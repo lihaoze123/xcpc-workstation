@@ -57,11 +57,29 @@
         "type": "github"
       }
     },
+    "olymp-reference": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785940181,
+        "narHash": "sha256-UpTKM1/qVPcSr7eeHHE4HjwvpGnZcxbtArBDIso0xfk=",
+        "owner": "lihaoze123",
+        "repo": "polygon-chinese-template",
+        "rev": "10f99594ff6a92e73c96f1f4ae235717049c8446",
+        "type": "github"
+      },
+      "original": {
+        "owner": "lihaoze123",
+        "repo": "polygon-chinese-template",
+        "rev": "10f99594ff6a92e73c96f1f4ae235717049c8446",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "chinese-fonts-overlay": "chinese-fonts-overlay",
         "fenix": "fenix",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "olymp-reference": "olymp-reference"
       }
     },
     "rust-analyzer-src": {

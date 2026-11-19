@@ -1,0 +1,212 @@
+// olymp-classic: the look of polygon-chinese-template@10f9959 (olymp.sty + ctexart, 12pt).
+//
+// The goal is to look the same, not to reproduce TeX's line-by-line arithmetic: the
+// values below are the design parameters of olymp.sty and ctexart (their sizes,
+// skips, rules and widths), and Typst does the typesetting. See docs/statement-style.md §1.
+
+// TeX points (1/72.27 in) to Typst points (1/72 in).
+#let tex(x) = x * 72 / 72.27 * 1pt
+
+// ---- Design parameters ----------------------------------------------------------------
+
+#let text-width = 175mm                       // olymp.sty, A4 portrait, 12pt
+#let text-height = tex(697.09)                // 245mm, rounded to whole lines by ctex
+#let text-left = tex(72.27 - 56.91 + 31.0)    // 1in + \hoffset + \oddsidemargin
+#let text-top = tex(72.27 - 99.58 + 20.0 + 56.91 + 17.07) // + \topmargin + \headheight + \headsep
+
+// ctex's \linespread{1.3} over LaTeX's baselines: about 1.57 × the font size at every size.
+// A TeX strut: 70% of the baselineskip above the baseline, 30% below, so lines set with
+// it and no leading sit one baselineskip apart. The body uses the normal size's strut
+// throughout (TeX ends size groups before \par, so headings take the body's spacing too).
+#let strut(size) = (top-edge: 0.7 * 1.57 * size, bottom-edge: -0.3 * 1.57 * size)
+#let parindent = 2em                          // ctex
+#let smallskip = tex(3)
+#let tabcolsep = tex(6)
+#let rule = 0.4pt
+
+#let sizes = (normal: tex(12), small: tex(10.95), footnote: tex(10), large: tex(14.4), Large: tex(17.28), LARGE: tex(20.74))
+
+// ---- Fonts ----------------------------------------------------------------------------
+
+// Latin Modern ships optical sizes; fontspec picks 10 below 11pt, 12 up to 15pt, 17 above.
+#let optical(family, size) = family + if size < tex(11) { "" } else if size < tex(15) { " 12" } else { " 17" }
+#let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
+
+#let serif(size: sizes.normal, cjk: "FZShuSong-Z01", body) = text(font: with-cjk(optical("Latin Modern Roman", size), cjk), size: size, body)
+#let kai(size: sizes.normal, body) = serif(size: size, cjk: "FZKai-Z03", body)
+#let sans(size: sizes.normal, body) = text(font: with-cjk(optical("Latin Modern Sans", size), "FZHei-B01"), size: size, body)
+// Bold sans exists only at the 10pt design size; CJK bold is FZ Hei.
+#let bold-sans(size, body) = text(font: with-cjk("Latin Modern Sans", "FZHei-B01"), weight: "bold", size: size, body)
+#let mono-font = with-cjk("Latin Modern Mono 12", "FZFangSong-Z02")
+#let mono(body) = text(font: mono-font, body)
+
+// ---- Words ----------------------------------------------------------------------------
+
+#let words = (
+  chinese: (
+    problem: "Problem", input-file: "输入文件", output-file: "输出文件",
+    time-limit: "时间限制", memory-limit: "内存限制", stdin: "标准输入", stdout: "标准输出",
+    input: "输入格式", output: "输出格式", interaction: "交互", example: "样例", examples: "样例",
+    explanation: "样例解释", note: "提示", notes: "提示", scoring: "评分", constraints: "约束",
+  ),
+  english: (
+    problem: "Problem", input-file: "Input file:", output-file: "Output file:",
+    time-limit: "Time limit:", memory-limit: "Memory limit:", stdin: "standard input", stdout: "standard output",
+    input: "Input", output: "Output", interaction: "Interaction Protocol", example: "Example", examples: "Examples",
+    explanation: "Explanation", note: "Note", notes: "Notes", scoring: "Scoring", constraints: "Constraints",
+  ),
+)
+#let lang-state = state("xcpc-language", "chinese")
+#let word(key) = context words.at(lang-state.get()).at(key)
+
+// ---- Statement parts ------------------------------------------------------------------
+
+// \smallbreak\smallskip before, \smallskip after; weak spacing merges with the glue
+// before it, as \smallbreak does.
+#let section(key, title: none) = {
+  v(2 * smallskip, weak: true)
+  block(sticky: true, below: smallskip, bold-sans(sizes.Large, if title == none { word(key) } else { title }))
+}
+
+// One table for all samples, kept on one page (the heading moves with it).
+#let samples(..pairs) = {
+  let pairs = pairs.pos()
+  let cell(body) = raw(body.trim("\n", at: end))
+  let head(key) = align(center, mono(text(weight: "bold", word(key))))
+  let column = 0.43 * text-width + 2 * tabcolsep
+  section(if pairs.len() == 1 { "example" } else { "examples" })
+  block(breakable: false, below: smallskip, pad(left: parindent, table(
+    columns: (column, column),
+    stroke: rule,
+    inset: (x: tabcolsep, y: 0pt),
+    table.header(head("stdin"), head("stdout")),
+    ..pairs.map(((input, output)) => (cell(input), cell(output))).flatten(),
+  )))
+}
+
+#let problem(
+  title: none,
+  label: none,
+  input: none,
+  output: none,
+  time-limit: none,
+  memory-limit: none,
+  show-metadata: true,
+  body,
+) = {
+  pagebreak(weak: true)
+  [#metadata((label: label, title: title)) <xcpc-problem>]
+  block(sticky: true, below: 3mm, bold-sans(sizes.LARGE)[#word("problem") #label. #title])
+  if show-metadata {
+    let rows = (
+      ("input-file", mono(input)), ("output-file", mono(output)),
+      ("time-limit", time-limit), ("memory-limit", memory-limit),
+    ).filter(((_, v)) => v != none)
+    // tabular{l@{\extracolsep{1cm}}l}, set at olymp.sty's 6.5mm indent.
+    pad(left: 6.5mm + tabcolsep, grid(columns: 2, column-gutter: 1cm, ..rows.map(((k, v)) => (word(k), v)).flatten()))
+  }
+  v(2mm)
+  body
+}
+
+// ---- Cover ----------------------------------------------------------------------------
+
+// \maketitle (title \LARGE, author and date \large) and the problem list floating at the
+// bottom. polygon-chinese-template writes the cover in Chinese whatever the language.
+#let cover(name, author, date) = {
+  [#metadata(none) <xcpc-cover>]
+  // \null, \vskip 2em, center's \topsep, then the title's own \vspace{4cm}.
+  v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  align(center, {
+    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), "FZHei-B01"), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
+    v(1.5em)
+    text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
+    v(1em)
+    text(..strut(sizes.large), serif(size: sizes.large, date))
+  })
+  place(bottom + center, float: true, context {
+    let problems = query(<xcpc-problem>)
+    set align(center)
+    sans[试题列表]
+    v(0.5em)
+    text(..strut(sizes.small), serif(size: sizes.small, table(
+      columns: (1cm + 2 * tabcolsep, 6cm + 2 * tabcolsep),
+      align: center,
+      inset: (x: tabcolsep, y: 0pt),
+      stroke: (x, y) => (x: rule, top: if y == 0 { rule }, bottom: if y == problems.len() - 1 { rule }),
+      ..problems.map(p => (p.value.label, p.value.title)).flatten(),
+    )))
+    v(2em)
+    text(..strut(sizes.footnote), serif(size: sizes.footnote)[
+      本试题册共 #problems.len() 题，#counter(page).final().first() 页。\
+      如果您的试题册缺少页面，请立即通知志愿者。
+    ])
+    v(tex(9))                                 // the center environment's \topsep
+  })
+  pagebreak()
+}
+
+// ---- Contest --------------------------------------------------------------------------
+
+#let contest(
+  name: none,
+  location: none,
+  date: none,
+  author: none,
+  language: "chinese",
+  show-cover: true,
+  body,
+) = {
+  let chinese = language == "chinese"
+  lang-state.update(language)
+  set document(title: name)
+  set text(lang: if chinese { "zh" } else { "en" }, region: if chinese { "cn" } else { none })
+
+  set text(..strut(sizes.normal))
+  // olymp.sty: no space between paragraphs in Chinese, \parskip = 1ex (0.43em in Latin Modern) otherwise.
+  set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
+  set text(font: with-cjk("Latin Modern Roman 12", "FZShuSong-Z01"), size: sizes.normal)
+  show raw: set text(font: mono-font, size: sizes.normal)
+  show math.equation: set text(font: "Latin Modern Math")
+  // olymp.sty's `chinese` option makes \le and \ge slanted.
+  show math.equation: it => if chinese { show "≤": "⩽"; show "≥": "⩾"; it } else { it }
+  // itemize: \leftmargini 2.5em, \labelsep 0.5em, \topsep + \partopsep around.
+  set list(marker: box(width: 2em, align(right)[•]), indent: 0pt, body-indent: 0.5em, spacing: 0pt)
+  show list: set block(above: tex(12), below: tex(12))
+  show list: set par(first-line-indent: 0pt)
+  // Displays: TeX picks long (12pt) or short (0–6.5pt) skips from the length of the line
+  // before; one medium skip looks right for both.
+  show math.equation.where(block: true): set block(above: tex(6), below: tex(6))
+
+  let is-cover() = query(<xcpc-cover>).any(c => c.location().page() == here().page())
+  set page(
+    width: 210mm,
+    height: 297mm,
+    margin: (left: text-left, right: 210mm - text-left - text-width, top: text-top, bottom: 297mm - text-top - text-height),
+    // Running head: name left, date right, its baseline \headsep above the text; the
+    // rule hangs 2pt below the ink (\\[2pt] then \hrule).
+    header-ascent: 6mm,
+    header: context if not is-cover() {
+      set par(first-line-indent: 0pt, spacing: 0pt)
+      set block(spacing: 0pt)
+      let head = { serif(name); h(1fr); serif(date) }
+      let depth = measure(text(top-edge: "baseline", bottom-edge: "bounds", head)).height
+      block(text(top-edge: "bounds", bottom-edge: "baseline", head))
+      block(height: 0pt, move(dy: depth + 2pt, line(length: 100%, stroke: rule)))
+    },
+    // Running foot: a rule, 6pt, then the ink of "Page X of Y" in sans.
+    footer-descent: tex(30) - sizes.normal,
+    footer: context if not is-cover() {
+      set par(first-line-indent: 0pt, spacing: 0pt)
+      line(length: 100%, stroke: rule)
+      v(6pt)
+      align(center, sans(text(top-edge: "bounds")[Page #counter(page).get().first() of #counter(page).final().first()]))
+    },
+  )
+
+  if show-cover {
+    counter(page).update(0)
+    cover(name, author, date)
+  }
+  body
+}

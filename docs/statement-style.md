@@ -6,10 +6,17 @@
 
 `olymp-classic` 的**唯一基准**是 [`lihaoze123/polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)，固定在 commit `10f99594ff6a92e73c96f1f4ae235717049c8446`。这个仓库是 `GassaFM/olymp.sty` 加上中文适配。
 
-- **基准 PDF**：用该 commit 的 `olymp.sty` 和 `ctexart` 模板，通过 `tectonic` 编译生成，存放在 `tests/fixtures/olymp-ref/`，覆盖中文单题、整本（含封面和题表）、长样例、交互题、英文等场景。生成时 `ctexart` 使用 `fontset=founder`，并设置 `FONTCONFIG_FILE=$XCPC_FONTCONFIG_FILE`，确保与引擎读取同一套字体文件。
-- **视觉回归**：`render_page_png` 的输出逐页与基准 PDF 的栅格化结果比对，指标用 SSIM 或带容差的像素差，不要求逐字节一致。
+- **基准 PDF**：用该 commit 的 `olymp.sty` 和 `ctexart` 模板，通过 `tectonic` 编译生成（`scripts/build-olymp-ref.sh`），和对应的 Typst 源文件一起存放在 `tests/fixtures/olymp-ref/<用例>/`。生成时 `ctexart` 使用 `fontset=founder`，并把 fontconfig 限定为锁定的字体，确保和引擎读取同一套字体文件。
+- **验收标准：看起来一样。** 把同一份内容的基准 PDF 和我们的 PDF 逐页并排对照，版式、字体、字号、层级、间距的比例都一致，正常阅读时看不出差别。**不要求**逐点重合：TeX 和 Typst 的断行、行距计算、数学排版本来就不同，这些差异予以尊重，不去模拟。但也不能差得太远：页眉、页脚、题头、表格这些固定元素的位置，应当和基准基本重合。
 - **冲突时的处理**：本文的描述与基准 PDF 不一致时，以基准 PDF 为准，并修正本文。
-- 下文的数值都取自上述 commit 的 `olymp.sty`、`statements.ftl` 和 `pandoc/contest.template.tex`。最终落点以基准 PDF 的实测为准。
+
+### 1.1.1 实现原则：设计参数，不用魔数
+
+- 模板里的数值只能是**设计参数**：直接取自 `olymp.sty`、`ctexart` 和参考模板源码中的字号、行距、`\smallskip`、`\afterproblemhead`（3mm）、`\tabcolsep`、线宽、列宽、版心尺寸等，并在注释里写明出处。
+- **禁止**为了和某个基准对齐而反推偏移量，比如「下移 2.16bp」「右移 3.9bp」，也不要在 Typst 里模拟 TeX 的 `\lineskip`、`\topskip` 之类的行距细节。看起来不一样时，应该找是哪条**设计规则**写错了（字体、字号、缩进、哪段间距），而不是补一个数。例如页眉的规则是「文字基线离正文顶端 `\headsep`，横线在墨迹下方 2pt」，页脚是「横线下空 6pt 接文字」。
+- 优先用 Typst 的原生写法：`page` 的 `header`/`footer`、`block` 的 `above`/`below`、`sticky`、weak 间距、`set`/`show` 规则。模板保持短小、易读。
+- 每次修改模板后运行 `scripts/olymp-regress.sh`：检查所有用例的页数是否一致，并为每一页生成「基准 | 我们 | 叠加」的并排图（输出到 `target/olymp-regress/`），**逐页看图**确认。`scripts/compare-pdf.py` 能给出逐词坐标和像素差异，只作诊断参考，不作为验收指标。
+- 用例要覆盖不同场景：中文/英文、显示/隐藏限制表、单组/多组样例、长样例、列表、行间公式、跨页长段落、样例后接正文等。新增版式规则时，同时补上对应的用例。
 
 ### 1.2 版面
 
@@ -39,7 +46,8 @@
 - 表头单元格居中，内容是 `\bf\texttt{\InputFileName}` / `\OutputFileName`。中文模式下显示为 `标准输入` / `标准输出`；中文没有等宽粗体，实际呈现为普通字重。
 - 同一道题的多组样例放在**同一张表**里，每组占一行，行与行之间用 `\hline` 分隔，单元格底部留 `\medskip`。
 - 可选变体有 `examplewide`（输入和输出上下排列）和 `examplethree`（多一列样例说明）。
-- **分页（与基准不同的地方）**：LaTeX 的 `tabular` 不能跨页，过长的样例在基准里会溢出页面。我们在表格超出页面时允许跨页，并用 `table.header(repeat: true)` 重复表头。这是有意的增强，不影响正常长度样例的回归比对。
+- **分页**：LaTeX 的 `tabular` 不能跨页。剩余空间放不下时，基准会把「样例」标题连同整张表一起移到下一页，原页留白（见用例 `contest-zh` 的 C 题）。我们的行为相同：表格不拆分，标题通过 `sticky` 跟着表走。
+- **与基准不同的地方（尚未实现）**：一整页都放不下的超长样例在基准里会溢出页面；我们计划改为跨页，并用 `table.header(repeat: true)` 重复表头。
 
 ### 1.6 封面与试题列表页
 
@@ -54,7 +62,7 @@
 | 用途 | 字体 | 来源 |
 | :--- | :--- | :--- |
 | 西文正文 / 标题 / 等宽 | Latin Modern Roman / Sans / Mono（与 XeLaTeX 默认一致） | nixpkgs `lmodern` |
-| 数学 | Latin Modern Math | nixpkgs `lmodern` |
+| 数学 | Latin Modern Math（基准实际用的是 Computer Modern Type1：CMR/CMMI/CMSY/MSAM，字形相近，但盒子尺寸和间距略有不同） | nixpkgs `lmodern` |
 | 中文正文（宋体） | 方正书宋 `FZShuSong-Z01` | `foundertype-ctex-fonts` |
 | 中文标题（黑体，含 `\heiti`） | 方正黑体 `FZHei-B01` | 同上 |
 | 中文作者行（楷体，`\kaishu`） | 方正楷体 `FZKai-Z03` | 同上 |

@@ -1,0 +1,15 @@
+[package]
+name = "xcpc-engine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+typst.workspace = true
+typst-layout.workspace = true
+typst-render.workspace = true
+tiny-skia.workspace = true
+typst-pdf.workspace = true
+typst-kit.workspace = true
+comemo.workspace = true
+thiserror.workspace = true

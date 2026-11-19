@@ -8,6 +8,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # FounderType (方正) fonts packaged for ctex's `fontset=founder`.
+    # Visual baseline of the default statement style (docs/statement-style.md §1.1).
+    olymp-reference = {
+      url = "github:lihaoze123/polygon-chinese-template/10f99594ff6a92e73c96f1f4ae235717049c8446";
+      flake = false;
+    };
     chinese-fonts-overlay = {
       url = "github:brsvh/chinese-fonts-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -19,6 +24,7 @@
       nixpkgs,
       fenix,
       chinese-fonts-overlay,
+      olymp-reference,
       ...
     }:
     let
@@ -135,7 +141,15 @@
             pkgs.lmodern
             chinese-fonts-overlay.packages.${system}.foundertype-ctex-fonts
           ];
-          statementFontsConf = pkgs.makeFontsConf { fontDirectories = statementFonts; };
+          # Only the pinned fonts: no /etc/fonts, no user or profile directories.
+          statementFontsConf = pkgs.writeText "xcpc-statement-fonts.conf" ''
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+            <fontconfig>
+              ${pkgs.lib.concatMapStrings (f: "<dir>${f}/share/fonts</dir>\n") statementFonts}
+              <cachedir prefix="xdg">xcpc-statement-fontconfig</cachedir>
+            </fontconfig>
+          '';
           linuxLibraries = with pkgs; [
             gtk4
             webkitgtk_6_0
@@ -154,6 +168,8 @@
               pkgs.clang
               pkgs.cmake
               pkgs.tectonic
+              pkgs.pandoc
+              pkgs.poppler-utils
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.gobject-introspection ];
             buildInputs =
@@ -167,6 +183,8 @@
             # Fontconfig restricted to the statement fonts: set it as FONTCONFIG_FILE
             # only when building reference PDFs, never for the whole shell (the GUI needs system fonts).
             XCPC_FONTCONFIG_FILE = "${statementFontsConf}";
+            # Pinned polygon-chinese-template checkout used to build reference PDFs.
+            XCPC_OLYMP_REFERENCE = "${olymp-reference}";
 
             shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
               # Also expose dynamically loaded media plugins to Rust-built apps.

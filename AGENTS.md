@@ -37,6 +37,7 @@
 ## 不可违反的约束
 
 - **题面版式以参考模板为唯一基准**：`lihaoze123/polygon-chinese-template@10f9959`，基准 PDF 由 tectonic 编译生成，详见 `docs/statement-style.md` §1。不要凭印象改版式，比如把题名改成居中、把页脚改成「第 X 页」都是错的。
+- **看起来一样，不用魔数**：题面版式的验收标准是和基准并排看起来一样，不要求逐点重合，尊重 TeX 和 Typst 之间的差异，但固定元素（页眉、页脚、题头、表格）不能差太远。模板里只能写有出处的设计参数（字号、行距、间距、线宽等），不得为了对齐而反推偏移量，也不要模拟 TeX 的行距细节。改动模板后运行 `scripts/olymp-regress.sh`，逐页看并排图。详见 `docs/statement-style.md` §1.1.1。
 - **只用 Typst 生成 PDF**：不导出 LaTeX，不写 v1 迁移代码，不做题解幻灯片，不做气球颜色。
 - **不手写 Markdown/LaTeX 解析器**：用 `pulldown-cmark`（GFM + `ENABLE_MATH`）、`mitex`、`tylax`、`typlite`，自己只写薄胶水层。
 - **安全边界在 Core 层强制执行**：写入一律原子化（临时文件 + rename）；冻结的比赛只读，写入返回明确错误码；**解冻只开放给 GUI/CLI（需二次确认），不开放给 MCP**；支持 `--read-only`；文件访问不得越出工作区目录。
