@@ -1,39 +1,45 @@
 # 路线图
 
-## Phase 0：NSH + Rust Core 技术验证（PoC）
+**原则：出版优先，每个阶段都要先打通一条可用的端到端链路。** 平台只考虑 Linux。
 
-先验证风险最高的几个技术接缝，再开始铺功能：
+## Phase 0：技术验证（PoC）
 
-1. **初始化 workspace**：搭建 Cargo + NSH 工作区，按 [architecture.md](./architecture.md#3-workspace-划分) 划好 crate 边界，并建立 `hero-nsh` 风格的三端桌面与 Web 脚手架。
-2. **NSH + Typst Canvas 闭环**：用 Rust 编译一个最小的 `olymp-classic` Typst 页面，通过 `typst-render` 输出 HiDPI Pixmap，在 NSH Canvas 中流畅地缩放和平移。同时验证 `comemo` 增量编译的性能和输出清晰度。
-3. **文本编辑与 IME**：验证 NSH 原生多行文本编辑能否正确处理中文 IME、撤销/重做和长文档。
-4. **尽早接通 `xcpc mcp`**：在 Phase 1 初期就接好 `compile_and_diagnose` 和 `render_page_png`，以便自动把 `olymp-classic` 的渲染结果与真实的 `olymp.sty` PDF 做视觉比对。
+1. **初始化 workspace**：Cargo workspace 加 `nsh init --template mixed` 生成的 `apps/desktop`，按 [architecture.md](./architecture.md#3-workspace-划分) 划好 crate 边界。
+2. **NSH + Typst Canvas 闭环**：用 Rust 编译一个最小的 `olymp-classic` 页面，通过 `typst-render` 生成 HiDPI 位图，在 `nsh/base` 的 `Canvas` 中流畅缩放和平移；同时验证 `comemo` 增量编译的耗时。
+3. **编辑器**：验证 `nsh/base` 的 `Editor`（或 `RichEditor`）在中文 IME、撤销/重做、长文档下的表现。
+4. **基准 PDF 流水线**：用 `tectonic` 和固定 commit 的参考模板生成第一批 `tests/fixtures/olymp-ref/`，并跑通 PNG 比对。
 
-## Phase 1：双层存储 + `olymp.sty` 出版核心 + 初版 CLI/MCP
+## Phase 1：最短出版链路
 
-- 开放目录工作区、`notify` 文件监听、SQLite FTS5 索引层；生成 JSON Schema 和工作区的 `AGENTS.md`。
-- 集成 `tylax` + `mitex` + `pulldown-cmark` 转换管线；逐像素完成 `olymp-classic` 模板并建立视觉回归基准；打通整本题册、单题、题解册三种 PDF 导出。
-- `xcpc mcp` 基础工具集：`compile_and_diagnose`、`render_page_png`、`export_pdf`、`search_problems`、`upsert_problem`。
+- 工作区目录的读写，包括 `problem.toml`（含 `[[source]]`）、`statement.md`、`samples/`、`editorial.md`、`contest.toml`；原子写入、路径沙箱、冻结只读守卫。
+- Markdown + Math → Typst（`pulldown-cmark` + `mitex`），包括按二级标题识别章节和生成样例表。
+- `olymp-classic` 模板：题面页、封面和试题列表、A4 题解册，并与基准 PDF 做视觉回归。
+- 导出单题、整本、题解册三种 PDF。
+- 二进制 `xcpc`：`build` / `render` 等子命令（支持 `--json`），MCP 工具 `compile_and_diagnose`、`render_page_png`、`export_pdf`。
+- 最小桌面窗口：打开一道题或一场比赛，左边是编辑器，右边是 Canvas 预览。
 
-## Phase 2：题库中心 + 活引用组卷 + 出版工作室 + Linter
+**明确推迟**：SQLite FTS5、`notify` 监听、LaTeX 输入、JSON Schema 和工作区 `AGENTS.md` 生成、`search_problems` / `upsert_problem`。
 
-- 题库中心：多维筛选、题解、代码、训练状态。
-- 比赛组卷：活引用、局部覆写、难度均衡分析、一键冻结快照。
-- 沉浸式出版工作室：结构化/源码双模编辑、双语并排校对与语义级 Diff、三层主题定制、`Cmd+K` 命令面板。
-- `xcpc-lint` 题面体检与印刷前预检；补全 MCP 的组卷和体检工具，以及与桌面端的实时热联动。
+## Phase 2：题库中心 + 组卷 + 出版工作室 + Linter
 
-## Phase 3：训练 Dashboard + OJ 生态 + 模板册 + 完整 MCP
+- 引入 `notify` 监听、FTS5 索引、JSON Schema 和工作区 `AGENTS.md`。
+- 题库中心：多维筛选，查看题解和代码，显示派生出的训练状态。
+- 比赛组卷：活引用、元数据覆写、难度和页数统计、冻结与人工解冻。
+- 完整的出版工作室：大纲、预览 HUD、`Cmd+K`。
+- `xcpc-lint`；补齐 MCP 的题库、组卷和体检工具；GUI 实时联动。
 
-- 训练看板（热力图、标签雷达、难度分布、VP 复盘、待补题队列）和训练类 MCP 工具。
-- 6 平台外部 OJ 同步（CF / AtCoder / QOJ / 洛谷 / 牛客 / 力扣）。
-- 代码模板册（TRD）+ KACTL 6 位哈希。
-- Competitive Companion（`:10043`）本地收题；Polygon / DOMjudge / Hydro / FPS / QOJ 适配器；轻量 Git 集成；桌面端一键安装 MCP 配置；Web 端的 OPFS/ZIP 适配。
+## Phase 3：训练与生态
 
-## Phase 4：性能压测、安装包与发布
+- Codeforces / AtCoder / QOJ 同步、训练看板、复盘与待补队列；训练类 MCP 工具。
+- Polygon 导入（同时启用 `tylax` 处理 LaTeX 输入），以及 Competitive Companion 收题。
 
-- 用 1,000+ 题的本地题库和 20+ 题的超长题册做压测和优化。
-- 输出 macOS / Windows / Linux 原生安装包（内含 `xcpc` CLI/MCP 二进制），以及 Web 轻量版。
+## 待定（尚未排期）
 
-## Phase 5（远期）：Hull 式声明式本地 Polygon
-
-参考 [`rindag-devs/hull`](https://hull.aberter0x3f.top/)，在预留的 `problems/<id>/` 声明式 schema 上，用 Rust 原生的 WASI/WASM 确定性沙箱（`wasmtime`）实现跨平台、可复现的造数据、Subtask/Trait 校验、Checker 验证、多解法期望结果测试和对拍；兼容 Testlib / CPLib，支持与 Hull 工程互通，并扩展到 MCP 工具链。
+- 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
+- DOMjudge / Hydro / FPS / QOJ 包的导入导出。
+- 代码模板册（TRD）。
+- 双语并排校对与语义级 Diff。
+- 更多主题预设和定制体系。
+- 打包发布与 1,000+ 题规模的压测。
+- Web 版。
+- Phase 5：参考 Hull 的声明式本地 Polygon（`wasmtime` 沙箱）。
