@@ -9,6 +9,13 @@
 3. **编辑器**：验证 `nsh/base` 的 `Editor`（或 `RichEditor`）在中文 IME、撤销/重做、长文档下的表现。
 4. **基准 PDF 流水线**：用 `tectonic` 和固定 commit 的参考模板生成第一批 `tests/fixtures/olymp-ref/`，并跑通 PNG 比对。
 
+**Phase 0 结论**（2026-11-20，Linux，开发构建，依赖开启 `opt-level = 2`）：
+
+- 增量编译：首次约 230ms，之后改一处文字约 25ms（`comemo` 生效）。
+- 光栅化是瓶颈：5 页 A4 按约 2.5 px/pt 并行渲染需要 170–340ms。按页面哈希复用位图的方法不成立，因为页面帧里带有源码位置（span），编辑后每一页的哈希都会变。**Phase 1 改为只渲染可见页**，并在缩放时先拉伸旧位图，再换成清晰的新图。
+- `Canvas` 的 `drawImage(file://…)` 可以使用；滚轮平移正常。Ctrl+滚轮或捏合缩放、中文输入法、撤销/重做和长文档要人工验收。
+- 基准管线：3 套用例共 13 页，页数与基准一致，并排图看起来一样（`scripts/olymp-regress.sh`）。
+
 ## Phase 1：最短出版链路
 
 - 工作区目录的读写，包括 `problem.toml`（含 `[[source]]`）、`statement.md`、`samples/`、`editorial.md`、`contest.toml`；原子写入、路径沙箱、冻结只读守卫。

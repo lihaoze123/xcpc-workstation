@@ -73,6 +73,18 @@ impl Compiled {
         self.document.pages().len()
     }
 
+    /// A hash of one page's content (0-based): equal hashes render the same, so a
+    /// preview can keep the bitmaps of pages an edit did not change.
+    pub fn page_hash(&self, page: usize) -> Option<u128> {
+        self.document.pages().get(page).map(typst::utils::hash128)
+    }
+
+    /// One page's size in points (0-based).
+    pub fn page_size(&self, page: usize) -> Option<(f64, f64)> {
+        let size = self.document.pages().get(page)?.frame.size();
+        Some((size.x.to_pt(), size.y.to_pt()))
+    }
+
     /// Renders one page (0-based) at `pixel_per_pt` (2.0 ≈ 144 dpi).
     pub fn render(&self, page: usize, pixel_per_pt: f32) -> Option<tiny_skia::Pixmap> {
         let page = self.document.pages().get(page)?;
