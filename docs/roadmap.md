@@ -50,3 +50,19 @@
 - 打包发布与 1,000+ 题规模的压测。
 - Web 版。
 - Phase 5：参考 Hull 的声明式本地 Polygon（`wasmtime` 沙箱）。
+
+## 备选路线：真 TeX + rtex（已验证，暂不采用）
+
+[realtime-tex（rtex）](https://github.com/HenryXiaoYang/realtime-tex) 在常驻的 LuaLaTeX 进程里只重排正在编辑的段落，输出与 LuaLaTeX 逐点一致。2026-11-20 用 `contest-zh` 用例和 rtex v0.0.7 做了验证：
+
+- 参考模板（ctexart + `fontset=founder` + olymp.sty）可以用 LuaLaTeX 编译，页数与基准一致。但 **LuaLaTeX 和 XeTeX 基准之间也差 1–6bp**，与 Typst 版的差距同一量级。采用这条路线时，基准要改为同一模板的 LuaLaTeX 输出。
+- rtex 接管后，5 页的页面显示列表都与 PDF 一致。但 olymp 的 `problem` 环境把整道题包成一个未知环境，**可实时更新的段落为 0**。把正文移出 `problem` 后，中文段落、行内公式和列表都能实时更新：一次编辑约 1.4ms，字形与完整编译一致。`\InputFile` 这类章节宏仍然要等后台编译。
+- 换页或行数变化要等后台完整编译，5 页约 2.1s；冷启动约 0.9s。依赖 TeX Live（这次试验的环境有 5 GiB，可以裁剪）。宿主要自己绘制字形坐标列表，其中 CM Type1 数学字体没有字形索引，需要额外处理。
+
+暂不采用的原因：
+
+- Typst 版已经达到「看起来一样」，对 10–30 页的比赛，整份增量编译约 25ms，速度已经够用。
+- 切换要推翻三项已确认的决定：只用 Typst 生成 PDF、Markdown → Typst 的转换方式、引擎设计。题面结构也要改，不能再整道题包在 `problem` 里。
+- rtex 还很早期，API 不稳定。
+
+如果 Typst 逼近模板的维护成本明显上升（比如题解册、复杂版式），按以上数据重新评估。
