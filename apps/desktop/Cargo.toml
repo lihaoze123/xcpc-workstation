@@ -1,0 +1,10 @@
+[package]
+name = "xcpc-desktop"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+nsh-core.workspace = true
+nsh-base.workspace = true
+xcpc-engine.workspace = true
