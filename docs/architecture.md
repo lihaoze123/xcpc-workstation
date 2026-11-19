@@ -1,52 +1,52 @@
 # 系统架构
 
-## 1. 技术栈
+## 1. 技术栈与平台
 
 | 维度 | 选型 |
 | :--- | :--- |
-| 应用框架 | **NSH（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI；以桌面端（macOS / Windows / Linux）为主，同时兼容 NSH Web 构建 |
-| UI 组件与视觉 | `nsh/base` + [`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 风格的组件层，见 [design-system.md](./design-system.md) |
-| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 读取系统字体、`typst-render` 输出到 NSH Canvas 或 Agent 用的 PNG、`typst-pdf` 导出 PDF |
-| 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）、`mitex`、`tylax`、`typlite`，只写一层很薄的胶水代码 |
-| 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite FTS5 派生索引 |
+| 平台 | **只在 Linux 上开发和验收**。macOS / Windows 不验收，但能低成本避免的平台特有写法要避免。Web 版远期待定 |
+| 应用框架 | **NSH 0.6（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
+| UI 组件 | **只用 `nsh/base`**：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
+| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 加载字体、`typst-render` 输出到 Canvas 或 PNG、`typst-pdf` 导出 PDF |
+| 题面字体 | Latin Modern 和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供，见 [statement-style.md](./statement-style.md#17-字体) |
+| 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）+ `mitex`；LaTeX 输入用 `tylax`；导出为 Markdown 用 `typlite`/`tylax` |
+| 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite 派生数据 |
 | 凭据 | 系统钥匙串（`keyring`） |
-| Agent 接口 | `xcpc mcp`（stdio MCP Server）+ `xcpc <subcommand> --json` |
-| 远期沙箱 | `wasmtime`（WASI/WASM，Phase 5） |
+| Agent 接口 | `xcpc mcp`（stdio）+ `xcpc <subcommand> --json` |
+| 视觉基准 | `tectonic` 编译参考模板，生成基准 PDF |
 
 ## 2. 总体结构
 
-计算密集和持久化相关的模块全部放在 Rust 原生层。**同一个 Rust Core** 同时驱动 NSH 桌面 GUI、无头的 `xcpc mcp` 和 `xcpc` CLI，三者之间不重复实现任何逻辑。
+**同一个 Rust Core** 同时驱动 NSH 桌面 GUI、无头的 `xcpc mcp` 和 `xcpc` CLI，三者之间不重复实现任何逻辑。
 
 ```mermaid
 flowchart TD
-    subgraph Agents["外部 AI Agents (Claude Code / Cursor / Antigravity)"]
+    subgraph Agents["外部 AI Agents"]
         MCPClient["MCP Client (stdio)"]
         CLICaller["Shell / CLI (--json)"]
     end
 
-    subgraph UI["UI 呈现层 (NSH TSX + hero-nsh)"]
+    subgraph UI["UI 层 (NSH TSX + nsh/base)"]
         Rail["左侧导航 (总览 / 题库 / 比赛 / 设置)"]
-        Dash["训练看板"]
-        Bank["题库中心"]
-        Studio["出版工作室"]
-        Cmd["全局命令面板 (Cmd+K)"]
+        Studio["出版工作室 (Editor + Canvas 预览)"]
+        Others["题库中心 / 训练看板 / Cmd+K"]
     end
 
-    subgraph Entry["统一接入层"]
-        Bridge["NSH Native Bridge (异步 RPC & 零拷贝 Pixmap)"]
-        MCP["xcpc-mcp: 无头 stdio MCP Server + 本地 IPC 热联动"]
-        CLI["xcpc CLI: 结构化 JSON 输出 & 确定性退出码"]
+    subgraph Entry["接入层"]
+        Bridge["NSH Native Module (Rust ↔ TSX)"]
+        MCP["xcpc-mcp: stdio MCP Server"]
+        CLI["xcpc CLI: JSON 输出 & 确定性退出码"]
     end
 
     subgraph Core["Rust Core"]
-        Store["xcpc-storage: 开放目录(Truth) + notify + SQLite FTS5(Index)"]
-        Model["xcpc-domain: Problem / Contest / TrainingLog / Theme"]
-        Conv["xcpc-convert: tylax / mitex / pulldown-cmark 胶水层"]
-        Lint["xcpc-lint: 题面体检 & 印刷前预检"]
+        Store["xcpc-storage: 开放目录 + 原子写入 (+ 监听 / 索引)"]
+        Model["xcpc-domain: Problem / Contest / TrainingLog"]
+        Conv["xcpc-convert: Markdown → Typst 胶水层"]
+        Lint["xcpc-lint"]
         Engine["xcpc-engine: typst + comemo + fontdb"]
         Render["typst-render (Canvas / PNG) & typst-pdf"]
-        Pkg["xcpc-packages: Polygon / DOMjudge / Hydro / FPS / QOJ / Companion"]
-        Sync["xcpc-sync: Git 集成 + 外部 OJ 同步 + 可选云同步"]
+        Pkg["xcpc-packages: Polygon / Companion / ..."]
+        Sync["xcpc-sync: 外部 OJ 同步"]
     end
 
     UI <--> Bridge
@@ -68,155 +68,158 @@ flowchart TD
 
 ```text
 crates/
-  xcpc-domain     # Problem、Contest（活引用 + overrides + 快照）、TrainingLog、Theme tokens
-  xcpc-storage    # 开放目录 FS、notify 监听、SQLite FTS5 索引、原子写入
-  xcpc-convert    # pulldown-cmark + mitex + tylax 的胶水层（olymp.sty / Polygon 宏、图片路径映射）
-  xcpc-engine     # typst World、comemo 增量编译、fontdb、typst-render、typst-pdf
-  xcpc-lint       # 题面静态检查 & 印刷前预检
-  xcpc-packages   # Polygon、Competitive Companion(:10043)、DOMjudge、Hydro、FPS、QOJ
-  xcpc-sync       # 外部 OJ 同步（6 平台）、Git 集成、可选云同步
-  xcpc-mcp        # `xcpc mcp`（stdio）+ `xcpc <subcommand> --json`
+  xcpc-domain     # Problem、Contest（活引用 + 元数据覆写 + 冻结）、TrainingLog、状态派生规则
+  xcpc-storage    # 开放目录读写、原子写入、冻结只读守卫、路径沙箱；后续加入 notify 监听和 SQLite 索引
+  xcpc-convert    # Markdown + Math → Typst（pulldown-cmark + mitex）、章节识别、图片路径映射；后续加入 tylax
+  xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
+  xcpc-lint       # 题面检查与印刷前预检（Phase 2）
+  xcpc-packages   # Polygon、Competitive Companion 等（后续阶段）
+  xcpc-sync       # 外部 OJ 同步（后续阶段）
+  xcpc-mcp        # `xcpc` 二进制：CLI 子命令 + `xcpc mcp`
 apps/
-  desktop         # NSH Rust 宿主 + TSX UI（hero-nsh 风格）
+  desktop         # NSH mixed app：TSX UI + 调用 Core 的 Rust native module
+tests/fixtures/
+  olymp-ref/      # 参考模板生成的基准 PDF 及其源文件
 ```
 
-依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`；`mcp` 和 `apps/desktop` 只是 Core 的外壳，不放业务逻辑。
+依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`。`xcpc-mcp` 和 `apps/desktop` 只是外壳，不放业务逻辑。
 
 ## 4. 领域模型
 
 ```mermaid
 erDiagram
+    PROBLEM ||--o{ PROBLEM_SOURCE : "identified_by"
     PROBLEM ||--o{ CONTEST_ITEM : "referenced_by"
     CONTEST ||--|{ CONTEST_ITEM : "contains"
-    PROBLEM ||--o{ TRAINING_LOG : "tracked_in"
-    CONTEST ||--o{ VP_SESSION : "practiced_as"
-    THEME ||--o{ CONTEST : "styles"
+    PROBLEM ||--o{ TRAINING_EVENT : "tracked_in"
+    PROBLEM_SOURCE ||--o{ SYNCED_SUBMISSION : "matched_by"
 
     PROBLEM {
-        string id PK
-        string slug
+        string id PK "目录名 slug，不可改"
         string title
         string format "md | latex | typst"
         string[] tags
-        int rating "e.g. 800-3500"
-        string origin "e.g. 2025 ICPC Nanjing"
-        string status "todo | attempted | ac | upsolved"
-        string editorial_path
-        string[] code_files
+        int rating
+        json limits "time / memory / input / output"
+    }
+
+    PROBLEM_SOURCE {
+        string problem_id FK
+        string platform "codeforces | atcoder | qoj | luogu | ..."
+        string id "平台题号"
+        string url
     }
 
     CONTEST {
         string id PK
-        string title
-        string subtitle
+        string name
+        string location
         string date
-        string theme_id FK
-        bool is_frozen "历史快照锁定"
+        string language "chinese | english"
+        bool cover
+        bool is_frozen
     }
 
     CONTEST_ITEM {
         string contest_id FK
         string problem_id FK
         string label "A, B, C..."
-        string balloon_color
-        json overrides "局部覆写时间/标题等"
-        string snapshot_hash "冻结时锁定内容"
+        json overrides "仅元数据: title / limits / show-metadata"
     }
 
-    TRAINING_LOG {
-        string id PK
+    TRAINING_EVENT {
         string problem_id FK
-        string result "ac | wa | tle | upsolved"
+        string kind "mark | vp | upsolve | review"
+        string result "ac | wa | tle | upsolved | ..."
         int duration_sec
         string[] mistake_tags
-        datetime review_due_at
+        datetime at
+    }
+
+    SYNCED_SUBMISSION {
+        string platform
+        string problem_id "平台题号"
+        string verdict
+        datetime at
     }
 ```
 
-- **活引用**：`CONTEST_ITEM` 只引用 `problem_id`，渲染时再合并 `overrides`。比赛冻结后，内容来自 `snapshot/`，并用 `snapshot_hash` 锁定。
-- `problem.toml` 预留了 Phase 5 的声明式字段（`subtasks` / `generators` / `validators` / `checkers` / `solutions`），当前阶段只做解析时的兼容，不实现对应功能。
+- **训练状态是派生值**：`status(problem) = max(TRAINING_EVENT 的结果, 通过 PROBLEM_SOURCE 匹配到的 SYNCED_SUBMISSION 的结果)`。它不写入 `problem.toml`。
+- **覆写只限元数据**：渲染时把 `CONTEST_ITEM.overrides` 合并到题目元数据上。题面正文不能覆写。
+- **冻结**：渲染改为读取 `contests/<id>/snapshot/`，不再读题库。
 
-## 5. 双层本地存储
+## 5. 本地存储
 
-**开放目录是精选题库和比赛的单一事实源**。SQLite 只承担派生出来的全文索引，以及海量的跨平台同步记录。
+开放目录是**单一事实源**。SQLite 只存放派生索引和同步数据，删除后可以重建或重新同步。
 
 ```text
 xcpc-workspace/
-├── .xcpc/
-│   ├── index.db              # 精选题库与比赛的 SQLite + FTS5 派生索引（可重建，.gitignore 忽略）
-│   └── oj_sync.db            # 多平台同步明细、参赛记录、Rating 历史与赛程缓存（不进 Git）
-├── workspace.toml            # 工作区配置、标签词典、默认主题、外部 OJ 账号（凭据存 OS Keychain）
-├── AGENTS.md                 # 新建工作区时自动生成，供 Agent 直接读写文件时参考
-├── themes/
-│   └── custom-icpc.toml      # 用户自定义主题 Token 与可选 Typst 插槽
-├── problems/                 # 精选题库
-│   └── p-2026-two-sum/
-│       ├── problem.toml      # 元数据、标签、难度、来源、限制、训练状态
-│       ├── statement.md      # 题面（或 statement.zh.md / statement.en.md；也支持 .tex / .typ）
-│       ├── editorial.md      # 题解与笔记
-│       ├── samples/          # 01.in, 01.ans, 02.in, 02.ans ...
-│       ├── assets/           # 本题配图
-│       └── code/             # std.cpp, ac_202605.cpp ...
-├── sheets/
-│   └── dp-advanced.toml      # 专题题单（引用本地题目或外部 OJ 题号）
-├── templates/
-│   └── ds/segtree.cpp        # 代码模板库（可出版为 TRD）
+├── .xcpc/                    # 不进 Git
+│   ├── index.db              # FTS5 派生索引（Phase 2）
+│   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存
+├── workspace.toml            # 工作区配置、标签词典、OJ 账号（凭据存放在钥匙串）
+├── AGENTS.md                 # 工作区级 Agent 指南（Phase 2 起自动生成）
+├── problems/
+│   └── cf-1999a/
+│       ├── problem.toml      # 元数据、限制、[[source]]；不含训练状态
+│       ├── statement.md      # 或 statement.zh.md / statement.en.md
+│       ├── editorial.md
+│       ├── samples/          # 01.in, 01.ans, ...
+│       ├── assets/
+│       └── code/
 ├── contests/
 │   └── icpc-2026-regional/
-│       ├── contest.toml      # 比赛元数据、题目引用列表、覆写、封面/题表开关
-│       ├── theme.toml        # 本场覆盖的主题 Token
-│       ├── assets/           # 赛事 Logo、赞助商页脚、封面图
-│       └── snapshot/         # （仅冻结后生成）不可变历史快照
+│       ├── contest.toml      # 元信息、题目引用、元数据覆写、出版开关
+│       ├── assets/
+│       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 当时的 PDF
+├── sheets/                   # 题单（后续阶段）
+├── templates/                # 代码模板（TRD，后续阶段）
 └── training/
-    └── logs.jsonl            # 追加式训练与 VP 记录（方便 Git 合并）
+    └── logs.jsonl            # 追加写入的训练事件
 ```
 
-- **文件监听**：用户在外部编辑器（VS Code / Neovim）里修改题面、题解或代码，或者执行 `git pull` 之后，后台用 Rust `notify` 增量刷新 `.xcpc/index.db`，前端视图和预览随之同步。
-- **Schema**：新建工作区时，会为 `problem.toml`、`contest.toml`、`theme.toml` 生成 JSON Schema，并自动附带 `AGENTS.md`。这样即使 Agent 绕开 MCP 直接读写文件，也能写出合规的内容。
-- **Web 端**：NSH Web 目标用 **OPFS + IndexedDB** 映射相同的目录结构，支持以 `.zip` 导入导出整个工作区或单场比赛包。
+- **Phase 1** 直接扫描目录（几十道题的规模足够）。**Phase 2** 起加入 `notify` 监听、`.xcpc/index.db` 增量索引，以及 `problem.toml` / `contest.toml` 的 JSON Schema 和工作区 `AGENTS.md` 生成。
 
 ## 6. 格式转换管线
 
-**不手写 Markdown / LaTeX / Typst 解析器**，直接原生链接成熟的 Rust crate：
+**不手写 Markdown / LaTeX / Typst 解析器。**
 
 ```mermaid
 flowchart LR
-    MD["Markdown + LaTeX Math (默认)"] --> P1["pulldown-cmark (GFM + ENABLE_MATH) + mitex"]
-    TEX["Polygon LaTeX"] --> P2["tylax (mitex-parser + typst-syntax)"]
-    TYP["原始 Typst 源码"] --> P3["Passthrough"]
-
-    P1 --> Glue["胶水层: olymp.sty 宏 & 图片路径映射"]
+    MD["Markdown + Math (默认)"] --> P1["pulldown-cmark (GFM + ENABLE_MATH) + mitex"]
+    TEX["Polygon LaTeX (后续)"] --> P2["tylax"]
+    TYP["Typst"] --> P3["直通"]
+    P1 --> Glue["胶水层: 二级标题→olymp 章节 / samples / 图片路径"]
     P2 --> Glue
     P3 --> Glue
-    Glue --> Typst["原生 Rust Typst 增量编译"]
+    Glue --> Typst["typst 增量编译 (olymp-classic)"]
 ```
 
-- **LaTeX → Typst**：使用 `tylax`（支持文档结构、数学公式、复杂表格、`\newcommand` 宏展开，以及 TikZ → CeTZ）和 `mitex`。
-- **Markdown + Math → Typst**：使用 `pulldown-cmark`（或 `md2typ`）和 `mitex`。
-- **Typst → Markdown**（导出到 Hydro / QOJ 等 OJ 时）：使用 `typlite` / `tylax`。
-- 胶水层**只**处理 `olymp.sty` / Polygon 特有的语义（`\epigraph`、`\illustration`、图片路径映射等）。
+- 胶水层负责三件事：按二级标题识别章节（规则见 [product.md](./product.md#21-题面结构)）、从 `samples/` 生成样例表、把图片路径映射到题目的 `assets/`。处理 Polygon LaTeX 时，还要转换 `\epigraph`、`\illustration` 等宏。
+- 导出到 Hydro / QOJ 等 OJ 时，用 `typlite` / `tylax` 把 Typst 转回 Markdown（后续阶段）。
 
 ## 7. Agent / MCP / CLI
 
-### 7.1 两种运行方式与热联动
+### 7.1 运行方式
 
-- **无头运行**：`xcpc mcp` 是标准的 stdio MCP 服务，不需要启动 GUI 就能被 Claude Code、Cursor、Antigravity 等客户端调用。同样的能力也可以通过 `xcpc <subcommand> --json` 调用，退出码是确定的。
-- **桌面端热联动**：桌面端打开同一个工作区时，Agent 通过 MCP 写入的改动会经由 `notify` 文件监听，以及可选的本地 IPC（Unix Socket / Named Pipe）即时通知 GUI，刷新题库列表、Dashboard 统计或当前的预览画布。
-- **接入体验**：「设置 → MCP 集成」里可以一键复制或自动安装 MCP 配置，适配常见客户端的配置文件格式。
+- `xcpc mcp`：stdio MCP 服务，不需要启动 GUI。
+- `xcpc <subcommand> --json`：输出结构化结果，退出码确定。
+- 桌面端打开同一工作区时，Agent 的写入会通过文件监听或本地 IPC 让 GUI 刷新（Phase 2）。
 
 ### 7.2 MCP Tools
 
-| 分组 | Tools | 用途 |
+| 分组 | Tools | 阶段 |
 | :--- | :--- | :--- |
-| 题库与组卷 | `search_problems`（FTS5 全文检索 + 标签/难度/状态筛选）、`get_problem` / `upsert_problem`、`list_contests` / `get_contest`、`compose_contest` / `update_contest_item` | 按难度曲线组卷、批量校对或翻译题面、补充样例与题解 |
-| 视觉自检与出版 | `lint_problem` / `lint_contest`、`compile_and_diagnose`（结构化 JSON 诊断：公式报错行号、总页数、溢出与断页警告）、`render_page_png`（把指定页渲染为 PNG 返回）、`export_pdf`（整本 / 单题 / 题解册） | 多模态 Agent 改完题面后可以跑 lint、编译，再「看图」检查渲染效果，自己修正公式超宽、符号不规范、样例跨页错位、图片清晰度不足等问题 |
-| 训练与复盘 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | 结合本地真实训练数据，制定补题和 VP 复盘计划 |
+| 出版与视觉自检 | `compile_and_diagnose`（结构化诊断：错误位置、总页数、溢出警告）、`render_page_png`、`export_pdf`（单题 / 整本 / 题解册） | Phase 1 |
+| 题库与组卷 | `search_problems`、`get_problem` / `upsert_problem`、`list_contests` / `get_contest`、`compose_contest` / `update_contest_item`、`freeze_contest` | Phase 2 |
+| 体检 | `lint_problem` / `lint_contest` | Phase 2 |
+| 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 3 |
 
-此外：TRD 出版复用 `compile_and_diagnose` / `render_page_png`；双语一致性校验会比对中英文题面里的变量、数据范围和边界条件。
+**MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。
 
 ### 7.3 安全边界（在 Core 层强制执行）
 
-- **原子写入**：所有写操作都先写临时文件，再 atomic rename 替换，杜绝写出半截的损坏文件。重要修改会自动留存一个轻量的本地回滚点，同时也天然纳入工作区的 Git Diff。
-- **冻结快照只读**：`is_frozen = true` 的比赛在 Rust Core 层强制只读，任何写入（包括 MCP 的写操作）都返回明确的错误码。
+- **原子写入**：先写临时文件，再 rename 替换。
+- **冻结只读**：`is_frozen = true` 的比赛及其快照禁止一切写入，写操作返回明确的错误码。解冻只开放给 GUI 和 CLI（需二次确认），不开放给 MCP。
 - **只读模式**：`xcpc mcp --read-only`。
-- **路径沙箱**：所有文件访问都限制在当前工作区目录内，防止路径穿越。
+- **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越。
