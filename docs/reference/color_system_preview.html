@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XCPC Workstation v2 — 色彩系统与界面骨架预览</title>
+  <style>
+    :root {
+      --bg-canvas: #FAFAFA;
+      --bg-surface: #FFFFFF;
+      --bg-elevated: #F4F4F5;
+      --bg-paper-stage: #E4E4E7;
+      --border-subtle: #E4E4E7;
+      --border-strong: #D4D4D8;
+      --text-primary: #09090B;
+      --text-secondary: #52525B;
+      --text-muted: #A1A1AA;
+
+      /* Deep Petrol Teal-Blue (鸭青到深蓝之间, H:195°) */
+      --accent-h: 195;
+      --accent-s: 85%;
+      --accent-l: 29%;
+      --accent-primary: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+      --accent-hover: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) - 6%));
+      --accent-soft: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.10);
+      --accent-border: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.28);
+
+      /* XCPC Semantic */
+      --ac-fg: #059669;
+      --ac-bg: rgba(16, 185, 129, 0.12);
+      --upsolve-fg: #0284C7;
+      --upsolve-bg: rgba(14, 165, 233, 0.12);
+      --wa-fg: #E11D48;
+      --wa-bg: rgba(244, 63, 94, 0.12);
+      --tle-fg: #D97706;
+      --tle-bg: rgba(245, 158, 11, 0.12);
+
+      /* CF / AtCoder Rating Tiers (Light) */
+      --r-gray: #52525B;
+      --r-green: #15803D;
+      --r-cyan: #0E7490;
+      --r-blue: #1D4ED8;
+      --r-violet: #7E22CE;
+      --r-orange: #C2410C;
+      --r-red: #B91C1C;
+
+      --hud-bg: rgba(255, 255, 255, 0.78);
+      --hud-border: rgba(228, 228, 231, 0.9);
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --paper-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.10);
+    }
+
+    [data-theme="dark"] {
+      --bg-canvas: #09090B;
+      --bg-surface: #111113;
+      --bg-elevated: #18181B;
+      --bg-paper-stage: #141417;
+      --border-subtle: #27272A;
+      --border-strong: #3F3F46;
+      --text-primary: #FAFAFA;
+      --text-secondary: #A1A1AA;
+      --text-muted: #71717A;
+
+      --accent-s: 69%;
+      --accent-l: 45%;
+      --accent-primary: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+      --accent-hover: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) + 8%));
+      --accent-soft: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.16);
+      --accent-border: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.36);
+
+      --ac-fg: #34D399;
+      --upsolve-fg: #38BDF8;
+      --wa-fg: #FB7185;
+      --tle-fg: #FBBF24;
+
+      --r-gray: #A1A1AA;
+      --r-green: #4ADE80;
+      --r-cyan: #22D3EE;
+      --r-blue: #60A5FA;
+      --r-violet: #C084FC;
+      --r-orange: #FB923C;
+      --r-red: #F87171;
+
+      --hud-bg: rgba(24, 24, 27, 0.78);
+      --hud-border: rgba(63, 63, 70, 0.8);
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      --paper-shadow: 0 2px 6px rgba(0, 0, 0, 0.45), 0 18px 40px rgba(0, 0, 0, 0.55);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      font-size: 13.5px;
+      line-height: 1.5;
+      transition: background 150ms cubic-bezier(0.2, 0, 0, 1), color 150ms cubic-bezier(0.2, 0, 0, 1);
+      padding-bottom: 64px;
+    }
+    .mono {
+      font-family: "JetBrains Mono", "Maple Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+
+    /* Top Controls Bar */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 24px;
+      background: var(--hud-bg);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+    .brand-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 4px;
+      background: var(--accent-primary);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .hue-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .hue-control input[type="range"] {
+      width: 110px;
+      accent-color: var(--accent-primary);
+      cursor: pointer;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      transition: all 120ms cubic-bezier(0.2, 0, 0, 1);
+    }
+    .btn:hover { border-color: var(--border-strong); background: var(--bg-elevated); }
+    .btn-primary {
+      background: var(--accent-primary);
+      border-color: transparent;
+      color: #FFFFFF;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-sub {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+
+    /* Swatches */
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+      gap: 10px;
+    }
+    .swatch {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
+    .swatch-color {
+      height: 52px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .swatch-meta {
+      padding: 8px 10px;
+    }
+    .swatch-name { font-size: 12px; font-weight: 600; }
+    .swatch-val { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* Badges Row */
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      box-shadow: var(--card-shadow);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+    /* Skeleton Window Frame */
+    .app-frame {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
+    .window-bar {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: var(--bg-canvas);
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 12.5px;
+    }
+    .traffic { display: flex; gap: 6px; }
+    .traffic span {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--border-strong);
+    }
+    .kbd {
+      padding: 2px 6px;
+      border-radius: 5px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    /* Dashboard Skeleton */
+    .dash-body {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      min-height: 360px;
+    }
+    .rail {
+      background: var(--bg-canvas);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 8px;
+    }
+    .rail-icon {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      display: grid; place-items: center;
+      color: var(--text-secondary);
+      font-size: 15px;
+      cursor: pointer;
+      transition: all 120ms ease;
+    }
+    .rail-icon:hover { background: var(--bg-elevated); color: var(--text-primary); }
+    .rail-icon.active {
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+      border: 1px solid var(--accent-border);
+    }
+
+    .bento {
+      padding: 18px;
+      background: var(--bg-canvas);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: var(--card-shadow);
+    }
+    .stat-label { font-size: 12px; color: var(--text-secondary); }
+    .stat-num { font-size: 24px; font-weight: 600; margin-top: 4px; letter-spacing: -0.02em; }
+    .stat-delta { font-size: 11.5px; color: var(--accent-primary); margin-top: 2px; }
+
+    .span-2 { grid-column: span 2; }
+    .span-4 { grid-column: span 4; }
+
+    .heatmap {
+      display: grid;
+      grid-template-columns: repeat(26, 1fr);
+      gap: 4px;
+      margin-top: 10px;
+    }
+    .hm-cell {
+      aspect-ratio: 1;
+      border-radius: 3px;
+      background: var(--bg-elevated);
+    }
+    .hm-1 { background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.22); }
+    .hm-2 { background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.45); }
+    .hm-3 { background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.72); }
+    .hm-4 { background: var(--accent-primary); }
+
+    .prob-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    .prob-table tr {
+      height: 36px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .prob-table tr:last-child { border-bottom: none; }
+    .prob-table td { padding: 0 6px; font-size: 12.5px; }
+
+    /* Studio Skeleton */
+    .studio-grid {
+      display: grid;
+      grid-template-columns: 190px 1fr 1.15fr 210px;
+      min-height: 460px;
+    }
+    .pane {
+      border-right: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .pane:last-child { border-right: none; }
+    .pane-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .outline-item {
+      padding: 6px 8px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+    .outline-item.active {
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+
+    .editor-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: 9px;
+      padding: 10px 12px;
+    }
+    .editor-card-head {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .code-line {
+      font-size: 12px;
+      color: var(--text-primary);
+      line-height: 1.65;
+    }
+    .code-math { color: var(--accent-primary); font-weight: 500; }
+
+    /* Paper Stage */
+    .paper-stage {
+      position: relative;
+      background: var(--bg-paper-stage);
+      padding: 22px 24px 64px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+    }
+    .paper {
+      width: 100%;
+      max-width: 370px;
+      background: #FFFFFF;
+      color: #111111;
+      padding: 26px 28px;
+      border-radius: 2px;
+      box-shadow: var(--paper-shadow);
+      font-family: "Times New Roman", "Songti SC", Georgia, serif;
+      font-size: 11.5px;
+      line-height: 1.5;
+      transition: filter 180ms ease;
+    }
+    .paper.inverted { filter: invert(0.91) hue-rotate(180deg); }
+    .olymp-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 8.5px;
+      color: #444;
+      border-bottom: 0.6px solid #222;
+      padding-bottom: 3px;
+      margin-bottom: 14px;
+    }
+    .olymp-title {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .olymp-limits {
+      margin: 0 auto 12px;
+      font-size: 9.5px;
+      border-collapse: collapse;
+    }
+    .olymp-limits td { padding: 1px 6px; }
+    .olymp-limits td:first-child { text-align: right; font-weight: 600; }
+    .olymp-sec { font-weight: 700; font-size: 12px; margin: 10px 0 4px; }
+    .olymp-samples {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px;
+    }
+    .olymp-samples th, .olymp-samples td {
+      border: 0.6px solid #111;
+      padding: 3px 6px;
+      vertical-align: top;
+      width: 50%;
+    }
+    .olymp-samples th { text-align: center; font-weight: 700; }
+
+    /* Floating Glass Pill HUD */
+    .floating-hud {
+      position: absolute;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: var(--hud-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--hud-border);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .hud-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 11.5px;
+      padding: 2px 6px;
+      border-radius: 9999px;
+    }
+    .hud-btn:hover { background: var(--accent-soft); color: var(--accent-primary); }
+
+    /* Inspector */
+    .prop-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .prop-label { font-size: 11.5px; color: var(--text-secondary); }
+    .prop-input {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 7px;
+      padding: 5px 8px;
+      font-size: 12px;
+      color: var(--text-primary);
+    }
+
+    @media (max-width: 960px) {
+      .bento { grid-template-columns: repeat(2, 1fr); }
+      .studio-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>XCPC Workstation v2 · Color System Skeleton</span>
+    </div>
+    <div class="controls">
+      <div class="hue-control">
+        <span>主色色相（鸭青 ↔ 深蓝）</span>
+        <input id="hueSlider" type="range" min="175" max="212" value="195" />
+        <span id="hueVal" class="mono">H:195°</span>
+      </div>
+      <button class="btn" id="themeToggle">切换深色 / 浅色</button>
+      <button class="btn btn-primary">导出 PDF</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 1. Swatches -->
+    <section>
+      <div class="section-title">
+        1. 核心色彩 Token <span class="section-sub">Zinc 中性灰基底 + 深鸭青蓝（Petrol Teal-Blue）主色</span>
+      </div>
+      <div class="swatch-grid">
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--bg-canvas)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Canvas 背景</div>
+            <div class="swatch-val mono">--bg-canvas</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--bg-surface)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Surface 面板</div>
+            <div class="swatch-val mono">--bg-surface</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--bg-elevated)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Elevated 控件</div>
+            <div class="swatch-val mono">--bg-elevated</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--bg-paper-stage)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Paper Stage 画布</div>
+            <div class="swatch-val mono">--bg-paper-stage</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--accent-primary)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Accent 主色</div>
+            <div class="swatch-val mono" id="accentHex">#0B6E8A</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--accent-hover)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Accent 悬停</div>
+            <div class="swatch-val mono">--accent-hover</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: var(--accent-soft)"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Accent 浅底高亮</div>
+            <div class="swatch-val mono">--accent-soft</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. XCPC Semantic & Rating Badges -->
+    <section>
+      <div class="section-title">
+        2. XCPC 语义状态与微调 Codeforces / AtCoder 难度色阶 <span class="section-sub">全局启用 tabular-nums</span>
+      </div>
+      <div class="badge-row">
+        <span class="badge" style="color: var(--ac-fg); background: var(--ac-bg)"><span class="dot"></span>赛时 AC</span>
+        <span class="badge" style="color: var(--upsolve-fg); background: var(--upsolve-bg)"><span class="dot"></span>补题 Upsolved</span>
+        <span class="badge" style="color: var(--wa-fg); background: var(--wa-bg)"><span class="dot"></span>WA · 罚时 +2</span>
+        <span class="badge" style="color: var(--tle-fg); background: var(--tle-bg)"><span class="dot"></span>待复习 Review</span>
+        <span style="width:1px; background:var(--border-subtle); margin: 0 4px;"></span>
+        <span class="badge mono" style="color: var(--r-gray); background: rgba(113,113,122,0.12)">1000</span>
+        <span class="badge mono" style="color: var(--r-green); background: rgba(21,128,61,0.12)">1300</span>
+        <span class="badge mono" style="color: var(--r-cyan); background: rgba(14,116,144,0.12)">1500</span>
+        <span class="badge mono" style="color: var(--r-blue); background: rgba(29,78,216,0.12)">1750</span>
+        <span class="badge mono" style="color: var(--r-violet); background: rgba(126,34,206,0.12)">2000</span>
+        <span class="badge mono" style="color: var(--r-orange); background: rgba(194,65,12,0.12)">2250</span>
+        <span class="badge mono" style="color: var(--r-red); background: rgba(185,28,28,0.12)">2600</span>
+      </div>
+    </section>
+
+    <!-- 3. Bento Dashboard Skeleton -->
+    <section>
+      <div class="section-title">
+        3. 训练 Dashboard & 题库骨架预览 <span class="section-sub">极简左侧 Rail + Bento Grid + 鸭青蓝热力图</span>
+      </div>
+      <div class="app-frame">
+        <div class="window-bar">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <span style="font-weight:600">ICPC 2026</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="kbd mono">⌘K</span>
+          </div>
+        </div>
+        <div class="dash-body">
+          <aside class="rail">
+            <div class="rail-icon active" title="总览">◫</div>
+            <div class="rail-icon" title="题库">☰</div>
+            <div class="rail-icon" title="比赛">❖</div>
+            <div class="rail-icon" style="margin-top:auto" title="设置">⚙</div>
+          </aside>
+          <div class="bento">
+            <div class="card">
+              <div class="stat-label">累计过题</div>
+              <div class="stat-num tabular">342</div>
+              <div class="stat-delta tabular">+14 本周</div>
+            </div>
+            <div class="card">
+              <div class="stat-label">待补题</div>
+              <div class="stat-num tabular">18</div>
+              <div class="stat-delta" style="color:var(--tle-fg)">3 题待复习</div>
+            </div>
+            <div class="card">
+              <div class="stat-label">题库</div>
+              <div class="stat-num tabular">1,284</div>
+              <div class="stat-delta">12 场比赛</div>
+            </div>
+            <div class="card">
+              <div class="stat-label">最近 VP</div>
+              <div class="stat-num tabular">9 / 13</div>
+              <div class="stat-delta" style="color:var(--ac-fg)">CCPC Harbin</div>
+            </div>
+
+            <div class="card span-2">
+              <div class="stat-label">近期活跃</div>
+              <div class="heatmap" id="heatmap"></div>
+            </div>
+
+            <div class="card span-2">
+              <div class="stat-label">待补题</div>
+              <table class="prob-table">
+                <tr>
+                  <td><span class="badge mono" style="color:var(--r-violet); background:rgba(126,34,206,0.12)">2000</span></td>
+                  <td style="font-weight:500">Tree Queries &amp; Rollback</td>
+                  <td style="color:var(--text-secondary)">DSU / 树上启发式</td>
+                  <td style="text-align:right"><span class="badge" style="color:var(--wa-fg); background:var(--wa-bg)">WA</span></td>
+                </tr>
+                <tr>
+                  <td><span class="badge mono" style="color:var(--r-orange); background:rgba(194,65,12,0.12)">2200</span></td>
+                  <td style="font-weight:500">Shortest Path on DAG</td>
+                  <td style="color:var(--text-secondary)">图论 / DP</td>
+                  <td style="text-align:right"><span class="badge" style="color:var(--upsolve-fg); background:var(--upsolve-bg)">补题中</span></td>
+                </tr>
+                <tr>
+                  <td><span class="badge mono" style="color:var(--r-blue); background:rgba(29,78,216,0.12)">1700</span></td>
+                  <td style="font-weight:500">XOR Partitioning</td>
+                  <td style="color:var(--text-secondary)">线性基 / 贪心</td>
+                  <td style="text-align:right"><span class="badge" style="color:var(--ac-fg); background:var(--ac-bg)">AC</span></td>
+                </tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Publishing Studio Skeleton -->
+    <section>
+      <div class="section-title">
+        4. 沉浸式出版工作室骨架预览 <span class="section-sub">1px 细线分割 + 中性灰画布衬托 1:1 olymp.sty 纸张 + 底部毛玻璃胶囊 HUD</span>
+      </div>
+      <div class="app-frame">
+        <div class="window-bar">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="color:var(--text-secondary)">←</span>
+            <span style="font-weight:600">ICPC 2026 Regional · A. Two Sum</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button class="btn btn-primary" style="padding:4px 10px; font-size:12px;">导出 PDF</button>
+          </div>
+        </div>
+
+        <div class="studio-grid">
+          <!-- Outline -->
+          <div class="pane">
+            <div class="outline-item"><span>封面</span><span class="mono" style="font-size:11px">1</span></div>
+            <div class="outline-item active"><span>A. Two Sum</span><span class="mono" style="font-size:11px">2</span></div>
+            <div class="outline-item"><span>B. Graph Paths</span><span class="mono" style="font-size:11px">4</span></div>
+            <div class="outline-item"><span>C. Matrix DP</span><span class="mono" style="font-size:11px">6</span></div>
+          </div>
+
+          <!-- Editor -->
+          <div class="pane">
+            <div class="editor-card">
+              <div class="editor-card-head"><span>题目描述</span></div>
+              <div class="code-line mono">
+                Given an array <span class="code-math">$a_1, a_2, \dots, a_n$</span> of length <span class="code-math">$n$</span> (<span class="code-math">$1 \le n \le 2 \cdot 10^5$</span>) and an integer <span class="code-math">$k$</span>, find two indices <span class="code-math">$i &lt; j$</span> such that <span class="code-math">$a_i + a_j = k$</span>.
+              </div>
+            </div>
+            <div class="editor-card">
+              <div class="editor-card-head"><span>样例 1</span></div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div class="prop-input mono" style="font-size:11.5px">4 9<br/>2 7 11 15</div>
+                <div class="prop-input mono" style="font-size:11.5px">1 2</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Paper Canvas -->
+          <div class="paper-stage">
+            <div class="paper" id="paperSheet">
+              <div class="olymp-header">
+                <span>ICPC 2026 Regional Contest</span>
+                <span>November 19, 2026</span>
+              </div>
+              <div class="olymp-title">Problem A. Two Sum</div>
+              <table class="olymp-limits">
+                <tr><td>Input file:</td><td>standard input</td></tr>
+                <tr><td>Output file:</td><td>standard output</td></tr>
+                <tr><td>Time limit:</td><td>1 second</td></tr>
+                <tr><td>Memory limit:</td><td>512 megabytes</td></tr>
+              </table>
+              <p>Given an array <i>a</i><sub>1</sub>, <i>a</i><sub>2</sub>, …, <i>a<sub>n</sub></i> of length <i>n</i> (1 ≤ <i>n</i> ≤ 2 · 10<sup>5</sup>) and an integer <i>k</i>, find two indices <i>i</i> &lt; <i>j</i> such that <i>a<sub>i</sub></i> + <i>a<sub>j</sub></i> = <i>k</i>.</p>
+              <div class="olymp-sec">Examples</div>
+              <table class="olymp-samples">
+                <tr><th>standard input</th><th>standard output</th></tr>
+                <tr><td>4 9<br/>2 7 11 15</td><td>1 2</td></tr>
+              </table>
+            </div>
+
+            <div class="floating-hud">
+              <button class="hud-btn mono">− 100% +</button>
+              <span>|</span>
+              <span class="mono">2 / 12</span>
+              <span>|</span>
+              <button class="hud-btn" id="invertBtn">☀ 反色</button>
+            </div>
+          </div>
+
+          <!-- Inspector -->
+          <div class="pane">
+            <div class="prop-row">
+              <div class="prop-label">预设</div>
+              <div class="prop-input">经典 ICPC</div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-label">页边距</div>
+              <div class="prop-input mono">15mm</div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-label">中文字体</div>
+              <div class="prop-input">方正书宋</div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-label">样例列宽</div>
+              <div class="prop-input mono">50% / 50%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const html = document.documentElement;
+    const themeToggle = document.getElementById('themeToggle');
+    const hueSlider = document.getElementById('hueSlider');
+    const hueVal = document.getElementById('hueVal');
+    const accentHex = document.getElementById('accentHex');
+    const invertBtn = document.getElementById('invertBtn');
+    const paperSheet = document.getElementById('paperSheet');
+
+    function hslToHex(h, s, l) {
+      l /= 100;
+      const a = s * Math.min(l, 1 - l) / 100;
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+    }
+
+    function updateAccentLabel() {
+      const h = Number(hueSlider.value);
+      const isDark = html.getAttribute('data-theme') === 'dark';
+      const s = isDark ? 69 : 85;
+      const l = isDark ? 45 : 29;
+      hueVal.textContent = `H:${h}°`;
+      accentHex.textContent = hslToHex(h, s, l);
+    }
+
+    hueSlider.addEventListener('input', () => {
+      html.style.setProperty('--accent-h', hueSlider.value);
+      updateAccentLabel();
+    });
+
+    themeToggle.addEventListener('click', () => {
+      const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      updateAccentLabel();
+    });
+
+    invertBtn.addEventListener('click', () => {
+      paperSheet.classList.toggle('inverted');
+    });
+
+    // Generate deterministic heatmap cells
+    const hm = document.getElementById('heatmap');
+    const pattern = [0,1,2,0,3,4,1,0,2,2,3,1,0,1,4,3,2,0,1,2,3,4,2,1,0,2];
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 26; c++) {
+        const div = document.createElement('div');
+        const lvl = pattern[(c + r * 5) % pattern.length];
+        div.className = 'hm-cell' + (lvl ? ` hm-${lvl}` : '');
+        hm.appendChild(div);
+      }
+    }
+
+    updateAccentLabel();
+  </script>
+</body>
+</html>
