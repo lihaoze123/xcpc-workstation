@@ -187,7 +187,8 @@ xcpc-workspace/
 ```
 
 - 工作区的根目录以 `workspace.toml` 为标志（Phase 1 可以是空文件）。`xcpc` 依次用 `--workspace`、`XCPC_WORKSPACE`、当前目录向上查找来确定工作区，桌面端用后两者。
-- 导出的 PDF 默认写到工作区的 `build/<id>.pdf` / `build/<id>-editorial.pdf`（派生物，建议加入 `.gitignore`）；CLI 的 `-o` 可以写到任意位置。
+- 导出的 PDF 默认写到工作区的 `build/`（派生物，建议加入 `.gitignore`）：Phase 1–2 默认为 `build/<id>.pdf` / `build/<id>-editorial.pdf`；**Phase 2.5 起**在 Core（`crates/xcpc-convert/src/publish.rs`）统一改为按标题命名（如 `build/春季训练赛-试题册.pdf` / `build/春季训练赛-题解.pdf`，自动替换路径非法字符），GUI、CLI 与 MCP 保持一致；CLI 的 `-o` / `--output` 与 MCP 的 `output` 参数仍可覆盖输出路径。
+- **内置示例工作区（Phase 2.5）**：示例工作区静态资源打包进二进制，由 Core 提供「释放到指定目录」接口，供 CLI `xcpc init --example` 与 GUI「打开示例」共用。
 - **Phase 1** 直接扫描目录。**Phase 2** 起 Core 维护内存索引（元数据 + 题面/题解的规范化纯文本）：桌面端启动时扫描一遍，之后由 `notify` 增量更新；CLI 和 MCP 每次启动现扫。不引入 SQLite / FTS5，也不做 JSON Schema。
 - **TOML 写回**：一律用 `toml_edit` 做局部修改，保留注释、顺序和未知字段；读取仍用 `serde`。GUI 和 CLI 通过 Core 的语义操作写入（增删题、移动、设置/删除覆写、比赛元数据、冻结）。
 - **并发写入**：Core 记录每个打开文件上次读写时的内容哈希，保存前比对，磁盘已变则返回 `conflict`，不静默覆盖；自己写入引起的 `notify` 事件靠哈希过滤。
@@ -210,6 +211,11 @@ flowchart LR
 - 胶水层负责三件事：按二级标题识别章节（规则见 [product.md](./product.md#21-题面结构)）、从 `samples/` 生成样例表、把图片路径映射到题目的 `assets/`。处理 Polygon LaTeX 时，还要转换 `\epigraph`、`\illustration` 等宏。
 - 数学定界符：LaTeX 里的普通括号（`(`、`[`、`\lceil` 等）不会缩放，转换成 Typst 时要写成转义或符号形式（`\(`、`\[`、`#sym.ceil.l`），避免 Typst 自动配对放大；只有 `\left…\right` 才转换成 `lr()`。
 - 导出到 Hydro / QOJ 等 OJ 时，用 `typlite` / `tylax` 把 Typst 转回 Markdown（后续阶段）。
+- **PDF 元数据与书签（Phase 2.5）**：导出 PDF 时由 Core 统一写入文档元数据，并复用 `olymp-classic.typ` 中已有的书签（`bookmarked: true`）：
+  - `Title`：`春季训练赛 试题册` / `春季训练赛 题解` / `A. Two Sum`（按比赛试题册、比赛题解或单题标题生成）；
+  - `Author`：比赛的作者字段，没有就不写；
+  - `Creator`：`XCPC Workstation <版本>`；
+  - `Producer`：保留 Typst 默认值。
 
 ## 7. Agent / MCP / CLI
 
@@ -240,9 +246,9 @@ Phase 2 的工具：
 - `set_override`：`contest`、`label`、`fields`（`title` / `limits` / `show-metadata`，`null` 表示删除该覆写）。
 - `freeze_contest`：冻结规则见 [product.md](./product.md#3-比赛contest)。
 
-对应的 CLI：`xcpc search`、`xcpc show`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`；lint 并入 `xcpc check`，不单设命令。
+对应的 CLI：`xcpc search`、`xcpc show`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`（Phase 2.5 起支持 `--example` 释放内置示例工作区）；lint 并入 `xcpc check`，不单设命令。
 
-Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
+Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径，未指定时走 Core 默认路径，Phase 2.5 起按标题命名，见 §5）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
 
 ### 7.3 安全边界（在 Core 层强制执行）
 
@@ -250,3 +256,8 @@ Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`
 - **冻结只读**：`is_frozen = true` 的比赛及其快照禁止一切写入，写操作返回明确的错误码。解冻只开放给 GUI 和 CLI（需二次确认），不开放给 MCP。
 - **只读模式**：`xcpc mcp --read-only`。
 - **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越。
+
+### 7.4 错误文案集中化（Phase 2.5）
+
+- 人类可读的中文错误文案集中维护在 Core 层，供桌面 GUI 与 CLI 文本输出共用，统一按三段式组织（人话说明现象 → 可点击/可定位的位置 → 仅在有明确下一步时给出操作建议；规则拒绝如冻结只读不当错误处理，详规范见 [design-system.md §7](./design-system.md#7-文案克制规范)）。
+- 默认人类可读主文案不暴露底层错误码与英文技术原文（GUI 收入「复制详情」）；CLI `--json` 与 MCP 响应继续保留完整的结构化错误码与细节字段。

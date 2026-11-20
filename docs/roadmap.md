@@ -76,6 +76,13 @@
    - `xcpc init [dir]`：创建 `workspace.toml`、`problems/`、`contests/`、`.gitignore`（`build/`、`.xcpc/`）和一份内嵌的静态 `AGENTS.md`，之后不再覆盖。GUI 打开非工作区目录时可以在此新建。**不做 JSON Schema。**
    - MCP 工具见 [architecture.md](./architecture.md#72-mcp-tools)；CLI 对应 `xcpc search`、`xcpc show`、`xcpc contest compose|override|freeze|unfreeze`。
 6. 全面落地 [design-system.md §8](./design-system.md#8-动效与流畅感fluidity) 的零抖动微交互规范。
+7. **衔接 Phase 2.5 的 5 项既有控件细节与 3 处接缝**（2026-11-20 确认，避免 `desktop-ui` 返工，细则见 [design-system.md](./design-system.md)）：
+   - 导出按钮直接做成按 PDF 新鲜度切换的分体按钮（与当前指纹一致时显示「在文件夹中显示」，过期时显示「导出 PDF」，重启按 `mtime` 恢复；`▾` 菜单固定 3 项；耗时 `> 150ms` 按钮内显示进度）；
+   - 窗口创建即设背景色 `bg-background`（防 GTK 白底闪屏）、窗口标题显示当前对象（无工作区显示 `XCPC Workstation`）、记住窗口位置/大小/最大化与分栏比例（多屏断开时主屏居中）；
+   - 被动层隐形引导：tooltip（悬停 `600ms`）与 `Cmd+K` 右侧显示快捷键、占位符淡色 `Ctrl K`、空态入口标快捷键；
+   - 冻结态在比赛名旁显示锁形图标（锁扣约 `160ms` 合上，解冻反向打开淡出），面板淡为只读语气、只留解冻入口；
+   - 新写的 GUI 错误提示按三段式与克制语气编写（规则拒绝用次级色陈述事实 + 入口）。
+   - **为 Phase 2.5 预留 3 处接缝**：无工作区时显示的页面做成独立组件；应用数据目录预留快照与窗口状态存放位置；错误展示组件预留「复制详情」。
 
 **不做**：结构化分区编辑、纸张反色、双页对开、HUD 自动淡出、嵌套横向 `<Scroll>` 惯性平移、编辑器 → 预览的行级跟随、按条件抽题、专门的 fork 功能、JSON Schema、SQLite 索引、本地 IPC。
 
@@ -88,6 +95,36 @@
 5. 删一张配图：HUD 徽章出现，冻结被拒绝；修复后冻结，面板只读，快照和两本 PDF 生成。
 6. 改题库里某道题后解冻，差异列表正确。
 7. 全程满足 §8 的流畅度铁律。
+
+## Phase 2.5：打磨
+
+2026-11-20 讨论确认，排在 Phase 2 之后、Phase 3 之前（界面与品牌规格见 [design-system.md](./design-system.md)，Core 工艺规格见 [architecture.md](./architecture.md)）。日常使用对熟手零打扰，只在首次体验与细节工艺上补齐质感。
+
+1. **品牌页与首次体验**：
+   - 无可打开的工作区时（首次启动或记住的工作区已失联）即显示品牌页；有工作区时冷启动直达上次对象。
+   - 实现 `144px` icon、`26px`「**XCPC** Workstation」字标、三个 `240×36` 纵向入口（「新建工作区 / 打开已有文件夹 / 打开示例」）、固定失联错误槽、页脚署名（`v0.1.0　chumeng 用 ♥ 制作`，间距分隔不用 `·`），以及约 `1.9s` 的 5 段开场动效（第 1 帧起可点击并快进同时生效、遵守 `prefers-reduced-motion`、终帧 = icon、只动 `transform`/`opacity`）。不做独立启动页、轮播或 slogan。
+2. **Icon 最终交付（v2）**：
+   - 届时将参数化源码（`icon/src/gen.py` 等）纳入仓库（如 `assets/brand/`），按最终版 v2 规范（「`≥ 128` 有绳，`≤ 64` 一律无绳」，投影仅用 SVG 1.1 滤镜、**禁用 `feDropShadow`**，底板 `<use>` 复用）补齐全部交付物：单独绘制像素对齐的 `48 / 24px`、Linux hicolor 各档 PNG + scalable SVG + `-symbolic.svg`、Windows `.ico`（`16/20/24/32/40/48/256`）与动效用分层 SVG。
+3. **内置示例工作区**：
+   - 示例工作区打包进二进制，由 Core 提供释放到指定目录接口；CLI 新增 `xcpc init --example`，GUI「打开示例」释放后直达出版工作室。
+   - 引导融入示例内容本身（如题面中提示修改实时更新、`Ctrl+点击` 预览跳回源码），按做题人视角写作，题解里藏一句作者的话；删除示例后引导随之消失。
+4. **署名与「关于」页**：
+   - 分层放置（品牌页页脚一行、「设置 → 关于」、`Cmd+K` 可搜「关于」），不做常驻底栏。
+   - 「关于」页展示 icon 与字标、版本、commit、构建日期、许可证、致谢（`polygon-chinese-template`、Typst、NSH、MiTeX）、字体许可证（Latin Modern 为 GUST，JetBrains Mono 为 OFL，**方正字体授权条款待核实**），以及致谢末行献词「献给每一个和 WA 较劲到深夜的人」。
+   - 点击版本号复制诊断信息（版本、commit、系统、字体来源）并短暂变为「已复制」；点击「关于」页 icon 重播品牌页动效，气球颜色从红 / 黄 / 绿 / 蓝 / 紫 5 色中随机。
+5. **冷启动快照即时恢复**：
+   - 预览稳定后节流写入「视口内 1–2 页像素 + `{target, id, book, zoom, scrollY}`」到应用数据目录。
+   - 冷启动首帧即绘出快照，编辑器立即可打字；新首帧到达后原地替换并接管预览交互。快照仅在内容哈希一致时有效，否则丢弃。
+6. **快捷键速查**：
+   - 设置新增「快捷键」分组按场景列出；全局 `Ctrl+/` 呼出同一张表的浮层（`Esc` 关闭）；`Cmd+K` 可搜。只读，不做改键。
+7. **Core 工艺升级**：
+   - **PDF 元数据**：写入 `Title`（`春季训练赛 试题册` / `春季训练赛 题解` / `A. Two Sum`）、`Author`（比赛作者字段，缺失不写）、`Creator`（`XCPC Workstation <版本>`）、`Producer`（保留 Typst 默认），复用 `olymp-classic.typ` 已有书签（`bookmarked: true`）。
+   - **导出默认文件名改为标题**：在 Core（`crates/xcpc-convert/src/publish.rs`）统一改为 `春季训练赛-试题册.pdf` / `春季训练赛-题解.pdf`（非法字符自动替换），GUI / CLI / MCP 一致，CLI `-o`/`--output` 与 MCP `output` 参数仍可覆盖；同步更新 `xcpc-mcp` 中断言 `build/a-plus-b.pdf` 的测试。
+   - **Core 错误文案集中化**：三段式中文人类可读错误文案集中维护在 Core，供 GUI 与 CLI 共用；`--json` 与 MCP 保留结构化错误码。
+
+**不做**：轮播引导、每次启动的启动页、slogan、常驻版本底栏、toast、行为触发的主动提示、改键、特定日期彩蛋、里程碑动效、icon 上的字母、ICPC 官方三色块组合。
+
+**待核实**：方正字体授权条款（用于「关于」页字体许可证）。
 
 ## Phase 3：本地 Polygon（可复现的题目包）
 
@@ -114,6 +151,7 @@
 
 ## 待定（尚未排期）
 
+- 方正字体授权条款核实（Phase 2.5「关于」页展示前确认）。
 - 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
 - DOMjudge / Hydro / FPS / QOJ 包的导入导出。
 - 代码模板册（TRD）。
