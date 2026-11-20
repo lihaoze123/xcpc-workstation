@@ -34,17 +34,17 @@ test("rasterizes only the pages an edit changed", async () => {
   expect(again.rendered).toBe(0);
   const edited = await preview.compile(sample.replace("请使用 64 位整数", "请使用 64 位有符号整数"), 1.25, all);
   expect(edited.rendered).toBe(1);
-  expect(edited.pages[0].layers[0].key).toBe(first.pages[0].layers[0].key);
+  expect(edited.pages[1].layers[0].key).toBe(first.pages[1].layers[0].key);
 });
 
 test("rasterizes the pages in view, and keeps the others' pixels at another scale", async () => {
   const preview = new Preview();
   const sample = Preview.sample();
-  const first = await preview.compile(sample, 1.5, inView([0, 1]));
+  const first = await preview.compile(sample, 0.75, inView([0, 1]));
   expect(first.rendered).toBe(2);
   // Out of view: no new pixels (an earlier test's, at another scale, are fine).
-  expect(first.pages[2].layers.every((l) => !l.key.endsWith("@1.5"))).toBe(true);
-  const sharper = await preview.compile(sample, 1.75, inView([1, 2]));
+  expect(first.pages[2].layers.every((l) => !l.key.endsWith("@0.75"))).toBe(true);
+  const sharper = await preview.compile(sample, 1.1, inView([1, 2]));
   expect(sharper.rendered).toBe(2);
   expect(sharper.pages[0].layers[0].key).toBe(first.pages[0].layers[0].key);
 });
@@ -57,7 +57,7 @@ test("tiles the part in view when the scale is above the whole page's", async ()
   const result = await preview.compile(sample, 4.5, inView([0], { x: 0, y: 0, width: 100, height: 100 }));
   const layers = result.pages[0].layers;
   expect(layers.length).toBe(5);
-  expect(layers[0].key.endsWith("@2")).toBe(true);
+  expect(layers[0].key.endsWith("@1.5")).toBe(true);
   expect(layers[0].width).toBe(1);
   expect(layers.slice(1).every((l) => l.key.includes("@4.5#"))).toBe(true);
   const tile = layers[4];
@@ -67,4 +67,19 @@ test("tiles the part in view when the scale is above the whole page's", async ()
   // Scrolling within what is tiled rasterizes nothing new.
   const nudged = await preview.compile(sample, 4.5, inView([0], { x: 0, y: 5, width: 100, height: 100 }));
   expect(nudged.rendered).toBe(0);
+});
+
+test("an edit rasterizes again only the tiles it touches", async () => {
+  const preview = new Preview();
+  const sample = Preview.sample();
+  // All of page 2 (problem A; page 1 is the cover) at 2.25 px/pt: its whole-page
+  // layer at 1.5 and 3 × 4 tiles.
+  const page = inView([1], { x: 0, y: 0, width: 1000, height: 1000 });
+  const first = await preview.compile(sample, 2.25, page);
+  expect(first.pages[1].layers.length).toBe(13);
+  const edited = await preview.compile(sample.replace("这是一道签到题", "这是一道很简单的签到题"), 2.25, page);
+  // The whole-page layer and the tiles of the changed lines.
+  expect(edited.rendered > 1 && edited.rendered < 5).toBe(true);
+  const kept = edited.pages[1].layers.filter((l) => first.pages[1].layers.some((f) => f.key === l.key));
+  expect(kept.length).toBe(13 - edited.rendered);
 });

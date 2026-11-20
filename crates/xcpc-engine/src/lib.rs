@@ -85,6 +85,19 @@ impl Compiled {
         self.document.pages().get(page).map(fingerprint::page)
     }
 
+    /// Fingerprints of regions `[x, y, width, height]` (pixels at `pixel_per_pt`) of one
+    /// page (0-based), as [`Self::render_region`] takes them: equal fingerprints render the
+    /// same pixels, and an edit changes only those of the regions it touches.
+    pub fn region_fingerprints(
+        &self,
+        page: usize,
+        pixel_per_pt: f32,
+        regions: &[[u32; 4]],
+    ) -> Option<Vec<u128>> {
+        let page = self.document.pages().get(page)?;
+        Some(fingerprint::regions(page, pixel_per_pt, regions))
+    }
+
     /// One page's size in points (0-based).
     pub fn page_size(&self, page: usize) -> Option<(f64, f64)> {
         let size = self.document.pages().get(page)?.frame.size();
