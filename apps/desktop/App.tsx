@@ -15,7 +15,7 @@ const GAP = 16; // points between pages, at zoom 1
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
 const TILE = 512; // pixels, as the native side tiles
-const WHOLE_SCALE = 3; // above this the native side tiles the part in view
+const BASE_SCALE = 1.5; // above this the native side tiles the part in view
 
 function App() {
   const pages = signal<PreviewPage[]>([]);
@@ -78,7 +78,7 @@ function App() {
     const s = scale();
     const list = view();
     if (s !== asked.scale || list.map((v) => v.page).join() !== asked.pages) return true;
-    if (s <= WHOLE_SCALE) return false;
+    if (s <= BASE_SCALE) return false;
     return list.some((v) => {
       if (v.width <= 0) return false;
       const [x0, y0, x1, y1] = tiles(v, s, 0);
@@ -88,10 +88,17 @@ function App() {
   }
 
   let source = Preview.sample();
-  let latest = 0;
-  let timer: number | undefined;
+  // One request at a time: what changes meanwhile (an edit, the view) makes one more
+  // when it is back, with the source and view as they are then. Nothing waits for
+  // typing to pause: a request takes about as long as a frame or two.
+  let running = false;
+  let again = false;
   async function compile() {
-    const id = ++latest;
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
     const t = Date.now();
     const s = scale();
     const list = view();
@@ -101,31 +108,23 @@ function App() {
       tiles: new Map(list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)])),
     };
     const result = await preview.compile(source, s, list);
-    if (id !== latest) return;      // a newer request is on its way
+    running = false;
     console.log(`[preview] compile ${result.compileMs.toFixed(0)}ms, render ${result.rendered} layers ${result.renderMs.toFixed(0)}ms, round trip ${Date.now() - t}ms`);
     error.set(result.error ?? undefined);
     if (!result.error) {
       pages.set(result.pages);
       fit();
     }
-  }
-  // An edit waits for typing to pause (`debounce`); the view asks at most once a
-  // frame while it keeps moving, so sharper pixels follow a long scroll or zoom.
-  function schedule(delay: number, debounce = true) {
-    if (timer !== undefined) {
-      if (!debounce) return;
-      clearTimeout(timer);
-    }
-    timer = setTimeout(() => {
-      timer = undefined;
+    if (again) {
+      again = false;
       compile();
-    }, delay);
+    }
   }
   compile();
   // The view needs other pixels: ask (the source is unchanged, so compiling again
   // costs next to nothing).
   effect(() => {
-    if (due()) schedule(16, false);
+    if (due()) compile();
   });
 
   function scrollTo(y: number) {
@@ -163,7 +162,7 @@ function App() {
           softWrap
           onChange={(e) => {
             source = e.value;
-            schedule(120);
+            compile();
           }}
         />
       </View>

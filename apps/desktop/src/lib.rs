@@ -6,10 +6,12 @@
 //! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files:
 //! rasterizing a page takes a fraction of what encoding it as PNG would. A page shows as
 //! layers ([`PreviewLayer`]): the whole page at the scale the app asks for, up to
-//! [`WHOLE_SCALE`]; sharper, the whole page at [`BASE_SCALE`] and over it tiles of
-//! [`TILE`] pixels at the scale asked for, covering the part in view. Pixels are kept by key (the page's span-free
-//! fingerprint, the scale and the tile), so what an edit did not change is neither
-//! rasterized nor uploaded again. Pages out of view keep a whole-page layer they have at
+//! [`BASE_SCALE`]; sharper, the whole page at that scale and over it tiles of [`TILE`]
+//! pixels at the scale asked for, covering the part in view. Pixels are kept by key:
+//! a whole page's by its span-free fingerprint and the scale, a tile's by the
+//! fingerprint of what draws in it, the scale and its place. So what an edit did not
+//! change is neither rasterized nor uploaded again: typing redraws the tiles it touches,
+//! and the small whole-page layer under them. Pages out of view keep a whole-page layer they have at
 //! another scale, or show none until they come into view.
 
 use std::collections::{HashMap, HashSet};
@@ -33,11 +35,8 @@ fn native(registry: &mut Registry) {
 const SAMPLE: &str = include_str!("../../../tests/fixtures/olymp-ref/contest-zh/main.typ");
 
 /// The most pixels per point of a whole-page layer: sharper than this, the part in view
-/// is tiled (an A4 page at 3 is 1786 × 2526 pixels, 18 MB).
-const WHOLE_SCALE: f32 = 3.0;
-
-/// The scale of the whole-page layer under tiles (an A4 page at 2 is 8 MB).
-const BASE_SCALE: f32 = 2.0;
+/// is tiled over it (an A4 page at 1.5 is 893 × 1263 pixels, 4.5 MB).
+const BASE_SCALE: f32 = 1.5;
 
 /// The side of a tile in pixels.
 const TILE: u32 = 512;
@@ -175,11 +174,7 @@ impl State {
         };
 
         let start = Instant::now();
-        let base = if scale <= WHOLE_SCALE {
-            scale
-        } else {
-            BASE_SCALE
-        };
+        let base = scale.min(BASE_SCALE);
         let mut pages = Vec::with_capacity(compiled.page_count());
         let mut jobs = Vec::new();
         {
@@ -218,9 +213,13 @@ impl State {
                             &mut layers,
                         );
                         if scale > base {
-                            for region in tiles(part, scale, (width, height)) {
+                            let regions = tiles(part, scale, (width, height));
+                            let prints = compiled
+                                .region_fingerprints(i, scale, &regions)
+                                .unwrap_or_default();
+                            for (region, print) in regions.into_iter().zip(prints) {
                                 let [x, y, ..] = region;
-                                let key = format!("{fingerprint:032x}@{scale}#{x},{y}");
+                                let key = format!("{print:032x}@{scale}#{x},{y}");
                                 add(key, Some(region), scale, &mut layers);
                             }
                         }
@@ -348,22 +347,25 @@ pub struct PageImageProps {
 }
 
 /// A page `Preview.compile` rasterized, its layers stretched over the box (size it as the
-/// page). New layers show once they have loaded: until all of them have, the layers they
-/// replace stay under them, so the page never goes blank while an edit or a zoom lands.
+/// page). New layers show together once all of them have loaded; until then the layers
+/// they replace stay, so the page never goes blank (nor blurred, by a new whole-page
+/// layer over old tiles) while an edit or a zoom lands.
 #[component]
 pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement {
-    // The keys whose image has loaded, and the layers drawn: the current ones over the
-    // ones they replace.
+    // The keys whose image has loaded; the layers laid out (the current ones over the
+    // ones they replace); and the keys of those drawn.
     let ready = signal(HashSet::<String>::new());
     let shown = signal(Vec::<PreviewLayer>::new());
+    let live = signal(HashSet::<String>::new());
     let settle = move |current: &[PreviewLayer]| {
         if current
             .iter()
             .all(|l| ready.with_untracked(|r| r.contains(&l.key)))
         {
             shown.set(current.to_vec());
-            let keep: HashSet<&String> = current.iter().map(|l| &l.key).collect();
+            let keep: HashSet<String> = current.iter().map(|l| l.key.clone()).collect();
             ready.update(|r| r.retain(|k| keep.contains(k)));
+            live.set(keep);
         }
     };
     effect(move || {
@@ -397,9 +399,9 @@ pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement
                 });
                 untracked(|| settle(&props.layers.get_untracked()));
             };
-            let is_ready = {
+            let is_live = {
                 let key = key.clone();
-                move || ready.with(|r| r.contains(&key))
+                move || live.with(|r| r.contains(&key))
             };
             image(src)
                 .absolute()
@@ -407,7 +409,7 @@ pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement
                 .top(relative(layer.top as f32))
                 .w(relative(layer.width as f32))
                 .h(relative(layer.height as f32))
-                .opacity(move || if is_ready() { 1.0_f32 } else { 0.0 })
+                .opacity(move || if is_live() { 1.0_f32 } else { 0.0 })
                 .on_load({
                     let key = key.clone();
                     move |_: &Size<DevicePixels>| arrived(&key)

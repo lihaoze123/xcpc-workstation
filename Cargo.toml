@@ -22,6 +22,7 @@ typst-svg = "0.15.1"
 typst-kit = { version = "0.15.1", default-features = false, features = ["scan-fonts"] }
 comemo = "0.5.1"
 siphasher = "1"
+ttf-parser = "0.25"
 
 anyhow = "1"
 thiserror = "2"

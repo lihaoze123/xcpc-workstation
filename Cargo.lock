@@ -4324,6 +4324,7 @@ dependencies = [
  "siphasher",
  "thiserror",
  "tiny-skia",
+ "ttf-parser",
  "typst",
  "typst-kit",
  "typst-layout",
