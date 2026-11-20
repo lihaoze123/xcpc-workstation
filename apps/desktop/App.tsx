@@ -1,3 +1,4 @@
+import process from "process";
 import { computed, effect, mount, pixelRatio, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
 import { Button, Editor, type EditorDiagnostic, Select, Toggle, ToggleGroup } from "nsh/base";
 import {
@@ -22,7 +23,7 @@ import {
 // keeps the old layers until the new ones have loaded, so nothing blinks. Only what is
 // in view is rasterized at the zoom's scale.
 
-const preview = new Preview();
+const preview = new Preview(process.dataDir);
 const GAP = 16; // points between pages, at zoom 1
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
