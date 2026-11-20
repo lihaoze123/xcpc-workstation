@@ -18,4 +18,3 @@ XCPC Workstation 是本地优先的 **个人 XCPC 工作站**（以 Linux 桌面
 - `v1_lib.typ`：v1 的 Typst 题面模板，字体回退链和 i18n 词条可以参考。版式**不能**参考它，版式以 [statement-style.md](./statement-style.md#11-基准) 中的参考模板为准。
 - `v1_polygon_converter.ts`：v1 的 Polygon ZIP 解析器，可以参考 Polygon XML 和 statement 的各种边界情况。
 - `color_system_preview.html`：色彩 Token 与界面骨架的交互式预览，在浏览器中打开即可查看精确色板和布局克制程度。
-- `handoff.md`：最近一次工作交接（状态、待验证项、注意事项）
