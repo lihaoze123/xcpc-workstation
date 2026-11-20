@@ -49,6 +49,7 @@
               "rust-analyzer"
             ])
             rust.targets.wasm32-unknown-unknown.stable.rust-std
+            rust.targets.x86_64-pc-windows-msvc.stable.rust-std
           ];
           nsh =
             let
@@ -168,6 +169,10 @@
               pkgs.pkg-config
               pkgs.clang
               pkgs.cmake
+              pkgs.cargo-xwin
+              pkgs.lld
+              pkgs.llvm
+              pkgs.upx
               pkgs.tectonic
               pkgs.pandoc
               pkgs.poppler-utils

@@ -19,15 +19,16 @@
 
 ## 开发环境与命令
 
-- 用 `nix develop` 进入开发环境（direnv 会通过 `.envrc` 自动加载）。环境提供 fenix stable Rust、clang/cmake/pkg-config、**NSH 0.6.0**、`tectonic`，以及 Linux 上的 GTK4/WebKitGTK/GStreamer。
-- **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体；release 构建同时内嵌 Latin Modern 与 JetBrains Mono。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
+- 用 `nix develop` 进入开发环境（direnv 会通过 `.envrc` 自动加载）。环境提供 fenix stable Rust（含 `wasm32-unknown-unknown` 与 `x86_64-pc-windows-msvc` target std）、clang/cmake/pkg-config、**NSH 0.6.0**、`cargo-xwin`/`lld`/`llvm`（Linux→Windows 交叉编译）、`upx`、`tectonic`，以及 Linux 上的 GTK4/WebKitGTK/GStreamer。
+- **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体；release 构建同时内嵌 Latin Modern 与 JetBrains Mono。未设置 `XCPC_FONT_DIRS` 时（独立分发 / Windows），引擎自动扫描可执行文件旁的 `fonts/` 目录并回退到系统字体（含中文字体回退链）。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
 - NSH CLI：`nsh init`（本项目用 `--template mixed`）、`nsh dev`、`nsh run --target …`、`nsh check`（`nsh.json` 声明了 `"rust"` 时会先跑 `cargo check`）、`nsh test`（先跑 Rust 的 `cargo test`，再无头运行 `*.test.tsx`）、`nsh build`、`nsh package`。细节用 `nsh <cmd> --help` 查看。查 NSH 的 API 时读 `.nsh/types/nsh/{index,base}.d.ts`；那里只有 JS 侧的接口，Rust 侧还有更多（文件对话框、在文件管理器中显示等），查 `~/.cargo/registry/src/*/nsh-core-0.6.0/src`。
-- 依赖 `XCPC_FONT_DIRS` 的命令（`xcpc`、`nsh test`、`nsh dev`）要在开发环境里运行；不在 direnv 下时用 `nix develop -c <cmd>`。
-- 依赖的 `opt-level = 2` 写在 `.cargo/config.toml` 而不是 `Cargo.toml`：`nsh` 为桌面宿主生成的 `apps/desktop/.nsh/rust` 是另一个 workspace，读不到根 `Cargo.toml` 的 profile。
+- 依赖 `XCPC_FONT_DIRS` 的命令（`xcpc`、`nsh test`、`nsh dev`、`scripts/package.sh`）要在开发环境里运行；不在 direnv 下时用 `nix develop -c <cmd>`。
+- `.cargo/config.toml` 集中配置了 `[profile.dev.package."*"]`（`opt-level = 2`）、`[profile.release]`（`opt-level = "z"`、`lto = "fat"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`）以及 `[target.x86_64-pc-windows-msvc]`（静态 CRT `+crt-static`）：`nsh` 为桌面宿主生成的 `apps/desktop/.nsh/rust` 是另一个 workspace，读不到根 `Cargo.toml` 的 profile。
+- `scripts/package.sh`：统一打包桌面端（`nsh package`）与 `xcpc` CLI 的 release 产物，支持 `--target <linux|windows|all>`（默认 `linux`）、`--out <DIR>`（默认 `target/dist`）和 `--no-upx`，默认用 UPX 压缩后在 `target/dist/` 产出各自独立的归档。
 - `xcpc`：`xcpc -w <工作区> build|check|render <problem|contest> <id> [--editorial] [--json]`、`xcpc list`、`xcpc mcp [--read-only]`；`build --emit-typst <文件>` 可以看生成的 Typst。基准用例的工作区在 `tests/fixtures/olymp-ref/<用例>/workspace/`，由 `scripts/fixture-to-workspace.py` 从参考模板的 Markdown 生成。桌面端用 `XCPC_WORKSPACE=<工作区> nsh dev`，或启动后用「打开工作区」选。NSH 的文件对话框等系统服务只开放给 Rust（`nsh_core::file_dialog`），JS 侧没有，需要时在 `apps/desktop/src/lib.rs` 里包一层。
 - Rust：`cargo build`、`cargo test -p <crate> <test_name>`（运行单个测试）、`cargo clippy`、`cargo fmt`。Nix 文件用 `nix fmt` 格式化。
 - 版本管理用 **jj**（与 Git colocated），不要用会改动仓库状态的 git 命令。
-- 只在 Linux 上开发和验收。
+- 只在 Linux 上开发和验收（可通过 `scripts/package.sh --target windows` 在 Linux 上交叉打包 Windows 产物供手动验收）。
 
 ## 架构要点
 
