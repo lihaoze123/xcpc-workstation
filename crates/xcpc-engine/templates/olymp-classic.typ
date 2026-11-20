@@ -29,17 +29,19 @@
 
 // ---- Fonts ----------------------------------------------------------------------------
 
+#import "/xcpc/fonts.typ": cjk-fangsong, cjk-hei, cjk-kai, cjk-song
+
 // Latin Modern ships optical sizes; fontspec picks 10 below 11pt, 12 up to 15pt, 17 above.
 #let optical(family, size) = family + if size < tex(11) { "" } else if size < tex(15) { " 12" } else { " 17" }
 #let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
 
-#let serif(size: sizes.normal, cjk: "FZShuSong-Z01", body) = text(font: with-cjk(optical("Latin Modern Roman", size), cjk), size: size, body)
-#let kai(size: sizes.normal, body) = serif(size: size, cjk: "FZKai-Z03", body)
-#let sans(size: sizes.normal, body) = text(font: with-cjk(optical("Latin Modern Sans", size), "FZHei-B01"), size: size, body)
+#let serif(size: sizes.normal, cjk: cjk-song, body) = text(font: with-cjk(optical("Latin Modern Roman", size), cjk), size: size, body)
+#let kai(size: sizes.normal, body) = serif(size: size, cjk: cjk-kai, body)
+#let sans(size: sizes.normal, body) = text(font: with-cjk(optical("Latin Modern Sans", size), cjk-hei), size: size, body)
 // Bold sans exists only at the 10pt design size; CJK bold is FZ Hei.
-#let bold-sans(size, body) = text(font: with-cjk("Latin Modern Sans", "FZHei-B01"), weight: "bold", size: size, body)
-#let mono-font = with-cjk("Latin Modern Mono 12", "FZFangSong-Z02")
-#let code-font = with-cjk("JetBrains Mono", "FZFangSong-Z02")
+#let bold-sans(size, body) = text(font: with-cjk("Latin Modern Sans", cjk-hei), weight: "bold", size: size, body)
+#let mono-font = with-cjk("Latin Modern Mono 12", cjk-fangsong)
+#let code-font = with-cjk("JetBrains Mono", cjk-fangsong)
 #let mono(body) = text(font: mono-font, body)
 
 // ---- Words ----------------------------------------------------------------------------
@@ -143,7 +145,7 @@
   // \null, \vskip 2em, center's \topsep, then the title's own \vspace{4cm}.
   v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
   align(center, {
-    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), "FZHei-B01"), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
+    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
     v(1.5em)
     text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
     v(1em)
@@ -187,7 +189,7 @@
   [#metadata(none) <xcpc-cover>]
   v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
   align(center, {
-    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), "FZHei-B01"), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
+    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
     v(1.5em)
     text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
     v(1em)
@@ -284,21 +286,21 @@
   set text(..strut(sizes.normal))
   // olymp.sty: no space between paragraphs in Chinese, \parskip = 1ex (0.43em in Latin Modern) otherwise.
   set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
-  set text(font: with-cjk("Latin Modern Roman 12", "FZShuSong-Z01"), size: sizes.normal)
+  set text(font: with-cjk("Latin Modern Roman 12", cjk-song), size: sizes.normal)
   show raw.where(block: false): set text(font: mono-font, size: sizes.normal)
   show raw.where(block: true): set text(font: code-font, size: sizes.normal)
   // ctex's founder fontset: CJK bold is FZ Hei, CJK italic FZ Kai.
-  show strong: set text(font: with-cjk("Latin Modern Roman 12", "FZHei-B01"))
-  show emph: set text(font: with-cjk("Latin Modern Roman 12", "FZKai-Z03"))
+  show strong: set text(font: with-cjk("Latin Modern Roman 12", cjk-hei))
+  show emph: set text(font: with-cjk("Latin Modern Roman 12", cjk-kai))
   // Highlighted raw emits strong/emph; keep monospace inside raw.
   show raw.where(block: false): it => {
-    show strong: set text(font: with-cjk("Latin Modern Mono 12", "FZHei-B01"))
-    show emph: set text(font: with-cjk("Latin Modern Mono 12", "FZKai-Z03"))
+    show strong: set text(font: with-cjk("Latin Modern Mono 12", cjk-hei))
+    show emph: set text(font: with-cjk("Latin Modern Mono 12", cjk-kai))
     it
   }
   show raw.where(block: true): it => {
-    show strong: set text(font: with-cjk("JetBrains Mono", "FZHei-B01"))
-    show emph: set text(font: with-cjk("JetBrains Mono", "FZKai-Z03"))
+    show strong: set text(font: with-cjk("JetBrains Mono", cjk-hei))
+    show emph: set text(font: with-cjk("JetBrains Mono", cjk-kai))
     it
   }
   show math.equation: set text(font: "Latin Modern Math")

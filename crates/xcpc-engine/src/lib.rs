@@ -5,7 +5,9 @@
 //! ([`Engine::set_main`]), so repeated compilations reuse `comemo`'s memoized work.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -55,6 +57,60 @@ const TEMPLATES: &[(&str, &str)] = &[
 
 /// Path of the main source inside the virtual project.
 const MAIN_PATH: &str = "/main.typ";
+
+/// Per-engine virtual module exposing the resolved CJK font family names.
+const FONTS_PATH: &str = "/xcpc/fonts.typ";
+
+/// Candidate CJK font families in preference order for each template role.
+/// The first entry is the pinned FounderType family; later entries serve as
+/// standalone/cross-platform fallbacks when FounderType is unavailable.
+const CJK_ROLES: &[(&str, &[&str])] = &[
+    (
+        "cjk-song",
+        &[
+            "FZShuSong-Z01",
+            "Source Han Serif SC",
+            "Noto Serif CJK SC",
+            "SimSun",
+            "NSimSun",
+            "Songti SC",
+        ],
+    ),
+    (
+        "cjk-hei",
+        &[
+            "FZHei-B01",
+            "Source Han Sans SC",
+            "Noto Sans CJK SC",
+            "SimHei",
+            "Microsoft YaHei",
+            "PingFang SC",
+        ],
+    ),
+    (
+        "cjk-kai",
+        &[
+            "FZKai-Z03",
+            "KaiTi",
+            "STKaiti",
+            "Kaiti SC",
+            "Source Han Serif SC",
+            "Noto Serif CJK SC",
+            "SimSun",
+        ],
+    ),
+    (
+        "cjk-fangsong",
+        &[
+            "FZFangSong-Z02",
+            "FangSong",
+            "STFangsong",
+            "Source Han Serif SC",
+            "Noto Serif CJK SC",
+            "SimSun",
+        ],
+    ),
+];
 
 #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
 const BUNDLED_FONT_BYTES: &[&[u8]] = &[
@@ -107,15 +163,32 @@ pub struct FontOptions {
 }
 
 impl FontOptions {
-    /// `XCPC_FONT_DIRS` (colon-separated) and no system fonts: deterministic output.
+    /// Reads `XCPC_FONT_DIRS` (deterministic, no system fonts). When unset or empty,
+    /// scans a sibling `fonts/` directory next to the executable (if present) and
+    /// enables system font discovery for standalone builds.
     pub fn from_env() -> Self {
-        let dirs = std::env::var_os("XCPC_FONT_DIRS")
-            .map(|v| std::env::split_paths(&v).collect())
-            .unwrap_or_default();
-        Self {
-            dirs,
-            system: false,
+        let exe = std::env::current_exe().ok();
+        Self::from_env_with(
+            std::env::var_os("XCPC_FONT_DIRS").as_deref(),
+            exe.as_deref().and_then(Path::parent),
+        )
+    }
+
+    fn from_env_with(env_val: Option<&OsStr>, exe_dir: Option<&Path>) -> Self {
+        if let Some(v) = env_val.filter(|v| !v.is_empty()) {
+            return Self {
+                dirs: std::env::split_paths(v).collect(),
+                system: false,
+            };
         }
+        let mut dirs = Vec::new();
+        if let Some(dir) = exe_dir {
+            let sibling = dir.join("fonts");
+            if sibling.is_dir() {
+                dirs.push(sibling);
+            }
+        }
+        Self { dirs, system: true }
     }
 }
 
@@ -238,12 +311,6 @@ impl Compiled {
         Some(typst_render::render(&tile, &options))
     }
 
-    /// Renders one page (0-based) as an SVG document whose units are points.
-    pub fn render_svg(&self, page: usize) -> Option<String> {
-        let page = self.document.pages().get(page)?;
-        Some(typst_svg::svg(page, &typst_svg::SvgOptions::default()))
-    }
-
     /// Renders one page as PNG bytes.
     pub fn render_png(&self, page: usize, pixel_per_pt: f32) -> Option<Vec<u8>> {
         self.render(page, pixel_per_pt)?.encode_png().ok()
@@ -270,6 +337,9 @@ pub struct Engine {
     fonts: FontStore,
     root: Option<PathBuf>,
     main: Source,
+    fonts_source: Source,
+    fonts_used: AtomicBool,
+    font_fallback_warning: Option<String>,
     /// Disk files read so far, keyed by their virtual id.
     files: Mutex<HashMap<FileId, FileResult<Bytes>>>,
 }
@@ -286,11 +356,15 @@ impl Engine {
         if fonts.system {
             store.extend(typst_kit::fonts::system());
         }
+        let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
         Self {
             library: LazyHash::new(Library::default()),
             fonts: store,
             root,
             main: Source::new(main_id(), String::new()),
+            fonts_source: Source::new(project_id(FONTS_PATH), fonts_text),
+            fonts_used: AtomicBool::new(false),
+            font_fallback_warning,
             files: Mutex::new(HashMap::new()),
         }
     }
@@ -336,6 +410,20 @@ impl Engine {
                 d
             }));
         }
+        if self.fonts_used.load(Ordering::Relaxed)
+            && let Some(message) = &self.font_fallback_warning
+        {
+            warnings.push(Diagnostic {
+                error: false,
+                message: message.clone(),
+                file: None,
+                line: None,
+                column: None,
+                offset: None,
+                page: None,
+                hints: Vec::new(),
+            });
+        }
         match warned.output {
             Ok(document) => Ok(Compiled {
                 document,
@@ -355,11 +443,9 @@ impl Engine {
                 // In a bundled template (a helper the document called), point at the
                 // call in the main source instead: that is the user's code.
                 let main = self.main.id();
-                let span = if d
-                    .span
-                    .id()
-                    .is_some_and(|id| id != main && template(id).is_some())
-                {
+                let span = if d.span.id().is_some_and(|id| {
+                    id != main && (id == self.fonts_source.id() || template(id).is_some())
+                }) {
                     d.trace
                         .iter()
                         .map(|t| typst::syntax::DiagSpan::from(t.span))
@@ -425,6 +511,38 @@ impl Engine {
     }
 }
 
+/// Picks the first available family for each CJK role and generates `/xcpc/fonts.typ`.
+/// Selecting a single family per role avoids Typst's per-entry `unknown font family`
+/// warnings for platform fallbacks that are not installed on the current host.
+fn resolve_cjk_fonts(book: &FontBook) -> (String, Option<String>) {
+    let mut source = String::new();
+    let mut fallbacks = Vec::new();
+    for &(var, candidates) in CJK_ROLES {
+        let primary = candidates[0];
+        let chosen = candidates
+            .iter()
+            .copied()
+            .find(|name| book.select_family(&name.to_lowercase()).next().is_some());
+        let family = match chosen {
+            Some(name) => {
+                if name != primary {
+                    fallbacks.push(format!("{primary} -> {name}"));
+                }
+                name
+            }
+            None => primary,
+        };
+        source.push_str(&format!("#let {var} = \"{family}\"\n"));
+    }
+    let warning = (!fallbacks.is_empty()).then(|| {
+        format!(
+            "FounderType CJK font(s) missing; using fallback: {}",
+            fallbacks.join(", ")
+        )
+    });
+    (source, warning)
+}
+
 fn plain_diagnostic(d: &SourceDiagnostic) -> Diagnostic {
     Diagnostic {
         error: d.severity == Severity::Error,
@@ -482,6 +600,10 @@ impl World for Engine {
         if id == self.main.id() {
             return Ok(self.main.clone());
         }
+        if id == self.fonts_source.id() {
+            self.fonts_used.store(true, Ordering::Relaxed);
+            return Ok(self.fonts_source.clone());
+        }
         static TEMPLATE_SOURCES: OnceLock<Mutex<HashMap<FileId, Source>>> = OnceLock::new();
         if let Some(text) = template(id) {
             let cache = TEMPLATE_SOURCES.get_or_init(Default::default);
@@ -497,6 +619,10 @@ impl World for Engine {
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
+        if id == self.fonts_source.id() {
+            self.fonts_used.store(true, Ordering::Relaxed);
+            return Ok(Bytes::from_string(self.fonts_source.text().to_owned()));
+        }
         if let Some(text) = template(id) {
             return Ok(Bytes::from_string(text));
         }
@@ -516,5 +642,152 @@ impl World for Engine {
 
     fn today(&self, _offset: Option<TypstDuration>) -> Option<Datetime> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use typst::text::{Coverage, FontFlags, FontInfo, FontVariant};
+
+    fn fake_book(families: &[&str]) -> FontBook {
+        FontBook::from_infos(families.iter().map(|family| FontInfo {
+            family: (*family).to_string(),
+            variant: FontVariant::new(Default::default(), Default::default(), Default::default()),
+            flags: FontFlags::empty(),
+            axes: Vec::new(),
+            coverage: Coverage::from_vec(Vec::new()),
+        }))
+    }
+
+    #[test]
+    fn from_env_uses_env_dirs_without_system_fonts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("fonts")).unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let joined = std::env::join_paths([&a, &b]).unwrap();
+        let opts = FontOptions::from_env_with(Some(&joined), Some(dir.path()));
+        assert_eq!(opts.dirs, vec![a, b]);
+        assert!(!opts.system);
+    }
+
+    #[test]
+    fn from_env_falls_back_to_sibling_fonts_and_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let without = FontOptions::from_env_with(None, Some(dir.path()));
+        assert!(without.dirs.is_empty());
+        assert!(without.system);
+
+        let sibling = dir.path().join("fonts");
+        std::fs::create_dir(&sibling).unwrap();
+        let from_empty_env = FontOptions::from_env_with(Some(OsStr::new("")), Some(dir.path()));
+        assert_eq!(from_empty_env.dirs, vec![sibling]);
+        assert!(from_empty_env.system);
+    }
+
+    #[test]
+    fn resolve_cjk_fonts_prefers_foundertype_and_falls_back_cleanly() {
+        let founder = fake_book(&[
+            "FZShuSong-Z01",
+            "FZHei-B01",
+            "FZKai-Z03",
+            "FZFangSong-Z02",
+            "SimSun",
+        ]);
+        let (src, warn) = resolve_cjk_fonts(&founder);
+        assert!(warn.is_none());
+        assert!(src.contains(r#"#let cjk-song = "FZShuSong-Z01""#));
+        assert!(src.contains(r#"#let cjk-hei = "FZHei-B01""#));
+        assert!(src.contains(r#"#let cjk-kai = "FZKai-Z03""#));
+        assert!(src.contains(r#"#let cjk-fangsong = "FZFangSong-Z02""#));
+
+        let windows = fake_book(&["SimSun", "SimHei", "KaiTi", "FangSong"]);
+        let (src, warn) = resolve_cjk_fonts(&windows);
+        let warn = warn.expect("fallback warning expected");
+        assert!(warn.contains("FZShuSong-Z01 -> SimSun"));
+        assert!(warn.contains("FZHei-B01 -> SimHei"));
+        assert!(warn.contains("FZKai-Z03 -> KaiTi"));
+        assert!(warn.contains("FZFangSong-Z02 -> FangSong"));
+        assert!(src.contains(r#"#let cjk-song = "SimSun""#));
+        assert!(src.contains(r#"#let cjk-hei = "SimHei""#));
+        assert!(src.contains(r#"#let cjk-kai = "KaiTi""#));
+        assert!(src.contains(r#"#let cjk-fangsong = "FangSong""#));
+
+        let source_han = fake_book(&["Source Han Serif SC", "Source Han Sans SC"]);
+        let (src, warn) = resolve_cjk_fonts(&source_han);
+        assert!(warn.is_some());
+        assert!(src.contains(r#"#let cjk-song = "Source Han Serif SC""#));
+        assert!(src.contains(r#"#let cjk-hei = "Source Han Sans SC""#));
+        assert!(src.contains(r#"#let cjk-kai = "Source Han Serif SC""#));
+        assert!(src.contains(r#"#let cjk-fangsong = "Source Han Serif SC""#));
+
+        let empty = fake_book(&[]);
+        let (src, warn) = resolve_cjk_fonts(&empty);
+        assert!(warn.is_none());
+        assert!(src.contains(r#"#let cjk-song = "FZShuSong-Z01""#));
+    }
+
+    #[test]
+    fn fallback_warning_only_emits_when_olymp_fonts_are_imported() {
+        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        engine.font_fallback_warning =
+            Some("FounderType CJK font(s) missing; using fallback: FZShuSong-Z01 -> SimSun".into());
+        engine.set_main("#set page(width: 100pt, height: 100pt)\nHello");
+        let plain = engine.compile().unwrap();
+        assert!(
+            !plain
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("using fallback")),
+            "unexpected fallback warning without olymp-classic: {:?}",
+            plain.warnings
+        );
+
+        engine.set_main(
+            r#"#import "/xcpc/olymp-classic.typ": contest, problem
+#show: contest.with(name: "Test", show-cover: false)
+#problem(label: "A", title: "Title")[测试]
+"#,
+        );
+        let with_template = engine.compile().unwrap();
+        assert!(
+            with_template
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("using fallback")),
+            "expected fallback warning when olymp-classic is used: {:?}",
+            with_template.warnings
+        );
+        assert!(
+            !with_template
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("unknown font family")),
+            "unexpected unknown font family noise: {:?}",
+            with_template.warnings
+        );
+    }
+
+    #[test]
+    fn olymp_classic_compiles_with_env_fonts_without_fallback_warning() {
+        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        assert!(
+            engine.font_fallback_warning.is_none(),
+            "expected FounderType in XCPC_FONT_DIRS: {:?}",
+            engine.font_fallback_warning
+        );
+        engine.set_main(
+            r#"#import "/xcpc/olymp-classic.typ": contest, problem
+#show: contest.with(name: "Test", show-cover: false)
+#problem(label: "A", title: "Title")[中文 *加粗* _斜体_ `代码`]
+"#,
+        );
+        let compiled = engine.compile().unwrap();
+        assert!(
+            compiled.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            compiled.warnings
+        );
     }
 }

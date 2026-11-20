@@ -14,14 +14,13 @@ xcpc-convert = { path = "crates/xcpc-convert" }
 xcpc-engine = { path = "crates/xcpc-engine" }
 
 nsh-core = "0.6.0"
-nsh-base = "0.6.0"
+nsh-base = { version = "0.6.0", default-features = false }
 
 typst = "0.15.1"
 typst-layout = "0.15.1"
 typst-render = "0.15.1"
 tiny-skia = "0.12"
 typst-pdf = "0.15.1"
-typst-svg = "0.15.1"
 typst-kit = { version = "0.15.1", default-features = false, features = ["scan-fonts"] }
 comemo = "0.5.1"
 siphasher = "1"
