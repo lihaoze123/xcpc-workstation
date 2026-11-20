@@ -6,7 +6,7 @@
 //! main file with a [`SourceMap`] back to the Markdown, so the engine's diagnostics can
 //! point into `statement.md` instead of the generated code.
 
-use xcpc_domain::{ContestItem, ContestMeta, Language, Limits, Problem};
+use xcpc_domain::{ContestItem, ContestMeta, Language, Limits, Problem, ProblemMeta};
 
 mod markdown;
 pub mod publish;
@@ -89,6 +89,8 @@ pub struct Book {
     pub show_metadata: bool,
     pub cover: bool,
     pub blank_pages: bool,
+    /// One problem on its own, not a contest's.
+    pub single: bool,
 }
 
 impl Book {
@@ -103,6 +105,7 @@ impl Book {
             show_metadata: meta.show_metadata,
             cover: meta.has_cover(),
             blank_pages: meta.blank_pages,
+            single: false,
         }
     }
 
@@ -121,6 +124,7 @@ impl Book {
             show_metadata: true,
             cover: false,
             blank_pages: false,
+            single: true,
         }
     }
 }
@@ -148,7 +152,7 @@ impl<'a> Entry<'a> {
 /// The problem book: each problem's statement with its limits and samples.
 pub fn statements(book: &Book, entries: &[Entry]) -> Document {
     let mut out = Out::new();
-    head(&mut out, book, book.cover, book.blank_pages);
+    head(&mut out, book, "statements", book.cover, book.blank_pages);
     let mut diagnostics = Vec::new();
     for entry in entries {
         let meta = entry.item.apply(&entry.problem.meta);
@@ -185,7 +189,7 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
                         file,
                         path: &statement.file.path,
                         dir: &entry.problem.dir,
-                        sections: true,
+                        editorial: false,
                         samples,
                     },
                     &mut out,
@@ -215,12 +219,27 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
     out.finish(set, diagnostics)
 }
 
-/// The editorial book: each problem's `editorial.md` under "Problem Tutorial", in A4,
-/// without a cover. Problems without one are left out, with a warning.
+/// The editorial book: each problem's `editorial.md` from a new page, under its label,
+/// title and what is known about it; a contest's with a title page and contents (when
+/// its statements have a cover). Problems without one are left out, with a warning.
 pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
     let mut out = Out::new();
-    // Tutorials follow one another (olymp's `tutorial` has no \problemend).
-    head(&mut out, book, false, false);
+    // A problem on its own: the running head says "Editorial" and its title.
+    let book = &Book {
+        name: if book.single {
+            String::new()
+        } else {
+            book.name.clone()
+        },
+        ..book.clone()
+    };
+    head(
+        &mut out,
+        book,
+        "editorial",
+        book.cover && !book.single,
+        false,
+    );
     let mut diagnostics = Vec::new();
     let mut set = Vec::new();
     for entry in entries {
@@ -239,10 +258,19 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
             continue;
         };
         set.push((entry.item.label.clone(), entry.problem.id.clone()));
+        let label = if book.single {
+            "none".into()
+        } else {
+            string(&entry.item.label)
+        };
+        let about: Vec<String> = about(&meta, book.language)
+            .iter()
+            .map(|m| string(m))
+            .collect();
         out.raw(&format!(
-            "#tutorial(label: {}, title: {})[\n",
-            string(&entry.item.label),
-            string(&meta.title)
+            "#tutorial(label: {label}, title: {}, meta: ({}))[\n",
+            string(&meta.title),
+            about.iter().map(|m| format!("{m},")).collect::<String>(),
         ));
         let file = out.file(&editorial.path, &editorial.text);
         markdown::convert(
@@ -251,7 +279,7 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
                 file,
                 path: &editorial.path,
                 dir: &entry.problem.dir,
-                sections: false,
+                editorial: true,
                 samples: None,
             },
             &mut out,
@@ -263,19 +291,46 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
     out.finish(set, diagnostics)
 }
 
-fn head(out: &mut Out, book: &Book, cover: bool, blank_pages: bool) {
+/// What an editorial's head says about a problem, besides its title: its author, tags
+/// and sources (`Codeforces 1999A`), each one item. Not its rating.
+fn about(meta: &ProblemMeta, language: Language) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(author) = meta.author.as_deref().filter(|a| !a.trim().is_empty()) {
+        out.push(match language {
+            Language::Chinese => format!("作者 {author}"),
+            Language::English => format!("by {author}"),
+        });
+    }
+    out.extend(meta.tags.iter().cloned());
+    out.extend(meta.sources.iter().map(|s| {
+        let platform = match s.platform.as_str() {
+            "codeforces" => "Codeforces",
+            "atcoder" => "AtCoder",
+            "qoj" => "QOJ",
+            "luogu" => "Luogu",
+            "nowcoder" => "NowCoder",
+            "leetcode" => "LeetCode",
+            other => other,
+        };
+        format!("{platform} {}", s.id)
+    }));
+    out
+}
+
+fn head(out: &mut Out, book: &Book, kind: &str, cover: bool, blank_pages: bool) {
     let opt = |v: &Option<String>| v.as_deref().map_or("none".into(), string);
     out.raw(&format!(
         "// Generated by xcpc from the workspace: edit the workspace, not this.\n\
          #import \"/xcpc/olymp-classic.typ\": *\n\
          #import \"/xcpc/markdown.typ\": m, dm\n\n\
-         #show: contest.with(name: {}, location: {}, date: {}, author: {}, language: {}, show-cover: {cover}, blank-pages: {})\n\n",
+         #show: contest.with(name: {}, location: {}, date: {}, author: {}, language: {}, show-cover: {cover}, blank-pages: {}, book: {})\n\n",
         string(&book.name),
         opt(&book.location),
         opt(&book.date),
         opt(&book.author),
         string(book.language.name()),
         blank_pages,
+        string(kind),
     ));
 }
 

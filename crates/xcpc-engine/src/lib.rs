@@ -24,7 +24,8 @@ mod overflow;
 pub use typst_render::render as render_page_raw;
 
 /// The bundled templates, addressable from Typst as `/xcpc/<name>`: `olymp-classic`,
-/// what the Markdown converter emits calls (`markdown.typ`), and MiTeX's scope for it.
+/// what the Markdown converter emits calls (`markdown.typ`), MiTeX's scope for it, and
+/// the editorial's code theme (`mono.tmTheme`).
 const TEMPLATES: &[(&str, &str)] = &[
     (
         "/xcpc/olymp-classic.typ",
@@ -33,6 +34,10 @@ const TEMPLATES: &[(&str, &str)] = &[
     (
         "/xcpc/markdown.typ",
         include_str!("../templates/markdown.typ"),
+    ),
+    (
+        "/xcpc/mono.tmTheme",
+        include_str!("../templates/mono.tmTheme"),
     ),
     (
         "/xcpc/mitex/mod.typ",
