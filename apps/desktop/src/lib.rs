@@ -226,6 +226,8 @@ pub struct Preview {
 
 struct State {
     workspace: Option<Workspace>,
+    /// Where the workspace opened last is kept.
+    data_dir: Option<std::path::PathBuf>,
     engine: Engine,
     /// The keys of the last two results.
     live: [HashSet<String>; 2],
@@ -242,18 +244,27 @@ struct Job {
 #[class]
 impl Preview {
     #[allow(clippy::new_without_default)] // the JS constructor
-    /// A preview of the workspace `XCPC_WORKSPACE` names, else the one the current
-    /// directory is in, with the statement fonts of `XCPC_FONT_DIRS`.
-    pub fn new() -> Self {
+    /// A preview with the statement fonts of `XCPC_FONT_DIRS`, of the workspace
+    /// `XCPC_WORKSPACE` names, else the one the current directory is in, else the one
+    /// opened last (if it is still there). `data_dir` (JS's `process.dataDir`) is where
+    /// the last one is kept; none, nothing is kept.
+    pub fn new(data_dir: Option<String>) -> Self {
+        let data_dir = data_dir.map(std::path::PathBuf::from);
         let workspace = match std::env::var_os("XCPC_WORKSPACE") {
             Some(dir) => Workspace::open(dir, false).ok(),
-            None => Workspace::discover(".", false).ok(),
+            None => Workspace::discover(".", false)
+                .ok()
+                .or_else(|| Workspace::open(last_workspace(data_dir.as_deref()?)?, false).ok()),
         };
+        if let (Some(ws), Some(dir)) = (&workspace, &data_dir) {
+            remember_workspace(dir, ws);
+        }
         let root = workspace.as_ref().map(|w| w.root().to_path_buf());
         Preview {
             state: Arc::new(Mutex::new(State {
                 workspace,
                 engine: Engine::new(&FontOptions::from_env(), root),
+                data_dir,
                 live: Default::default(),
             })),
         }
@@ -312,7 +323,12 @@ impl Preview {
             };
             let Some(dir) = dir else { return p.workspace() };
             match Workspace::discover(&dir, false) {
-                Ok(ws) => p.switch(ws),
+                Ok(ws) => {
+                    if let Some(dir) = &p.state.lock().unwrap().data_dir {
+                        remember_workspace(dir, &ws);
+                    }
+                    p.switch(ws)
+                }
                 Err(_) => WorkspaceInfo {
                     error: Some(format!(
                         "{} 不在工作区里（没有 workspace.toml）",
@@ -669,6 +685,25 @@ impl State {
             .retain(|k, _| current.contains(k) || last.contains(k));
         self.live = [last, current];
     }
+}
+
+/// Where the workspace opened last is kept: a line in the app's data directory.
+fn last_workspace_file(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("last-workspace")
+}
+
+/// The workspace opened last, if any.
+fn last_workspace(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let text = std::fs::read_to_string(last_workspace_file(data_dir)).ok()?;
+    Some(std::path::PathBuf::from(text.trim_end_matches('\n')))
+}
+
+/// Keeps `ws` as the one to open next time (what cannot be written is let go: the
+/// next start just asks).
+fn remember_workspace(data_dir: &std::path::Path, ws: &Workspace) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let file = last_workspace_file(data_dir);
+    let _ = xcpc_storage::write_atomic(&file, format!("{}\n", ws.root().display()).as_bytes());
 }
 
 /// The statement file set in `language` (`statement.md` for a problem that has none yet).

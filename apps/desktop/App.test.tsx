@@ -8,7 +8,7 @@ import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation
 const C = "problems/contest-zh-c/statement.md";
 
 function open() {
-  const preview = new Preview();
+  const preview = new Preview(null);
   preview.openWorkspace(Preview.fixture(), true);
   return preview;
 }
