@@ -1,10 +1,11 @@
-import { computed, mount, pixelRatio, signal, Text, View } from "nsh";
+import { computed, effect, mount, pixelRatio, signal, Text, View } from "nsh";
 import { Editor } from "nsh/base";
 import { PageImage, Preview, type PreviewPage } from "xcpc-workstation/native";
 
 // Phase 0: a Typst source on the left, its pages on the right. The pages are pixel
 // buffers shown as images in one view that pans and zooms by its transform, so moving
 // them is compositing; a zoom stretches what is there until sharper pages arrive.
+// Only the pages in view are rasterized at the zoom's scale.
 
 const preview = new Preview();
 const GAP = 16; // points between pages, at zoom 1
@@ -17,18 +18,45 @@ function App() {
   const zoom = signal(0);           // 0 until the first fit
   const pan = signal({ x: 0, y: 0 });
 
+  const pane = signal({ width: 0, height: 0 });
+
   // Rasterize sharp enough for the current zoom on this screen, in half-pixel
   // steps so zooming does not re-rasterize on every wheel tick.
   const scale = computed(() => Math.min(Math.ceil(Math.max(zoom(), 0.5) * pixelRatio() * 2) / 2, 8));
 
+  // The pages in view and one on each side: only these are rasterized at `scale`.
+  const view = computed(() => {
+    const list = pages();
+    const z = zoom();
+    if (list.length === 0 || z === 0) return { first: 0, last: 1 };
+    const top = -pan().y / z;
+    const bottom = top + pane().height / z;
+    let first = -1;
+    let last = -1;
+    let y = 0;
+    list.forEach((page, i) => {
+      if (y + page.height >= top && y <= bottom) {
+        if (first < 0) first = i;
+        last = i;
+      }
+      y += page.height + GAP;
+    });
+    if (first < 0) return { first: 0, last: -1 };
+    return { first: Math.max(0, first - 1), last: Math.min(list.length - 1, last + 1) };
+  }, { equals: (a, b) => a.first === b.first && a.last === b.last });
+
   let source = Preview.sample();
   let latest = 0;
   let timer: number | undefined;
+  // What the last request asked for; the view asks again when it wants more.
+  let asked = { scale: 0, first: 0, last: -1 };
   async function compile() {
     const id = ++latest;
     const t = Date.now();
-    const result = await preview.compile(source, scale());
-    if (id !== latest) return;      // a newer edit is on its way
+    const { first, last } = view();
+    asked = { scale: scale(), first, last };
+    const result = await preview.compile(source, asked.scale, Math.max(first, 0), Math.max(last, 0));
+    if (id !== latest) return;      // a newer request is on its way
     console.log(`[preview] compile ${result.compileMs.toFixed(0)}ms, render ${result.rendered} pages ${result.renderMs.toFixed(0)}ms, round trip ${Date.now() - t}ms`);
     error.set(result.error ?? undefined);
     if (!result.error) {
@@ -36,37 +64,35 @@ function App() {
       fit();
     }
   }
-  function schedule() {
+  function schedule(delay: number) {
     clearTimeout(timer);
-    timer = setTimeout(compile, 120);
+    timer = setTimeout(compile, delay);
   }
   compile();
 
-  let lastScale = scale();
+  // Other pages in view, or a new scale: rasterize them (the source is unchanged, so
+  // compiling again costs next to nothing).
+  effect(() => {
+    const { first, last } = view();
+    const s = scale();
+    if (s !== asked.scale || first < asked.first || last > asked.last) schedule(30);
+  });
+
   function setZoom(next: number, at: { x: number; y: number }) {
     const z = zoom();
     next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
     const p = pan();
     pan.set({ x: at.x - (at.x - p.x) * (next / z), y: at.y - (at.y - p.y) * (next / z) });
     zoom.set(next);
-    if (scale() !== lastScale) {
-      lastScale = scale();
-      schedule();
-    }
   }
 
   let drag: { x: number; y: number } | undefined;
-  let paneWidth = 0;
   // Fit the page width, with a margin, once there are pages and a pane.
   function fit() {
     const list = pages();
-    if (zoom() !== 0 || list.length === 0 || paneWidth === 0) return;
-    zoom.set((paneWidth - 2 * GAP) / list[0].width);
+    if (zoom() !== 0 || list.length === 0 || pane().width === 0) return;
+    zoom.set((pane().width - 2 * GAP) / list[0].width);
     pan.set({ x: GAP, y: GAP });
-    if (scale() !== lastScale) {
-      lastScale = scale();
-      schedule();
-    }
   }
 
   return (
@@ -79,7 +105,7 @@ function App() {
           softWrap
           onChange={(e) => {
             source = e.value;
-            schedule();
+            schedule(120);
           }}
         />
       </View>
@@ -87,7 +113,7 @@ function App() {
         style={{ flex: 1, overflow: "hidden" }}
         class="bg-muted"
         onLayout={(e) => {
-          paneWidth = e.bounds.size.width;
+          pane.set({ width: e.bounds.size.width, height: e.bounds.size.height });
           fit();
         }}
         onWheel={(e) => {

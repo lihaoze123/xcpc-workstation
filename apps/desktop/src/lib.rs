@@ -3,12 +3,15 @@
 //!
 //! Only glue lives here; typesetting is `xcpc-engine`'s.
 //!
-//! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files: a
-//! page's raster costs about as much as one PNG encode of it would take tenths of. They
-//! are kept by key (a page's span-free fingerprint and the scale), so a page an edit
-//! did not change is neither rasterized again nor uploaded again.
+//! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files:
+//! rasterizing a page takes a fraction of what encoding it as PNG would. They are kept
+//! by key (a page's span-free fingerprint and the scale), so a page an edit did not
+//! change is neither rasterized again nor uploaded again. Only the pages the app says
+//! are in view are rasterized at the scale it asks for; the others keep the pixels they
+//! have at another scale, or show none until they come into view.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::RangeInclusive;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
@@ -35,7 +38,8 @@ static PIXELS: LazyLock<Mutex<HashMap<String, ImageSrc>>> = LazyLock::new(Defaul
 #[derive(Debug, Clone, Default, PartialEq, JsObject)]
 pub struct PreviewPage {
     /// Its pixels for `PageImage`'s `page`. Named by what the page draws and the scale,
-    /// so a page an edit did not change keeps its key (and its texture).
+    /// so a page an edit did not change keeps its key (and its texture). Empty for a page
+    /// out of view that has no pixels yet.
     pub key: String,
     /// Its size in typographic points.
     pub width: f64,
@@ -87,10 +91,19 @@ impl Preview {
         SAMPLE.to_owned()
     }
 
-    /// Compiles `source` and rasterizes its pages at `scale` pixels per point.
-    pub async fn compile(this: Instance<Self>, source: String, scale: f64) -> PreviewResult {
+    /// Compiles `source` and rasterizes the pages `first..=last` (0-based, those in view)
+    /// at `scale` pixels per point. Compiling a source that did not change is all but
+    /// free, so call it again when other pages come into view or the scale changes.
+    pub async fn compile(
+        this: Instance<Self>,
+        source: String,
+        scale: f64,
+        first: u32,
+        last: u32,
+    ) -> PreviewResult {
         let state = this.with(|p| p.state.clone());
-        blocking(move || state.lock().unwrap().run(&source, scale as f32))
+        let view = first as usize..=last as usize;
+        blocking(move || state.lock().unwrap().run(&source, scale as f32, view))
             .await
             .unwrap_or_else(|e| PreviewResult {
                 error: Some(format!("preview task failed: {e}")),
@@ -100,7 +113,7 @@ impl Preview {
 }
 
 impl State {
-    fn run(&mut self, source: &str, scale: f32) -> PreviewResult {
+    fn run(&mut self, source: &str, scale: f32, view: RangeInclusive<usize>) -> PreviewResult {
         let start = Instant::now();
         self.engine.set_main(source);
         let compiled = self.engine.compile();
@@ -121,20 +134,23 @@ impl State {
         };
 
         let start = Instant::now();
-        let keys: Vec<String> = (0..compiled.page_count())
-            .map(|i| {
-                format!(
-                    "{:032x}@{scale}",
-                    compiled.page_fingerprint(i).unwrap_or_default()
-                )
-            })
-            .collect();
-        let missing: Vec<usize> = {
+        let mut keys: Vec<String> = Vec::with_capacity(compiled.page_count());
+        let mut missing = Vec::new();
+        {
             let pixels = PIXELS.lock().unwrap();
-            (0..keys.len())
-                .filter(|&i| !pixels.contains_key(&keys[i]))
-                .collect()
-        };
+            for i in 0..compiled.page_count() {
+                let fingerprint = compiled.page_fingerprint(i).unwrap_or_default();
+                let key = format!("{fingerprint:032x}@{scale}");
+                if view.contains(&i) {
+                    if !pixels.contains_key(&key) {
+                        missing.push(i);
+                    }
+                    keys.push(key);
+                } else {
+                    keys.push(nearest(&pixels, fingerprint, scale).unwrap_or_default());
+                }
+            }
+        }
         let rendered = render_pages(&compiled, scale, &missing);
         {
             let mut pixels = PIXELS.lock().unwrap();
@@ -156,7 +172,7 @@ impl State {
                 }
             })
             .collect();
-        self.retire(keys.into_iter().collect());
+        self.retire(keys.into_iter().filter(|k| !k.is_empty()).collect());
         PreviewResult {
             pages,
             error: None,
@@ -175,6 +191,16 @@ impl State {
             .retain(|k, _| current.contains(k) || last.contains(k));
         self.live = [last, current];
     }
+}
+
+/// The key of the pixels of the page `fingerprint` at the scale nearest `scale`, if any.
+fn nearest(pixels: &HashMap<String, ImageSrc>, fingerprint: u128, scale: f32) -> Option<String> {
+    let prefix = format!("{fingerprint:032x}@");
+    pixels
+        .keys()
+        .filter_map(|k| Some((k, k.strip_prefix(&prefix)?.parse::<f32>().ok()?)))
+        .min_by(|(_, a), (_, b)| (*a / scale).ln().abs().total_cmp(&(*b / scale).ln().abs()))
+        .map(|(k, _)| k.clone())
 }
 
 /// Rasterizes `pages` in parallel into pixel buffers.
