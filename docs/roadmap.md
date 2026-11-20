@@ -9,11 +9,17 @@
 3. **编辑器**：验证 `nsh/base` 的 `Editor`（或 `RichEditor`）在中文 IME、撤销/重做、长文档下的表现。
 4. **基准 PDF 流水线**：用 `tectonic` 和固定 commit 的参考模板生成第一批 `tests/fixtures/olymp-ref/`，并跑通 PNG 比对。
 
-**Phase 0 结论**（2026-11-20，Linux，开发构建，依赖开启 `opt-level = 2`）：
+**Phase 0 结论**（2026-11-20，Linux，开发构建）：
 
-- 增量编译：首次约 230ms，之后改一处文字约 25ms（`comemo` 生效）。
-- 光栅化是瓶颈：5 页 A4 按约 2.5 px/pt 并行渲染需要 170–340ms。按页面哈希复用位图的方法不成立，因为页面帧里带有源码位置（span），编辑后每一页的哈希都会变。**Phase 1 改为只渲染可见页**，并在缩放时先拉伸旧位图，再换成清晰的新图。
-- `Canvas` 的 `drawImage(file://…)` 可以使用；滚轮平移正常。Ctrl+滚轮或捏合缩放、中文输入法、撤销/重做和长文档要人工验收。
+- 预览性能（后续实测修正了最初「编译约 25ms、光栅化 170–340ms」的结论）：
+  - 最初的数字来自**未优化**的 Typst。`nsh` 为桌面宿主另外生成了一个 Cargo workspace（`apps/desktop/.nsh/rust`），根 `Cargo.toml` 里的 profile 对它不生效。现在依赖的 `opt-level = 2` 写在 `.cargo/config.toml`，两边都能读到。
+  - 优化后，5 页样例每次编辑的增量编译约 2ms（应用内 4–6ms），单页光栅化（2.5 px/pt）约 2ms，单页 PNG 编码约 15ms。**真正的瓶颈是 PNG 编码和写文件，不是光栅化**。所以不需要「局部重排快路径 + 全局编译慢路径」的双轨方案：完整的增量编译本来就在一帧之内。
+  - 页面指纹改为不含 span 的内容哈希（`xcpc-engine` 的 `page_fingerprint`），编辑一处只有所在页需要重新光栅化。
+  - 页面以像素缓冲（`ImageSrc::rgba`）交给 Rust 组件 `PageImage` 显示，不再编码 PNG、写文件、再解码；平移和缩放是容器的 `transform`，由 GSK 合成，缩放时先拉伸旧图，再换成新图。应用内改一个字到出图的往返：PNG + `Canvas` 约 60ms，像素缓冲约 14ms；平移时每帧不再有 `Canvas` 的 Cairo 重放（原来每帧 4–7ms）。
+  - SVG 和 `Painter` 两条矢量通路在 Linux 上都由 Cairo 在 UI 线程上按显示缩放重放成位图，不随 `transform` 缩放（读 `nsh-platform-linux` 的 `canvas.rs` 得出，未实测），比在后台线程光栅化更差，暂不采用。
+  - 待做：**只光栅化可见页**。现在缩放跨过倍数档位时会把所有页按新倍数重画，倍数很大时单页可达上百 MB，图片到达那一帧在主线程上拷贝和上传要 80ms 以上。
+  - 复现：`cargo run --release -p xcpc-engine --example preview_bench`；应用内看日志里的 `[preview]` 行，帧开销用 `NSH_FPS=1`。
+- 滚轮平移正常。Ctrl+滚轮或捏合缩放、中文输入法、撤销/重做和长文档要人工验收。
 - 基准管线：3 套用例共 13 页，页数与基准一致，并排图看起来一样（`scripts/olymp-regress.sh`）。
 
 ## Phase 1：最短出版链路
@@ -23,7 +29,7 @@
 - `olymp-classic` 模板：题面页、封面和试题列表、A4 题解册，并与基准 PDF 做视觉回归。
 - 导出单题、整本、题解册三种 PDF。
 - 二进制 `xcpc`：`build` / `render` 等子命令（支持 `--json`），MCP 工具 `compile_and_diagnose`、`render_page_png`、`export_pdf`。
-- 最小桌面窗口：打开一道题或一场比赛，左边是编辑器，右边是 Canvas 预览。
+- 最小桌面窗口：打开一道题或一场比赛，左边是编辑器，右边是页面预览。
 
 **明确推迟**：SQLite FTS5、`notify` 监听、LaTeX 输入、JSON Schema 和工作区 `AGENTS.md` 生成、`search_problems` / `upsert_problem`。
 

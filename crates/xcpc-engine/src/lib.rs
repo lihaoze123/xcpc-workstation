@@ -11,12 +11,14 @@ use std::time::{Duration, Instant};
 
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration as TypstDuration};
-use typst_layout::PagedDocument;
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
 use typst_kit::fonts::FontStore;
+use typst_layout::PagedDocument;
+
+mod fingerprint;
 
 pub use typst_render::render as render_page_raw;
 
@@ -44,7 +46,10 @@ impl FontOptions {
         let dirs = std::env::var_os("XCPC_FONT_DIRS")
             .map(|v| std::env::split_paths(&v).collect())
             .unwrap_or_default();
-        Self { dirs, system: false }
+        Self {
+            dirs,
+            system: false,
+        }
     }
 }
 
@@ -73,10 +78,11 @@ impl Compiled {
         self.document.pages().len()
     }
 
-    /// A hash of one page's content (0-based): equal hashes render the same, so a
-    /// preview can keep the bitmaps of pages an edit did not change.
-    pub fn page_hash(&self, page: usize) -> Option<u128> {
-        self.document.pages().get(page).map(typst::utils::hash128)
+    /// A fingerprint of what one page (0-based) draws, blind to source positions:
+    /// equal fingerprints render the same, so a preview can keep the pages an edit
+    /// did not change.
+    pub fn page_fingerprint(&self, page: usize) -> Option<u128> {
+        self.document.pages().get(page).map(fingerprint::page)
     }
 
     /// One page's size in points (0-based).
@@ -93,6 +99,12 @@ impl Compiled {
             ..Default::default()
         };
         Some(typst_render::render(page, &options))
+    }
+
+    /// Renders one page (0-based) as an SVG document whose units are points.
+    pub fn render_svg(&self, page: usize) -> Option<String> {
+        let page = self.document.pages().get(page)?;
+        Some(typst_svg::svg(page, &typst_svg::SvgOptions::default()))
     }
 
     /// Renders one page as PNG bytes.
@@ -171,8 +183,15 @@ impl Engine {
         let warned = typst::compile::<PagedDocument>(self);
         let warnings = self.diagnostics(&warned.warnings);
         match warned.output {
-            Ok(document) => Ok(Compiled { document, warnings, duration: start.elapsed() }),
-            Err(errors) => Err(CompileError { errors: self.diagnostics(&errors), warnings }),
+            Ok(document) => Ok(Compiled {
+                document,
+                warnings,
+                duration: start.elapsed(),
+            }),
+            Err(errors) => Err(CompileError {
+                errors: self.diagnostics(&errors),
+                warnings,
+            }),
         }
     }
 
@@ -195,8 +214,13 @@ impl Engine {
 
     fn read_disk(&self, id: FileId) -> FileResult<Bytes> {
         let root = self.root.as_deref().ok_or_else(|| not_found(id))?;
-        let path = id.vpath().realize(root).map_err(|_| FileError::AccessDenied)?;
-        std::fs::read(&path).map(Bytes::new).map_err(|e| FileError::from_io(e, &path))
+        let path = id
+            .vpath()
+            .realize(root)
+            .map_err(|_| FileError::AccessDenied)?;
+        std::fs::read(&path)
+            .map(Bytes::new)
+            .map_err(|e| FileError::from_io(e, &path))
     }
 }
 
@@ -216,8 +240,11 @@ fn main_id() -> FileId {
 }
 
 fn project_id(path: &str) -> FileId {
-    RootedPath::new(VirtualRoot::Project, VirtualPath::new(path).expect("valid virtual path"))
-        .intern()
+    RootedPath::new(
+        VirtualRoot::Project,
+        VirtualPath::new(path).expect("valid virtual path"),
+    )
+    .intern()
 }
 
 fn not_found(id: FileId) -> FileError {
@@ -229,7 +256,10 @@ fn template(id: FileId) -> Option<&'static str> {
         return None;
     }
     let path = id.vpath().get_with_slash();
-    TEMPLATES.iter().find(|(p, _)| *p == path).map(|(_, text)| *text)
+    TEMPLATES
+        .iter()
+        .find(|(p, _)| *p == path)
+        .map(|(_, text)| *text)
 }
 
 impl World for Engine {
@@ -253,7 +283,10 @@ impl World for Engine {
         if let Some(text) = template(id) {
             let cache = TEMPLATE_SOURCES.get_or_init(Default::default);
             let mut cache = cache.lock().unwrap();
-            return Ok(cache.entry(id).or_insert_with(|| Source::new(id, text.into())).clone());
+            return Ok(cache
+                .entry(id)
+                .or_insert_with(|| Source::new(id, text.into()))
+                .clone());
         }
         let bytes = self.file(id)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
@@ -268,7 +301,10 @@ impl World for Engine {
             return Err(FileError::Other(Some("packages are not available".into())));
         }
         let mut files = self.files.lock().unwrap();
-        files.entry(id).or_insert_with(|| self.read_disk(id)).clone()
+        files
+            .entry(id)
+            .or_insert_with(|| self.read_disk(id))
+            .clone()
     }
 
     fn font(&self, index: usize) -> Option<Font> {

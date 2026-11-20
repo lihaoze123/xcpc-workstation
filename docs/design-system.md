@@ -1,6 +1,6 @@
 # 界面设计系统
 
-本文定义 NSH 应用界面的信息架构和视觉语言。组件**只用 `nsh/base`**，主题通过 `nsh/base` 的主题/Token 机制实现；[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/)（HeroUI 风格）只作样式参考，不作为依赖。快捷键写作 `Cmd`，在 Linux 上对应 `Ctrl`。题面纸张的样式见 [statement-style.md](./statement-style.md)。色板和布局骨架可以在 [`reference/color_system_preview.html`](./reference/color_system_preview.html) 中交互式查看。
+本文定义 NSH 应用界面的信息架构和视觉语言。组件**以 `nsh/base` 为基础**（需要时可以基于 NSH 自己写组件，不引入第三方 UI 组件库），主题通过 `nsh/base` 的主题/Token 机制实现；[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/)（HeroUI 风格）只作样式参考，不作为依赖。快捷键写作 `Cmd`，在 Linux 上对应 `Ctrl`。题面纸张的样式见 [statement-style.md](./statement-style.md)。色板和布局骨架可以在 [`reference/color_system_preview.html`](./reference/color_system_preview.html) 中交互式查看。
 
 ## 1. 设计理念
 
