@@ -33,12 +33,13 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::types::{
     ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
-    ContestStatsJs, FreezeResultJs, FuzzyHitJs, LimitsJs, OverridePatchJs, PickedFolder,
-    PreviewDiagnostic, PreviewLayer, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
-    PreviewView, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
-    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, OverridePatchJs,
+    PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer, PreviewPage, PreviewRequest,
+    PreviewResult, PreviewStart, PreviewView, ProblemDetailJs, ProblemMetaPatchJs,
+    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
+    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 
 /// The crate's UI set (`nsh.json` `"rust"`).
@@ -397,6 +398,30 @@ impl Preview {
                 error: Some(format!("export failed: {e}")),
                 ..Default::default()
             })
+    }
+
+    /// Reports independent PDF freshness (`exists`, `fresh`, `relPath`, `absPath`) for both
+    /// the statements book and the editorial book of `request`'s target.
+    pub fn export_status(&self, request: PreviewRequest) -> ExportBookStatusJs {
+        self.state.lock().unwrap().export_status(&request)
+    }
+
+    /// Reveals a file or directory (absolute or workspace-relative path) inside the open
+    /// workspace in the system file manager. Rejects paths outside the workspace or missing
+    /// targets.
+    pub async fn reveal_in_folder(this: Instance<Self>, path: String) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let resolved = this.with(|p| p.state.lock().unwrap().resolve_reveal_path(&path));
+        let abs = match resolved {
+            Ok(abs) => abs,
+            Err(err) => return err,
+        };
+        match reveal_path(abs).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
     }
 
     // ---- Problem library & editing -----------------------------------------------------

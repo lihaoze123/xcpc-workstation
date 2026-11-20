@@ -28,6 +28,9 @@ pub(crate) struct FrecencyRecord {
 pub(crate) struct StoredPrefs {
     pub(crate) app: AppPrefsJs,
     pub(crate) frecency: HashMap<String, FrecencyRecord>,
+    /// Reserved Phase 2.5 window placement/state payload preserved verbatim across
+    /// `prefs.json` read/write cycles (omitted from JSON when `None`).
+    pub(crate) window_state: Option<JsonValue>,
 }
 
 impl StoredPrefs {
@@ -155,6 +158,12 @@ fn prefs_file(data_dir: &Path) -> PathBuf {
     data_dir.join("prefs.json")
 }
 
+/// Reserved Phase 2.5 cold-start preview snapshot directory (`<dataDir>/snapshots`).
+#[allow(dead_code)] // Phase 2.5 cold-start snapshot seam
+pub(crate) fn snapshots_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("snapshots")
+}
+
 fn read_legacy_last_workspace(data_dir: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(data_dir.join("last-workspace")).ok()?;
     let trimmed = text.trim_end_matches(['\r', '\n']);
@@ -244,7 +253,13 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
         }
     }
 
-    Some(StoredPrefs { app, frecency })
+    let window_state = obj.get("windowState").filter(|v| !v.is_null()).cloned();
+
+    Some(StoredPrefs {
+        app,
+        frecency,
+        window_state,
+    })
 }
 
 fn empty_json_object() -> JsonValue {
@@ -275,6 +290,9 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     }
     root["lastBook"] = JsonValue::from(prefs.app.last_book.as_str());
     root["propsOpen"] = JsonValue::from(prefs.app.props_open);
+    if let Some(ref window_state) = prefs.window_state {
+        root["windowState"] = window_state.clone();
+    }
 
     let mut frec = empty_json_object();
     let mut keys: Vec<&String> = prefs.frecency.keys().collect();

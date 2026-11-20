@@ -187,11 +187,35 @@ pub struct WorkspaceInfo {
     /// Its directory; empty when none is open.
     pub root: String,
     pub read_only: bool,
+    /// True when startup tried to reopen the last remembered workspace (`prefs.json` or
+    /// legacy `last-workspace`) and its directory no longer exists or lacks `workspace.toml`.
+    /// False on a fresh launch with no history or once any workspace is opened/initialized.
+    pub last_workspace_missing: bool,
     /// What could not be read, or why the folder picked is no workspace.
     #[prop(skip_none)]
     pub error: Option<String>,
     pub problems: Vec<WorkspaceProblem>,
     pub contests: Vec<WorkspaceContest>,
+}
+
+/// Freshness state of one exported book PDF (`build/<id>.pdf` or `build/<id>-editorial.pdf`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PdfFreshnessJs {
+    /// Default output path relative to the workspace.
+    pub rel_path: String,
+    /// Absolute path on disk; empty when no workspace is open.
+    pub abs_path: String,
+    /// True when the PDF file currently exists on disk.
+    pub exists: bool,
+    /// True when the on-disk PDF matches the current sources and unsaved editor state.
+    pub fresh: bool,
+}
+
+/// Independent PDF freshness states for statements and editorial books.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ExportBookStatusJs {
+    pub statements: PdfFreshnessJs,
+    pub editorial: PdfFreshnessJs,
 }
 
 /// Result of picking a folder via the system dialog (may or may not be inside a workspace).

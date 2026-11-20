@@ -1265,3 +1265,372 @@ fn tristate_patch_types_declare_valid_ts_interfaces_and_decode_keep_clear_set() 
     assert_eq!(cm.cover, Patch::Set(true));
     assert_eq!(cm.blank_pages, Some(false));
 }
+
+#[test]
+fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
+    let (dir, preview) = init_temp_preview("export-freshness");
+    assert!(preview.create_problem("p1".into(), "Fresh Demo".into()).ok);
+    let stmt_v1 = "题面第一版。\n\n## 输入格式\n\n一个整数 $n$。\n\n## 输出格式\n\n输出答案。\n";
+    let ed_v1 = "题解第一版。\n";
+    assert!(
+        preview
+            .save("problems/p1/statement.md".into(), stmt_v1.into(), None)
+            .ok
+    );
+    assert!(
+        preview
+            .save("problems/p1/editorial.md".into(), ed_v1.into(), None)
+            .ok
+    );
+
+    let stmt_req = PreviewRequest {
+        target: "problem".into(),
+        id: "p1".into(),
+        book: "statements".into(),
+        path: "problems/p1/statement.md".into(),
+        text: stmt_v1.into(),
+    };
+    let ed_req = PreviewRequest {
+        target: "problem".into(),
+        id: "p1".into(),
+        book: "editorial".into(),
+        path: "problems/p1/editorial.md".into(),
+        text: ed_v1.into(),
+    };
+
+    // 1. Before any export, neither PDF exists nor is fresh.
+    let s0 = preview.export_status(stmt_req.clone());
+    assert_eq!(s0.statements.rel_path, "build/p1.pdf");
+    assert!(!s0.statements.exists);
+    assert!(!s0.statements.fresh);
+    assert_eq!(s0.editorial.rel_path, "build/p1-editorial.pdf");
+    assert!(!s0.editorial.exists);
+    assert!(!s0.editorial.fresh);
+
+    // 2. Export statements and editorial -> both become fresh.
+    let exp_s = preview.state.lock().unwrap().export(&stmt_req);
+    assert!(
+        exp_s.error.is_none(),
+        "export stmt error: {:?}",
+        exp_s.error
+    );
+    let s1 = preview.export_status(stmt_req.clone());
+    assert!(s1.statements.exists && s1.statements.fresh);
+    assert!(!s1.editorial.exists && !s1.editorial.fresh);
+
+    let exp_e = preview.state.lock().unwrap().export(&ed_req);
+    assert!(exp_e.error.is_none(), "export ed error: {:?}", exp_e.error);
+    let s2 = preview.export_status(stmt_req.clone());
+    assert!(s2.statements.exists && s2.statements.fresh);
+    assert!(s2.editorial.exists && s2.editorial.fresh);
+
+    // 3. Unsaved edit to statement.md invalidates statements only; editorial remains fresh.
+    let dirty_stmt_req = PreviewRequest {
+        text: format!("{stmt_v1}\n额外未保存一行。\n"),
+        ..stmt_req.clone()
+    };
+    let s3 = preview.export_status(dirty_stmt_req);
+    assert!(s3.statements.exists && !s3.statements.fresh);
+    assert!(s3.editorial.exists && s3.editorial.fresh);
+
+    // Undoing back to disk text immediately restores statements freshness.
+    let s3_undo = preview.export_status(stmt_req.clone());
+    assert!(s3_undo.statements.fresh);
+
+    // 4. Saving modified statement.md invalidates statements via fingerprint (even within same mtime tick);
+    //    reverting disk text back to stmt_v1 restores freshness!
+    let stmt_v2 = "题面第二版。\n\n## 输入格式\n\n$n$\n\n## 输出格式\n\n$n$\n";
+    assert!(
+        preview
+            .save("problems/p1/statement.md".into(), stmt_v2.into(), None)
+            .ok
+    );
+    let s4 = preview.export_status(PreviewRequest {
+        text: stmt_v2.into(),
+        ..stmt_req.clone()
+    });
+    assert!(s4.statements.exists && !s4.statements.fresh);
+    assert!(s4.editorial.exists && s4.editorial.fresh);
+
+    assert!(
+        preview
+            .save("problems/p1/statement.md".into(), stmt_v1.into(), None)
+            .ok
+    );
+    let s4_revert = preview.export_status(stmt_req.clone());
+    assert!(s4_revert.statements.fresh);
+
+    // 5. Restart recovery: fresh Preview without in-session export map uses mtime comparison.
+    //    Re-export after a short sleep so pdf_mtime is strictly >= all source mtimes.
+    std::thread::sleep(Duration::from_millis(25));
+    assert!(
+        preview
+            .state
+            .lock()
+            .unwrap()
+            .export(&stmt_req)
+            .error
+            .is_none()
+    );
+    assert!(
+        preview
+            .state
+            .lock()
+            .unwrap()
+            .export(&ed_req)
+            .error
+            .is_none()
+    );
+
+    let restarted = Preview::new(None);
+    assert!(
+        restarted
+            .open_workspace(dir.0.display().to_string(), false)
+            .error
+            .is_none()
+    );
+    let r0 = restarted.export_status(stmt_req.clone());
+    assert!(r0.statements.exists && r0.statements.fresh);
+    assert!(r0.editorial.exists && r0.editorial.fresh);
+
+    // Unsaved edit after restart still marks only that book stale.
+    let r_dirty = restarted.export_status(PreviewRequest {
+        text: "未保存修改".into(),
+        ..stmt_req.clone()
+    });
+    assert!(!r_dirty.statements.fresh);
+    assert!(r_dirty.editorial.fresh);
+
+    // Modifying statement.md on disk advances its mtime past pdf_mtime -> statements stale, editorial fresh.
+    std::thread::sleep(Duration::from_millis(25));
+    assert!(
+        restarted
+            .save("problems/p1/statement.md".into(), stmt_v2.into(), None)
+            .ok
+    );
+    let r1 = restarted.export_status(PreviewRequest {
+        text: stmt_v2.into(),
+        ..stmt_req.clone()
+    });
+    assert!(r1.statements.exists && !r1.statements.fresh);
+    assert!(r1.editorial.exists && r1.editorial.fresh);
+
+    // 6. Frozen contest isolation: editing library problem does not stale a frozen contest's PDF.
+    assert!(
+        restarted
+            .create_contest("c1".into(), "Frozen Fresh".into())
+            .ok
+    );
+    assert!(restarted.compose_contest("c1".into(), vec!["p1".into()]).ok);
+    let frozen = restarted.state.lock().unwrap().freeze_contest("c1");
+    assert!(frozen.ok, "freeze error: {:?}", frozen.error);
+    let contest_req = PreviewRequest {
+        target: "contest".into(),
+        id: "c1".into(),
+        book: "statements".into(),
+        path: String::new(),
+        text: String::new(),
+    };
+    std::thread::sleep(Duration::from_millis(25));
+    assert!(
+        restarted
+            .state
+            .lock()
+            .unwrap()
+            .export(&contest_req)
+            .error
+            .is_none()
+    );
+    std::thread::sleep(Duration::from_millis(25));
+    assert!(
+        restarted
+            .save("problems/p1/statement.md".into(), stmt_v1.into(), None)
+            .ok
+    );
+    let c_in_session = restarted.export_status(contest_req.clone());
+    assert!(c_in_session.statements.exists && c_in_session.statements.fresh);
+
+    let restarted2 = Preview::new(None);
+    assert!(
+        restarted2
+            .open_workspace(dir.0.display().to_string(), false)
+            .error
+            .is_none()
+    );
+    let c_after_restart = restarted2.export_status(contest_req);
+    assert!(c_after_restart.statements.exists && c_after_restart.statements.fresh);
+}
+
+#[test]
+fn last_workspace_missing_flags_deleted_or_invalid_remembered_workspace() {
+    let empty_cwd = TempDir::new("empty-cwd");
+
+    // 1. Fresh launch with no history -> last_workspace_missing is false.
+    let fresh_data = TempDir::new("fresh-data");
+    let fresh_state =
+        crate::state::State::new_with_sources(Some(fresh_data.0.clone()), None, &empty_cwd.0);
+    let fresh_info = fresh_state.info();
+    assert!(fresh_info.root.is_empty());
+    assert!(!fresh_info.last_workspace_missing);
+
+    // 2. Remembered workspace in prefs.json whose directory was deleted -> true.
+    let deleted_data = TempDir::new("deleted-data");
+    let gone = empty_cwd.0.join("no-such-workspace");
+    std::fs::write(
+        deleted_data.0.join("prefs.json"),
+        format!(
+            r#"{{"recentWorkspaces":[{:?}]}}"#,
+            gone.display().to_string()
+        ),
+    )
+    .unwrap();
+    let missing_state =
+        crate::state::State::new_with_sources(Some(deleted_data.0.clone()), None, &empty_cwd.0);
+    let missing_info = missing_state.info();
+    assert!(missing_info.root.is_empty());
+    assert!(missing_info.last_workspace_missing);
+
+    // 3. Remembered directory exists on disk but lacks workspace.toml -> true.
+    let invalid_ws = TempDir::new("no-toml-dir");
+    let invalid_data = TempDir::new("invalid-data");
+    std::fs::write(
+        invalid_data.0.join("prefs.json"),
+        format!(
+            r#"{{"recentWorkspaces":[{:?}]}}"#,
+            invalid_ws.0.display().to_string()
+        ),
+    )
+    .unwrap();
+    let invalid_state =
+        crate::state::State::new_with_sources(Some(invalid_data.0.clone()), None, &empty_cwd.0);
+    let invalid_info = invalid_state.info();
+    assert!(invalid_info.root.is_empty());
+    assert!(invalid_info.last_workspace_missing);
+
+    // 4. Legacy last-workspace pointing to a deleted path -> true; opening a valid workspace resets to false.
+    let legacy_data = TempDir::new("legacy-missing");
+    std::fs::write(
+        legacy_data.0.join("last-workspace"),
+        format!("{}\n", gone.display()),
+    )
+    .unwrap();
+    let mut legacy_state =
+        crate::state::State::new_with_sources(Some(legacy_data.0.clone()), None, &empty_cwd.0);
+    assert!(legacy_state.info().last_workspace_missing);
+
+    let valid_ws = TempDir::new("valid-reopen");
+    let ws = xcpc_storage::init_workspace(&valid_ws.0).unwrap();
+    let old = legacy_state.install_workspace(ws);
+    drop(old);
+    assert!(!legacy_state.info().last_workspace_missing);
+    assert!(!legacy_state.info().root.is_empty());
+}
+
+#[test]
+fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
+    let (dir, preview) = init_temp_preview("reveal-sandbox");
+    assert!(preview.create_problem("p1".into(), "Reveal".into()).ok);
+
+    // Valid relative path inside workspace.
+    let rel_ok = preview
+        .state
+        .lock()
+        .unwrap()
+        .resolve_reveal_path("problems/p1/statement.md");
+    assert!(rel_ok.is_ok(), "relative reveal failed: {:?}", rel_ok);
+
+    // Valid absolute path inside workspace.
+    let abs_target = dir.0.join("problems/p1/problem.toml");
+    let abs_ok = preview
+        .state
+        .lock()
+        .unwrap()
+        .resolve_reveal_path(&abs_target.display().to_string());
+    assert!(abs_ok.is_ok(), "absolute reveal failed: {:?}", abs_ok);
+
+    // Missing file returns not_found.
+    let missing = preview
+        .state
+        .lock()
+        .unwrap()
+        .resolve_reveal_path("build/does-not-exist.pdf")
+        .unwrap_err();
+    assert!(!missing.ok);
+    assert_eq!(missing.code.as_deref(), Some("not_found"));
+
+    // Relative path traversal outside workspace is rejected with path_escape.
+    let outside = TempDir::new("reveal-outside");
+    let outside_file = outside.0.join("secret.txt");
+    std::fs::write(&outside_file, "secret").unwrap();
+
+    let rel_escape = preview
+        .state
+        .lock()
+        .unwrap()
+        .resolve_reveal_path("../escape.txt")
+        .unwrap_err();
+    assert_eq!(rel_escape.code.as_deref(), Some("path_escape"));
+
+    // Absolute path outside workspace is rejected with path_escape.
+    let abs_escape = preview
+        .state
+        .lock()
+        .unwrap()
+        .resolve_reveal_path(&outside_file.display().to_string())
+        .unwrap_err();
+    assert_eq!(abs_escape.code.as_deref(), Some("path_escape"));
+
+    // Symlink inside workspace pointing outside workspace is rejected with path_escape.
+    #[cfg(unix)]
+    {
+        let link = dir.0.join("problems/p1/evil-link.txt");
+        std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+        let sym_escape = preview
+            .state
+            .lock()
+            .unwrap()
+            .resolve_reveal_path("problems/p1/evil-link.txt")
+            .unwrap_err();
+        assert_eq!(sym_escape.code.as_deref(), Some("path_escape"));
+    }
+}
+
+#[test]
+fn prefs_preserves_window_state_and_exposes_snapshots_dir() {
+    let data = TempDir::new("prefs-seams");
+    assert_eq!(
+        crate::prefs::snapshots_dir(&data.0),
+        data.0.join("snapshots")
+    );
+
+    // Default prefs.json omits `windowState` when absent.
+    let preview = Preview::new(Some(data.0.display().to_string()));
+    preview.save_prefs(AppPrefsJs {
+        split_ratio: 0.48,
+        ..Default::default()
+    });
+    let raw_without = std::fs::read_to_string(data.0.join("prefs.json")).unwrap();
+    assert!(
+        !raw_without.contains("windowState"),
+        "windowState should be omitted when None: {raw_without}"
+    );
+
+    // Inject a Phase 2.5 `windowState` payload and ensure `save_prefs` preserves it verbatim.
+    let mut parsed: JsonValue = raw_without.parse().unwrap();
+    parsed["windowState"] = r#"{"width":1360,"height":860,"maximized":false}"#.parse().unwrap();
+    std::fs::write(data.0.join("prefs.json"), format!("{parsed:#}\n")).unwrap();
+
+    let reloaded = Preview::new(Some(data.0.display().to_string()));
+    let mut app = reloaded.load_prefs();
+    app.split_ratio = 0.55;
+    reloaded.save_prefs(app);
+
+    let after: JsonValue = std::fs::read_to_string(data.0.join("prefs.json"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(after["windowState"]["width"], 1360);
+    assert_eq!(after["windowState"]["height"], 860);
+    assert_eq!(after["windowState"]["maximized"], false);
+    assert!((after["splitRatio"].as_f64().unwrap() - 0.55).abs() < 1e-9);
+}

@@ -9,6 +9,10 @@
       "style": "hidden",
       "height": 44
     },
+    "defaultSize": {
+      "width": 1280,
+      "height": 820
+    },
     "minSize": {
       "width": 960,
       "height": 640

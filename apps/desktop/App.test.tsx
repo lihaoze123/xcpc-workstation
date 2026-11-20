@@ -218,6 +218,18 @@ test("exposes Phase 2 search, detail, stats, fuzzy jump, locateClick and MCP sni
   preview.savePrefs({ ...prefs, splitRatio: 0.45, propsOpen: false });
   expect(preview.loadPrefs().splitRatio).toBe(0.45);
   expect(preview.loadPrefs().propsOpen).toBe(false);
+
+  // Export status, lastWorkspaceMissing, and revealInFolder sandbox checks.
+  expect(preview.workspace().lastWorkspaceMissing).toBe(false);
+  const status = preview.exportStatus(contest());
+  expect(status.statements.relPath).toBe("build/contest-zh.pdf");
+  expect(status.editorial.relPath).toBe("build/contest-zh-editorial.pdf");
+  const escapeRes = await preview.revealInFolder("../outside.txt");
+  expect(escapeRes.ok).toBe(false);
+  expect(escapeRes.code).toBe("path_escape");
+  const missingRes = await preview.revealInFolder("build/nonexistent.pdf");
+  expect(missingRes.ok).toBe(false);
+  expect(missingRes.code).toBe("not_found");
 });
 
 test("wakes nextChange cleanly when Preview is disposed", async () => {

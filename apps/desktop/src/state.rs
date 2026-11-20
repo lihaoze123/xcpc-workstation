@@ -4,29 +4,32 @@
 //! All domain and storage rules are delegated to `xcpc-domain`, `xcpc-storage`, and
 //! `xcpc-convert`.
 
-use std::collections::{BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
-use xcpc_convert::publish;
+use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
     ContestMetaPatch, FuzzyMatchKind, Language, Problem, RatingTier, SearchQuery, check_id,
 };
 use xcpc_engine::{Compiled, Engine, FontOptions};
-use xcpc_storage::{WatchEvent, Workspace, WorkspaceIndex, WorkspaceWatcher, content_hash};
+use xcpc_storage::{
+    WORKSPACE_FILE, WatchEvent, Workspace, WorkspaceIndex, WorkspaceWatcher, content_hash,
+};
 
 use crate::cache::{CachedCompile, CancelToken, NEXT_PREVIEW_ID, PIXELS, rasterize_cached};
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
 use crate::types::{
     ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
-    ContestStatsJs, FreezeResultJs, FuzzyHitJs, OverridePatchJs, PreviewRequest, PreviewResult,
-    PreviewView, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs,
-    RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report, first_error,
-    limits_to_js, rating_tier_str, source_to_js,
+    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, OverridePatchJs,
+    PdfFreshnessJs, PreviewRequest, PreviewResult, PreviewView, ProblemDetailJs,
+    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
+    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js, rating_tier_str,
+    source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -36,9 +39,19 @@ pub(crate) struct WatchSession {
     pub(crate) rx: Arc<Mutex<mpsc::Receiver<WatchEvent>>>,
 }
 
+/// In-session record of a PDF exported by `Preview::export`, used by `export_status` to
+/// detect staleness immediately even within the same filesystem timestamp tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExportRecord {
+    pub(crate) fingerprint: String,
+    pub(crate) pdf_len: u64,
+    pub(crate) pdf_mtime: Option<SystemTime>,
+}
+
 pub(crate) struct State {
     pub(crate) id: u64,
     pub(crate) workspace: Option<Workspace>,
+    pub(crate) last_workspace_missing: bool,
     pub(crate) index: WorkspaceIndex,
     pub(crate) watcher: Option<WorkspaceWatcher>,
     pub(crate) watch_session: Option<WatchSession>,
@@ -50,6 +63,8 @@ pub(crate) struct State {
     /// Bumped on workspace mutations, switches, and external watch events to invalidate `cached`.
     pub(crate) revision: u64,
     pub(crate) cached: Option<CachedCompile>,
+    /// In-session PDF export fingerprints keyed by `(Target, Kind)`.
+    pub(crate) exports: HashMap<(Target, Kind), ExportRecord>,
     /// Layer keys of the latest committed preview result, protected from LRU eviction.
     pub(crate) active: HashSet<String>,
 }
@@ -66,18 +81,40 @@ impl Drop for State {
 
 impl State {
     pub(crate) fn new(data_dir: Option<PathBuf>) -> Self {
+        let env_ws = std::env::var_os("XCPC_WORKSPACE").map(PathBuf::from);
+        Self::new_with_sources(data_dir, env_ws.as_deref(), Path::new("."))
+    }
+
+    pub(crate) fn new_with_sources(
+        data_dir: Option<PathBuf>,
+        env_workspace: Option<&Path>,
+        cwd: &Path,
+    ) -> Self {
         let prefs = StoredPrefs::load(data_dir.as_deref());
-        let workspace = match std::env::var_os("XCPC_WORKSPACE") {
+        let mut last_workspace_missing = false;
+        let workspace = match env_workspace {
             Some(dir) => Workspace::open(dir, false).ok(),
-            None => Workspace::discover(".", false).ok().or_else(|| {
+            None => Workspace::discover(cwd, false).ok().or_else(|| {
                 let last = prefs.latest_workspace()?;
-                Workspace::open(last, false).ok()
+                if last.is_dir() && last.join(WORKSPACE_FILE).is_file() {
+                    match Workspace::open(&last, false) {
+                        Ok(ws) => Some(ws),
+                        Err(_) => {
+                            last_workspace_missing = true;
+                            None
+                        }
+                    }
+                } else {
+                    last_workspace_missing = true;
+                    None
+                }
             }),
         };
 
         let mut state = Self {
             id: NEXT_PREVIEW_ID.fetch_add(1, Ordering::Relaxed),
             workspace: None,
+            last_workspace_missing,
             index: WorkspaceIndex::default(),
             watcher: None,
             watch_session: None,
@@ -87,6 +124,7 @@ impl State {
             engine: Engine::new(&FontOptions::from_env(), None),
             revision: 0,
             cached: None,
+            exports: HashMap::new(),
             active: HashSet::new(),
         };
 
@@ -120,7 +158,9 @@ impl State {
         self.index = WorkspaceIndex::scan(&tracked_ws).unwrap_or_default();
         self.engine.set_root(Some(root));
         self.workspace = Some(tracked_ws);
+        self.last_workspace_missing = false;
         self.watch_session = new_session;
+        self.exports.clear();
         self.invalidate_cache();
 
         std::mem::replace(&mut self.watcher, new_watcher)
@@ -188,11 +228,15 @@ impl State {
 
     pub(crate) fn info(&self) -> WorkspaceInfo {
         let Some(ws) = &self.workspace else {
-            return WorkspaceInfo::default();
+            return WorkspaceInfo {
+                last_workspace_missing: self.last_workspace_missing,
+                ..Default::default()
+            };
         };
         let mut info = WorkspaceInfo {
             root: ws.root().display().to_string(),
             read_only: ws.is_read_only(),
+            last_workspace_missing: false,
             ..Default::default()
         };
         let mut errors = Vec::new();
@@ -467,7 +511,9 @@ impl State {
     }
 
     pub(crate) fn export(&mut self, request: &PreviewRequest) -> WorkspaceFile {
-        let path = publish::default_output(&request.target(), request.kind());
+        let target = request.target();
+        let kind = request.kind();
+        let path = publish::default_output(&target, kind);
         let fail = |error: String| WorkspaceFile {
             path: path.clone(),
             error: Some(error),
@@ -475,37 +521,186 @@ impl State {
         };
 
         // Fast path: reuse cached compilation when it matches and passed all checks.
-        let pdf = if let Some(cached) = self
+        let (pdf, doc_source) = if let Some(cached) = self
             .cached
             .as_ref()
             .filter(|c| c.revision == self.revision && c.request == *request && c.report.ok)
         {
             match cached.compiled.pdf() {
-                Ok(pdf) => pdf,
+                Ok(pdf) => (pdf, cached.doc.source.clone()),
                 Err(e) => return fail(e.first().map(|d| d.message.clone()).unwrap_or_default()),
             }
         } else {
             self.cached = None;
-            let (compiled, _doc, report) = match self.compile(request) {
+            let (compiled, doc, report) = match self.compile(request) {
                 Ok(r) => r,
                 Err(e) => return fail(e),
             };
-            let Some(compiled) = compiled.filter(|_| report.ok) else {
+            let (Some(compiled), Some(doc)) = (compiled.filter(|_| report.ok), doc) else {
                 return fail(first_error(&report).unwrap_or_default());
             };
             match compiled.pdf() {
-                Ok(pdf) => pdf,
+                Ok(pdf) => (pdf, doc.source),
                 Err(e) => return fail(e.first().map(|d| d.message.clone()).unwrap_or_default()),
             }
         };
 
-        let ws = self.workspace.as_ref().expect("compiled in it");
+        let ws = self.workspace.clone().expect("compiled in it");
         match ws.write(&path, &pdf) {
-            Ok(()) => WorkspaceFile {
-                path: ws.root().join(&path).display().to_string(),
-                ..Default::default()
-            },
+            Ok(()) => {
+                let abs_path = ws.root().join(&path);
+                let pdf_meta = std::fs::metadata(&abs_path).ok();
+                let pdf_len = pdf_meta.as_ref().map_or(pdf.len() as u64, |m| m.len());
+                let pdf_mtime = pdf_meta.and_then(|m| m.modified().ok());
+                if let Some(fingerprint) =
+                    compute_book_fingerprint(&ws, &target, kind, Some(doc_source.as_str()))
+                {
+                    self.exports.insert(
+                        (target, kind),
+                        ExportRecord {
+                            fingerprint,
+                            pdf_len,
+                            pdf_mtime,
+                        },
+                    );
+                }
+                WorkspaceFile {
+                    path: abs_path.display().to_string(),
+                    ..Default::default()
+                }
+            }
             Err(e) => fail(e.to_string()),
+        }
+    }
+
+    /// Resolves and validates `path` (absolute or workspace-relative) for `revealInFolder`,
+    /// enforcing that the target exists and stays strictly inside the open workspace.
+    pub(crate) fn resolve_reveal_path(&self, path: &str) -> Result<PathBuf, ActionResult> {
+        let Some(ws) = &self.workspace else {
+            return Err(ActionResult::err("no_workspace", "no workspace open"));
+        };
+        if path.is_empty() {
+            return Err(ActionResult::err("not_found", "path is empty"));
+        }
+        let candidate = Path::new(path);
+        let resolved = if candidate.is_absolute() {
+            if !candidate.exists() {
+                return Err(ActionResult::err("not_found", format!("{path} not found")));
+            }
+            candidate.to_path_buf()
+        } else {
+            let p = ws.resolve(path).map_err(ActionResult::from_storage_err)?;
+            if !p.exists() {
+                return Err(ActionResult::err("not_found", format!("{path} not found")));
+            }
+            p
+        };
+        let canonical = resolved
+            .canonicalize()
+            .map_err(|e| ActionResult::err("io", format!("{path}: {e}")))?;
+        if !canonical.starts_with(ws.root()) {
+            return Err(ActionResult::err(
+                "path_escape",
+                format!("path {path:?} is outside the workspace"),
+            ));
+        }
+        Ok(canonical)
+    }
+
+    /// Computes independent PDF freshness states for both `statements` and `editorial` books
+    /// of `request`'s target (in-session content fingerprint with restart `mtime` fallback).
+    pub(crate) fn export_status(&self, request: &PreviewRequest) -> ExportBookStatusJs {
+        let target = request.target();
+        ExportBookStatusJs {
+            statements: self.book_freshness(&target, Kind::Statements, request),
+            editorial: self.book_freshness(&target, Kind::Editorial, request),
+        }
+    }
+
+    fn book_freshness(
+        &self,
+        target: &Target,
+        kind: Kind,
+        request: &PreviewRequest,
+    ) -> PdfFreshnessJs {
+        let rel_path = publish::default_output(target, kind);
+        let Some(ws) = &self.workspace else {
+            return PdfFreshnessJs {
+                rel_path,
+                abs_path: String::new(),
+                exists: false,
+                fresh: false,
+            };
+        };
+        let abs_buf = ws.root().join(&rel_path);
+        let abs_path = abs_buf.display().to_string();
+        let Ok(pdf_meta) = std::fs::metadata(&abs_buf) else {
+            return PdfFreshnessJs {
+                rel_path,
+                abs_path,
+                exists: false,
+                fresh: false,
+            };
+        };
+        if !pdf_meta.is_file() {
+            return PdfFreshnessJs {
+                rel_path,
+                abs_path,
+                exists: false,
+                fresh: false,
+            };
+        }
+
+        // Unsaved editor edits belonging to this book immediately mark the on-disk PDF stale.
+        if unsaved_affects_book(ws, target, kind, request.unsaved()) {
+            return PdfFreshnessJs {
+                rel_path,
+                abs_path,
+                exists: true,
+                fresh: false,
+            };
+        }
+
+        let disk_len = pdf_meta.len();
+        let disk_mtime = pdf_meta.modified().ok();
+
+        // In-session export cache: exact content fingerprint match when the on-disk PDF is
+        // still the file we wrote in this session.
+        if let Some(rec) = self.exports.get(&(target.clone(), kind))
+            && rec.pdf_len == disk_len
+            && rec.pdf_mtime == disk_mtime
+        {
+            let cached_source = self
+                .cached
+                .as_ref()
+                .filter(|c| {
+                    c.revision == self.revision
+                        && c.request.target() == *target
+                        && c.request.kind() == kind
+                        && !unsaved_affects_book(ws, target, kind, c.request.unsaved())
+                })
+                .map(|c| c.doc.source.as_str());
+            let fresh = compute_book_fingerprint(ws, target, kind, cached_source)
+                .is_some_and(|fp| fp == rec.fingerprint);
+            return PdfFreshnessJs {
+                rel_path,
+                abs_path,
+                exists: true,
+                fresh,
+            };
+        }
+
+        // Restart recovery (or PDF produced externally): compare PDF mtime against the
+        // newest source file mtime for this book.
+        let fresh = match (disk_mtime, latest_book_source_mtime(ws, target, kind)) {
+            (Some(pdf_t), Some(src_t)) => pdf_t >= src_t,
+            _ => false,
+        };
+        PdfFreshnessJs {
+            rel_path,
+            abs_path,
+            exists: true,
+            fresh,
         }
     }
 
@@ -1279,4 +1474,263 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
         }
     }
     true
+}
+
+// ---- PDF freshness helpers (fingerprint + unsaved check + restart mtime recovery) ------
+
+/// Returns `(contest_dir_opt, problem_dirs)` for `target`:
+/// - Single problem: `(None, ["problems/<id>"])`
+/// - Unfrozen contest: `(Some("contests/<id>"), ["problems/<item.id>", ...])`
+/// - Frozen contest: `(Some("contests/<id>"), ["contests/<id>/snapshot/<label>", ...])`
+fn target_source_dirs(ws: &Workspace, target: &Target) -> Option<(Option<String>, Vec<String>)> {
+    match target {
+        Target::Problem(id) => {
+            check_id(id).ok()?;
+            Some((None, vec![format!("problems/{id}")]))
+        }
+        Target::Contest(id) => {
+            let contest = ws.load_contest(id).ok()?;
+            let dirs = contest
+                .meta
+                .problems
+                .iter()
+                .map(|item| {
+                    if contest.meta.frozen {
+                        format!("{}/snapshot/{}", contest.dir, item.label)
+                    } else {
+                        format!("problems/{}", item.id)
+                    }
+                })
+                .collect();
+            Some((Some(contest.dir), dirs))
+        }
+    }
+}
+
+fn normalize_ws_rel(rel: &str) -> String {
+    let replaced = rel.replace('\\', "/");
+    replaced
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_owned()
+}
+
+fn path_belongs_to_book(ws: &Workspace, target: &Target, kind: Kind, rel: &str) -> bool {
+    let Some((contest_dir, problem_dirs)) = target_source_dirs(ws, target) else {
+        return false;
+    };
+    let norm = normalize_ws_rel(rel);
+    if let Some(cdir) = contest_dir
+        && (norm == format!("{cdir}/contest.toml") || norm.starts_with(&format!("{cdir}/assets/")))
+    {
+        return true;
+    }
+    for pdir in problem_dirs {
+        let Some(sub) = norm.strip_prefix(&format!("{pdir}/")) else {
+            continue;
+        };
+        if sub == "problem.toml" || sub.starts_with("assets/") {
+            return true;
+        }
+        match kind {
+            Kind::Statements => {
+                if sub == "statement.md"
+                    || (sub.starts_with("statement.") && sub.ends_with(".md"))
+                    || sub.starts_with("samples/")
+                {
+                    return true;
+                }
+            }
+            Kind::Editorial => {
+                if sub == "editorial.md" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn unsaved_affects_book(
+    ws: &Workspace,
+    target: &Target,
+    kind: Kind,
+    unsaved: Option<(&str, &str)>,
+) -> bool {
+    let Some((path, text)) = unsaved else {
+        return false;
+    };
+    if !path_belongs_to_book(ws, target, kind, path) {
+        return false;
+    }
+    match ws.read_text(path) {
+        Ok(disk) => disk != text,
+        Err(xcpc_storage::Error::NotFound(_)) => !text.is_empty(),
+        Err(_) => true,
+    }
+}
+
+/// Computes a deterministic SHA-256 content fingerprint for `(target, kind)` combining
+/// the generated Typst document source (from disk) and every file under `assets/**`.
+fn compute_book_fingerprint(
+    ws: &Workspace,
+    target: &Target,
+    kind: Kind,
+    known_doc_source: Option<&str>,
+) -> Option<String> {
+    let owned_source;
+    let doc_source = match known_doc_source {
+        Some(s) => s,
+        None => {
+            let doc = publish::document_with(ws, target, kind, None, None).ok()?;
+            owned_source = doc.source;
+            &owned_source
+        }
+    };
+
+    let mut summary = String::new();
+    summary.push_str("doc:");
+    summary.push_str(&content_hash(doc_source.as_bytes()));
+    summary.push('\n');
+
+    let mut asset_hashes = BTreeMap::<String, String>::new();
+    if let Some((contest_dir, problem_dirs)) = target_source_dirs(ws, target) {
+        if let Some(cdir) = contest_dir {
+            collect_tree_hashes(ws, &format!("{cdir}/assets"), &mut asset_hashes);
+        }
+        for pdir in problem_dirs {
+            collect_tree_hashes(ws, &format!("{pdir}/assets"), &mut asset_hashes);
+        }
+    }
+    for (rel, hash) in asset_hashes {
+        summary.push_str(&rel);
+        summary.push(':');
+        summary.push_str(&hash);
+        summary.push('\n');
+    }
+
+    Some(content_hash(summary.as_bytes()))
+}
+
+fn collect_tree_hashes(ws: &Workspace, rel_dir: &str, out: &mut BTreeMap<String, String>) {
+    let Ok(abs_dir) = ws.resolve(rel_dir) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&abs_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let child_rel = format!("{rel_dir}/{name}");
+        let Ok(child_abs) = ws.resolve(&child_rel) else {
+            continue;
+        };
+        if child_abs.is_dir() {
+            collect_tree_hashes(ws, &child_rel, out);
+        } else if child_abs.is_file()
+            && let Ok(bytes) = std::fs::read(&child_abs)
+        {
+            out.insert(child_rel, content_hash(&bytes));
+        }
+    }
+}
+
+/// Returns the latest `mtime` across every source file contributing to `(target, kind)`
+/// for restart freshness recovery.
+fn latest_book_source_mtime(ws: &Workspace, target: &Target, kind: Kind) -> Option<SystemTime> {
+    let (contest_dir, problem_dirs) = target_source_dirs(ws, target)?;
+    let mut latest: Option<SystemTime> = None;
+    let bump = |latest: &mut Option<SystemTime>, t: SystemTime| {
+        *latest = Some(match *latest {
+            Some(cur) => cur.max(t),
+            None => t,
+        });
+    };
+
+    if let Some(cdir) = contest_dir {
+        record_file_mtime(ws, &format!("{cdir}/contest.toml"), &mut latest, &bump);
+        record_tree_mtime(ws, &format!("{cdir}/assets"), &mut latest, &bump);
+    }
+
+    for pdir in problem_dirs {
+        record_file_mtime(ws, &format!("{pdir}/problem.toml"), &mut latest, &bump);
+        record_tree_mtime(ws, &format!("{pdir}/assets"), &mut latest, &bump);
+        match kind {
+            Kind::Statements => {
+                for name in ["statement.md", "statement.zh.md", "statement.en.md"] {
+                    record_file_mtime(ws, &format!("{pdir}/{name}"), &mut latest, &bump);
+                }
+                record_tree_mtime(ws, &format!("{pdir}/samples"), &mut latest, &bump);
+            }
+            Kind::Editorial => {
+                record_file_mtime(ws, &format!("{pdir}/editorial.md"), &mut latest, &bump);
+            }
+        }
+    }
+
+    latest
+}
+
+fn record_file_mtime(
+    ws: &Workspace,
+    rel: &str,
+    latest: &mut Option<SystemTime>,
+    bump: &impl Fn(&mut Option<SystemTime>, SystemTime),
+) {
+    if let Ok(abs) = ws.resolve(rel)
+        && let Ok(meta) = std::fs::metadata(&abs)
+        && meta.is_file()
+        && let Ok(mtime) = meta.modified()
+    {
+        bump(latest, mtime);
+    }
+}
+
+fn record_tree_mtime(
+    ws: &Workspace,
+    rel_dir: &str,
+    latest: &mut Option<SystemTime>,
+    bump: &impl Fn(&mut Option<SystemTime>, SystemTime),
+) {
+    let Ok(abs_dir) = ws.resolve(rel_dir) else {
+        return;
+    };
+    let Ok(dir_meta) = std::fs::metadata(&abs_dir) else {
+        return;
+    };
+    if !dir_meta.is_dir() {
+        return;
+    }
+    // Include the directory's own mtime so deleting a sample or asset also invalidates.
+    if let Ok(mtime) = dir_meta.modified() {
+        bump(latest, mtime);
+    }
+    let Ok(entries) = std::fs::read_dir(&abs_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let child_rel = format!("{rel_dir}/{name}");
+        let Ok(child_abs) = ws.resolve(&child_rel) else {
+            continue;
+        };
+        if child_abs.is_dir() {
+            record_tree_mtime(ws, &child_rel, latest, bump);
+        } else if let Ok(meta) = std::fs::metadata(&child_abs)
+            && meta.is_file()
+            && let Ok(mtime) = meta.modified()
+        {
+            bump(latest, mtime);
+        }
+    }
 }
