@@ -74,7 +74,7 @@
 | 仿宋（`\fangsong`） | 方正仿宋 `FZFangSong-Z02` | 同上 |
 
 - 方正字体包来自 `github:brsvh/chinese-fonts-overlay`，在 `flake.nix` 中锁定版本。开发环境通过 `XCPC_FONT_DIRS` 提供字体目录，引擎**优先**从这些目录加载字体，保证在任何机器上排版结果一致；release 构建同时内嵌 Latin Modern 与 JetBrains Mono 字体作为兜底。
-- 运行时如果找不到上述字体，回退到系统字体（`fontdb`）中的思源宋体 / 思源黑体，并在诊断信息中给出警告。
+- 引擎默认只加载 `XCPC_FONT_DIRS`（以及 release 构建内嵌的 Latin Modern / JetBrains Mono），保证跨机器排版确定性；需要回退到系统字体（如思源宋体 / 思源黑体）时，CLI 可传入 `--system-fonts`。
 
 ## 2. 主题定制
 

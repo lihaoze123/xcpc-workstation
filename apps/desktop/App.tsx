@@ -1,5 +1,5 @@
 import process from "process";
-import { computed, effect, mount, pixelRatio, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
+import { computed, effect, mount, pixelRatio, Scroll, type ScrollRef, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { Button, Editor, type EditorDiagnostic, Select, Toggle, ToggleGroup } from "nsh/base";
 import {
   PageImage,
@@ -120,6 +120,23 @@ function App() {
   const scrollY = signal(0);
   const panX = signal(0);           // where the pages' left edge is, when wider than the pane
   let scroll: ScrollRef | undefined;
+  let paneView: ViewRef | undefined;
+  let paneOrigin = { x: 0, y: 0 };
+
+  // Live GPU-composited zoom transform while a pinch or Ctrl+wheel gesture is active:
+  // avoids re-laying out pages and racing Scroll.scrollTo on every event, then commits
+  // once when the gesture settles.
+  const live = signal({ k: 1, tx: 0, ty: 0 });
+  let baseScrollY = 0;
+  let zoomTargetK = 1;
+  let zoomAnchor = { x: 0, y: 0 };
+  let zoomRaf: number | undefined;
+  let zoomLastTime = 0;
+  let pinchCommitTimer: number | undefined;
+  const liveTransform = computed(() => {
+    const l = live();
+    return l.k === 1 && l.tx === 0 && l.ty === 0 ? "none" : `translate(${l.tx}px, ${l.ty}px) scale(${l.k})`;
+  });
 
   // Rasterize sharp enough for the current zoom on this screen, in half-pixel
   // steps so zooming does not re-rasterize on every wheel tick.
@@ -252,24 +269,131 @@ function App() {
 
   // Another problem or contest: new pages, fitted again.
   function choose(next: Pick | undefined) {
+    cancelLiveZoom();
     save();
     pick.set(next);
     label.set(undefined);
     pages.set([]);
     zoom.set(0);
+    scrollY.set(0);
     scrollTo(0);
   }
 
-  // Zooms to `next` keeping the content point under `at` (content coordinates) still.
-  function setZoom(next: number, at: { x: number; y: number }) {
+  function cancelLiveZoom() {
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    zoomTargetK = 1;
+    live.set({ k: 1, tx: 0, ty: 0 });
+  }
+
+  function viewportAt(pagePosition: { x: number; y: number }) {
+    return { x: pagePosition.x - paneOrigin.x, y: pagePosition.y - paneOrigin.y };
+  }
+
+  // Apply a live compositor scale `nextK` keeping the content point under `at` (viewport
+  // coordinates) pixel-locked.
+  function applyLiveScale(nextK: number, at: { x: number; y: number }) {
     const z = zoom();
     if (z === 0) return;
-    next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
-    const viewportY = at.y - scrollY();
-    const docX = (at.x - left()) / z;
-    zoom.set(next);
-    panX.set(at.x - docX * next);
-    scrollTo((at.y * next) / z - viewportY);
+    const cur = live();
+    if (cur.k === 1 && cur.tx === 0 && cur.ty === 0) {
+      baseScrollY = scrollY();
+    }
+    const clampedK = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * nextK)) / z;
+    const r = clampedK / cur.k;
+    const tx = at.x - r * (at.x - cur.tx);
+    const ty = at.y + baseScrollY - r * (at.y + baseScrollY - cur.ty);
+    live.set({ k: clampedK, tx, ty });
+  }
+
+  // Commit the live transform into laid-out zoom, panX and scrollY in one atomic batch.
+  function commitZoom() {
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    const z = zoom();
+    if (z === 0 || (cur.k === 1 && cur.tx === 0 && cur.ty === 0)) {
+      zoomTargetK = 1;
+      return;
+    }
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * cur.k));
+    const nextPanX = cur.tx + cur.k * left();
+    const contentHeight =
+      pages().reduce((h, p) => h + (p.height + GAP) * nextZoom, GAP * nextZoom);
+    const maxScroll = Math.max(0, contentHeight - pane().height);
+    const nextScrollY = Math.min(maxScroll, Math.max(0, baseScrollY - cur.ty));
+    zoomTargetK = 1;
+    live.set({ k: 1, tx: 0, ty: 0 });
+    zoom.set(nextZoom);
+    panX.set(nextPanX);
+    scrollY.set(nextScrollY);
+    scrollTo(nextScrollY);
+  }
+
+  function stepWheelZoom(now: number) {
+    zoomRaf = undefined;
+    const dt = zoomLastTime === 0 ? 16 : Math.min(48, Math.max(1, now - zoomLastTime));
+    zoomLastTime = now;
+    const cur = live();
+    const diff = zoomTargetK - cur.k;
+    if (Math.abs(diff) / cur.k < 0.0015) {
+      applyLiveScale(zoomTargetK, zoomAnchor);
+      commitZoom();
+      return;
+    }
+    // Exponential damping (~120ms settle time, matching design-system.md §8).
+    const alpha = 1 - Math.exp(-dt / 32);
+    applyLiveScale(cur.k + diff * alpha, zoomAnchor);
+    zoomRaf = requestAnimationFrame(stepWheelZoom);
+  }
+
+  function zoomWheel(factor: number, at: { x: number; y: number }) {
+    const z = zoom();
+    if (z === 0) return;
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    if (cur.k === 1 && cur.tx === 0 && cur.ty === 0 && zoomRaf === undefined) {
+      baseScrollY = scrollY();
+      zoomTargetK = 1;
+    }
+    zoomAnchor = at;
+    zoomTargetK = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * zoomTargetK * factor)) / z;
+    if (zoomRaf === undefined) {
+      zoomLastTime = 0;
+      zoomRaf = requestAnimationFrame(stepWheelZoom);
+    }
+  }
+
+  function zoomPinch(delta: number, phase: "start" | "move" | "end", at: { x: number; y: number }) {
+    if (zoom() === 0) return;
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    if (phase === "start" && cur.k === 1 && cur.tx === 0 && cur.ty === 0) {
+      baseScrollY = scrollY();
+    }
+    if (delta !== 0) {
+      applyLiveScale(cur.k * (1 + delta), at);
+    }
+    if (phase === "end") {
+      commitZoom();
+    } else {
+      // Fallback commit if the platform drops the final "end" event.
+      pinchCommitTimer = setTimeout(commitZoom, 140);
+    }
   }
 
   // Fit the page width, with a margin, once there are pages and a pane.
@@ -406,17 +530,24 @@ function App() {
         </Each>
       </View>
       <View
+        ref={(r) => (paneView = r)}
         style={{ flex: 1 }}
         class="bg-muted"
         onLayout={(e) => {
           pane.set({ width: e.bounds.size.width, height: e.bounds.size.height });
+          paneView?.measure().then((m) => {
+            if (m) paneOrigin = m.pagePosition;
+          });
           fit();
         }}
       >
         <Scroll
           ref={(r) => (scroll = r)}
           style={{ flex: 1 }}
-          onScroll={(e) => scrollY.set(e.offset.y)}
+          onScroll={(e) => {
+            if (live().k !== 1) commitZoom();
+            scrollY.set(e.offset.y);
+          }}
         >
           <View
             // Takes Ctrl + wheel (zoom) and sideways scrolling; the scroll view keeps
@@ -425,18 +556,20 @@ function App() {
             onWheel={(e) => {
               if (e.modifiers.control) {
                 const steps = e.deltaMode === "lines" ? e.delta.y : e.delta.y / 40;
-                setZoom(zoom() * Math.pow(1.1, -steps), e.position);
+                zoomWheel(Math.pow(1.12, -steps), viewportAt(e.pagePosition));
               } else {
+                if (live().k !== 1) commitZoom();
                 const k = e.deltaMode === "lines" ? 40 : 1;
                 panX.set(left() - e.delta.x * k);
               }
             }}
-            onPinch={(e) => setZoom(zoom() * (1 + e.delta), e.position)}
+            onPinch={(e) => zoomPinch(e.delta, e.phase, viewportAt(e.pagePosition))}
             onMouseMove={(e) => {
               if (e.pressedButton !== "left") {
                 drag = undefined;
                 return;
               }
+              if (live().k !== 1) commitZoom();
               if (drag) {
                 panX.set(left() + e.pagePosition.x - drag.x);
                 scrollTo(scrollY() - (e.pagePosition.y - drag.y));
@@ -448,6 +581,8 @@ function App() {
               paddingBottom: GAP * zoom(),
               gap: GAP * zoom(),
               opacity: zoom() === 0 ? 0 : 1,
+              transform: liveTransform(),
+              transformOrigin: "0 0",
             }}
           >
             <Each of={pages()} key="index">
@@ -458,6 +593,9 @@ function App() {
                     height: page().height * zoom(),
                     transform: `translateX(${left()}px)`,
                     backgroundColor: "#ffffff",
+                    borderWidth: 1,
+                    borderColor: "rgba(0,0,0,0.08)",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)",
                   }}
                 >
                   <PageImage layers={page().layers} style={{ width: "100%", height: "100%" }} />
