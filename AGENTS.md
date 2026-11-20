@@ -45,4 +45,4 @@
 - **不手写 Markdown/LaTeX 解析器**：用 `pulldown-cmark`（GFM + `ENABLE_MATH`）、`mitex`、`tylax`、`typlite`，自己只写薄胶水层。
 - **安全边界在 Core 层强制执行**：写入一律原子化（临时文件 + rename）；冻结的比赛只读，写入返回明确错误码；**解冻只开放给 GUI/CLI（需二次确认），不开放给 MCP**；支持 `--read-only`；文件访问不得越出工作区目录。
 - 不要超出当前阶段的范围（见 `docs/roadmap.md`）。`problem.toml` 要预留 Phase 5 的字段，但现在不实现。
-- **UI 文案克制**：主工作区不放冗余标题，不暴露技术细节（`SQLite FTS5`、`12ms`、`theme.toml`、`MCP Ready` 等）；成功状态不提示；耗时不到 150ms 的操作不显示 loading；嵌套圆角同心；数字用 `tabular-nums`；不能有 1px 布局抖动。Token 以 `docs/design-system.md` 为准。
+- **UI 文案克制与流畅感硬约束**：主工作区不放冗余标题，不暴露技术细节（`SQLite FTS5`、`12ms`、`theme.toml`、`MCP Ready` 等）；成功状态不提示；耗时不到 150ms 的操作不显示 loading；嵌套圆角同心；数字用 `tabular-nums`；不能有 1px 布局抖动。**交互流畅感是一等公民**：遵循 Linear / Zed 精密工具风（零弹跳过冲、120–160ms 临界阻尼/指数缓动、随时可打断）；连续手势（缩放、平移、拖拽）全程只动 GPU 合成器 `transform`、结束时单次原子提交，禁止每帧重排或与 `scrollTo` 竞态；切换与刷新零闪白，高频输入 1 帧内响应（≤16ms）。Token 与工程铁律以 `docs/design-system.md`（尤其是 §8）为准。
