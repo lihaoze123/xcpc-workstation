@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-# Regenerate the contest-en and contest-zh-mixed fixtures (Markdown for the reference
-# template, Typst for our engine) from one description:
+# Regenerate the contest-en and contest-zh-mixed fixtures from one description:
 #   scripts/gen-olymp-fixtures.py tests/fixtures/olymp-ref
-# then rebuild their reference.pdf with scripts/build-olymp-ref.sh.
-"""Generate held-out olymp fixtures: the same content as reference Markdown and as Typst."""
+# writes the reference template's Markdown and, through scripts/fixture-to-workspace.py,
+# the same content as a workspace; then rebuild their reference.pdf with
+# scripts/build-olymp-ref.sh.
+"""Generate held-out olymp fixtures: the same content as reference Markdown and as a workspace."""
+import subprocess
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
 
-# Each block: ("p", md, typ) paragraph; ("h", key) section; ("dm", md, typ) display math;
+# Each block (the Typst forms are left from Phase 0 and unused): ("p", md, typ) paragraph; ("h", key) section; ("dm", md, typ) display math;
 # ("ul", [(md, typ)...]); ("samples", [(in, out)...]).
 SECTION_MD = {
     "chinese": {"input": "输入格式", "output": "输出格式", "note": "提示", "explanation": "样例解释",
@@ -44,34 +46,6 @@ def problem_md(p, language):
     return "\n".join(out)
 
 
-def problem_typ(p, label):
-    args = [f'label: "{label}"', f'title: "{p["title"]}"', f'input: "{p["input-file"]}"',
-            f'output: "{p["output-file"]}"', f'time-limit: "{p["time-limit"]}"',
-            f'memory-limit: "{p["memory-limit"]}"']
-    if not p.get("metadata", True):
-        args.append("show-metadata: false")
-    out = [f"#problem({', '.join(args)})["]
-    for b in p["body"]:
-        kind = b[0]
-        if kind == "p":
-            out += [f"  {b[2]}", ""]
-        elif kind == "h":
-            out += [f'  #section("{b[1]}")', ""]
-        elif kind == "dm":
-            out += [f"  $ {b[2]} $", ""]
-        elif kind == "ul":
-            out += [f"  - {typ}" for _, typ in b[1]] + [""]
-        elif kind == "samples":
-            pairs = ", ".join(f"({tq(i)}, {tq(o)})" for i, o in b[1])
-            out += [f"  #samples({pairs},)", ""]
-    out.append("]")
-    return "\n".join(out)
-
-
-def tq(s):
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
-
-
 def write(name, contest, problems):
     d = root / name
     (d / "problems").mkdir(parents=True, exist_ok=True)
@@ -83,22 +57,7 @@ def write(name, contest, problems):
     )
     for l, p in zip(labels, problems):
         (d / "problems" / f"{l.lower()}.md").write_text(problem_md(p, contest["language"]))
-    typ = [
-        "// Generated with contest.md + problems/*.md by scripts/gen-olymp-fixtures.py.",
-        '#import "/xcpc/olymp-classic.typ": contest, problem, section, samples',
-        "",
-        "#show: contest.with(",
-        f'  name: "{contest["name"]}",',
-        f'  location: "{contest["location"]}",',
-        f'  date: "{contest["date"]}",',
-        f'  author: "{contest["author"]}",',
-        f'  language: "{contest["language"]}",',
-        ")",
-        "",
-    ]
-    for l, p in zip(labels, problems):
-        typ += [problem_typ(p, l), ""]
-    (d / "main.typ").write_text("\n".join(typ))
+    subprocess.run([sys.executable, Path(__file__).with_name("fixture-to-workspace.py"), d], check=True)
 
 
 EN_STD = {"input-file": "standard input", "output-file": "standard output"}

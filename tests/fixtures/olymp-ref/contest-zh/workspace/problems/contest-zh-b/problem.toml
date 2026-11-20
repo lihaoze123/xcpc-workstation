@@ -1,0 +1,5 @@
+title = "猜数字"
+
+[limits]
+time = "2s"
+memory = "512MB"

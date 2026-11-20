@@ -1,0 +1,5 @@
+title = "很长的样例"
+
+[limits]
+time = "1s"
+memory = "256MB"

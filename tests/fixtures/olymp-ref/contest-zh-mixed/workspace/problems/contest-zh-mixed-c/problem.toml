@@ -1,0 +1,5 @@
+title = "样例之后"
+
+[limits]
+time = "1s"
+memory = "256MB"

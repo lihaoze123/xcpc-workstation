@@ -1,0 +1,5 @@
+title = "Quiet Problem"
+
+[limits]
+time = "1s"
+memory = "512MB"

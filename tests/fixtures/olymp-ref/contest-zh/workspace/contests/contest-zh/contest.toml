@@ -1,0 +1,18 @@
+name = "第一届 XCPC 工作站测试赛"
+location = "上海"
+date = "2026 年 11 月 20 日"
+author = "出题人"
+language = "chinese"
+show-metadata = true
+
+[[problem]]
+id = "contest-zh-a"
+label = "A"
+
+[[problem]]
+id = "contest-zh-b"
+label = "B"
+
+[[problem]]
+id = "contest-zh-c"
+label = "C"
