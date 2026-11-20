@@ -4,7 +4,7 @@
 
 ## 项目
 
-**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、训练看板，并原生支持 MCP。**当前优先级是出版**。Phase 0（技术验证）已完成：`crates/xcpc-engine`（Typst 引擎与内嵌的 `olymp-classic` 模板）、`crates/xcpc-mcp`（`xcpc` CLI）、`apps/desktop`（编辑器 + Canvas 预览的 PoC）和基准回归管线，下一步是 Phase 1。
+**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、训练看板，并原生支持 MCP。**当前优先级是出版**。Phase 0（技术验证）已完成：`crates/xcpc-engine`（Typst 引擎与内嵌的 `olymp-classic` 模板）、`crates/xcpc-mcp`（`xcpc` CLI）、`apps/desktop`（编辑器 + 页面预览的 PoC）和基准回归管线，下一步是 Phase 1。
 
 完整规格在 `docs/` 下，按需阅读：
 
@@ -23,6 +23,7 @@
 - **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern 和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
 - NSH CLI：`nsh init`（本项目用 `--template mixed`）、`nsh dev`、`nsh run --target …`、`nsh check`（`nsh.json` 声明了 `"rust"` 时会先跑 `cargo check`）、`nsh test`（先跑 Rust 的 `cargo test`，再无头运行 `*.test.tsx`）、`nsh build`、`nsh package`。细节用 `nsh <cmd> --help` 查看。查 NSH 的 API 时读 `.nsh/types/nsh/{index,base}.d.ts`。
 - 依赖 `XCPC_FONT_DIRS` 的命令（`xcpc`、`nsh test`、`nsh dev`）要在开发环境里运行；不在 direnv 下时用 `nix develop -c <cmd>`。
+- 依赖的 `opt-level = 2` 写在 `.cargo/config.toml` 而不是 `Cargo.toml`：`nsh` 为桌面宿主生成的 `apps/desktop/.nsh/rust` 是另一个 workspace，读不到根 `Cargo.toml` 的 profile。
 - Rust：`cargo build`、`cargo test -p <crate> <test_name>`（运行单个测试）、`cargo clippy`、`cargo fmt`。Nix 文件用 `nix fmt` 格式化。
 - 版本管理用 **jj**（与 Git colocated），不要用会改动仓库状态的 git 命令。
 - 只在 Linux 上开发和验收。
@@ -30,10 +31,10 @@
 ## 架构要点
 
 - **单一 Rust Core**：NSH 桌面 GUI、`xcpc mcp`（stdio）和 `xcpc <subcommand> --json` 共用同一套 Core。业务逻辑只能写在 `crates/` 里，`apps/desktop` 和 `xcpc-mcp` 只是外壳。
-- **数据流**：开放目录（单一事实源）→ domain → convert（Markdown + Math，按二级标题识别章节，样例取自 `samples/`）→ typst（`olymp-classic`）→ `typst-render`（Canvas/PNG）或 `typst-pdf`。
+- **数据流**：开放目录（单一事实源）→ domain → convert（Markdown + Math，按二级标题识别章节，样例取自 `samples/`）→ typst（`olymp-classic`）→ `typst-render`（预览用像素缓冲，或 PNG）或 `typst-pdf`。
 - **题目**：目录名 slug 就是 ID，创建后不再改名；外部身份写在 `[[source]]` 中。**训练状态不写进任何内容文件**，在运行时由 `training/logs.jsonl` 和 `.xcpc/oj_sync.db` 合并派生。
 - **比赛**：活引用；覆写只允许改元数据（标题、限制、`show-metadata`）。冻结时把源文件和 PDF 复制进 `snapshot/`。
-- UI 组件只用 `nsh/base`。
+- UI 组件以 `nsh/base` 为基础：优先用现成组件，需要时可以基于 NSH 自己写组件（比如预览用的 `PageImage`），不引入第三方 UI 组件库。
 
 ## 不可违反的约束
 

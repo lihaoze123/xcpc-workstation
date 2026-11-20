@@ -1,11 +1,13 @@
-import { Canvas, computed, mount, pixelRatio, signal, Text, View } from "nsh";
+import { computed, mount, pixelRatio, signal, Text, View } from "nsh";
 import { Editor } from "nsh/base";
-import { Preview, type PreviewPage } from "xcpc-workstation/native";
+import { PageImage, Preview, type PreviewPage } from "xcpc-workstation/native";
 
-// Phase 0: a Typst source on the left, its pages on a canvas on the right.
+// Phase 0: a Typst source on the left, its pages on the right. The pages are pixel
+// buffers shown as images in one view that pans and zooms by its transform, so moving
+// them is compositing; a zoom stretches what is there until sharper pages arrive.
 
 const preview = new Preview();
-const GAP = 16; // points between pages, in canvas space
+const GAP = 16; // points between pages, at zoom 1
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
 
@@ -29,7 +31,10 @@ function App() {
     if (id !== latest) return;      // a newer edit is on its way
     console.log(`[preview] compile ${result.compileMs.toFixed(0)}ms, render ${result.rendered} pages ${result.renderMs.toFixed(0)}ms, round trip ${Date.now() - t}ms`);
     error.set(result.error ?? undefined);
-    if (!result.error) pages.set(result.pages);
+    if (!result.error) {
+      pages.set(result.pages);
+      fit();
+    }
   }
   function schedule() {
     clearTimeout(timer);
@@ -51,6 +56,18 @@ function App() {
   }
 
   let drag: { x: number; y: number } | undefined;
+  let paneWidth = 0;
+  // Fit the page width, with a margin, once there are pages and a pane.
+  function fit() {
+    const list = pages();
+    if (zoom() !== 0 || list.length === 0 || paneWidth === 0) return;
+    zoom.set((paneWidth - 2 * GAP) / list[0].width);
+    pan.set({ x: GAP, y: GAP });
+    if (scale() !== lastScale) {
+      lastScale = scale();
+      schedule();
+    }
+  }
 
   return (
     <View style={{ flex: 1, flexDirection: "row" }} class="bg-background">
@@ -67,8 +84,12 @@ function App() {
         />
       </View>
       <View
-        style={{ flex: 1 }}
+        style={{ flex: 1, overflow: "hidden" }}
         class="bg-muted"
+        onLayout={(e) => {
+          paneWidth = e.bounds.size.width;
+          fit();
+        }}
         onWheel={(e) => {
           if (e.modifiers.control) {
             const steps = e.deltaMode === "lines" ? e.delta.y : e.delta.y / 40;
@@ -92,34 +113,23 @@ function App() {
           drag = e.position;
         }}
       >
-        <Canvas
-          style={{ flex: 1 }}
-          draw={(cx, s) => {
-            const list = pages();
-            if (list.length === 0) return;
-            if (zoom() === 0) {
-              // Fit the page width, with a margin.
-              const z = (s.width - 2 * GAP) / list[0].width;
-              zoom.set(z);
-              pan.set({ x: GAP, y: GAP });
-              return;
-            }
-            const z = zoom();
-            const p = pan();
-            let y = 0;
-            for (const page of list) {
-              const w = page.width * z;
-              const h = page.height * z;
-              const top = p.y + y * z;
-              if (top < s.height && top + h > 0) {
-                cx.fillStyle = "#ffffff";
-                cx.fillRect(p.x, top, w, h);
-                cx.drawImage(page.url, p.x, top, w, h);
-              }
-              y += page.height + GAP;
-            }
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            gap: GAP,
+            transformOrigin: "top left",
+            transform: `translate(${pan().x}px, ${pan().y}px) scale(${zoom() || 1})`,
+            opacity: zoom() === 0 ? 0 : 1,
           }}
-        />
+        >
+          {pages().map((page) => (
+            <View style={{ width: page.width, height: page.height, backgroundColor: "#ffffff" }}>
+              <PageImage page={page.key} style={{ width: page.width, height: page.height }} />
+            </View>
+          ))}
+        </View>
         {error() && (
           <View style={{ position: "absolute", left: 12, right: 12, bottom: 12, padding: 8, borderRadius: 8 }} class="bg-background">
             <Text class="text-destructive" style={{ fontSize: 12 }}>{error()}</Text>

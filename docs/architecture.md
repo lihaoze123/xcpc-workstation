@@ -6,8 +6,8 @@
 | :--- | :--- |
 | 平台 | **只在 Linux 上开发和验收**。macOS / Windows 不验收，但能低成本避免的平台特有写法要避免。Web 版远期待定 |
 | 应用框架 | **NSH 0.6（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
-| UI 组件 | **只用 `nsh/base`**：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
-| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 加载字体、`typst-render` 输出到 Canvas 或 PNG、`typst-pdf` 导出 PDF |
+| UI 组件 | **以 `nsh/base` 为基础**，需要时可以基于 NSH 自己写组件（如预览页面的 `PageImage`）：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
+| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 加载字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF |
 | 题面字体 | Latin Modern 和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供，见 [statement-style.md](./statement-style.md#17-字体) |
 | 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）+ `mitex`；LaTeX 输入用 `tylax`；导出为 Markdown 用 `typlite`/`tylax` |
 | 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite 派生数据 |
@@ -28,7 +28,7 @@ flowchart TD
 
     subgraph UI["UI 层 (NSH TSX + nsh/base)"]
         Rail["左侧导航 (总览 / 题库 / 比赛 / 设置)"]
-        Studio["出版工作室 (Editor + Canvas 预览)"]
+        Studio["出版工作室 (Editor + 页面预览)"]
         Others["题库中心 / 训练看板 / Cmd+K"]
     end
 
@@ -44,7 +44,7 @@ flowchart TD
         Conv["xcpc-convert: Markdown → Typst 胶水层"]
         Lint["xcpc-lint"]
         Engine["xcpc-engine: typst + comemo + fontdb"]
-        Render["typst-render (Canvas / PNG) & typst-pdf"]
+        Render["typst-render (像素缓冲 / PNG) & typst-pdf"]
         Pkg["xcpc-packages: Polygon / Companion / ..."]
         Sync["xcpc-sync: 外部 OJ 同步"]
     end

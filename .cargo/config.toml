@@ -1,0 +1,5 @@
+# Typst's layout and rasterizer are unusably slow unoptimized; our own crates stay
+# debuggable. Here rather than in `Cargo.toml` so it also reaches the workspace `nsh`
+# generates for the desktop hosts (`apps/desktop/.nsh/rust`), whose profiles are its own.
+[profile.dev.package."*"]
+opt-level = 2
