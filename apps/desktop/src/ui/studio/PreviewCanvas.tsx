@@ -1,0 +1,1227 @@
+// The paper preview (§6.2, §8.2): pages scroll in a native scroll view, laid out at the
+// zoom's size; both zoom (pinch / Ctrl+wheel) and left-drag panning run strictly on the
+// GPU compositor (`transform`) until the gesture settles, then commit in a single batch
+// with zero mid-drag re-rasterization or `scrollTo` race. Over it, a single unified
+// floating HUD capsule that glides with the Inspector drawer and hides cleanly on narrow
+// panes so it is never clipped.
+
+import {
+  batch,
+  cleanup,
+  colorScheme,
+  computed,
+  effect,
+  pixelRatio,
+  Scroll,
+  signal,
+  Text,
+  untracked,
+  View,
+  type ScrollRef,
+  type ViewRef,
+} from "nsh";
+import { Popover } from "nsh/base";
+import {
+  PageImage,
+  type PreviewDiagnostic,
+  type PreviewPage,
+  type PreviewRequest,
+  type PreviewResult,
+  type PreviewStart,
+  type PreviewView,
+  type SourceLocationJs,
+} from "xcpc-workstation/native";
+import { Icon, type IconName } from "../Icon";
+import { DelayedSpinner, tip } from "../kit";
+import {
+  BASE_SCALE,
+  DEFAULT_PAGE,
+  diagnosticCounts,
+  GAP,
+  leftFor,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  scaleFor,
+  TILE,
+  type PageSize,
+} from "../logic";
+import { preview } from "../store";
+import { EASE_DRAWER, EASE_STANDARD, ms, popoverShadow } from "../theme";
+
+type ViewportMemory = { zoom: number; scrollY: number; panX: number; autoFit: boolean; pageSizes: PageSize[] };
+
+// Kept across studio sessions: going back to a contest finds it where it was left.
+const viewports = new Map<string, ViewportMemory>();
+
+const TOP_PAD = 28; // breathing room above page 1 when content overflows vertically
+const BOTTOM_HUD_PAD = 76; // clears the floating HUD capsule (bottom 16 + height 32 + 28 breathing room)
+const BOTTOM_NO_HUD_PAD = 28;
+const FIT_SIDE_PAD = 36; // comfortable horizontal margin for fit-to-width
+const MAX_FIT_ZOOM = 1.25; // crisp and generous without blowing up on ultrawide monitors
+
+function requestKey(req: { target: string; id: string; book: string }): string {
+  return `${req.target}:${req.id}:${req.book}`;
+}
+
+/** Clamped visual gap between pages so extreme zoom levels never stretch or collapse spacing. */
+function pageGap(z: number): number {
+  if (z <= 0) return GAP;
+  return Math.max(10, Math.min(32, GAP * z));
+}
+
+/** Generous fit-to-width zoom with comfortable side margins and a sensible upper bound. */
+function fitZoom(list: readonly { width: number }[], paneWidth: number): number {
+  if (list.length === 0 || paneWidth <= 0) return 0;
+  const pad = Math.min(FIT_SIDE_PAD, Math.max(GAP, paneWidth * 0.06));
+  const raw = (paneWidth - 2 * pad) / list[0].width;
+  return Math.min(MAX_FIT_ZOOM, Math.max(MIN_ZOOM, raw));
+}
+
+function bottomPadFor(hasHud: boolean): number {
+  return hasHud ? BOTTOM_HUD_PAD : BOTTOM_NO_HUD_PAD;
+}
+
+/** Pure height of the page stack (all pages plus gaps between them, excluding top/bottom padding). */
+function stackHeight(list: readonly { height: number }[], z: number): number {
+  if (list.length === 0 || z <= 0) return 0;
+  const g = pageGap(z);
+  let h = 0;
+  for (let i = 0; i < list.length; i++) {
+    h += list[i].height * z;
+    if (i > 0) h += g;
+  }
+  return h;
+}
+
+/**
+ * Top padding of the page column: vertically centers the stack when shorter than the viewport
+ * (while still clearing the bottom HUD without introducing a spurious scrollbar), otherwise
+ * keeps a comfortable `TOP_PAD` breathing margin.
+ */
+function topPadFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean): number {
+  if (list.length === 0 || z <= 0 || paneHeight <= 0) return TOP_PAD;
+  const sh = stackHeight(list, z);
+  const minBottom = bottomPadFor(hasHud);
+  const room = paneHeight - sh;
+  if (room <= TOP_PAD + minBottom) return TOP_PAD;
+  const centered = Math.floor(room / 2);
+  return Math.max(TOP_PAD, Math.min(centered, room - minBottom));
+}
+
+function heightFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean): number {
+  if (list.length === 0 || z <= 0) return 0;
+  return topPadFor(list, z, paneHeight, hasHud) + stackHeight(list, z) + bottomPadFor(hasHud);
+}
+
+/** Y offset of page `index`'s top edge in scroll-content coordinates. */
+function pageYFor(list: readonly { height: number }[], z: number, index: number, topPad: number): number {
+  const g = pageGap(z);
+  let y = topPad;
+  for (let i = 0; i < index && i < list.length; i++) {
+    y += list[i].height * z + g;
+  }
+  return y;
+}
+
+/** Target `scrollY` to jump to page `index`. */
+function topFor(list: readonly { height: number }[], z: number, index: number, topPad: number): number {
+  if (index <= 0) return 0;
+  return Math.max(0, pageYFor(list, z, index, topPad) - pageGap(z));
+}
+
+function pageIndexAt(
+  list: readonly { height: number }[],
+  z: number,
+  scrollY: number,
+  paneHeight: number,
+  topPad: number,
+): number {
+  if (list.length === 0 || z <= 0) return 0;
+  const g = pageGap(z);
+  const mid = scrollY + paneHeight / 3;
+  let y = topPad;
+  for (let i = 0; i < list.length; i++) {
+    y += list[i].height * z + g;
+    if (mid < y) return i;
+  }
+  return list.length - 1;
+}
+
+function viewFor(
+  list: readonly PageSize[],
+  z: number,
+  curScrollY: number,
+  curPanX: number,
+  curPane: { width: number; height: number },
+  topPad: number,
+): PreviewView[] {
+  const edge = (page: number): PreviewView => ({ page, x: 0, y: 0, width: 0, height: 0 });
+  if (list.length === 0 || z === 0) return [edge(0), edge(1)];
+  const g = pageGap(z);
+  const curLeft = leftFor(list[0].width, z, curPane.width, curPanX);
+  const top = curScrollY;
+  const bottom = top + curPane.height;
+  const x0 = Math.max(0, -curLeft / z);
+  const out: PreviewView[] = [];
+  let y = topPad;
+  list.forEach((page, i) => {
+    const h = page.height * z;
+    if (y + h >= top && y <= bottom) {
+      const y0 = Math.max(0, (top - y) / z);
+      const y1 = Math.min(page.height, (bottom - y) / z);
+      const x1 = Math.min(page.width, (curPane.width - curLeft) / z);
+      out.push({ page: i, x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) });
+    }
+    y += h + g;
+  });
+  if (out.length === 0) return [edge(0), edge(1)];
+  if (out[0].page > 0) out.unshift(edge(out[0].page - 1));
+  if (out[out.length - 1].page < list.length - 1) out.push(edge(out[out.length - 1].page + 1));
+  return out;
+}
+
+function hitPage(
+  list: readonly PageSize[],
+  z: number,
+  left: number,
+  x: number,
+  y: number,
+  topPad: number,
+): { page: number; xPt: number; yPt: number } | null {
+  if (list.length === 0 || z <= 0) return null;
+  const g = pageGap(z);
+  let top = topPad;
+  for (let i = 0; i < list.length; i++) {
+    const h = list[i].height * z;
+    if (y >= top && y <= top + h) {
+      const xPt = (x - left) / z;
+      const yPt = (y - top) / z;
+      if (xPt < 0 || xPt > list[i].width) return null;
+      return { page: i, xPt, yPt };
+    }
+    top += h + g;
+  }
+  return null;
+}
+
+export interface CanvasController {
+  /** Typesets the request again (its text changed). */
+  compile(): void;
+  /** Scrolls to `label`'s first page: smoothly when it is in the pages shown, else once the next result says where. */
+  jumpTo(label: string): void;
+  /** Scrolls to page `index` (0-based). */
+  goPage(index: number, animated?: boolean): void;
+  /** Scrolls smoothly to `(page, yPt)` (for forward source-to-preview locate). */
+  scrollToLocation(page: number, yPt: number, animated?: boolean): void;
+  /** Zooms by `factor` around the middle of the pane. */
+  zoomBy(factor: number): void;
+  /** Fits the page width. */
+  fitWidth(): void;
+  /** Closes the preflight popover if open; returns true if it was open. */
+  closeHud(): boolean;
+}
+
+export function PreviewCanvas(props: {
+  request: () => PreviewRequest | undefined;
+  controller: (c: CanvasController) => void;
+  onResult?: (result: PreviewResult) => void;
+  onLocate?: (loc: SourceLocationJs) => void;
+  onDiagnostic?: (d: PreviewDiagnostic) => void;
+  /** Room the drawer covers on the right: the HUD centers in what is left. */
+  inset?: number;
+  /** The floating HUD (the studio's); a glance elsewhere goes without. */
+  hud?: boolean;
+}) {
+  const pages = signal<PreviewPage[]>([]);
+  const diagnostics = signal<PreviewDiagnostic[]>([]);
+  /** Why there are no pages to show (the first error), while there are none. */
+  const failure = signal<PreviewDiagnostic | undefined>(undefined);
+  const zoom = signal(0); // 0 until the first fit
+  const pane = signal({ width: 0, height: 0 });
+  const scrollY = signal(0);
+  const panX = signal(0); // where the pages' left edge is, when wider than the pane
+  const resizing = signal(false);
+  let resizeTimer: number | undefined;
+  let scroll: ScrollRef | undefined;
+  let paneView: ViewRef | undefined;
+  let paneOrigin = { x: 0, y: 0 };
+
+  let shownKey: string | undefined;
+  let needsFit = false;
+  let autoFit = true;
+  let pendingJumpPage: number | undefined;
+  let lastStarts: PreviewStart[] = [];
+
+  // The content's laid-out height, so a scroll target beyond the previous maximum
+  // settles once layout grows, and stays interruptible by the user.
+  let contentHeightLaidOut = 0;
+  let pendingScroll: { y: number; minContentHeight: number; raf?: number } | undefined;
+
+  const hasHud = () => props.hud !== false;
+
+  const key = computed(() => {
+    const r = props.request();
+    return r ? requestKey(r) : undefined;
+  });
+
+  function cancelPendingScroll() {
+    if (pendingScroll?.raf !== undefined) cancelAnimationFrame(pendingScroll.raf);
+    pendingScroll = undefined;
+  }
+
+  function currentMaxScroll(): number {
+    const curPaneH = pane().height;
+    const h = contentHeightLaidOut > 0 ? contentHeightLaidOut : heightFor(pages(), zoom(), curPaneH, hasHud());
+    return Math.max(0, h - curPaneH);
+  }
+
+  function clampScroll(list: readonly PageSize[], z: number, y: number, paneH = pane().height): number {
+    const max = Math.max(0, heightFor(list, z, paneH, hasHud()) - paneH);
+    return Math.min(max, Math.max(0, y));
+  }
+
+  function scrollTo(y: number, animated = false) {
+    scroll?.scrollTo({ y, animated: animated && ms(1) > 0 });
+  }
+
+  function commitScroll(targetY: number, oldMaxScroll: number, newMaxScroll: number) {
+    const clampedY = Math.min(newMaxScroll, Math.max(0, targetY));
+    cancelPendingScroll();
+    scrollTo(clampedY);
+    if (clampedY > oldMaxScroll + 0.5) {
+      const entry: { y: number; minContentHeight: number; raf?: number } = { y: clampedY, minContentHeight: clampedY + pane().height };
+      pendingScroll = entry;
+      entry.raf = requestAnimationFrame(() => {
+        if (pendingScroll !== entry) return;
+        pendingScroll = undefined;
+        scrollY.set(clampedY);
+        scrollTo(clampedY);
+      });
+    }
+  }
+
+  function saveViewport() {
+    if (!shownKey || !hasHud()) return;
+    const list = pages();
+    const z = zoom();
+    if (list.length === 0 || z === 0) return;
+    viewports.set(shownKey, {
+      zoom: z,
+      scrollY: scrollY(),
+      panX: panX(),
+      autoFit,
+      pageSizes: list.map((p) => ({ width: p.width, height: p.height })),
+    });
+  }
+
+  // The live compositor transform of a pinch/Ctrl+wheel zoom or left-drag pan.
+  const live = signal({ k: 1, tx: 0, ty: 0 });
+  const panOffset = signal({ dx: 0, dy: 0 });
+  const dragging = signal(false);
+  let dragStart: { x: number; y: number } | undefined;
+
+  let baseScrollY = 0;
+  let zoomTargetK = 1;
+  let zoomAnchor = { x: 0, y: 0 };
+  let zoomRaf: number | undefined;
+  let zoomLastTime = 0;
+  let pinchCommitTimer: number | undefined;
+
+  const liveTransform = computed(() => {
+    const l = live();
+    const p = panOffset();
+    const tx = l.tx + p.dx;
+    const ty = l.ty + p.dy;
+    return l.k === 1 && tx === 0 && ty === 0 ? "none" : `translate(${tx}px, ${ty}px) scale(${l.k})`;
+  });
+
+  const scale = computed(() => scaleFor(zoom(), pixelRatio()));
+  const left = computed(() => leftFor(pages()[0]?.width ?? 0, zoom(), pane().width, panX()));
+  const topPad = computed(() => topPadFor(pages(), zoom(), pane().height, hasHud()));
+  const bottomPad = computed(() => bottomPadFor(hasHud()));
+  const view = computed<PreviewView[]>(() => viewFor(pages(), zoom(), scrollY(), panX(), pane(), topPad()));
+  const currentPage = computed(() => pageIndexAt(pages(), zoom(), scrollY(), pane().height, topPad()));
+
+  function tiles(v: PreviewView, s: number, margin: number) {
+    const t = (pt: number, m: number) => Math.max(0, Math.floor((pt * s + m) / TILE));
+    return [t(v.x, -margin), t(v.y, -margin), t(v.x + v.width, margin), t(v.y + v.height, margin)];
+  }
+
+  let asked = { key: "", scale: 0, pages: "", tiles: new Map<number, number[]>() };
+  function due() {
+    // Read every dependency before deciding, so the effect tracks them all.
+    const curKey = key();
+    const s = scale();
+    const list = view();
+    const isResizing = resizing();
+    if (!curKey || curKey !== shownKey || isResizing) return false;
+    if (curKey !== asked.key || s !== asked.scale || list.map((v) => v.page).join() !== asked.pages) return true;
+    if (s <= BASE_SCALE) return false;
+    return list.some((v) => {
+      if (v.width <= 0) return false;
+      const [x0, y0, x1, y1] = tiles(v, s, 0);
+      const [a0, b0, a1, b1] = asked.tiles.get(v.page) ?? [1, 1, 0, 0];
+      return x0 < a0 || y0 < b0 || x1 > a1 || y1 > b1;
+    });
+  }
+
+  let jumpTo: string | undefined;
+  let retries = 0;
+  let compileSeq = 0;
+  let inFlight = 0;
+  let again = false;
+
+  function applyResult(reqKey: string, result: PreviewResult) {
+    const isSwitch = reqKey !== shownKey;
+    props.onResult?.(result);
+    if (result.pages.length === 0) {
+      if (!result.error && result.diagnostics.length === 0 && retries < 3) {
+        retries += 1;
+        setTimeout(compile, 60);
+        return;
+      }
+      batch(() => {
+        diagnostics.set(result.diagnostics);
+        if (isSwitch) {
+          shownKey = reqKey;
+          pages.set([]);
+        }
+        if (pages().length === 0) failure.set(result.diagnostics.find((d) => d.severity === "error") ?? { severity: "error", message: result.error ?? "" });
+      });
+      return;
+    }
+    retries = 0;
+    failure.set(undefined);
+    lastStarts = result.starts;
+    const start = jumpTo === undefined ? undefined : result.starts.find((x) => x.label === jumpTo);
+    jumpTo = undefined;
+
+    if (!isSwitch) {
+      const oldMaxScroll = currentMaxScroll();
+      batch(() => {
+        diagnostics.set(result.diagnostics);
+        pages.set(result.pages);
+        if (needsFit) fit();
+      });
+      const z = zoom();
+      const curPaneH = pane().height;
+      const newMaxScroll = Math.max(0, heightFor(result.pages, z, curPaneH, hasHud()) - curPaneH);
+      if (start) {
+        if (z > 0) {
+          const tp = topPadFor(result.pages, z, curPaneH, hasHud());
+          const targetY = clampScroll(result.pages, z, topFor(result.pages, z, start.page, tp), curPaneH);
+          scrollY.set(targetY);
+          commitScroll(targetY, oldMaxScroll, newMaxScroll);
+        } else {
+          pendingJumpPage = start.page;
+        }
+      } else if (z > 0 && scrollY() > newMaxScroll + 0.5) {
+        scrollY.set(newMaxScroll);
+        commitScroll(newMaxScroll, oldMaxScroll, newMaxScroll);
+      }
+      return;
+    }
+
+    const saved = hasHud() ? viewports.get(reqKey) : undefined;
+    const curPane = pane();
+    const oldMaxScroll = currentMaxScroll();
+    let nextZoom: number;
+    let nextPanX: number;
+    let nextScrollY: number;
+    let nextNeedsFit: boolean;
+    let nextAutoFit: boolean;
+    pendingJumpPage = undefined;
+    if (saved && !saved.autoFit) {
+      nextZoom = saved.zoom;
+      nextPanX = saved.panX;
+      nextNeedsFit = false;
+      nextAutoFit = false;
+      const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud());
+      const rawY = start ? topFor(result.pages, nextZoom, start.page, tp) : saved.scrollY;
+      nextScrollY = clampScroll(result.pages, nextZoom, rawY, curPane.height);
+    } else {
+      nextZoom = fitZoom(result.pages, curPane.width);
+      nextNeedsFit = nextZoom === 0;
+      nextAutoFit = true;
+      nextPanX = 0;
+      if (start && nextZoom === 0) {
+        pendingJumpPage = start.page;
+        nextScrollY = 0;
+      } else {
+        const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud());
+        const rawY = start ? topFor(result.pages, nextZoom, start.page, tp) : saved ? saved.scrollY : 0;
+        nextScrollY = clampScroll(result.pages, nextZoom, rawY, curPane.height);
+      }
+    }
+    const newMaxScroll = Math.max(0, heightFor(result.pages, nextZoom, curPane.height, hasHud()) - curPane.height);
+    cancelLiveZoom();
+    cancelPan();
+    cancelPendingScroll();
+    batch(() => {
+      shownKey = reqKey;
+      needsFit = nextNeedsFit;
+      autoFit = nextAutoFit;
+      diagnostics.set(result.diagnostics);
+      pages.set(result.pages);
+      zoom.set(nextZoom);
+      panX.set(nextPanX);
+      scrollY.set(nextScrollY);
+    });
+    commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+  }
+
+  function compile() {
+    const req = untracked(props.request);
+    if (!req) return;
+    if (inFlight >= 2) {
+      again = true;
+      return;
+    }
+    const reqKey = requestKey(req);
+    const isSwitch = reqKey !== shownKey;
+    const seq = ++compileSeq;
+    inFlight += 1;
+
+    const curPane = pane();
+    const dpr = pixelRatio();
+    let s: number;
+    let list: PreviewView[];
+    if (isSwitch) {
+      const saved = hasHud() ? viewports.get(reqKey) : undefined;
+      if (saved && !saved.autoFit) {
+        s = scaleFor(saved.zoom, dpr);
+        const tp = topPadFor(saved.pageSizes, saved.zoom, curPane.height, hasHud());
+        list = viewFor(saved.pageSizes, saved.zoom, saved.scrollY, saved.panX, curPane, tp);
+      } else {
+        const estZoom = fitZoom([DEFAULT_PAGE], curPane.width);
+        s = scaleFor(estZoom, dpr);
+        const estPages = [DEFAULT_PAGE, DEFAULT_PAGE];
+        const tp = topPadFor(estPages, estZoom, curPane.height, hasHud());
+        list =
+          estZoom > 0 && curPane.height > 0
+            ? viewFor(estPages, estZoom, 0, 0, curPane, tp)
+            : [
+                { page: 0, x: 0, y: 0, width: 0, height: 0 },
+                { page: 1, x: 0, y: 0, width: 0, height: 0 },
+              ];
+      }
+    } else {
+      s = untracked(scale);
+      list = untracked(view);
+    }
+
+    asked = {
+      key: reqKey,
+      scale: s,
+      pages: list.map((v) => v.page).join(),
+      tiles: new Map(list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)])),
+    };
+
+    void preview.compile(req, s, list).then((result) => {
+      inFlight -= 1;
+      const stale = seq !== compileSeq || reqKey !== untracked(key);
+      if (!stale) applyResult(reqKey, result);
+      if (again) {
+        again = false;
+        compile();
+      }
+    });
+  }
+
+  effect(() => {
+    if (due()) untracked(compile);
+  });
+
+  let lastKey: string | undefined;
+  effect(() => {
+    const next = key();
+    untracked(() => {
+      if (next === lastKey) return;
+      lastKey = next;
+      cancelLiveZoom();
+      cancelPan();
+      cancelPendingScroll();
+      saveViewport();
+      compileSeq += 1;
+      again = false;
+      pendingJumpPage = undefined;
+      if (!next) {
+        shownKey = undefined;
+        needsFit = false;
+        autoFit = true;
+        lastStarts = [];
+        contentHeightLaidOut = 0;
+        asked = { key: "", scale: 0, pages: "", tiles: new Map() };
+        batch(() => {
+          pages.set([]);
+          diagnostics.set([]);
+          failure.set(undefined);
+          zoom.set(0);
+          panX.set(0);
+          scrollY.set(0);
+        });
+        scrollTo(0);
+        return;
+      }
+      compile();
+    });
+  });
+
+  cleanup(() => {
+    clearTimeout(resizeTimer);
+    clearTimeout(pinchCommitTimer);
+    if (zoomRaf !== undefined) cancelAnimationFrame(zoomRaf);
+    cancelPendingScroll();
+  });
+
+  function cancelPan() {
+    dragStart = undefined;
+    if (dragging() || panOffset().dx !== 0 || panOffset().dy !== 0) {
+      batch(() => {
+        dragging.set(false);
+        panOffset.set({ dx: 0, dy: 0 });
+      });
+    }
+  }
+
+  function commitPan() {
+    const p = panOffset();
+    dragStart = undefined;
+    if (!dragging() && p.dx === 0 && p.dy === 0) return;
+    const z = zoom();
+    const list = pages();
+    if (z === 0 || list.length === 0 || (p.dx === 0 && p.dy === 0)) {
+      cancelPan();
+      return;
+    }
+    const curPaneH = pane().height;
+    const oldMaxScroll = currentMaxScroll();
+    const newMaxScroll = Math.max(0, heightFor(list, z, curPaneH, hasHud()) - curPaneH);
+    const nextPanX = left() + p.dx;
+    const nextScrollY = Math.min(newMaxScroll, Math.max(0, scrollY() - p.dy));
+    batch(() => {
+      dragging.set(false);
+      panOffset.set({ dx: 0, dy: 0 });
+      panX.set(nextPanX);
+      scrollY.set(nextScrollY);
+    });
+    commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+  }
+
+  function cancelLiveZoom() {
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    zoomTargetK = 1;
+    live.set({ k: 1, tx: 0, ty: 0 });
+  }
+
+  function viewportAt(pagePosition: { x: number; y: number }) {
+    return { x: pagePosition.x - paneOrigin.x, y: pagePosition.y - paneOrigin.y };
+  }
+
+  function applyLiveScale(nextK: number, at: { x: number; y: number }) {
+    const z = zoom();
+    if (z === 0) return;
+    const cur = live();
+    if (cur.k === 1 && cur.tx === 0 && cur.ty === 0) baseScrollY = scrollY();
+    const clampedK = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * nextK)) / z;
+    const r = clampedK / cur.k;
+    const tx = at.x - r * (at.x - cur.tx);
+    const ty = at.y + baseScrollY - r * (at.y + baseScrollY - cur.ty);
+    live.set({ k: clampedK, tx, ty });
+  }
+
+  function commitZoom() {
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    const z = zoom();
+    if (z === 0 || (cur.k === 1 && cur.tx === 0 && cur.ty === 0)) {
+      zoomTargetK = 1;
+      return;
+    }
+    autoFit = false;
+    const list = pages();
+    const curPaneH = pane().height;
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * cur.k));
+    const nextPanX = cur.tx + cur.k * left();
+    const oldTopPad = topPadFor(list, z, curPaneH, hasHud());
+    const newTopPad = topPadFor(list, nextZoom, curPaneH, hasHud());
+    const oldMaxScroll = currentMaxScroll();
+    const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPaneH, hasHud()) - curPaneH);
+    // Keep the page point under the cursor fixed across any topPad change (e.g. centered -> overflowing).
+    const rawScrollY = baseScrollY - cur.ty + (newTopPad - cur.k * oldTopPad);
+    const nextScrollY = Math.min(newMaxScroll, Math.max(0, rawScrollY));
+    zoomTargetK = 1;
+    batch(() => {
+      live.set({ k: 1, tx: 0, ty: 0 });
+      zoom.set(nextZoom);
+      panX.set(nextPanX);
+      scrollY.set(nextScrollY);
+    });
+    commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+  }
+
+  function stepWheelZoom(now: number) {
+    zoomRaf = undefined;
+    const dt = zoomLastTime === 0 ? 16 : Math.min(48, Math.max(1, now - zoomLastTime));
+    zoomLastTime = now;
+    const cur = live();
+    const diff = zoomTargetK - cur.k;
+    if (Math.abs(diff) / cur.k < 0.0015 || ms(1) === 0) {
+      applyLiveScale(zoomTargetK, zoomAnchor);
+      commitZoom();
+      return;
+    }
+    const alpha = 1 - Math.exp(-dt / 32);
+    applyLiveScale(cur.k + diff * alpha, zoomAnchor);
+    zoomRaf = requestAnimationFrame(stepWheelZoom);
+  }
+
+  function zoomWheel(factor: number, at: { x: number; y: number }) {
+    const z = zoom();
+    if (z === 0) return;
+    autoFit = false;
+    commitPan();
+    cancelPendingScroll();
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    if (cur.k === 1 && cur.tx === 0 && cur.ty === 0 && zoomRaf === undefined) {
+      baseScrollY = scrollY();
+      zoomTargetK = 1;
+    }
+    zoomAnchor = at;
+    zoomTargetK = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * zoomTargetK * factor)) / z;
+    if (zoomRaf === undefined) {
+      zoomLastTime = 0;
+      zoomRaf = requestAnimationFrame(stepWheelZoom);
+    }
+  }
+
+  function zoomPinch(delta: number, phase: "start" | "move" | "end", at: { x: number; y: number }) {
+    if (zoom() === 0) return;
+    autoFit = false;
+    commitPan();
+    cancelPendingScroll();
+    if (zoomRaf !== undefined) {
+      cancelAnimationFrame(zoomRaf);
+      zoomRaf = undefined;
+    }
+    clearTimeout(pinchCommitTimer);
+    pinchCommitTimer = undefined;
+    const cur = live();
+    if (phase === "start" && cur.k === 1 && cur.tx === 0 && cur.ty === 0) baseScrollY = scrollY();
+    if (delta !== 0) applyLiveScale(cur.k * (1 + delta), at);
+    if (phase === "end") commitZoom();
+    else pinchCommitTimer = setTimeout(commitZoom, 140);
+  }
+
+  function fit() {
+    const list = pages();
+    const curPane = pane();
+    if (!needsFit || list.length === 0 || curPane.width === 0) return;
+    const nextZoom = fitZoom(list, curPane.width);
+    if (nextZoom === 0) return;
+    needsFit = false;
+    autoFit = true;
+    const oldMaxScroll = currentMaxScroll();
+    const jumpPage = pendingJumpPage;
+    pendingJumpPage = undefined;
+    const tp = topPadFor(list, nextZoom, curPane.height, hasHud());
+    const nextScrollY =
+      jumpPage !== undefined
+        ? clampScroll(list, nextZoom, topFor(list, nextZoom, jumpPage, tp), curPane.height)
+        : clampScroll(list, nextZoom, scrollY(), curPane.height);
+    batch(() => {
+      zoom.set(nextZoom);
+      panX.set(0);
+      if (jumpPage !== undefined || nextScrollY !== scrollY()) scrollY.set(nextScrollY);
+    });
+    if (jumpPage !== undefined) {
+      const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height);
+      commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+    }
+  }
+
+  function fitWidth() {
+    const list = pages();
+    if (list.length === 0) return;
+    cancelLiveZoom();
+    cancelPan();
+    cancelPendingScroll();
+    const curPane = pane();
+    const page = currentPage();
+    const nextZoom = fitZoom(list, curPane.width);
+    if (nextZoom === 0) return;
+    autoFit = true;
+    const oldMaxScroll = currentMaxScroll();
+    const tp = topPadFor(list, nextZoom, curPane.height, hasHud());
+    const nextScrollY = clampScroll(list, nextZoom, topFor(list, nextZoom, page, tp), curPane.height);
+    batch(() => {
+      zoom.set(nextZoom);
+      panX.set(0);
+      scrollY.set(nextScrollY);
+    });
+    commitScroll(nextScrollY, oldMaxScroll, Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height));
+  }
+
+  function goPage(index: number, animated = true) {
+    const list = pages();
+    const z = zoom();
+    if (list.length === 0 || z === 0) return;
+    cancelLiveZoom();
+    cancelPan();
+    cancelPendingScroll();
+    const i = Math.max(0, Math.min(list.length - 1, index));
+    const curPaneH = pane().height;
+    const tp = topPadFor(list, z, curPaneH, hasHud());
+    const y = clampScroll(list, z, topFor(list, z, i, tp), curPaneH);
+    if (!animated) scrollY.set(y);
+    scrollTo(y, animated);
+  }
+
+  function scrollToLocation(page: number, yPt: number, animated = true) {
+    const list = pages();
+    const z = zoom();
+    if (list.length === 0 || z === 0) return;
+    cancelLiveZoom();
+    cancelPan();
+    cancelPendingScroll();
+    const i = Math.max(0, Math.min(list.length - 1, page));
+    const curPaneH = pane().height;
+    const tp = topPadFor(list, z, curPaneH, hasHud());
+    const pageTop = pageYFor(list, z, i, tp);
+    const rawY = pageTop + yPt * z - curPaneH * 0.3;
+    const y = clampScroll(list, z, rawY, curPaneH);
+    if (!animated) scrollY.set(y);
+    scrollTo(y, animated);
+  }
+
+  const counts = computed(() => diagnosticCounts(diagnostics()));
+  const flagged = computed(() => diagnostics().filter((d) => d.severity === "error" || d.severity === "warning"));
+  const hudOpen = signal(false);
+
+  props.controller({
+    compile,
+    jumpTo(label: string) {
+      const start = lastStarts.find((x) => x.label === label);
+      if (start && shownKey === key() && zoom() > 0) {
+        goPage(start.page, true);
+        return;
+      }
+      jumpTo = label;
+    },
+    goPage,
+    scrollToLocation,
+    zoomBy: (factor: number) => zoomWheel(factor, { x: pane().width / 2, y: pane().height / 2 }),
+    fitWidth,
+    closeHud() {
+      if (!hudOpen()) return false;
+      hudOpen.set(false);
+      return true;
+    },
+  });
+
+  function locate(e: { pagePosition: { x: number; y: number } }) {
+    const at = viewportAt(e.pagePosition);
+    const hit = hitPage(pages(), zoom(), left(), at.x, at.y + scrollY(), topPad());
+    if (!hit) return;
+    const loc = preview.locateClick(hit.page, hit.xPt, hit.yPt);
+    if (loc) props.onLocate?.(loc);
+  }
+
+  const inset = () => props.inset ?? 0;
+  const availableWidth = computed(() => pane().width - inset());
+  // Hide HUD smoothly on narrow panes when the Inspector drawer is open so it is never clipped.
+  const hudHidden = computed(() => inset() > 0 && pane().width > 0 && availableWidth() < 320);
+  const hudCompact = computed(() => pane().width > 0 && availableWidth() < 380);
+
+  const preflightLabel = () => {
+    const c = counts();
+    if (c.errors > 0 && c.warnings > 0) return `${c.errors} 错  ${c.warnings} 警`;
+    if (c.errors > 0) return `${c.errors} 个错误`;
+    return `${c.warnings} 个警告`;
+  };
+
+  return (
+    <View
+      ref={(r) => (paneView = r)}
+      style={{ flex: 1, overflow: "hidden" }}
+      class="bg-sidebar"
+      onLayout={(e) => {
+        const prev = untracked(pane);
+        const w = e.bounds.size.width;
+        const h = e.bounds.size.height;
+        const moved = prev.width > 0 && (Math.abs(prev.width - w) > 0.5 || Math.abs(prev.height - h) > 0.5);
+        pane.set({ width: w, height: h });
+        paneView?.measure().then((m) => {
+          if (m) paneOrigin = m.pagePosition;
+        });
+        if (moved) {
+          resizing.set(true);
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => resizing.set(false), 120);
+        }
+        if (needsFit) {
+          fit();
+          return;
+        }
+        const list = untracked(pages);
+        const curZoom = untracked(zoom);
+        if (list.length === 0 || w <= 0) return;
+        // Re-fit smoothly while the user hasn't manually zoomed (handles transient initial layout widths & split drags).
+        if (autoFit && !untracked(dragging) && untracked(live).k === 1) {
+          const nextZoom = fitZoom(list, w);
+          if (nextZoom > 0 && Math.abs(nextZoom - curZoom) > 0.001) {
+            const oldMaxScroll = currentMaxScroll();
+            const newMaxScroll = Math.max(0, heightFor(list, nextZoom, h, hasHud()) - h);
+            const nextScrollY = Math.min(newMaxScroll, Math.max(0, untracked(scrollY)));
+            batch(() => {
+              zoom.set(nextZoom);
+              panX.set(0);
+              scrollY.set(nextScrollY);
+            });
+            commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+            return;
+          }
+        }
+        if (curZoom > 0) {
+          const newMaxScroll = Math.max(0, heightFor(list, curZoom, h, hasHud()) - h);
+          if (untracked(scrollY) > newMaxScroll + 0.5) {
+            scrollY.set(newMaxScroll);
+            scrollTo(newMaxScroll);
+          }
+        }
+      }}
+    >
+      <Scroll
+        ref={(r) => (scroll = r)}
+        style={{ flex: 1 }}
+        onScrollDragStart={() => cancelPendingScroll()}
+        onScroll={(e) => {
+          if (e.contentSize.height > 0) contentHeightLaidOut = e.contentSize.height;
+          if (live().k !== 1) {
+            commitZoom();
+            return;
+          }
+          if (pendingScroll) {
+            if (Math.abs(e.offset.y - pendingScroll.y) <= 1) {
+              cancelPendingScroll();
+              scrollY.set(e.offset.y);
+              return;
+            }
+            if (e.contentSize.height < pendingScroll.minContentHeight - 1) return;
+            cancelPendingScroll();
+          }
+          scrollY.set(e.offset.y);
+        }}
+      >
+        <View
+          panActivation={{ activeOffsetX: 10 }}
+          onLayout={(e) => {
+            const h = e.bounds.size.height;
+            if (h > 0) contentHeightLaidOut = h;
+            if (pendingScroll && h >= pendingScroll.minContentHeight - 1) {
+              const targetY = pendingScroll.y;
+              cancelPendingScroll();
+              scrollY.set(targetY);
+              scrollTo(targetY);
+            }
+          }}
+          onWheel={(e) => {
+            cancelPendingScroll();
+            if (e.modifiers.control) {
+              const steps = e.deltaMode === "lines" ? e.delta.y : e.delta.y / 40;
+              zoomWheel(Math.pow(1.12, -steps), viewportAt(e.pagePosition));
+            } else {
+              if (live().k !== 1) commitZoom();
+              const k = e.deltaMode === "lines" ? 40 : 1;
+              if (e.delta.x !== 0) panX.set(left() - e.delta.x * k);
+            }
+          }}
+          onPinch={(e) => zoomPinch(e.delta, e.phase, viewportAt(e.pagePosition))}
+          onPress={(e) => {
+            if (e.modifiers.control || e.modifiers.platform) locate(e);
+          }}
+          onMouseMove={(e) => {
+            if (e.pressedButton !== "left" || e.modifiers.control) {
+              if (dragStart || dragging()) commitPan();
+              return;
+            }
+            cancelPendingScroll();
+            if (live().k !== 1) commitZoom();
+            if (!dragStart) {
+              dragStart = e.pagePosition;
+              return;
+            }
+            const dx = e.pagePosition.x - dragStart.x;
+            const dy = e.pagePosition.y - dragStart.y;
+            if (!dragging() && Math.hypot(dx, dy) < 3) return;
+            batch(() => {
+              dragging.set(true);
+              panOffset.set({ dx, dy });
+            });
+          }}
+          onMouseUp={() => commitPan()}
+          onMouseLeave={() => commitPan()}
+          style={{
+            paddingTop: topPad(),
+            paddingBottom: bottomPad(),
+            gap: pageGap(zoom()),
+            opacity: zoom() === 0 ? 0 : 1,
+            transform: liveTransform(),
+            transformOrigin: "0 0",
+            cursor: dragging() ? "grabbing" : zoom() > 0 ? "grab" : "default",
+          }}
+        >
+          <Each of={pages()} key="index">
+            {(page) => {
+              const dark = () => colorScheme() === "dark";
+              return (
+                <View
+                  style={{
+                    width: page().width * zoom(),
+                    height: page().height * zoom(),
+                    transform: `translateX(${left()}px)`,
+                    backgroundColor: "#ffffff",
+                    borderWidth: 1,
+                    borderColor: dark() ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.06)",
+                    boxShadow: dark()
+                      ? "0 4px 24px rgba(0,0,0,0.48), 0 1px 4px rgba(0,0,0,0.32)"
+                      : "0 1px 2px rgba(0,0,0,0.06), 0 6px 20px rgba(0,0,0,0.06)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <PageImage layers={page().layers} style={{ width: "100%", height: "100%" }} />
+                </View>
+              );
+            }}
+          </Each>
+        </View>
+      </Scroll>
+
+      {/* Initial compile >150 ms loading indicator */}
+      <If when={pages().length === 0 && !failure() && !!key()}>
+        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <DelayedSpinner active={true} size={18} />
+        </View>
+      </If>
+
+      {/* Typesetting failure overlay */}
+      <If when={pages().length === 0 ? failure() : undefined}>
+        {(f) => (
+          <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: 32, gap: 8 }}>
+            <Text style={{ fontSize: 13, fontWeight: 500, lineHeight: 20 }} class="text-secondary-foreground">
+              排版出错，暂时没有页面
+            </Text>
+            <If when={!!f().message}>
+              <Text
+                style={{ fontSize: 12, lineHeight: 18, textAlign: "center", maxWidth: 420, numberOfLines: 3, textOverflow: "ellipsis" }}
+                class="text-muted-foreground"
+              >
+                {f().message}
+              </Text>
+            </If>
+            <If when={f().file}>
+              <Text
+                style={{ fontSize: 12, lineHeight: 18, textDecorationLine: props.onDiagnostic ? "underline" : "none" }}
+                class={props.onDiagnostic ? "text-primary" : "text-muted-foreground"}
+                onPress={() => props.onDiagnostic?.(f())}
+              >
+                {`${f().file}${f().line ? `:${f().line}` : ""}`}
+              </Text>
+            </If>
+          </View>
+        )}
+      </If>
+
+      {/* Unified floating HUD capsule */}
+      <If when={props.hud !== false}>
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 16,
+            alignItems: "center",
+            pointerEvents: hudHidden() ? "none" : "box-none",
+            opacity: hudHidden() ? 0 : 1,
+            transform: `translateX(${-inset() / 2}px)`,
+            transitionProperty: "transform, opacity",
+            transitionDuration: ms(170),
+            transitionTimingFunction: EASE_DRAWER,
+          }}
+        >
+          <View
+            style={{
+              height: 32,
+              flexDirection: "row",
+              alignItems: "center",
+              borderRadius: 9999,
+              borderWidth: 1,
+              paddingLeft: 4,
+              paddingRight: 4,
+              backdropFilter: "blur(12px)",
+              boxShadow: popoverShadow(),
+            }}
+            class="bg-popover border-border"
+          >
+            {/* Zoom group */}
+            <If when={!hudCompact()}>
+              <HudButton
+                icon="minus"
+                disabled={zoom() === 0 || zoom() <= MIN_ZOOM + 0.001}
+                onPress={() => zoomWheel(1 / 1.25, { x: pane().width / 2, y: pane().height / 2 })}
+                tooltip={tip("缩小", "mod+minus")}
+              />
+            </If>
+            <View
+              onPress={() => zoom() > 0 && fitWidth()}
+              tooltip={tip("适合宽度", "mod+0")}
+              class={zoom() > 0 ? "hover:bg-muted active:bg-accent" : ""}
+              style={{
+                height: 24,
+                minWidth: 42,
+                paddingLeft: 6,
+                paddingRight: 6,
+                borderRadius: 9999,
+                alignItems: "center",
+                justifyContent: "center",
+                transitionProperty: "colors",
+                transitionDuration: ms(120),
+                transitionTimingFunction: EASE_STANDARD,
+              }}
+            >
+              <Text style={{ textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                {zoom() > 0 ? `${Math.round(zoom() * 100)}%` : "–"}
+              </Text>
+            </View>
+            <If when={!hudCompact()}>
+              <HudButton
+                icon="plus"
+                disabled={zoom() === 0 || zoom() >= MAX_ZOOM - 0.001}
+                onPress={() => zoomWheel(1.25, { x: pane().width / 2, y: pane().height / 2 })}
+                tooltip={tip("放大", "mod+plus")}
+              />
+            </If>
+
+            <View style={{ width: 1, height: 14, marginLeft: 4, marginRight: 4 }} class="bg-border" />
+
+            {/* Page group */}
+            <HudButton
+              icon="chevronLeft"
+              disabled={pages().length === 0 || currentPage() <= 0}
+              onPress={() => goPage(currentPage() - 1)}
+              tooltip={tip("上一页")}
+            />
+            <Text style={{ minWidth: 44, textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+              {pages().length > 0 ? `${currentPage() + 1} / ${pages().length}` : "–"}
+            </Text>
+            <HudButton
+              icon="chevronRight"
+              disabled={pages().length === 0 || currentPage() >= pages().length - 1}
+              onPress={() => goPage(currentPage() + 1)}
+              tooltip={tip("下一页")}
+            />
+
+            {/* Preflight diagnostics */}
+            <If when={flagged().length > 0}>
+              <View style={{ width: 1, height: 14, marginLeft: 4, marginRight: 4 }} class="bg-border" />
+              <Popover
+                open={hudOpen()}
+                onOpenChange={(e) => hudOpen.set(e.open)}
+                placement="top"
+                offset={8}
+                popupClass="bg-popover border border-border rounded-[10px] p-1.5"
+                popupStyle={{ width: 360, maxHeight: 320, boxShadow: popoverShadow() }}
+                trigger={
+                  <View
+                    testID="preflight-badge"
+                    style={{
+                      height: 24,
+                      paddingLeft: 8,
+                      paddingRight: 8,
+                      borderRadius: 9999,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 5,
+                      transitionProperty: "colors",
+                      transitionDuration: ms(120),
+                      transitionTimingFunction: EASE_STANDARD,
+                    }}
+                    class="hover:bg-muted active:bg-accent"
+                  >
+                    <View style={{ width: 6, height: 6, borderRadius: 3 }} class={counts().errors > 0 ? "bg-destructive" : "bg-chart-4"} />
+                    <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class={counts().errors > 0 ? "text-destructive" : "text-chart-4"}>
+                      {preflightLabel()}
+                    </Text>
+                  </View>
+                }
+              >
+                <Scroll style={{ maxHeight: 308 }}>
+                  <Each of={flagged()} key={(_, i) => String(i)}>
+                    {(d) => (
+                      <View
+                        onPress={() => {
+                          hudOpen.set(false);
+                          const x = d();
+                          if (x.page != null && !x.file) goPage(x.page);
+                          else props.onDiagnostic?.(x);
+                        }}
+                        class="hover:bg-muted active:bg-accent"
+                        style={{ paddingTop: 6, paddingBottom: 6, paddingLeft: 8, paddingRight: 8, borderRadius: 6, gap: 2 }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <View style={{ width: 6, height: 6, borderRadius: 3 }} class={d().severity === "error" ? "bg-destructive" : "bg-chart-4"} />
+                          <Text style={{ numberOfLines: 2, textOverflow: "ellipsis", flex: 1, fontSize: 12.5 }}>
+                            {d().message}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 11.5, marginLeft: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                          {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : d().page != null ? `第 ${d().page! + 1} 页` : ""}
+                        </Text>
+                      </View>
+                    )}
+                  </Each>
+                </Scroll>
+              </Popover>
+            </If>
+          </View>
+        </View>
+      </If>
+    </View>
+  );
+}
+
+function HudButton(props: { icon: IconName; onPress: () => void; disabled?: boolean; tooltip?: any }) {
+  return (
+    <View
+      disabled={props.disabled}
+      onPress={() => !props.disabled && props.onPress()}
+      tooltip={props.tooltip}
+      class={props.disabled ? "" : "hover:bg-muted active:bg-accent"}
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 9999,
+        alignItems: "center",
+        justifyContent: "center",
+        opacity: props.disabled ? 0.35 : 1,
+        transitionProperty: "colors",
+        transitionDuration: ms(120),
+        transitionTimingFunction: EASE_STANDARD,
+      }}
+    >
+      <Icon name={props.icon} size={14} />
+    </View>
+  );
+}

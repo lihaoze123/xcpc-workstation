@@ -2,8 +2,8 @@
 //! generation-based task cancellation shared with [`crate::page_image::PageImage`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use nsh_core::element::ImageSrc;
@@ -187,16 +187,62 @@ impl PixelCache {
 pub(crate) static PIXELS: LazyLock<Mutex<PixelCache>> =
     LazyLock::new(|| Mutex::new(PixelCache::with_budget(PIXEL_CACHE_BUDGET)));
 
+/// One sampled mapping from a 1-based Markdown line to a 0-based preview page and vertical
+/// offset (`y_pt`, typographic points from top of page).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SourceAnchor {
+    pub(crate) line: u32,
+    pub(crate) page: u32,
+    pub(crate) y_pt: f64,
+}
+
+/// Lightweight, UI-thread-accessible snapshot of the latest compiled preview.
+///
+/// Kept outside `CompilerState`'s mutex so `export_status`, `save` cache-preservation checks,
+/// and `locate_source` never block on an active Typst compilation or rasterization.
+pub(crate) struct CachedSnapshot {
+    pub(crate) request: PreviewRequest,
+    pub(crate) revision: u64,
+    /// True when the compiled state is known to match the files currently on disk
+    /// (either compiled with no unsaved overlay, or `save()` wrote the exact same text).
+    pub(crate) matches_disk: Arc<AtomicBool>,
+    pub(crate) doc_source: String,
+    pub(crate) problems: Vec<publish::Pages>,
+    /// Forward-locate anchors per normalized workspace-relative file path, sorted by `line`.
+    pub(crate) anchors: Mutex<HashMap<String, Vec<SourceAnchor>>>,
+}
+
 /// Cached compilation result reused across view/scale changes and `Ctrl+click` source
 /// lookup until invalidated.
 pub(crate) struct CachedCompile {
     pub(crate) request: PreviewRequest,
     pub(crate) revision: u64,
+    /// Shared with [`CachedSnapshot::matches_disk`] so `save()` can promote an unsaved
+    /// compilation to disk-clean without locking `CompilerState`.
+    pub(crate) matches_disk: Arc<AtomicBool>,
     pub(crate) compiled: Compiled,
     pub(crate) doc: Document,
     pub(crate) report: publish::Report,
     /// Lazily computed span-free fingerprints per page (computed only when a page enters `view`).
     pub(crate) fingerprints: Vec<Option<u128>>,
+}
+
+impl CachedCompile {
+    /// Returns true when this cached compilation is still valid at `revision` and satisfies
+    /// `request` (either exact request match, or disk-clean match when `request.path` is empty).
+    pub(crate) fn matches_request(&self, request: &PreviewRequest, revision: u64) -> bool {
+        if self.revision != revision {
+            return false;
+        }
+        if self.request == *request {
+            return true;
+        }
+        request.path.is_empty()
+            && self.matches_disk.load(Ordering::Acquire)
+            && self.request.target == request.target
+            && self.request.id == request.id
+            && self.request.book == request.book
+    }
 }
 
 /// Generation-based cancellation check for an in-flight compile/rasterize request.

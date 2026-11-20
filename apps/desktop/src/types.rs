@@ -148,6 +148,18 @@ pub struct SourceLocationJs {
     pub column: u32,
 }
 
+/// A position on a rendered preview page, returned by `locateSource`.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct PreviewLocationJs {
+    /// 0-based page index into `PreviewResult.pages`.
+    pub page: u32,
+    /// Vertical offset from the top of `page`, in typographic points.
+    pub y_pt: f64,
+    /// True when the position came from a mapped source anchor rather than a
+    /// problem-start fallback.
+    pub exact: bool,
+}
+
 // ---- Workspace, files & file watching --------------------------------------------------
 
 /// A problem of the workspace.
@@ -1017,4 +1029,22 @@ pub(crate) fn first_error(report: &publish::Report) -> Option<String> {
         (Some(f), Some(l)) => format!("{f}:{l}: {}", d.message),
         _ => d.message.clone(),
     })
+}
+
+// ---- Editor styling -----------------------------------------------------------------
+
+/// One styled span of a Markdown source (`markdownSpans`), as editor positions: 0-based
+/// lines and UTF-16 columns, `end` not included.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct MarkdownSpanJs {
+    /// `heading`, `strong`, `emphasis`, `strikethrough`, `inlineMath`, `displayMath`,
+    /// `mathCommand`, `mathOperator`, `code`, `codeBlock`, `codeComment`, `codeString`,
+    /// `codeKeyword`, `codeNumber`, `link`, `url`, `table` or `markup`.
+    pub kind: String,
+    /// A heading's level (1–6); 0 otherwise.
+    pub level: u32,
+    pub start_line: u32,
+    pub start_column: u32,
+    pub end_line: u32,
+    pub end_column: u32,
 }

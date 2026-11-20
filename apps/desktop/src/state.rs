@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Instant, SystemTime};
 
@@ -19,12 +19,15 @@ use xcpc_storage::{
     WORKSPACE_FILE, WatchEvent, Workspace, WorkspaceIndex, WorkspaceWatcher, content_hash,
 };
 
-use crate::cache::{CachedCompile, CancelToken, NEXT_PREVIEW_ID, PIXELS, rasterize_cached};
+use crate::cache::{
+    CachedCompile, CachedSnapshot, CancelToken, NEXT_PREVIEW_ID, PIXELS, SourceAnchor,
+    rasterize_cached,
+};
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
 use crate::types::{
     ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
     ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, OverridePatchJs,
-    PdfFreshnessJs, PreviewRequest, PreviewResult, PreviewView, ProblemDetailJs,
+    PdfFreshnessJs, PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemDetailJs,
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
     SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
     WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
@@ -48,31 +51,86 @@ pub(crate) struct ExportRecord {
     pub(crate) pdf_mtime: Option<SystemTime>,
 }
 
-pub(crate) struct State {
-    pub(crate) id: u64,
+/// Fast UI-thread state: open workspace handle, in-memory index, file watcher,
+/// persisted preferences, and in-session export records.
+///
+/// Never held during Typst compilation, PDF generation, or pixel rasterization.
+pub(crate) struct CoreState {
     pub(crate) workspace: Option<Workspace>,
     pub(crate) last_workspace_missing: bool,
     pub(crate) index: WorkspaceIndex,
     pub(crate) watcher: Option<WorkspaceWatcher>,
     pub(crate) watch_session: Option<WatchSession>,
     watch_seq: u64,
-    /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
-    pub(crate) data_dir: Option<PathBuf>,
     pub(crate) prefs: StoredPrefs,
-    pub(crate) engine: Engine,
-    /// Bumped on workspace mutations, switches, and external watch events to invalidate `cached`.
-    pub(crate) revision: u64,
-    pub(crate) cached: Option<CachedCompile>,
     /// In-session PDF export fingerprints keyed by `(Target, Kind)`.
     pub(crate) exports: HashMap<(Target, Kind), ExportRecord>,
+}
+
+/// Heavy compilation and rasterization state, locked exclusively by background
+/// `blocking(...)` tasks (`compile`, `export`, `freeze_contest`) and probed
+/// non-blockingly (`try_lock()`) by `locate_click` and lazy `locate_source`.
+pub(crate) struct CompilerState {
+    pub(crate) engine: Engine,
+    engine_root: Option<PathBuf>,
+    pub(crate) cached: Option<CachedCompile>,
     /// Layer keys of the latest committed preview result, protected from LRU eviction.
     pub(crate) active: HashSet<String>,
 }
 
+impl CompilerState {
+    fn sync_root(&mut self, ws: &Workspace) {
+        let root = ws.root();
+        if self.engine_root.as_deref() != Some(root) {
+            self.engine.set_root(Some(root.to_path_buf()));
+            self.engine_root = Some(root.to_path_buf());
+            self.cached = None;
+        }
+    }
+
+    fn compile(
+        &mut self,
+        ws: &Workspace,
+        request: &PreviewRequest,
+    ) -> Result<
+        (
+            Option<Compiled>,
+            Option<xcpc_convert::Document>,
+            publish::Report,
+        ),
+        String,
+    > {
+        self.sync_root(ws);
+        publish::check(
+            ws,
+            &mut self.engine,
+            &request.target(),
+            request.kind(),
+            None,
+            request.unsaved(),
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+pub(crate) struct State {
+    pub(crate) id: u64,
+    /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
+    pub(crate) data_dir: Option<PathBuf>,
+    /// Bumped on workspace mutations, switches, and external watch events to invalidate `cached`.
+    pub(crate) revision: AtomicU64,
+    pub(crate) core: Mutex<CoreState>,
+    /// Lightweight UI-accessible snapshot of the latest compiled preview.
+    pub(crate) snapshot: Mutex<Option<Arc<CachedSnapshot>>>,
+    pub(crate) compiler: Mutex<CompilerState>,
+}
+
 impl Drop for State {
     fn drop(&mut self) {
-        self.watch_session = None;
-        drop(self.watcher.take());
+        if let Ok(mut core) = self.core.lock() {
+            core.watch_session = None;
+            drop(core.watcher.take());
+        }
         if let Ok(mut pixels) = PIXELS.lock() {
             pixels.remove_owner(self.id);
         }
@@ -111,21 +169,27 @@ impl State {
             }),
         };
 
-        let mut state = Self {
+        let state = Self {
             id: NEXT_PREVIEW_ID.fetch_add(1, Ordering::Relaxed),
-            workspace: None,
-            last_workspace_missing,
-            index: WorkspaceIndex::default(),
-            watcher: None,
-            watch_session: None,
-            watch_seq: 0,
             data_dir,
-            prefs,
-            engine: Engine::new(&FontOptions::from_env(), None),
-            revision: 0,
-            cached: None,
-            exports: HashMap::new(),
-            active: HashSet::new(),
+            revision: AtomicU64::new(0),
+            core: Mutex::new(CoreState {
+                workspace: None,
+                last_workspace_missing,
+                index: WorkspaceIndex::default(),
+                watcher: None,
+                watch_session: None,
+                watch_seq: 0,
+                prefs,
+                exports: HashMap::new(),
+            }),
+            snapshot: Mutex::new(None),
+            compiler: Mutex::new(CompilerState {
+                engine: Engine::new(&FontOptions::from_env(), None),
+                engine_root: None,
+                cached: None,
+                active: HashSet::new(),
+            }),
         };
 
         if let Some(ws) = workspace {
@@ -135,101 +199,138 @@ impl State {
         state
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn workspace_root(&self) -> Option<PathBuf> {
+        self.core
+            .lock()
+            .unwrap()
+            .workspace
+            .as_ref()
+            .map(|w| w.root().to_path_buf())
+    }
+
+    pub(crate) fn recent_workspaces(&self) -> Vec<String> {
+        self.core
+            .lock()
+            .unwrap()
+            .prefs
+            .app
+            .recent_workspaces
+            .clone()
+    }
+
+    pub(crate) fn watch_session(&self) -> Option<WatchSession> {
+        self.core.lock().unwrap().watch_session.clone()
+    }
+
     /// Switches to `ws`, starting a fresh [`WorkspaceWatcher`] wired with [`SelfWriteTracker`]
     /// and scanning a fresh [`WorkspaceIndex`]. Returns the previous watcher so the caller
-    /// can drop it outside `State`'s mutex.
-    pub(crate) fn install_workspace(&mut self, ws: Workspace) -> Option<WorkspaceWatcher> {
-        let (tracked_ws, new_watcher, new_session) = match ws.watch() {
-            Ok((tracked, watcher, rx)) => {
-                self.watch_seq = self.watch_seq.wrapping_add(1);
-                let session = WatchSession {
-                    id: self.watch_seq,
-                    rx: Arc::new(Mutex::new(rx)),
-                };
-                (tracked, Some(watcher), Some(session))
-            }
+    /// can drop it outside `core`'s mutex. Never blocks on `compiler`.
+    pub(crate) fn install_workspace(&self, ws: Workspace) -> Option<WorkspaceWatcher> {
+        let (tracked_ws, new_watcher, new_session_rx) = match ws.watch() {
+            Ok((tracked, watcher, rx)) => (tracked, Some(watcher), Some(rx)),
             Err(_) => (ws, None, None),
         };
 
         let root = tracked_ws.root().to_path_buf();
-        self.prefs.remember_workspace(&root);
-        self.prefs.persist(self.data_dir.as_deref());
+        let new_index = WorkspaceIndex::scan(&tracked_ws).unwrap_or_default();
 
-        self.index = WorkspaceIndex::scan(&tracked_ws).unwrap_or_default();
-        self.engine.set_root(Some(root));
-        self.workspace = Some(tracked_ws);
-        self.last_workspace_missing = false;
-        self.watch_session = new_session;
-        self.exports.clear();
+        let old_watcher = {
+            let mut core = self.core.lock().unwrap();
+            let new_session = new_session_rx.map(|rx| {
+                core.watch_seq = core.watch_seq.wrapping_add(1);
+                WatchSession {
+                    id: core.watch_seq,
+                    rx: Arc::new(Mutex::new(rx)),
+                }
+            });
+            core.prefs.remember_workspace(&root);
+            core.prefs.persist(self.data_dir.as_deref());
+            core.index = new_index;
+            core.workspace = Some(tracked_ws);
+            core.last_workspace_missing = false;
+            core.watch_session = new_session;
+            core.exports.clear();
+            std::mem::replace(&mut core.watcher, new_watcher)
+        };
         self.invalidate_cache();
-
-        std::mem::replace(&mut self.watcher, new_watcher)
+        old_watcher
     }
 
     /// Stops the active watcher (if any) and returns it to be dropped outside the lock.
-    pub(crate) fn stop_watcher(&mut self) -> Option<WorkspaceWatcher> {
-        self.watch_session = None;
-        self.watcher.take()
+    pub(crate) fn stop_watcher(&self) -> Option<WorkspaceWatcher> {
+        let mut core = self.core.lock().ok()?;
+        core.watch_session = None;
+        core.watcher.take()
     }
 
-    pub(crate) fn invalidate_cache(&mut self) {
-        self.revision = self.revision.wrapping_add(1);
-        self.cached = None;
+    /// Invalidates the compiled preview cache without touching `compiler` or `core`.
+    pub(crate) fn invalidate_cache(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+        *self.snapshot.lock().unwrap() = None;
     }
 
     /// Applies an external [`WatchEvent`] if it still belongs to `session_id`: updates
-    /// [`WorkspaceIndex`] incrementally (or rescans on overflow), resets the engine's disk
-    /// file cache, and invalidates [`CachedCompile`].
-    pub(crate) fn apply_watch_event(&mut self, session_id: u64, event: WatchEvent) -> WatchEventJs {
-        if !self
-            .watch_session
-            .as_ref()
-            .is_some_and(|s| s.id == session_id)
-        {
-            return WatchEventJs {
-                kind: "closed".into(),
-                paths: Vec::new(),
-            };
-        }
-        let Some(ws) = self.workspace.clone() else {
-            return WatchEventJs {
-                kind: "closed".into(),
-                paths: Vec::new(),
-            };
-        };
-
-        match event {
-            WatchEvent::Changed(paths) => {
-                for p in &paths {
-                    let _ = self.index.refresh_path(&ws, p);
-                }
-                self.engine.reset_files();
-                self.invalidate_cache();
-                WatchEventJs {
-                    kind: "changed".into(),
-                    paths,
-                }
-            }
-            WatchEvent::Rescan => {
-                if let Ok(idx) = WorkspaceIndex::scan(&ws) {
-                    self.index = idx;
-                }
-                self.engine.reset_files();
-                self.invalidate_cache();
-                WatchEventJs {
-                    kind: "rescan".into(),
+    /// [`WorkspaceIndex`] incrementally (or rescans on overflow) and invalidates the
+    /// compiled cache. Never blocks on `compiler`.
+    pub(crate) fn apply_watch_event(&self, session_id: u64, event: WatchEvent) -> WatchEventJs {
+        let out = {
+            let mut core = self.core.lock().unwrap();
+            if !core
+                .watch_session
+                .as_ref()
+                .is_some_and(|s| s.id == session_id)
+            {
+                return WatchEventJs {
+                    kind: "closed".into(),
                     paths: Vec::new(),
+                };
+            }
+            let Some(ws) = core.workspace.clone() else {
+                return WatchEventJs {
+                    kind: "closed".into(),
+                    paths: Vec::new(),
+                };
+            };
+
+            match event {
+                WatchEvent::Changed(paths) => {
+                    for p in &paths {
+                        let _ = core.index.refresh_path(&ws, p);
+                    }
+                    WatchEventJs {
+                        kind: "changed".into(),
+                        paths,
+                    }
+                }
+                WatchEvent::Rescan => {
+                    if let Ok(idx) = WorkspaceIndex::scan(&ws) {
+                        core.index = idx;
+                    }
+                    WatchEventJs {
+                        kind: "rescan".into(),
+                        paths: Vec::new(),
+                    }
                 }
             }
-        }
+        };
+        self.invalidate_cache();
+        out
     }
 
     // ---- Workspace info & file I/O -----------------------------------------------------
 
     pub(crate) fn info(&self) -> WorkspaceInfo {
-        let Some(ws) = &self.workspace else {
+        let (ws, last_workspace_missing) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.last_workspace_missing)
+        };
+        let Some(ws) = ws else {
             return WorkspaceInfo {
-                last_workspace_missing: self.last_workspace_missing,
+                last_workspace_missing,
                 ..Default::default()
             };
         };
@@ -314,7 +415,8 @@ impl State {
     }
 
     pub(crate) fn read(&self, path: String) -> WorkspaceFile {
-        let Some(ws) = &self.workspace else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return WorkspaceFile {
                 path,
                 read_only: true,
@@ -348,12 +450,13 @@ impl State {
     }
 
     pub(crate) fn save(
-        &mut self,
+        &self,
         path: String,
         text: String,
         expected_hash: Option<String>,
     ) -> SaveResult {
-        let Some(ws) = self.workspace.clone() else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return SaveResult {
                 ok: false,
                 hash: String::new(),
@@ -365,9 +468,30 @@ impl State {
         // `write_checked` records the expected hash before atomically renaming into place.
         match ws.write_checked(&path, text.as_bytes(), expected_hash.as_deref()) {
             Ok(hash) => {
-                let _ = self.index.refresh_path(&ws, &path);
-                self.engine.reset_files();
-                self.invalidate_cache();
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_path(&ws, &path);
+                }
+                // Avoid redundant recompile when `save()` flushes the exact Markdown text
+                // that is already compiled in `snapshot`/`cached`.
+                let rev = self.revision();
+                let norm_path = normalize_ws_rel(&path);
+                let preserve_cache = is_overlayable_markdown_path(&norm_path) && {
+                    let snap = self.snapshot.lock().unwrap();
+                    if let Some(s) = snap.as_ref().filter(|s| {
+                        s.revision == rev
+                            && normalize_ws_rel(&s.request.path) == norm_path
+                            && s.request.text == text
+                    }) {
+                        s.matches_disk.store(true, Ordering::Release);
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !preserve_cache {
+                    self.invalidate_cache();
+                }
                 SaveResult {
                     ok: true,
                     hash,
@@ -391,36 +515,14 @@ impl State {
     }
 
     pub(crate) fn mcp_config_snippet(&self) -> String {
-        mcp_config_snippet(self.workspace.as_ref().map(|w| w.root()))
+        let root = self.workspace_root();
+        mcp_config_snippet(root.as_deref())
     }
 
-    // ---- Preview compilation, rasterization, export & reverse click lookup -------------
-
-    fn compile(
-        &mut self,
-        request: &PreviewRequest,
-    ) -> Result<
-        (
-            Option<Compiled>,
-            Option<xcpc_convert::Document>,
-            publish::Report,
-        ),
-        String,
-    > {
-        let ws = self.workspace.as_ref().ok_or("no workspace")?;
-        publish::check(
-            ws,
-            &mut self.engine,
-            &request.target(),
-            request.kind(),
-            None,
-            request.unsaved(),
-        )
-        .map_err(|e| e.to_string())
-    }
+    // ---- Preview compilation, rasterization, export & bidirectional lookup -------------
 
     pub(crate) fn run(
-        &mut self,
+        &self,
         request: &PreviewRequest,
         scale: f32,
         view: &[PreviewView],
@@ -429,18 +531,35 @@ impl State {
         if cancel.is_cancelled() {
             return PreviewResult::default();
         }
-        let cache_hit = self
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return PreviewResult {
+                error: Some("no workspace".into()),
+                ..Default::default()
+            };
+        };
+
+        let mut compiler = self.compiler.lock().unwrap();
+        if cancel.is_cancelled() {
+            return PreviewResult::default();
+        }
+        compiler.sync_root(&ws);
+
+        let rev = self.revision();
+        let cache_hit = compiler
             .cached
             .as_ref()
-            .is_some_and(|c| c.revision == self.revision && c.request == *request);
+            .is_some_and(|c| c.matches_request(request, rev));
         let compile_ms = if cache_hit {
             0.0
         } else {
-            // Clear stale cache before mutating `self.engine` so `locate_click` never
-            // queries spans against a mismatched `/main.typ`.
-            self.cached = None;
+            // Clear stale cache & snapshot before mutating `compiler.engine` so `locate_click`
+            // never queries spans against a mismatched `/main.typ`.
+            compiler.cached = None;
+            *self.snapshot.lock().unwrap() = None;
+
             let start = Instant::now();
-            let compiled = self.compile(request);
+            let compiled = compiler.compile(&ws, request);
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             let (compiled, doc, report) = match compiled {
                 Ok(r) => r,
@@ -462,15 +581,50 @@ impl State {
                     ..Default::default()
                 };
             };
+
             let page_count = compiled.page_count();
-            self.cached = Some(CachedCompile {
+            let matches_disk = Arc::new(AtomicBool::new(request.path.is_empty()));
+
+            // Pre-index forward-locate anchors for the currently edited file on this
+            // background thread so UI-thread `locateSource` never touches `compiler`.
+            let mut initial_anchors = HashMap::new();
+            if !request.path.is_empty() && !cancel.is_cancelled() {
+                let norm = normalize_ws_rel(&request.path);
+                if file_matches_book_kind(&norm, request.kind()) {
+                    let anchors = sample_file_anchors(
+                        &compiler.engine,
+                        &compiled,
+                        &doc,
+                        &report.problems,
+                        &norm,
+                    );
+                    initial_anchors.insert(norm, anchors);
+                }
+            }
+
+            let snap = Arc::new(CachedSnapshot {
                 request: request.clone(),
-                revision: self.revision,
+                revision: rev,
+                matches_disk: matches_disk.clone(),
+                doc_source: doc.source.clone(),
+                problems: report.problems.clone(),
+                anchors: Mutex::new(initial_anchors),
+            });
+
+            compiler.cached = Some(CachedCompile {
+                request: request.clone(),
+                revision: rev,
+                matches_disk,
                 compiled,
                 doc,
                 report,
                 fingerprints: vec![None; page_count],
             });
+
+            // Only publish snapshot if no mutation invalidated `rev` while compiling.
+            if self.revision() == rev {
+                *self.snapshot.lock().unwrap() = Some(snap);
+            }
             elapsed
         };
         if cancel.is_cancelled() {
@@ -479,9 +633,10 @@ impl State {
                 ..Default::default()
             };
         }
-        let cached = self.cached.as_mut().expect("cached above");
+        let CompilerState { cached, active, .. } = &mut *compiler;
+        let cached = cached.as_mut().expect("cached above");
         let (mut result, cancelled) =
-            rasterize_cached(self.id, &mut self.active, cached, scale, view, cancel);
+            rasterize_cached(self.id, active, cached, scale, view, cancel);
         result.compile_ms = compile_ms;
         if cancelled {
             return result;
@@ -494,9 +649,15 @@ impl State {
     }
 
     pub(crate) fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
-        let cached = self.cached.as_ref()?;
+        let Ok(compiler) = self.compiler.try_lock() else {
+            return None;
+        };
+        let cached = compiler.cached.as_ref()?;
+        if cached.revision != self.revision() {
+            return None;
+        }
         let loc = publish::locate_point(
-            &self.engine,
+            &compiler.engine,
             &cached.compiled,
             &cached.doc,
             page as usize,
@@ -510,7 +671,69 @@ impl State {
         })
     }
 
-    pub(crate) fn export(&mut self, request: &PreviewRequest) -> WorkspaceFile {
+    /// Maps a 1-based line inside workspace-relative `file` to its position `(page, yPt)`
+    /// in the currently cached preview. Never blocks on an active compilation.
+    pub(crate) fn locate_source(&self, file: &str, line: u32) -> Option<PreviewLocationJs> {
+        let norm_file = normalize_ws_rel(file);
+        if norm_file.is_empty() {
+            return None;
+        }
+        let rev = self.revision();
+        let snap = {
+            let guard = self.snapshot.lock().unwrap();
+            guard.as_ref().filter(|s| s.revision == rev).cloned()
+        }?;
+
+        if !file_matches_book_kind(&norm_file, snap.request.kind()) {
+            return None;
+        }
+
+        let target_line = line.max(1);
+        let fallback_page = problem_pages_for_file(&snap.problems, &norm_file)
+            .map(|p| p.first.saturating_sub(1) as u32);
+
+        // Fast path: anchors already indexed for this file (always true for active editor file).
+        if let Some(anchors) = snap.anchors.lock().unwrap().get(&norm_file) {
+            return interpolate_anchor(anchors, target_line).or_else(|| {
+                fallback_page.map(|page| PreviewLocationJs {
+                    page,
+                    y_pt: 0.0,
+                    exact: false,
+                })
+            });
+        }
+
+        // Lazy indexing for another file in the same compiled book (non-blocking `try_lock`).
+        if let Ok(compiler) = self.compiler.try_lock()
+            && let Some(cached) = compiler.cached.as_ref().filter(|c| c.revision == rev)
+        {
+            let anchors = sample_file_anchors(
+                &compiler.engine,
+                &cached.compiled,
+                &cached.doc,
+                &snap.problems,
+                &norm_file,
+            );
+            let result = interpolate_anchor(&anchors, target_line);
+            snap.anchors.lock().unwrap().insert(norm_file, anchors);
+            return result.or_else(|| {
+                fallback_page.map(|page| PreviewLocationJs {
+                    page,
+                    y_pt: 0.0,
+                    exact: false,
+                })
+            });
+        }
+
+        // Compiler busy: fall back immediately to the problem's first page.
+        fallback_page.map(|page| PreviewLocationJs {
+            page,
+            y_pt: 0.0,
+            exact: false,
+        })
+    }
+
+    pub(crate) fn export(&self, request: &PreviewRequest) -> WorkspaceFile {
         let target = request.target();
         let kind = request.kind();
         let path = publish::default_output(&target, kind);
@@ -520,32 +743,47 @@ impl State {
             ..Default::default()
         };
 
-        // Fast path: reuse cached compilation when it matches and passed all checks.
-        let (pdf, doc_source) = if let Some(cached) = self
-            .cached
-            .as_ref()
-            .filter(|c| c.revision == self.revision && c.request == *request && c.report.ok)
-        {
-            match cached.compiled.pdf() {
-                Ok(pdf) => (pdf, cached.doc.source.clone()),
-                Err(e) => return fail(e.first().map(|d| d.message.clone()).unwrap_or_default()),
-            }
-        } else {
-            self.cached = None;
-            let (compiled, doc, report) = match self.compile(request) {
-                Ok(r) => r,
-                Err(e) => return fail(e),
-            };
-            let (Some(compiled), Some(doc)) = (compiled.filter(|_| report.ok), doc) else {
-                return fail(first_error(&report).unwrap_or_default());
-            };
-            match compiled.pdf() {
-                Ok(pdf) => (pdf, doc.source),
-                Err(e) => return fail(e.first().map(|d| d.message.clone()).unwrap_or_default()),
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return fail("no workspace".into());
+        };
+
+        // Compile / generate PDF under `compiler` lock (UI thread `core` stays free).
+        let (pdf, doc_source) = {
+            let mut compiler = self.compiler.lock().unwrap();
+            compiler.sync_root(&ws);
+            let rev = self.revision();
+
+            if let Some(cached) = compiler
+                .cached
+                .as_ref()
+                .filter(|c| c.matches_request(request, rev) && c.report.ok)
+            {
+                match cached.compiled.pdf() {
+                    Ok(pdf) => (pdf, cached.doc.source.clone()),
+                    Err(e) => {
+                        return fail(e.first().map(|d| d.message.clone()).unwrap_or_default());
+                    }
+                }
+            } else {
+                compiler.cached = None;
+                *self.snapshot.lock().unwrap() = None;
+                let (compiled, doc, report) = match compiler.compile(&ws, request) {
+                    Ok(r) => r,
+                    Err(e) => return fail(e),
+                };
+                let (Some(compiled), Some(doc)) = (compiled.filter(|_| report.ok), doc) else {
+                    return fail(first_error(&report).unwrap_or_default());
+                };
+                match compiled.pdf() {
+                    Ok(pdf) => (pdf, doc.source),
+                    Err(e) => {
+                        return fail(e.first().map(|d| d.message.clone()).unwrap_or_default());
+                    }
+                }
             }
         };
 
-        let ws = self.workspace.clone().expect("compiled in it");
         match ws.write(&path, &pdf) {
             Ok(()) => {
                 let abs_path = ws.root().join(&path);
@@ -555,7 +793,7 @@ impl State {
                 if let Some(fingerprint) =
                     compute_book_fingerprint(&ws, &target, kind, Some(doc_source.as_str()))
                 {
-                    self.exports.insert(
+                    self.core.lock().unwrap().exports.insert(
                         (target, kind),
                         ExportRecord {
                             fingerprint,
@@ -576,7 +814,8 @@ impl State {
     /// Resolves and validates `path` (absolute or workspace-relative) for `revealInFolder`,
     /// enforcing that the target exists and stays strictly inside the open workspace.
     pub(crate) fn resolve_reveal_path(&self, path: &str) -> Result<PathBuf, ActionResult> {
-        let Some(ws) = &self.workspace else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return Err(ActionResult::err("no_workspace", "no workspace open"));
         };
         if path.is_empty() {
@@ -609,98 +848,43 @@ impl State {
 
     /// Computes independent PDF freshness states for both `statements` and `editorial` books
     /// of `request`'s target (in-session content fingerprint with restart `mtime` fallback).
+    /// Never blocks on `compiler`.
     pub(crate) fn export_status(&self, request: &PreviewRequest) -> ExportBookStatusJs {
         let target = request.target();
+        let (ws, stmt_rec, ed_rec) = {
+            let core = self.core.lock().unwrap();
+            (
+                core.workspace.clone(),
+                core.exports
+                    .get(&(target.clone(), Kind::Statements))
+                    .cloned(),
+                core.exports
+                    .get(&(target.clone(), Kind::Editorial))
+                    .cloned(),
+            )
+        };
+        let rev = self.revision();
+        let snap = {
+            let guard = self.snapshot.lock().unwrap();
+            guard.as_ref().filter(|s| s.revision == rev).cloned()
+        };
         ExportBookStatusJs {
-            statements: self.book_freshness(&target, Kind::Statements, request),
-            editorial: self.book_freshness(&target, Kind::Editorial, request),
-        }
-    }
-
-    fn book_freshness(
-        &self,
-        target: &Target,
-        kind: Kind,
-        request: &PreviewRequest,
-    ) -> PdfFreshnessJs {
-        let rel_path = publish::default_output(target, kind);
-        let Some(ws) = &self.workspace else {
-            return PdfFreshnessJs {
-                rel_path,
-                abs_path: String::new(),
-                exists: false,
-                fresh: false,
-            };
-        };
-        let abs_buf = ws.root().join(&rel_path);
-        let abs_path = abs_buf.display().to_string();
-        let Ok(pdf_meta) = std::fs::metadata(&abs_buf) else {
-            return PdfFreshnessJs {
-                rel_path,
-                abs_path,
-                exists: false,
-                fresh: false,
-            };
-        };
-        if !pdf_meta.is_file() {
-            return PdfFreshnessJs {
-                rel_path,
-                abs_path,
-                exists: false,
-                fresh: false,
-            };
-        }
-
-        // Unsaved editor edits belonging to this book immediately mark the on-disk PDF stale.
-        if unsaved_affects_book(ws, target, kind, request.unsaved()) {
-            return PdfFreshnessJs {
-                rel_path,
-                abs_path,
-                exists: true,
-                fresh: false,
-            };
-        }
-
-        let disk_len = pdf_meta.len();
-        let disk_mtime = pdf_meta.modified().ok();
-
-        // In-session export cache: exact content fingerprint match when the on-disk PDF is
-        // still the file we wrote in this session.
-        if let Some(rec) = self.exports.get(&(target.clone(), kind))
-            && rec.pdf_len == disk_len
-            && rec.pdf_mtime == disk_mtime
-        {
-            let cached_source = self
-                .cached
-                .as_ref()
-                .filter(|c| {
-                    c.revision == self.revision
-                        && c.request.target() == *target
-                        && c.request.kind() == kind
-                        && !unsaved_affects_book(ws, target, kind, c.request.unsaved())
-                })
-                .map(|c| c.doc.source.as_str());
-            let fresh = compute_book_fingerprint(ws, target, kind, cached_source)
-                .is_some_and(|fp| fp == rec.fingerprint);
-            return PdfFreshnessJs {
-                rel_path,
-                abs_path,
-                exists: true,
-                fresh,
-            };
-        }
-
-        // Restart recovery (or PDF produced externally): compare PDF mtime against the
-        // newest source file mtime for this book.
-        let fresh = match (disk_mtime, latest_book_source_mtime(ws, target, kind)) {
-            (Some(pdf_t), Some(src_t)) => pdf_t >= src_t,
-            _ => false,
-        };
-        PdfFreshnessJs {
-            rel_path,
-            abs_path,
-            exists: true,
-            fresh,
+            statements: book_freshness(
+                ws.as_ref(),
+                stmt_rec.as_ref(),
+                snap.as_deref(),
+                &target,
+                Kind::Statements,
+                request,
+            ),
+            editorial: book_freshness(
+                ws.as_ref(),
+                ed_rec.as_ref(),
+                snap.as_deref(),
+                &target,
+                Kind::Editorial,
+                request,
+            ),
         }
     }
 
@@ -714,7 +898,8 @@ impl State {
             rating_max: query.rating_max,
             platform: query.platform,
         };
-        self.index
+        let core = self.core.lock().unwrap();
+        core.index
             .search_problems(&core_query)
             .into_iter()
             .map(|p| ProblemSummaryJs {
@@ -733,7 +918,8 @@ impl State {
     pub(crate) fn workspace_facets(&self) -> WorkspaceFacets {
         let mut tags = BTreeSet::new();
         let mut platforms = BTreeSet::new();
-        for p in self.index.problems() {
+        let core = self.core.lock().unwrap();
+        for p in core.index.problems() {
             for t in &p.tags {
                 if !t.is_empty() {
                     tags.insert(t.clone());
@@ -752,7 +938,18 @@ impl State {
     }
 
     pub(crate) fn problem_detail(&self, id: &str) -> ProblemDetailJs {
-        let Some(ws) = &self.workspace else {
+        let (ws, referencing_contests) = {
+            let core = self.core.lock().unwrap();
+            let refs = core
+                .index
+                .contests()
+                .into_iter()
+                .filter(|(_, meta)| meta.problems.iter().any(|item| item.id == id))
+                .map(|(cid, _)| cid.to_owned())
+                .collect();
+            (core.workspace.clone(), refs)
+        };
+        let Some(ws) = ws else {
             return ProblemDetailJs {
                 id: id.to_owned(),
                 error: Some("no workspace open".into()),
@@ -825,13 +1022,6 @@ impl State {
             })
             .collect();
         let solutions = ws.list_solutions(id).unwrap_or_default();
-        let referencing_contests = self
-            .index
-            .contests()
-            .into_iter()
-            .filter(|(_, meta)| meta.problems.iter().any(|item| item.id == id))
-            .map(|(cid, _)| cid.to_owned())
-            .collect();
 
         ProblemDetailJs {
             id: problem.id,
@@ -854,7 +1044,8 @@ impl State {
 
     pub(crate) fn read_solution(&self, id: &str, name: &str) -> WorkspaceFile {
         let path = format!("problems/{id}/solutions/{name}");
-        let Some(ws) = &self.workspace else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return WorkspaceFile {
                 path,
                 read_only: true,
@@ -880,13 +1071,14 @@ impl State {
         }
     }
 
-    pub(crate) fn create_problem(&mut self, id: &str, title: &str) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn create_problem(&self, id: &str, title: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.create_problem(id, title) {
             Ok(_) => {
-                let _ = self.index.refresh_problem(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_problem(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -894,17 +1086,14 @@ impl State {
         }
     }
 
-    pub(crate) fn update_problem_meta(
-        &mut self,
-        id: &str,
-        patch: ProblemMetaPatchJs,
-    ) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn update_problem_meta(&self, id: &str, patch: ProblemMetaPatchJs) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.update_problem_meta(id, &patch.into_core()) {
             Ok(_) => {
-                let _ = self.index.refresh_problem(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_problem(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -912,13 +1101,14 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_problem(&mut self, id: &str) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn delete_problem(&self, id: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.delete_problem(id) {
             Ok(()) => {
-                let _ = self.index.refresh_problem(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_problem(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -926,15 +1116,16 @@ impl State {
         }
     }
 
-    pub(crate) fn save_samples(&mut self, id: &str, samples: Vec<SamplePairJs>) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn save_samples(&self, id: &str, samples: Vec<SamplePairJs>) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         let pairs: Vec<(String, String)> =
             samples.into_iter().map(|s| (s.input, s.output)).collect();
         match ws.save_samples(id, &pairs) {
             Ok(()) => {
-                let _ = self.index.refresh_problem(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_problem(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -945,7 +1136,8 @@ impl State {
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
     pub(crate) fn contest_detail(&self, id: &str) -> ContestDetailJs {
-        let Some(ws) = &self.workspace else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ContestDetailJs {
                 id: id.to_owned(),
                 error: Some("no workspace open".into()),
@@ -1088,22 +1280,25 @@ impl State {
     }
 
     pub(crate) fn contest_stats(&self, id: &str) -> ContestStatsJs {
-        let stats = if let Some(s) = self.index.contest_stats_by_id(id) {
-            s
-        } else {
-            let Some(ws) = &self.workspace else {
-                return ContestStatsJs {
-                    error: Some("no workspace open".into()),
-                    ..Default::default()
-                };
-            };
-            match ws.load_contest(id) {
-                Ok(c) => self.index.contest_stats(&c.meta),
-                Err(e) => {
+        let stats = {
+            let core = self.core.lock().unwrap();
+            if let Some(s) = core.index.contest_stats_by_id(id) {
+                s
+            } else {
+                let Some(ws) = &core.workspace else {
                     return ContestStatsJs {
-                        error: Some(e.to_string()),
+                        error: Some("no workspace open".into()),
                         ..Default::default()
                     };
+                };
+                match ws.load_contest(id) {
+                    Ok(c) => core.index.contest_stats(&c.meta),
+                    Err(e) => {
+                        return ContestStatsJs {
+                            error: Some(e.to_string()),
+                            ..Default::default()
+                        };
+                    }
                 }
             }
         };
@@ -1132,8 +1327,9 @@ impl State {
         }
     }
 
-    pub(crate) fn create_contest(&mut self, id: &str, name: &str) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn create_contest(&self, id: &str, name: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         if let Err(e) = check_id(id) {
@@ -1156,7 +1352,7 @@ impl State {
         };
         match ws.compose_contest(id, &[], Some(&patch)) {
             Ok(_) => {
-                let _ = self.index.refresh_contest(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -1164,13 +1360,14 @@ impl State {
         }
     }
 
-    pub(crate) fn compose_contest(&mut self, id: &str, problem_ids: &[String]) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn compose_contest(&self, id: &str, problem_ids: &[String]) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.compose_contest(id, problem_ids, None) {
             Ok(_) => {
-                let _ = self.index.refresh_contest(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -1178,12 +1375,9 @@ impl State {
         }
     }
 
-    pub(crate) fn update_contest_meta(
-        &mut self,
-        id: &str,
-        patch: ContestMetaPatchJs,
-    ) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn update_contest_meta(&self, id: &str, patch: ContestMetaPatchJs) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         let core_patch = match patch.into_core() {
@@ -1192,7 +1386,7 @@ impl State {
         };
         match ws.update_contest_meta(id, &core_patch) {
             Ok(_) => {
-                let _ = self.index.refresh_contest(&ws, id);
+                let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -1201,17 +1395,23 @@ impl State {
     }
 
     pub(crate) fn set_override(
-        &mut self,
+        &self,
         contest_id: &str,
         label: &str,
         patch: OverridePatchJs,
     ) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.set_override(contest_id, label, &patch.into_core()) {
             Ok(_) => {
-                let _ = self.index.refresh_contest(&ws, contest_id);
+                let _ = self
+                    .core
+                    .lock()
+                    .unwrap()
+                    .index
+                    .refresh_contest(&ws, contest_id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -1219,8 +1419,9 @@ impl State {
         }
     }
 
-    pub(crate) fn freeze_contest(&mut self, id: &str) -> FreezeResultJs {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn freeze_contest(&self, id: &str) -> FreezeResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return FreezeResultJs {
                 ok: false,
                 frozen: false,
@@ -1230,14 +1431,20 @@ impl State {
             };
         };
         // `publish::freeze_contest` compiles statements (and optionally editorial) using
-        // `self.engine`, so clear `cached` to preserve the engine/cached span invariant.
-        self.cached = None;
-        match publish::freeze_contest(&ws, &mut self.engine, id) {
+        // `compiler.engine`, so clear `cached` & `snapshot` to preserve the engine/cached
+        // span invariant while leaving `core` unlocked for the UI thread.
+        let outcome = {
+            let mut compiler = self.compiler.lock().unwrap();
+            compiler.sync_root(&ws);
+            compiler.cached = None;
+            *self.snapshot.lock().unwrap() = None;
+            publish::freeze_contest(&ws, &mut compiler.engine, id)
+        };
+        match outcome {
             Ok(outcome) => {
                 let (first_err, diagnostics, _) = extract_report(&outcome.report);
                 if outcome.frozen {
-                    let _ = self.index.refresh_contest(&ws, id);
-                    self.engine.reset_files();
+                    let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                     self.invalidate_cache();
                 }
                 FreezeResultJs {
@@ -1261,7 +1468,8 @@ impl State {
     }
 
     pub(crate) fn unfreeze_diff(&self, id: &str) -> UnfreezeDiffResultJs {
-        let Some(ws) = &self.workspace else {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return UnfreezeDiffResultJs {
                 ok: false,
                 error: Some("no workspace open".into()),
@@ -1297,14 +1505,14 @@ impl State {
         }
     }
 
-    pub(crate) fn unfreeze_contest(&mut self, id: &str) -> ActionResult {
-        let Some(ws) = self.workspace.clone() else {
+    pub(crate) fn unfreeze_contest(&self, id: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
         match ws.unfreeze_contest(id) {
             Ok(_) => {
-                let _ = self.index.refresh_contest(&ws, id);
-                self.engine.reset_files();
+                let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -1325,17 +1533,18 @@ impl State {
         now_secs: u64,
     ) -> Vec<FuzzyHitJs> {
         const LIMIT: usize = 50;
+        let core = self.core.lock().unwrap();
         let mut hits = Vec::new();
 
         // Core fuzzy search over all problems and contests (without double-counting
         // in-memory index frecency; persisted Frecency from `prefs.json` is applied here).
-        for hit in self.index.fuzzy_search_at(query, usize::MAX, now_secs) {
+        for hit in core.index.fuzzy_search_at(query, usize::MAX, now_secs) {
             let kind = match hit.kind {
                 FuzzyMatchKind::Problem => "problem",
                 FuzzyMatchKind::Contest => "contest",
             };
             let visit_key = format!("{kind}:{}", hit.id);
-            let boost = self.prefs.frecency_boost(&visit_key, now_secs);
+            let boost = core.prefs.frecency_boost(&visit_key, now_secs);
             hits.push(FuzzyHitJs {
                 kind: kind.to_owned(),
                 id: hit.id,
@@ -1349,7 +1558,7 @@ impl State {
 
         // Contextual active-contest items (match by label `A`/`B`/…, ID, or title).
         if let Some(cid) = active_contest
-            && let Some(contest) = self.index.contest(cid)
+            && let Some(contest) = core.index.contest(cid)
         {
             let norm_q = normalize_query(query);
             let terms: Vec<&str> = norm_q.split_whitespace().collect();
@@ -1357,7 +1566,7 @@ impl State {
                 let effective_title = item
                     .title
                     .clone()
-                    .or_else(|| self.index.problem(&item.id).map(|p| p.title.clone()))
+                    .or_else(|| core.index.problem(&item.id).map(|p| p.title.clone()))
                     .unwrap_or_else(|| item.id.clone());
                 let Some(base_score) =
                     score_contest_item(&terms, &norm_q, &item.label, &item.id, &effective_title)
@@ -1365,7 +1574,7 @@ impl State {
                     continue;
                 };
                 let visit_key = format!("contest_item:{cid}:{}", item.label);
-                let boost = self.prefs.frecency_boost(&visit_key, now_secs);
+                let boost = core.prefs.frecency_boost(&visit_key, now_secs);
                 hits.push(FuzzyHitJs {
                     kind: "contest_item".to_owned(),
                     id: item.id.clone(),
@@ -1389,18 +1598,387 @@ impl State {
         hits
     }
 
-    pub(crate) fn record_visit(&mut self, key: &str) {
-        self.prefs.record_visit(key);
-        self.prefs.persist(self.data_dir.as_deref());
+    pub(crate) fn record_visit(&self, key: &str) {
+        let mut core = self.core.lock().unwrap();
+        core.prefs.record_visit(key);
+        core.prefs.persist(self.data_dir.as_deref());
     }
 
     pub(crate) fn load_prefs(&self) -> AppPrefsJs {
-        self.prefs.app.clone()
+        self.core.lock().unwrap().prefs.app.clone()
     }
 
-    pub(crate) fn save_prefs(&mut self, prefs: AppPrefsJs) {
-        self.prefs.apply_app_prefs(prefs);
-        self.prefs.persist(self.data_dir.as_deref());
+    pub(crate) fn save_prefs(&self, prefs: AppPrefsJs) {
+        let mut core = self.core.lock().unwrap();
+        core.prefs.apply_app_prefs(prefs);
+        core.prefs.persist(self.data_dir.as_deref());
+    }
+
+    // ---- Native image asset import -----------------------------------------------------
+
+    /// Pre-validates that `target` / `id` / `label` resolves to an existing writable problem
+    /// (not read-only workspace, not a frozen contest, valid IDs).
+    pub(crate) fn validate_image_target(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+    ) -> Result<String, String> {
+        self.resolve_image_target(target, id, label)
+            .map(|(_, problem_id)| problem_id)
+    }
+
+    /// Reads `src_path` and atomically imports it into `problems/<problem_id>/assets/<name>`,
+    /// avoiding overwrites with `-2`, `-3`, ... suffixes. Returns `"assets/<name>"`.
+    pub(crate) fn import_image_file(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        src_path: &Path,
+    ) -> Result<String, String> {
+        let (ws, problem_id) = self.resolve_image_target(target, id, label)?;
+        let ext = src_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .ok_or_else(|| "selected file has no extension".to_owned())?;
+        let ext = normalize_image_ext(ext)?;
+        let raw_stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image");
+        let stem = sanitize_asset_stem(raw_stem);
+        let bytes = std::fs::read(src_path)
+            .map_err(|e| format!("failed to read {}: {e}", src_path.display()))?;
+        if bytes.is_empty() {
+            return Err("selected image file is empty".to_owned());
+        }
+        self.write_unique_asset(&ws, &problem_id, &stem, &ext, &bytes)
+    }
+
+    /// Atomically writes raw image `bytes` into `problems/<problem_id>/assets/paste-YYYYMMDD-HHMMSS.<ext>`
+    /// (with `-2`, `-3`, ... suffix on collision). Returns `"assets/<name>"`.
+    pub(crate) fn import_image_bytes(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        ext: &str,
+        bytes: &[u8],
+    ) -> Result<String, String> {
+        let (ws, problem_id) = self.resolve_image_target(target, id, label)?;
+        if bytes.is_empty() {
+            return Err("image bytes are empty".to_owned());
+        }
+        let ext = if ext.trim().is_empty() {
+            "png".to_owned()
+        } else {
+            normalize_image_ext(ext)?
+        };
+        let stem = paste_timestamp_stem();
+        self.write_unique_asset(&ws, &problem_id, &stem, &ext, bytes)
+    }
+
+    fn resolve_image_target(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+    ) -> Result<(Workspace, String), String> {
+        let ws = self
+            .core
+            .lock()
+            .unwrap()
+            .workspace
+            .clone()
+            .ok_or_else(|| "no workspace open".to_owned())?;
+        if ws.is_read_only() {
+            return Err("workspace is read-only".to_owned());
+        }
+        match target {
+            "problem" => {
+                check_id(id).map_err(|e| e.to_string())?;
+                ws.load_problem(id).map_err(|e| e.to_string())?;
+                Ok((ws, id.to_owned()))
+            }
+            "contest" => {
+                check_id(id).map_err(|e| e.to_string())?;
+                let contest = ws.load_contest(id).map_err(|e| e.to_string())?;
+                if contest.meta.frozen {
+                    return Err(format!("contest '{id}' is frozen"));
+                }
+                let label = label
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| "missing problem label for contest target".to_owned())?;
+                let item = contest
+                    .meta
+                    .problems
+                    .iter()
+                    .find(|item| item.label.eq_ignore_ascii_case(label))
+                    .ok_or_else(|| format!("contest '{id}' has no problem '{label}'"))?;
+                check_id(&item.id).map_err(|e| e.to_string())?;
+                ws.load_problem(&item.id).map_err(|e| e.to_string())?;
+                Ok((ws, item.id.clone()))
+            }
+            other => Err(format!(
+                "invalid target {other:?}: expected \"problem\" or \"contest\""
+            )),
+        }
+    }
+
+    fn write_unique_asset(
+        &self,
+        ws: &Workspace,
+        problem_id: &str,
+        stem: &str,
+        ext: &str,
+        bytes: &[u8],
+    ) -> Result<String, String> {
+        for n in 1u32..=10_000 {
+            let filename = if n == 1 {
+                format!("{stem}.{ext}")
+            } else {
+                format!("{stem}-{n}.{ext}")
+            };
+            let ws_rel = format!("problems/{problem_id}/assets/{filename}");
+            let abs = ws.resolve(&ws_rel).map_err(|e| e.to_string())?;
+            if abs.symlink_metadata().is_err() {
+                ws.write(&ws_rel, bytes).map_err(|e| e.to_string())?;
+                self.invalidate_cache();
+                return Ok(format!("assets/{filename}"));
+            }
+        }
+        Err("too many colliding asset filenames".to_owned())
+    }
+}
+
+fn book_freshness(
+    ws: Option<&Workspace>,
+    export_rec: Option<&ExportRecord>,
+    snap: Option<&CachedSnapshot>,
+    target: &Target,
+    kind: Kind,
+    request: &PreviewRequest,
+) -> PdfFreshnessJs {
+    let rel_path = publish::default_output(target, kind);
+    let Some(ws) = ws else {
+        return PdfFreshnessJs {
+            rel_path,
+            abs_path: String::new(),
+            exists: false,
+            fresh: false,
+        };
+    };
+    let abs_buf = ws.root().join(&rel_path);
+    let abs_path = abs_buf.display().to_string();
+    let Ok(pdf_meta) = std::fs::metadata(&abs_buf) else {
+        return PdfFreshnessJs {
+            rel_path,
+            abs_path,
+            exists: false,
+            fresh: false,
+        };
+    };
+    if !pdf_meta.is_file() {
+        return PdfFreshnessJs {
+            rel_path,
+            abs_path,
+            exists: false,
+            fresh: false,
+        };
+    }
+
+    // Unsaved editor edits belonging to this book immediately mark the on-disk PDF stale.
+    if unsaved_affects_book(ws, target, kind, request.unsaved()) {
+        return PdfFreshnessJs {
+            rel_path,
+            abs_path,
+            exists: true,
+            fresh: false,
+        };
+    }
+
+    let disk_len = pdf_meta.len();
+    let disk_mtime = pdf_meta.modified().ok();
+
+    // In-session export cache: exact content fingerprint match when the on-disk PDF is
+    // still the file we wrote in this session.
+    if let Some(rec) = export_rec
+        && rec.pdf_len == disk_len
+        && rec.pdf_mtime == disk_mtime
+    {
+        let cached_source = snap
+            .filter(|s| {
+                s.request.target() == *target
+                    && s.request.kind() == kind
+                    && (s.matches_disk.load(Ordering::Acquire)
+                        || !unsaved_affects_book(ws, target, kind, s.request.unsaved()))
+            })
+            .map(|s| s.doc_source.as_str());
+        let fresh = compute_book_fingerprint(ws, target, kind, cached_source)
+            .is_some_and(|fp| fp == rec.fingerprint);
+        return PdfFreshnessJs {
+            rel_path,
+            abs_path,
+            exists: true,
+            fresh,
+        };
+    }
+
+    // Restart recovery (or PDF produced externally): compare PDF mtime against the
+    // newest source file mtime for this book.
+    let fresh = match (disk_mtime, latest_book_source_mtime(ws, target, kind)) {
+        (Some(pdf_t), Some(src_t)) => pdf_t >= src_t,
+        _ => false,
+    };
+    PdfFreshnessJs {
+        rel_path,
+        abs_path,
+        exists: true,
+        fresh,
+    }
+}
+
+// ---- Forward source → preview anchor sampling & interpolation --------------------------
+
+fn is_overlayable_markdown_path(norm: &str) -> bool {
+    let Some(name) = norm.rsplit('/').next() else {
+        return false;
+    };
+    name == "statement.md"
+        || name == "editorial.md"
+        || (name.starts_with("statement.") && name.ends_with(".md"))
+}
+
+fn file_matches_book_kind(norm: &str, kind: Kind) -> bool {
+    let Some(name) = norm.rsplit('/').next() else {
+        return false;
+    };
+    match kind {
+        Kind::Statements => {
+            name == "statement.md" || (name.starts_with("statement.") && name.ends_with(".md"))
+        }
+        Kind::Editorial => name == "editorial.md",
+    }
+}
+
+fn problem_pages_for_file<'a>(
+    problems: &'a [publish::Pages],
+    norm_file: &str,
+) -> Option<&'a publish::Pages> {
+    if let Some(rest) = norm_file.strip_prefix("problems/") {
+        let id = rest.split('/').next()?;
+        return problems.iter().find(|p| p.id == id);
+    }
+    if let Some((_, rest)) = norm_file.split_once("/snapshot/") {
+        let label = rest.split('/').next()?;
+        return problems.iter().find(|p| p.label == label);
+    }
+    None
+}
+
+/// Samples rendered points across the pages belonging to `norm_file` via
+/// `publish::locate_point` and returns deduplicated `(line, page, y_pt)` anchors sorted
+/// by ascending 1-based line number.
+fn sample_file_anchors(
+    engine: &Engine,
+    compiled: &Compiled,
+    doc: &xcpc_convert::Document,
+    problems: &[publish::Pages],
+    norm_file: &str,
+) -> Vec<SourceAnchor> {
+    const SAMPLE_STEP_PT: f64 = 20.0;
+    const TOP_MARGIN_PT: f64 = 48.0;
+    const BOTTOM_MARGIN_PT: f64 = 40.0;
+
+    let page_count = compiled.page_count();
+    if page_count == 0 {
+        return Vec::new();
+    }
+    let page_range = match problem_pages_for_file(problems, norm_file) {
+        Some(p) => {
+            let start = p.first.saturating_sub(1).min(page_count);
+            let end = start.saturating_add(p.count.max(1)).min(page_count);
+            start..end
+        }
+        None => 0..page_count.min(32),
+    };
+
+    let mut by_line: BTreeMap<u32, (u32, f64)> = BTreeMap::new();
+    for page_idx in page_range {
+        let Some((width, height)) = compiled.page_size(page_idx) else {
+            continue;
+        };
+        let xs = [width * 0.25, width * 0.5, width * 0.15];
+        let y_end = (height - BOTTOM_MARGIN_PT).max(TOP_MARGIN_PT);
+        let mut y = TOP_MARGIN_PT;
+        while y <= y_end {
+            for &x in &xs {
+                if let Some(loc) = publish::locate_point(engine, compiled, doc, page_idx, x, y)
+                    && normalize_ws_rel(&loc.file) == norm_file
+                {
+                    let line = (loc.line as u32).max(1);
+                    by_line.entry(line).or_insert((page_idx as u32, y));
+                    break;
+                }
+            }
+            y += SAMPLE_STEP_PT;
+        }
+    }
+
+    by_line
+        .into_iter()
+        .map(|(line, (page, y_pt))| SourceAnchor { line, page, y_pt })
+        .collect()
+}
+
+fn interpolate_anchor(anchors: &[SourceAnchor], line: u32) -> Option<PreviewLocationJs> {
+    if anchors.is_empty() {
+        return None;
+    }
+    match anchors.binary_search_by_key(&line, |a| a.line) {
+        Ok(i) => Some(PreviewLocationJs {
+            page: anchors[i].page,
+            y_pt: anchors[i].y_pt,
+            exact: true,
+        }),
+        Err(0) => Some(PreviewLocationJs {
+            page: anchors[0].page,
+            y_pt: anchors[0].y_pt,
+            exact: true,
+        }),
+        Err(i) if i >= anchors.len() => {
+            let last = anchors[anchors.len() - 1];
+            Some(PreviewLocationJs {
+                page: last.page,
+                y_pt: last.y_pt,
+                exact: true,
+            })
+        }
+        Err(i) => {
+            let prev = anchors[i - 1];
+            let next = anchors[i];
+            if prev.page == next.page && next.line > prev.line {
+                let t = f64::from(line - prev.line) / f64::from(next.line - prev.line);
+                Some(PreviewLocationJs {
+                    page: prev.page,
+                    y_pt: prev.y_pt + (next.y_pt - prev.y_pt) * t,
+                    exact: true,
+                })
+            } else {
+                let chosen = if line - prev.line <= next.line - line {
+                    prev
+                } else {
+                    next
+                };
+                Some(PreviewLocationJs {
+                    page: chosen.page,
+                    y_pt: chosen.y_pt,
+                    exact: true,
+                })
+            }
+        }
     }
 }
 
@@ -1733,4 +2311,67 @@ fn record_tree_mtime(
             bump(latest, mtime);
         }
     }
+}
+
+const ALLOWED_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "svg", "webp", "pdf"];
+
+fn normalize_image_ext(raw: &str) -> Result<String, String> {
+    let ext = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+    if ALLOWED_IMAGE_EXTS.contains(&ext.as_str()) {
+        Ok(ext)
+    } else {
+        Err(format!(
+            "unsupported image extension {raw:?}: expected one of png, jpg, jpeg, svg, webp, pdf"
+        ))
+    }
+}
+
+fn sanitize_asset_stem(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len().min(80));
+    let mut prev_dash = false;
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+            prev_dash = false;
+        } else if ch == '-' || ch.is_whitespace() || ch == '.' {
+            if !out.is_empty() && !prev_dash {
+                out.push('-');
+                prev_dash = true;
+            }
+        }
+        if out.len() >= 80 {
+            break;
+        }
+    }
+    let trimmed = out.trim_matches(['-', '_']);
+    if trimmed.is_empty() {
+        "image".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn paste_timestamp_stem() -> String {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let hour = rem / 3_600;
+    let minute = (rem % 3_600) / 60;
+    let second = rem % 60;
+
+    // Howard Hinnant's civil_from_days (UTC).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(month <= 2);
+
+    format!("paste-{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
 }

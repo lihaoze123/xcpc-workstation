@@ -184,55 +184,58 @@ fn compiled_cache_hits_and_invalidates_on_save_and_switch() {
     };
 
     // First run compiles from scratch.
-    let first = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.0, &[page_view(0)], token);
+    let first = preview.state.run(&req, 1.0, &[page_view(0)], token);
     assert!(first.error.is_none());
     assert_eq!(first.pages.len(), 1);
     assert!(first.compile_ms > 0.0);
 
     // Changing only scale/view hits the cached Compiled with compile_ms == 0.0.
-    let second = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.5, &[page_view(0)], token);
+    let second = preview.state.run(&req, 1.5, &[page_view(0)], token);
     assert!(second.error.is_none());
     assert_eq!(second.compile_ms, 0.0);
     assert_eq!(second.pages.len(), 1);
 
-    // save() increments revision and invalidates cached Compiled.
-    let rev_before_save = preview.state.lock().unwrap().revision;
-    let saved = preview.save("problems/p1/statement.md".into(), md.into(), None);
-    assert!(saved.ok, "save failed: {:?}", saved.error);
-    {
-        let state = preview.state.lock().unwrap();
-        assert_eq!(state.revision, rev_before_save + 1);
-        assert!(state.cached.is_none());
-    }
-    let after_save = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.5, &[page_view(0)], token);
-    assert!(after_save.compile_ms > 0.0);
+    // save() with the EXACT same Markdown already compiled preserves the cache (no redundant recompile).
+    let rev_before_same_save = preview.state.revision();
+    let saved_same = preview.save("problems/p1/statement.md".into(), md.into(), None);
+    assert!(saved_same.ok, "save failed: {:?}", saved_same.error);
+    assert_eq!(preview.state.revision(), rev_before_same_save);
+    assert!(preview.state.snapshot.lock().unwrap().is_some());
+    let after_same_save = preview.state.run(&req, 1.5, &[page_view(0)], token);
+    assert!(after_same_save.error.is_none());
+    assert_eq!(after_same_save.compile_ms, 0.0);
+
+    // Even a disk-only request (`path: ""`) hits the promoted disk-clean cache!
+    let disk_req = PreviewRequest {
+        path: String::new(),
+        text: String::new(),
+        ..req.clone()
+    };
+    let after_same_save_disk = preview.state.run(&disk_req, 1.5, &[page_view(0)], token);
+    assert!(after_same_save_disk.error.is_none());
+    assert_eq!(after_same_save_disk.compile_ms, 0.0);
+
+    // save() with DIFFERENT text increments revision and invalidates cached Compiled.
+    let md2 = format!("{md}\n补充说明。\n");
+    let rev_before_diff_save = preview.state.revision();
+    let saved_diff = preview.save("problems/p1/statement.md".into(), md2.clone(), None);
+    assert!(saved_diff.ok, "save failed: {:?}", saved_diff.error);
+    assert_eq!(preview.state.revision(), rev_before_diff_save + 1);
+    assert!(preview.state.snapshot.lock().unwrap().is_none());
+    let req2 = PreviewRequest {
+        text: md2,
+        ..req.clone()
+    };
+    let after_diff_save = preview.state.run(&req2, 1.5, &[page_view(0)], token);
+    assert!(after_diff_save.compile_ms > 0.0);
 
     // switch() increments revision and invalidates cached Compiled.
-    let rev_before_switch = preview.state.lock().unwrap().revision;
+    let rev_before_switch = preview.state.revision();
     let switched = preview.open_workspace(dir.0.display().to_string(), false);
     assert!(switched.error.is_none());
-    {
-        let state = preview.state.lock().unwrap();
-        assert_eq!(state.revision, rev_before_switch + 1);
-        assert!(state.cached.is_none());
-    }
-    let after_switch = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.5, &[page_view(0)], token);
+    assert_eq!(preview.state.revision(), rev_before_switch + 1);
+    assert!(preview.state.snapshot.lock().unwrap().is_none());
+    let after_switch = preview.state.run(&req2, 1.5, &[page_view(0)], token);
     assert!(after_switch.compile_ms > 0.0);
 }
 
@@ -247,11 +250,7 @@ fn fingerprints_computed_lazily_only_for_in_view_pages() {
     };
 
     // Request only page 0 in view out of 5 pages.
-    let first = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 0.9, &[page_view(0)], token);
+    let first = preview.state.run(&req, 0.9, &[page_view(0)], token);
     assert_eq!(first.pages.len(), 5);
     assert_eq!(first.rendered, 1);
     assert_eq!(first.pages[0].layers.len(), 1);
@@ -262,19 +261,15 @@ fn fingerprints_computed_lazily_only_for_in_view_pages() {
         );
     }
     {
-        let state = preview.state.lock().unwrap();
-        let fps = &state.cached.as_ref().unwrap().fingerprints;
+        let compiler = preview.state.compiler.lock().unwrap();
+        let fps = &compiler.cached.as_ref().unwrap().fingerprints;
         assert_eq!(fps.len(), 5);
         assert!(fps[0].is_some());
         assert!(fps[1..].iter().all(Option::is_none));
     }
 
     // Move view to page 2 at a different scale.
-    let second = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.2, &[page_view(2)], token);
+    let second = preview.state.run(&req, 1.2, &[page_view(2)], token);
     assert_eq!(second.compile_ms, 0.0);
     assert_eq!(second.rendered, 1);
     assert_eq!(second.pages[0].layers.len(), 1);
@@ -284,8 +279,8 @@ fn fingerprints_computed_lazily_only_for_in_view_pages() {
     assert!(second.pages[3].layers.is_empty());
     assert!(second.pages[4].layers.is_empty());
     {
-        let state = preview.state.lock().unwrap();
-        let fps = &state.cached.as_ref().unwrap().fingerprints;
+        let compiler = preview.state.compiler.lock().unwrap();
+        let fps = &compiler.cached.as_ref().unwrap().fingerprints;
         assert!(fps[0].is_some());
         assert!(fps[1].is_none());
         assert!(fps[2].is_some());
@@ -301,7 +296,7 @@ fn generation_counter_cancels_stale_run_and_mid_chunk_tiles() {
 
     // 1. Pre-cancelled generation aborts before compiling or rasterizing.
     let latest = AtomicU64::new(5);
-    let stale = preview.state.lock().unwrap().run(
+    let stale = preview.state.run(
         &req,
         1.0,
         &[page_view(0)],
@@ -319,15 +314,11 @@ fn generation_counter_cancels_stale_run_and_mid_chunk_tiles() {
         generation: 5,
         latest: &latest,
     };
-    let compiled_res = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.0, &[page_view(0)], live_token);
+    let compiled_res = preview.state.run(&req, 1.0, &[page_view(0)], live_token);
     assert_eq!(compiled_res.pages.len(), 5);
 
-    let state = preview.state.lock().unwrap();
-    let compiled = &state.cached.as_ref().unwrap().compiled;
+    let compiler = preview.state.compiler.lock().unwrap();
+    let compiled = &compiler.cached.as_ref().unwrap().compiled;
     let size = compiled.page_size(1).unwrap();
     let regions = tiles(
         &PreviewView {
@@ -387,11 +378,7 @@ fn compile_returns_lint_diagnostics_and_problem_page_ranges() {
         generation: 1,
         latest: &latest,
     };
-    let res = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.0, &[page_view(0)], token);
+    let res = preview.state.run(&req, 1.0, &[page_view(0)], token);
     assert!(res.error.is_none());
     assert_eq!(res.starts.len(), 3);
     assert_eq!(res.starts[0].label, "A");
@@ -420,11 +407,7 @@ fn compile_returns_lint_diagnostics_and_problem_page_ranges() {
         path: "problems/p1/statement.md".into(),
         text: bad_md.into(),
     };
-    let lint_res = ws_preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.0, &[page_view(0)], token);
+    let lint_res = ws_preview.state.run(&req, 1.0, &[page_view(0)], token);
     assert!(lint_res.error.is_some());
     assert!(
         lint_res
@@ -456,11 +439,7 @@ fn locate_click_maps_preview_point_to_markdown_source() {
         generation: 1,
         latest: &latest,
     };
-    let res = preview
-        .state
-        .lock()
-        .unwrap()
-        .run(&req, 1.0, &[page_view(1)], token);
+    let res = preview.state.run(&req, 1.0, &[page_view(1)], token);
     assert!(res.error.is_none());
 
     // Probe body area of page 1 (0-based, Problem A) to verify reverse click-to-source.
@@ -559,10 +538,7 @@ fn watcher_suppresses_self_writes_and_surfaces_external_edits() {
     // Drain any creation events from create_problem (directory creation / setup).
     let session = preview
         .state
-        .lock()
-        .unwrap()
-        .watch_session
-        .clone()
+        .watch_session()
         .expect("watcher should be active");
     while session
         .rx
@@ -600,7 +576,7 @@ fn watcher_suppresses_self_writes_and_surfaces_external_edits() {
     );
 
     // External modification must surface and incrementally update WorkspaceIndex + revision.
-    let rev_before = preview.state.lock().unwrap().revision;
+    let rev_before = preview.state.revision();
     std::fs::write(
         dir.0.join("problems/p1/problem.toml"),
         "title = \"External Updated Title\"\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n",
@@ -613,18 +589,14 @@ fn watcher_suppresses_self_writes_and_surfaces_external_edits() {
         .unwrap()
         .recv_timeout(Duration::from_secs(3))
         .expect("expected WatchEvent for external edit");
-    let js_ev = preview
-        .state
-        .lock()
-        .unwrap()
-        .apply_watch_event(session.id, ev);
+    let js_ev = preview.state.apply_watch_event(session.id, ev);
     assert_eq!(js_ev.kind, "changed");
     assert!(
         js_ev.paths.iter().any(|p| p == "problems/p1/problem.toml"),
         "expected problem.toml in watch paths, got {:?}",
         js_ev.paths
     );
-    assert_eq!(preview.state.lock().unwrap().revision, rev_before + 1);
+    assert_eq!(preview.state.revision(), rev_before + 1);
 
     let hits = preview.search_problems(ProblemSearchQuery {
         text: Some("External Updated".into()),
@@ -640,13 +612,7 @@ fn watcher_shuts_down_cleanly_on_switch_and_drop() {
     let d2 = TempDir::new("watch-stop-2");
     xcpc_storage::init_workspace(&d2.0).unwrap();
 
-    let s1 = preview
-        .state
-        .lock()
-        .unwrap()
-        .watch_session
-        .clone()
-        .expect("session 1");
+    let s1 = preview.state.watch_session().expect("session 1");
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let rx1 = s1.rx.clone();
     std::thread::spawn(move || {
@@ -665,13 +631,7 @@ fn watcher_shuts_down_cleanly_on_switch_and_drop() {
     );
 
     // Dropping Preview also wakes a blocked receiver immediately.
-    let s2 = preview
-        .state
-        .lock()
-        .unwrap()
-        .watch_session
-        .clone()
-        .expect("session 2");
+    let s2 = preview.state.watch_session().expect("session 2");
     let (drop_tx, drop_rx) = std::sync::mpsc::channel();
     let rx2 = s2.rx.clone();
     std::thread::spawn(move || {
@@ -1060,7 +1020,7 @@ fn contest_compose_override_stats_freeze_and_unfreeze() {
             )
             .ok
     );
-    let fail_freeze = preview.state.lock().unwrap().freeze_contest("r1");
+    let fail_freeze = preview.state.freeze_contest("r1");
     assert!(!fail_freeze.ok);
     assert!(!fail_freeze.frozen);
     assert!(
@@ -1081,7 +1041,7 @@ fn contest_compose_override_stats_freeze_and_unfreeze() {
             )
             .ok
     );
-    let ok_freeze = preview.state.lock().unwrap().freeze_contest("r1");
+    let ok_freeze = preview.state.freeze_contest("r1");
     assert!(ok_freeze.ok, "freeze failed: {:?}", ok_freeze.error);
     assert!(ok_freeze.frozen);
     assert_eq!(ok_freeze.outputs.len(), 2);
@@ -1308,7 +1268,7 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
     assert!(!s0.editorial.fresh);
 
     // 2. Export statements and editorial -> both become fresh.
-    let exp_s = preview.state.lock().unwrap().export(&stmt_req);
+    let exp_s = preview.state.export(&stmt_req);
     assert!(
         exp_s.error.is_none(),
         "export stmt error: {:?}",
@@ -1318,7 +1278,7 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
     assert!(s1.statements.exists && s1.statements.fresh);
     assert!(!s1.editorial.exists && !s1.editorial.fresh);
 
-    let exp_e = preview.state.lock().unwrap().export(&ed_req);
+    let exp_e = preview.state.export(&ed_req);
     assert!(exp_e.error.is_none(), "export ed error: {:?}", exp_e.error);
     let s2 = preview.export_status(stmt_req.clone());
     assert!(s2.statements.exists && s2.statements.fresh);
@@ -1363,24 +1323,8 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
     // 5. Restart recovery: fresh Preview without in-session export map uses mtime comparison.
     //    Re-export after a short sleep so pdf_mtime is strictly >= all source mtimes.
     std::thread::sleep(Duration::from_millis(25));
-    assert!(
-        preview
-            .state
-            .lock()
-            .unwrap()
-            .export(&stmt_req)
-            .error
-            .is_none()
-    );
-    assert!(
-        preview
-            .state
-            .lock()
-            .unwrap()
-            .export(&ed_req)
-            .error
-            .is_none()
-    );
+    assert!(preview.state.export(&stmt_req).error.is_none());
+    assert!(preview.state.export(&ed_req).error.is_none());
 
     let restarted = Preview::new(None);
     assert!(
@@ -1422,7 +1366,7 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
             .ok
     );
     assert!(restarted.compose_contest("c1".into(), vec!["p1".into()]).ok);
-    let frozen = restarted.state.lock().unwrap().freeze_contest("c1");
+    let frozen = restarted.state.freeze_contest("c1");
     assert!(frozen.ok, "freeze error: {:?}", frozen.error);
     let contest_req = PreviewRequest {
         target: "contest".into(),
@@ -1432,15 +1376,7 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
         text: String::new(),
     };
     std::thread::sleep(Duration::from_millis(25));
-    assert!(
-        restarted
-            .state
-            .lock()
-            .unwrap()
-            .export(&contest_req)
-            .error
-            .is_none()
-    );
+    assert!(restarted.state.export(&contest_req).error.is_none());
     std::thread::sleep(Duration::from_millis(25));
     assert!(
         restarted
@@ -1514,7 +1450,7 @@ fn last_workspace_missing_flags_deleted_or_invalid_remembered_workspace() {
         format!("{}\n", gone.display()),
     )
     .unwrap();
-    let mut legacy_state =
+    let legacy_state =
         crate::state::State::new_with_sources(Some(legacy_data.0.clone()), None, &empty_cwd.0);
     assert!(legacy_state.info().last_workspace_missing);
 
@@ -1534,8 +1470,6 @@ fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
     // Valid relative path inside workspace.
     let rel_ok = preview
         .state
-        .lock()
-        .unwrap()
         .resolve_reveal_path("problems/p1/statement.md");
     assert!(rel_ok.is_ok(), "relative reveal failed: {:?}", rel_ok);
 
@@ -1543,16 +1477,12 @@ fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
     let abs_target = dir.0.join("problems/p1/problem.toml");
     let abs_ok = preview
         .state
-        .lock()
-        .unwrap()
         .resolve_reveal_path(&abs_target.display().to_string());
     assert!(abs_ok.is_ok(), "absolute reveal failed: {:?}", abs_ok);
 
     // Missing file returns not_found.
     let missing = preview
         .state
-        .lock()
-        .unwrap()
         .resolve_reveal_path("build/does-not-exist.pdf")
         .unwrap_err();
     assert!(!missing.ok);
@@ -1565,8 +1495,6 @@ fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
 
     let rel_escape = preview
         .state
-        .lock()
-        .unwrap()
         .resolve_reveal_path("../escape.txt")
         .unwrap_err();
     assert_eq!(rel_escape.code.as_deref(), Some("path_escape"));
@@ -1574,8 +1502,6 @@ fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
     // Absolute path outside workspace is rejected with path_escape.
     let abs_escape = preview
         .state
-        .lock()
-        .unwrap()
         .resolve_reveal_path(&outside_file.display().to_string())
         .unwrap_err();
     assert_eq!(abs_escape.code.as_deref(), Some("path_escape"));
@@ -1587,8 +1513,6 @@ fn reveal_in_folder_enforces_workspace_sandbox_and_existence() {
         std::os::unix::fs::symlink(&outside_file, &link).unwrap();
         let sym_escape = preview
             .state
-            .lock()
-            .unwrap()
             .resolve_reveal_path("problems/p1/evil-link.txt")
             .unwrap_err();
         assert_eq!(sym_escape.code.as_deref(), Some("path_escape"));
@@ -1633,4 +1557,396 @@ fn prefs_preserves_window_state_and_exposes_snapshots_dir() {
     assert_eq!(after["windowState"]["height"], 860);
     assert_eq!(after["windowState"]["maximized"], false);
     assert!((after["splitRatio"].as_f64().unwrap() - 0.55).abs() < 1e-9);
+}
+
+#[test]
+fn ui_methods_do_not_block_while_compiler_lock_is_held() {
+    let (_dir, preview) = init_temp_preview("non-blocking-ui");
+    assert!(preview.create_problem("p1".into(), "Smooth".into()).ok);
+    assert!(preview.create_contest("c1".into(), "Contest".into()).ok);
+    assert!(preview.compose_contest("c1".into(), vec!["p1".into()]).ok);
+
+    let md = "## 题目描述\n\n给定整数 $n$。\n\n## 输入格式\n\n一行一个整数。\n\n## 输出格式\n\n一行一个整数。\n";
+    assert!(
+        preview
+            .save("problems/p1/statement.md".into(), md.into(), None)
+            .ok
+    );
+
+    let req = PreviewRequest {
+        target: "contest".into(),
+        id: "c1".into(),
+        book: "statements".into(),
+        path: "problems/p1/statement.md".into(),
+        text: md.into(),
+    };
+    let latest = AtomicU64::new(1);
+    let token = CancelToken {
+        generation: 1,
+        latest: &latest,
+    };
+    let compiled = preview.state.run(&req, 1.0, &[page_view(0)], token);
+    assert!(compiled.error.is_none());
+
+    // Simulate an in-flight background Typst compilation by holding `compiler` lock on the
+    // current thread. If ANY UI-thread bridge method attempted to lock `compiler`, it would
+    // immediately deadlock here.
+    let _compiler_guard = preview.state.compiler.lock().unwrap();
+
+    // Fast UI queries & mutations must all complete immediately without touching `compiler`.
+    assert!(
+        preview
+            .read("problems/p1/statement.md".into())
+            .error
+            .is_none()
+    );
+    assert!(preview.problem_detail("p1".into()).error.is_none());
+    assert!(preview.contest_detail("c1".into()).error.is_none());
+    assert!(
+        !preview
+            .search_problems(ProblemSearchQuery::default())
+            .is_empty()
+    );
+    let _ = preview.workspace_facets();
+    let _ = preview.export_status(req.clone());
+    let _ = preview.fuzzy_jump("p1".into(), Some("c1".into()));
+    let prefs = preview.load_prefs();
+    preview.save_prefs(prefs);
+
+    // `locate_click` must fail-fast (`None`) rather than blocking while `compiler` is busy.
+    assert!(preview.locate_click(0, 120.0, 180.0).is_none());
+
+    // `locate_source` for the pre-indexed active file still succeeds from `snapshot`!
+    let loc = preview.locate_source("problems/p1/statement.md".into(), 3);
+    assert!(
+        loc.is_some(),
+        "pre-indexed active file should locate without blocking on compiler"
+    );
+
+    // Same-text `save()` succeeds without blocking and preserves the compiled snapshot!
+    let rev_before = preview.state.revision();
+    let saved = preview.save("problems/p1/statement.md".into(), md.into(), None);
+    assert!(saved.ok);
+    assert_eq!(preview.state.revision(), rev_before);
+
+    // Different-text `save()` also succeeds without blocking and invalidates revision.
+    let saved2 = preview.save(
+        "problems/p1/statement.md".into(),
+        format!("{md}\n新行。\n"),
+        Some(saved.hash),
+    );
+    assert!(saved2.ok);
+    assert_eq!(preview.state.revision(), rev_before + 1);
+}
+
+#[test]
+fn locate_source_maps_markdown_lines_and_falls_back_across_contest_problems() {
+    let preview = fixture_preview();
+    // Before compiling, locate_source returns None.
+    assert!(
+        preview
+            .locate_source("problems/contest-zh-a/statement.md".into(), 1)
+            .is_none()
+    );
+
+    let a_file = preview.read("problems/contest-zh-a/statement.md".into());
+    let req = contest_request("problems/contest-zh-a/statement.md", &a_file.text);
+    let latest = AtomicU64::new(1);
+    let token = CancelToken {
+        generation: 1,
+        latest: &latest,
+    };
+    let res = preview.state.run(&req, 1.0, &[page_view(0)], token);
+    assert!(res.error.is_none());
+    assert_eq!(res.starts.len(), 3);
+
+    // Active file (Problem A) was pre-indexed during compile on page 1 (0-based).
+    let a_top = preview
+        .locate_source("problems/contest-zh-a/statement.md".into(), 1)
+        .expect("Problem A line 1 should map");
+    assert_eq!(a_top.page, res.starts[0].page);
+    assert!(a_top.exact);
+    assert!(a_top.y_pt > 0.0);
+
+    let a_later = preview
+        .locate_source("problems/contest-zh-a/statement.md".into(), 12)
+        .expect("Problem A later line should map");
+    assert!(
+        a_later.page > a_top.page || (a_later.page == a_top.page && a_later.y_pt >= a_top.y_pt),
+        "later line ({a_later:?}) should not be above earlier line ({a_top:?})"
+    );
+
+    // Another problem in the same contest (Problem C) is lazily indexed when compiler is idle.
+    let c_loc = preview
+        .locate_source("problems/contest-zh-c/statement.md".into(), 1)
+        .expect("Problem C should map");
+    assert!(c_loc.page >= res.starts[2].page);
+    assert!(c_loc.exact);
+
+    // Wrong book kind (editorial while viewing statements) returns None.
+    assert!(
+        preview
+            .locate_source("problems/contest-zh-a/editorial.md".into(), 1)
+            .is_none()
+    );
+
+    // When compiler is busy and a problem (Problem B) has not been lazily indexed yet,
+    // locate_source falls back immediately to Problem B's start page (`exact == false`).
+    let _compiler_guard = preview.state.compiler.lock().unwrap();
+    let b_fallback = preview
+        .locate_source("problems/contest-zh-b/statement.md".into(), 5)
+        .expect("Problem B should fall back to start page when compiler is busy");
+    assert_eq!(b_fallback.page, res.starts[1].page);
+    assert_eq!(b_fallback.y_pt, 0.0);
+    assert!(!b_fallback.exact);
+}
+
+#[test]
+fn markdown_spans_utf16_columns_and_fine_grained_kinds() {
+    let text = concat!(
+        "## 题目描述\n",
+        "给定中文 😀 序列 $2 \\le n \\le 2 \\times 10^5$ 和 $a_1, a_2, \\ldots, a_n$。\n",
+        "```cpp\n",
+        "#include <cstdio>\n",
+        "// 注释\n",
+        "int x = 42;\n",
+        "```\n",
+    );
+    let spans = Preview::markdown_spans(text.into());
+    let lines: Vec<Vec<u16>> = text
+        .split('\n')
+        .map(|l| l.encode_utf16().collect())
+        .collect();
+    let slice_utf16 = |s: &crate::types::MarkdownSpanJs| -> String {
+        assert_eq!(s.start_line, s.end_line, "expected single-line span: {s:?}");
+        let row = &lines[s.start_line as usize];
+        String::from_utf16(&row[s.start_column as usize..s.end_column as usize]).unwrap()
+    };
+
+    // Heading: `## ` is markup, `题目描述` is heading (no overlap).
+    let heading = spans.iter().find(|s| s.kind == "heading").unwrap();
+    assert_eq!(heading.level, 2);
+    assert_eq!(slice_utf16(heading), "题目描述");
+    assert_eq!(heading.start_column, 3);
+    let heading_hash = spans
+        .iter()
+        .find(|s| s.kind == "markup" && s.start_line == 0)
+        .unwrap();
+    assert_eq!(slice_utf16(heading_hash), "## ");
+    assert_eq!(heading_hash.start_column, 0);
+    assert_eq!(heading_hash.end_column, 3);
+
+    // Math internal spans after Chinese + astral emoji (UTF-16 surrogate pair = 2 units).
+    let math_cmds: Vec<String> = spans
+        .iter()
+        .filter(|s| s.kind == "mathCommand")
+        .map(slice_utf16)
+        .collect();
+    assert_eq!(math_cmds, ["\\le", "\\le", "\\times", "\\ldots"]);
+
+    let math_ops: Vec<String> = spans
+        .iter()
+        .filter(|s| s.kind == "mathOperator")
+        .map(slice_utf16)
+        .collect();
+    assert_eq!(math_ops, ["^", "_", "_", "_"]);
+
+    // Code block fine-grained spans.
+    let keywords: Vec<String> = spans
+        .iter()
+        .filter(|s| s.kind == "codeKeyword")
+        .map(slice_utf16)
+        .collect();
+    assert_eq!(keywords, ["#include", "int"]);
+    let comments: Vec<String> = spans
+        .iter()
+        .filter(|s| s.kind == "codeComment")
+        .map(slice_utf16)
+        .collect();
+    assert_eq!(comments, ["// 注释"]);
+    let numbers: Vec<String> = spans
+        .iter()
+        .filter(|s| s.kind == "codeNumber")
+        .map(slice_utf16)
+        .collect();
+    assert_eq!(numbers, ["42"]);
+}
+
+#[test]
+fn ui_fonts_loads_jetbrains_mono_and_prefers_ttf_over_otf() {
+    let dir = TempDir::new("ui-fonts");
+    let ttf_dir = dir.0.join("truetype");
+    let otf_dir = dir.0.join("opentype");
+    std::fs::create_dir_all(&ttf_dir).unwrap();
+    std::fs::create_dir_all(&otf_dir).unwrap();
+    std::fs::write(ttf_dir.join("JetBrainsMono-Regular.ttf"), b"TTF-REG").unwrap();
+    std::fs::write(otf_dir.join("JetBrainsMono-Regular.otf"), b"OTF-REG").unwrap();
+    std::fs::write(otf_dir.join("JetBrainsMono-Bold.otf"), b"OTF-BOLD").unwrap();
+
+    let loaded = crate::load_ui_fonts_from(std::slice::from_ref(&dir.0));
+    assert_eq!(loaded, vec![b"TTF-REG".to_vec(), b"OTF-BOLD".to_vec()]);
+
+    // In `nix develop`, `XCPC_FONT_DIRS` supplies JetBrains Mono directly.
+    if std::env::var_os("XCPC_FONT_DIRS").is_some() {
+        let env_fonts = Preview::ui_fonts();
+        assert!(
+            env_fonts.len() >= 4,
+            "expected at least 4 JetBrains Mono faces from XCPC_FONT_DIRS, got {}",
+            env_fonts.len()
+        );
+    }
+}
+
+#[test]
+fn image_import_enforces_security_boundaries_and_unique_names() {
+    let (dir, preview) = init_temp_preview("image-import");
+    assert!(preview.create_problem("p1".into(), "Graph".into()).ok);
+    assert!(preview.create_contest("c1".into(), "Round 1".into()).ok);
+    assert!(preview.compose_contest("c1".into(), vec!["p1".into()]).ok);
+
+    // 1. Import from external file: cleans filename and avoids collisions.
+    let src_dir = TempDir::new("image-src");
+    let src_png = src_dir.0.join("My Diagram 01.PNG");
+    std::fs::write(&src_png, b"\x89PNG\r\n\x1a\nfake1").unwrap();
+
+    let rel1 = preview
+        .state
+        .import_image_file("problem", "p1", None, &src_png)
+        .expect("first import should succeed");
+    assert_eq!(rel1, "assets/My-Diagram-01.png");
+    assert_eq!(
+        std::fs::read(dir.0.join("problems/p1/assets/My-Diagram-01.png")).unwrap(),
+        b"\x89PNG\r\n\x1a\nfake1"
+    );
+
+    // Second import with same filename creates -2 without overwriting the first.
+    std::fs::write(&src_png, b"\x89PNG\r\n\x1a\nfake2").unwrap();
+    let rel2 = preview
+        .state
+        .import_image_file("problem", "p1", None, &src_png)
+        .expect("second import should auto-increment");
+    assert_eq!(rel2, "assets/My-Diagram-01-2.png");
+    assert_eq!(
+        std::fs::read(dir.0.join("problems/p1/assets/My-Diagram-01.png")).unwrap(),
+        b"\x89PNG\r\n\x1a\nfake1"
+    );
+    assert_eq!(
+        std::fs::read(dir.0.join("problems/p1/assets/My-Diagram-01-2.png")).unwrap(),
+        b"\x89PNG\r\n\x1a\nfake2"
+    );
+
+    // 2. Import clipboard bytes via contest target + label.
+    let pasted = preview
+        .import_image_bytes(
+            "contest".into(),
+            "c1".into(),
+            Some("A".into()),
+            "png".into(),
+            b"\x89PNG\r\n\x1a\npaste".to_vec(),
+        )
+        .expect("contest image bytes import should succeed");
+    assert!(pasted.starts_with("assets/paste-"));
+    assert!(pasted.ends_with(".png"));
+    assert!(dir.0.join("problems/p1").join(&pasted).is_file());
+
+    // 3. Rejects unsupported extension, empty bytes, path traversal, and missing label.
+    assert!(
+        preview
+            .import_image_bytes(
+                "problem".into(),
+                "p1".into(),
+                None,
+                "exe".into(),
+                b"bad".to_vec()
+            )
+            .is_err()
+    );
+    assert!(
+        preview
+            .import_image_bytes(
+                "problem".into(),
+                "p1".into(),
+                None,
+                "png".into(),
+                Vec::new()
+            )
+            .is_err()
+    );
+    assert!(
+        preview
+            .import_image_bytes(
+                "problem".into(),
+                "../escape".into(),
+                None,
+                "png".into(),
+                b"x".to_vec()
+            )
+            .is_err()
+    );
+    assert!(
+        preview
+            .import_image_bytes(
+                "contest".into(),
+                "c1".into(),
+                None,
+                "png".into(),
+                b"x".to_vec()
+            )
+            .is_err()
+    );
+
+    // 4. Rejects frozen contest.
+    let stmt = "## 题目描述\n\n给定 $n$。\n\n## 输入格式\n\n$n$\n\n## 输出格式\n\n$n$\n";
+    assert!(
+        preview
+            .save("problems/p1/statement.md".into(), stmt.into(), None)
+            .ok
+    );
+    assert!(
+        preview
+            .save_samples(
+                "p1".into(),
+                vec![SamplePairJs {
+                    name: String::new(),
+                    input: "1\n".into(),
+                    output: "1\n".into(),
+                }]
+            )
+            .ok
+    );
+    let frozen = preview.state.freeze_contest("c1");
+    assert!(frozen.ok, "freeze failed: {:?}", frozen.error);
+    assert!(
+        preview
+            .import_image_bytes(
+                "contest".into(),
+                "c1".into(),
+                Some("A".into()),
+                "png".into(),
+                b"x".to_vec()
+            )
+            .is_err(),
+        "frozen contest must reject image import"
+    );
+
+    // 5. Rejects read-only workspace.
+    let ro_preview = Preview::new(None);
+    assert!(
+        ro_preview
+            .open_workspace(dir.0.display().to_string(), true)
+            .error
+            .is_none()
+    );
+    assert!(
+        ro_preview
+            .import_image_bytes(
+                "problem".into(),
+                "p1".into(),
+                None,
+                "png".into(),
+                b"x".to_vec()
+            )
+            .is_err(),
+        "read-only workspace must reject image import"
+    );
 }

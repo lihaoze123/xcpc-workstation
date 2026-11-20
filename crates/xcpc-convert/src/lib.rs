@@ -10,6 +10,9 @@ use xcpc_domain::{ContestItem, ContestMeta, Language, Limits, Problem, ProblemMe
 
 mod markdown;
 pub mod publish;
+mod spans;
+
+pub use spans::{Span, SpanKind, markdown_spans};
 
 /// A diagnostic in a workspace file (1-based line and column).
 #[derive(Debug, Clone, PartialEq, Eq)]

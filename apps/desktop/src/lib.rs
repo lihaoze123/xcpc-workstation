@@ -18,12 +18,13 @@ mod prefs;
 mod state;
 mod types;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use nsh_base as _;
-use nsh_core::file_dialog::OpenDialog;
+use nsh_core::element::JsError;
+use nsh_core::file_dialog::{FileFilter, OpenDialog};
 use nsh_core::prelude::*;
 use xcpc_storage::Workspace;
 
@@ -33,13 +34,13 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::types::{
     ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
-    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, OverridePatchJs,
-    PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer, PreviewPage, PreviewRequest,
-    PreviewResult, PreviewStart, PreviewView, ProblemDetailJs, ProblemMetaPatchJs,
-    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem,
+    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs,
+    OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
+    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
+    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
+    RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
+    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 
 /// The crate's UI set (`nsh.json` `"rust"`).
@@ -55,8 +56,8 @@ fn native(registry: &mut Registry) {
 /// rasterizes visible pages for [`PageImage`].
 #[class]
 pub struct Preview {
-    state: Arc<Mutex<State>>,
-    /// Generation counter incremented on every `Preview::compile` (before taking `state`)
+    state: Arc<State>,
+    /// Generation counter incremented on every `Preview::compile` (before taking `compiler`)
     /// so in-flight tile rasterization aborts as soon as a newer request arrives.
     generation: Arc<AtomicU64>,
 }
@@ -66,11 +67,7 @@ impl Drop for Preview {
         self.generation.fetch_add(1, Ordering::AcqRel);
         // Stop the watcher before dropping our `Arc<State>` so any pending `next_change`
         // blocking on `mpsc::Receiver::recv()` wakes up immediately and never leaks.
-        let old_watcher = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|mut state| state.stop_watcher());
+        let old_watcher = self.state.stop_watcher();
         drop(old_watcher);
     }
 }
@@ -84,7 +81,7 @@ impl Preview {
     pub fn new(data_dir: Option<String>) -> Self {
         let data_dir = data_dir.map(PathBuf::from);
         Preview {
-            state: Arc::new(Mutex::new(State::new(data_dir))),
+            state: Arc::new(State::new(data_dir)),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -96,6 +93,25 @@ impl Preview {
             "/../../tests/fixtures/olymp-ref/contest-zh/workspace"
         )
         .to_owned()
+    }
+
+    /// Returns raw font file bytes for JetBrains Mono (Regular, Medium, Bold, Italic,
+    /// BoldItalic) discovered from `XCPC_FONT_DIRS` and the executable's sibling `fonts/`
+    /// directory, ready to pass to `registerFont(bytes)`.
+    pub fn ui_fonts() -> Vec<Vec<u8>> {
+        let mut dirs = Vec::new();
+        if let Some(env_dirs) = std::env::var_os("XCPC_FONT_DIRS").filter(|v| !v.is_empty()) {
+            dirs.extend(std::env::split_paths(&env_dirs));
+        }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(parent) = exe.parent()
+        {
+            let sibling = parent.join("fonts");
+            if sibling.is_dir() {
+                dirs.push(sibling);
+            }
+        }
+        load_ui_fonts_from(&dirs)
     }
 
     // ---- Workspace & settings ----------------------------------------------------------
@@ -133,14 +149,7 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let start = this.with(|p| {
-            p.state
-                .lock()
-                .unwrap()
-                .workspace
-                .as_ref()
-                .map(|w| w.root().to_path_buf())
-        });
+        let start = this.with(|p| p.state.workspace_root());
         let mut dialog = OpenDialog::folders()
             .title("选择工作区目录")
             .button_label("选择");
@@ -193,14 +202,7 @@ impl Preview {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
-        let start = this.with(|p| {
-            p.state
-                .lock()
-                .unwrap()
-                .workspace
-                .as_ref()
-                .map(|w| w.root().to_path_buf())
-        });
+        let start = this.with(|p| p.state.workspace_root());
         let mut dialog = OpenDialog::folders()
             .title("打开工作区")
             .button_label("打开");
@@ -240,24 +242,18 @@ impl Preview {
 
     /// What the workspace has.
     pub fn workspace(&self) -> WorkspaceInfo {
-        self.state.lock().unwrap().info()
+        self.state.info()
     }
 
     /// Recently opened workspace directories, most recent first.
     pub fn recent_workspaces(&self) -> Vec<String> {
-        self.state
-            .lock()
-            .unwrap()
-            .prefs
-            .app
-            .recent_workspaces
-            .clone()
+        self.state.recent_workspaces()
     }
 
     /// Generates the ready-to-paste JSON snippet for configuring `xcpc mcp` against the
     /// currently open workspace.
     pub fn mcp_config_snippet(&self) -> String {
-        self.state.lock().unwrap().mcp_config_snippet()
+        self.state.mcp_config_snippet()
     }
 
     // ---- File read / save & live watcher -----------------------------------------------
@@ -265,17 +261,17 @@ impl Preview {
     /// Reads a file of the workspace for the editor together with its SHA-256 content hash
     /// (empty string when the file does not exist yet).
     pub fn read(&self, path: String) -> WorkspaceFile {
-        self.state.lock().unwrap().read(path)
+        self.state.read(path)
     }
 
     /// Atomically saves a workspace file, checking `expectedHash` when provided.
     ///
     /// Returns `{ conflict: true }` without overwriting when the file changed on disk since
     /// `expectedHash`. Successful writes are recorded in `SelfWriteTracker` so they are not
-    /// echoed back by `nextChange()`, incrementally refresh the index, and invalidate the
-    /// compiled preview cache.
+    /// echoed back by `nextChange()`, incrementally refresh the index, and preserve the
+    /// compiled preview cache when the saved Markdown matches the already-compiled state.
     pub fn save(&self, path: String, text: String, expected_hash: Option<String>) -> SaveResult {
-        self.state.lock().unwrap().save(path, text, expected_hash)
+        self.state.save(path, text, expected_hash)
     }
 
     /// Long-polling async notification of external filesystem changes inside the active
@@ -293,7 +289,7 @@ impl Preview {
             };
         }
         let (weak_state, session) = this.with(|p| {
-            let session = p.state.lock().unwrap().watch_session.clone();
+            let session = p.state.watch_session();
             (Arc::downgrade(&p.state), session)
         });
         let Some(session) = session else {
@@ -331,7 +327,6 @@ impl Preview {
                     paths: Vec::new(),
                 };
             };
-            let mut state = state.lock().unwrap();
             state.apply_watch_event(session_id, event)
         })
         .await
@@ -341,7 +336,7 @@ impl Preview {
         })
     }
 
-    // ---- Preview compile, locateClick & export -----------------------------------------
+    // ---- Preview compile, bidirectional locate & export --------------------------------
 
     /// Compiles `request` via `publish::check` (including `xcpc-lint` diagnostics) and
     /// rasterizes the pages in `view` for `scale` pixels per point. View/scale-only changes
@@ -365,10 +360,7 @@ impl Preview {
             if cancel.is_cancelled() {
                 return PreviewResult::default();
             }
-            state
-                .lock()
-                .unwrap()
-                .run(&request, scale as f32, &view, cancel)
+            state.run(&request, scale as f32, &view, cancel)
         })
         .await
         .unwrap_or_else(|e| PreviewResult {
@@ -379,8 +371,66 @@ impl Preview {
 
     /// Maps a click at `(xPt, yPt)` (typographic points from the top-left of 0-based `page`)
     /// on the currently cached preview back to its 1-based Markdown source location.
+    /// Returns `null` immediately without blocking if a compilation is in flight.
     pub fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
-        self.state.lock().unwrap().locate_click(page, x_pt, y_pt)
+        self.state.locate_click(page, x_pt, y_pt)
+    }
+
+    /// Maps a 1-based `line` in workspace-relative `file` (e.g. `"problems/a/statement.md"`)
+    /// to its position `(page, yPt)` in the currently cached preview. Never blocks on an
+    /// active compilation; falls back to the problem's first page when exact anchors are
+    /// unavailable.
+    pub fn locate_source(&self, file: String, line: u32) -> Option<PreviewLocationJs> {
+        self.state.locate_source(&file, line)
+    }
+
+    /// Where `text`'s Markdown structure lies (headings, emphasis, math, code, markup), as
+    /// the conversion reads it, for the editor to style its source.
+    pub fn markdown_spans(text: String) -> Vec<MarkdownSpanJs> {
+        use xcpc_convert::SpanKind as K;
+        // Byte offset → (line, UTF-16 column), walking the text once in span order.
+        let mut starts = vec![0usize];
+        starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
+        let at = |offset: usize| -> (u32, u32) {
+            let line = starts.partition_point(|&s| s <= offset) - 1;
+            let column = text[starts[line]..offset].encode_utf16().count();
+            (line as u32, column as u32)
+        };
+        xcpc_convert::markdown_spans(&text)
+            .into_iter()
+            .map(|s| {
+                let (start_line, start_column) = at(s.range.start);
+                let (end_line, end_column) = at(s.range.end);
+                let kind = match s.kind {
+                    K::Heading => "heading",
+                    K::Strong => "strong",
+                    K::Emphasis => "emphasis",
+                    K::Strikethrough => "strikethrough",
+                    K::InlineMath => "inlineMath",
+                    K::DisplayMath => "displayMath",
+                    K::MathCommand => "mathCommand",
+                    K::MathOperator => "mathOperator",
+                    K::Code => "code",
+                    K::CodeBlock => "codeBlock",
+                    K::CodeComment => "codeComment",
+                    K::CodeString => "codeString",
+                    K::CodeKeyword => "codeKeyword",
+                    K::CodeNumber => "codeNumber",
+                    K::Link => "link",
+                    K::Url => "url",
+                    K::Table => "table",
+                    K::Markup => "markup",
+                };
+                MarkdownSpanJs {
+                    kind: kind.into(),
+                    level: s.level.into(),
+                    start_line,
+                    start_column,
+                    end_line,
+                    end_column,
+                }
+            })
+            .collect()
     }
 
     /// Exports `request`'s PDF to `build/` in the workspace: its path, or why not.
@@ -392,7 +442,7 @@ impl Preview {
             };
         }
         let state = this.with(|p| p.state.clone());
-        blocking(move || state.lock().unwrap().export(&request))
+        blocking(move || state.export(&request))
             .await
             .unwrap_or_else(|e| WorkspaceFile {
                 error: Some(format!("export failed: {e}")),
@@ -403,7 +453,7 @@ impl Preview {
     /// Reports independent PDF freshness (`exists`, `fresh`, `relPath`, `absPath`) for both
     /// the statements book and the editorial book of `request`'s target.
     pub fn export_status(&self, request: PreviewRequest) -> ExportBookStatusJs {
-        self.state.lock().unwrap().export_status(&request)
+        self.state.export_status(&request)
     }
 
     /// Reveals a file or directory (absolute or workspace-relative path) inside the open
@@ -413,7 +463,7 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let resolved = this.with(|p| p.state.lock().unwrap().resolve_reveal_path(&path));
+        let resolved = this.with(|p| p.state.resolve_reveal_path(&path));
         let abs = match resolved {
             Ok(abs) => abs,
             Err(err) => return err,
@@ -428,79 +478,137 @@ impl Preview {
 
     /// Searches indexed problems using structured filters and normalized text matching.
     pub fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
-        self.state.lock().unwrap().search_problems(query)
+        self.state.search_problems(query)
     }
 
     /// Returns sorted distinct tags and external platforms across all indexed problems.
     pub fn workspace_facets(&self) -> WorkspaceFacets {
-        self.state.lock().unwrap().workspace_facets()
+        self.state.workspace_facets()
     }
 
     /// Loads full problem details: metadata, statements & editorial with hashes, samples,
     /// solution filenames, and referencing contests.
     pub fn problem_detail(&self, id: String) -> ProblemDetailJs {
-        self.state.lock().unwrap().problem_detail(&id)
+        self.state.problem_detail(&id)
     }
 
     /// Reads one solution file under `problems/<id>/solutions/<name>` read-only.
     pub fn read_solution(&self, id: String, name: String) -> WorkspaceFile {
-        self.state.lock().unwrap().read_solution(&id, &name)
+        self.state.read_solution(&id, &name)
     }
 
     /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton, and
     /// an empty `samples/` directory, refreshing the in-memory index.
     pub fn create_problem(&self, id: String, title: String) -> ActionResult {
-        self.state.lock().unwrap().create_problem(&id, &title)
+        self.state.create_problem(&id, &title)
     }
 
     /// Partially updates `problems/<id>/problem.toml` via `toml_edit`, preserving comments,
     /// key order, and unknown fields.
     pub fn update_problem_meta(&self, id: String, patch: ProblemMetaPatchJs) -> ActionResult {
-        self.state.lock().unwrap().update_problem_meta(&id, patch)
+        self.state.update_problem_meta(&id, patch)
     }
 
     /// Deletes a problem from the library. Refuses with `code: "problem_referenced"` and
     /// `referencingContests` when any unfrozen contest references it.
     pub fn delete_problem(&self, id: String) -> ActionResult {
-        self.state.lock().unwrap().delete_problem(&id)
+        self.state.delete_problem(&id)
     }
 
     /// Saves `samples` into `problems/<id>/samples/` as `01.in`/`01.ans`..`NN.in`/`NN.ans`,
     /// stripping UTF-8 BOM and `\r` atomically and refreshing cache and index.
     pub fn save_samples(&self, id: String, samples: Vec<SamplePairJs>) -> ActionResult {
-        self.state.lock().unwrap().save_samples(&id, samples)
+        self.state.save_samples(&id, samples)
+    }
+
+    /// Opens the system single-file picker filtered to image formats (`png`, `jpg`, `jpeg`,
+    /// `svg`, `webp`, `pdf`) and atomically copies the chosen file into the target problem's
+    /// `assets/<clean-name>` (never overwriting existing files). Returns `"assets/<name>"`,
+    /// or `null` when cancelled. Rejects read-only workspaces and frozen contests.
+    pub async fn pick_and_import_image(
+        this: Instance<Self>,
+        target: String,
+        id: String,
+        label: Option<String>,
+    ) -> Result<Option<String>, JsError> {
+        if this.is_disposed() {
+            return Err(JsError::Error("preview disposed".into()));
+        }
+        // Fail fast before opening the dialog if the workspace is read-only or contest frozen.
+        let check = this.with(|p| {
+            p.state
+                .validate_image_target(&target, &id, label.as_deref())
+        });
+        if let Err(err) = check {
+            return Err(JsError::Error(err));
+        }
+        let dialog = OpenDialog::files()
+            .title("插入图片")
+            .button_label("插入")
+            .filter(FileFilter::new(
+                "图片文件",
+                ["png", "jpg", "jpeg", "svg", "webp", "pdf"],
+            ));
+        let picked = pick_paths(dialog).await.map_err(JsError::Error)?;
+        let Some(src_path) = picked.and_then(|paths| paths.into_iter().next()) else {
+            return Ok(None);
+        };
+        if this.is_disposed() {
+            return Err(JsError::Error("preview disposed".into()));
+        }
+        let state = this.with(|p| p.state.clone());
+        let rel =
+            blocking(move || state.import_image_file(&target, &id, label.as_deref(), &src_path))
+                .await
+                .map_err(|e| JsError::Error(format!("image import task failed: {e}")))?
+                .map_err(JsError::Error)?;
+        Ok(Some(rel))
+    }
+
+    /// Atomically writes raw image `bytes` (e.g. from `Clipboard.readImage()`) into the
+    /// target problem's `assets/paste-YYYYMMDD-HHMMSS.<ext>` (auto-incrementing suffix on
+    /// collision) and returns `"assets/<name>"`. Rejects read-only workspaces and frozen
+    /// contests.
+    pub fn import_image_bytes(
+        &self,
+        target: String,
+        id: String,
+        label: Option<String>,
+        ext: String,
+        bytes: Vec<u8>,
+    ) -> Result<String, JsError> {
+        self.state
+            .import_image_bytes(&target, &id, label.as_deref(), &ext, &bytes)
+            .map_err(JsError::Error)
     }
 
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
     /// Loads full contest metadata and per-item effective/original values with override flags.
     pub fn contest_detail(&self, id: String) -> ContestDetailJs {
-        self.state.lock().unwrap().contest_detail(&id)
+        self.state.contest_detail(&id)
     }
 
     /// Computes 8-tier difficulty distribution and tag counts for `id`.
     pub fn contest_stats(&self, id: String) -> ContestStatsJs {
-        self.state.lock().unwrap().contest_stats(&id)
+        self.state.contest_stats(&id)
     }
 
     /// Creates a new empty contest via `compose_contest(id, [], { name })`, refusing if `id`
     /// already exists.
     pub fn create_contest(&self, id: String, name: String) -> ActionResult {
-        self.state.lock().unwrap().create_contest(&id, &name)
+        self.state.create_contest(&id, &name)
     }
 
     /// Sets the ordered problem list for contest `id`, re-labelling `A..Z`, preserving
     /// existing overrides on kept problems, and removing overrides for dropped problems.
     pub fn compose_contest(&self, id: String, problem_ids: Vec<String>) -> ActionResult {
-        self.state
-            .lock()
-            .unwrap()
-            .compose_contest(&id, &problem_ids)
+        self.state.compose_contest(&id, &problem_ids)
     }
 
     /// Partially updates `contests/<id>/contest.toml` metadata via `toml_edit`.
     pub fn update_contest_meta(&self, id: String, patch: ContestMetaPatchJs) -> ActionResult {
-        self.state.lock().unwrap().update_contest_meta(&id, patch)
+        self.state.update_contest_meta(&id, patch)
     }
 
     /// Sets or clears metadata overrides for `label` inside `contestId`. Passing `null`
@@ -511,10 +619,7 @@ impl Preview {
         label: String,
         patch: OverridePatchJs,
     ) -> ActionResult {
-        self.state
-            .lock()
-            .unwrap()
-            .set_override(&contest_id, &label, patch)
+        self.state.set_override(&contest_id, &label, patch)
     }
 
     /// Compiles statements (and optional editorial), checks preflight lint, and atomically
@@ -529,7 +634,7 @@ impl Preview {
             };
         }
         let state = this.with(|p| p.state.clone());
-        blocking(move || state.lock().unwrap().freeze_contest(&id))
+        blocking(move || state.freeze_contest(&id))
             .await
             .unwrap_or_else(|e| FreezeResultJs {
                 ok: false,
@@ -542,13 +647,13 @@ impl Preview {
     /// Byte-for-byte diff between a frozen contest's snapshot and the live library, for the
     /// unfreeze confirmation dialog.
     pub fn unfreeze_diff(&self, id: String) -> UnfreezeDiffResultJs {
-        self.state.lock().unwrap().unfreeze_diff(&id)
+        self.state.unfreeze_diff(&id)
     }
 
     /// Unfreezes a frozen contest (GUI-only, after human confirmation), deleting `snapshot/`
     /// and restoring live references.
     pub fn unfreeze_contest(&self, id: String) -> ActionResult {
-        self.state.lock().unwrap().unfreeze_contest(&id)
+        self.state.unfreeze_contest(&id)
     }
 
     // ---- Cmd+K fuzzy jump, Frecency & preferences --------------------------------------
@@ -556,27 +661,24 @@ impl Preview {
     /// Fuzzy-searches problems, contests, and (when `activeContest` is given) the active
     /// contest's problem labels, ranked with persisted Frecency.
     pub fn fuzzy_jump(&self, query: String, active_contest: Option<String>) -> Vec<FuzzyHitJs> {
-        self.state
-            .lock()
-            .unwrap()
-            .fuzzy_jump(&query, active_contest.as_deref())
+        self.state.fuzzy_jump(&query, active_contest.as_deref())
     }
 
     /// Records a visit (`"problem:<id>"`, `"contest:<id>"`, or
     /// `"contest_item:<contestId>:<label>"`) for Frecency ranking and persists `prefs.json`.
     pub fn record_visit(&self, key: String) {
-        self.state.lock().unwrap().record_visit(&key);
+        self.state.record_visit(&key);
     }
 
     /// Loads persisted desktop preferences from `<dataDir>/prefs.json`.
     pub fn load_prefs(&self) -> AppPrefsJs {
-        self.state.lock().unwrap().load_prefs()
+        self.state.load_prefs()
     }
 
     /// Persists desktop preferences atomically to `<dataDir>/prefs.json` (preserving
     /// persisted Frecency history).
     pub fn save_prefs(&self, prefs: AppPrefsJs) {
-        self.state.lock().unwrap().save_prefs(prefs);
+        self.state.save_prefs(prefs);
     }
 }
 
@@ -585,12 +687,94 @@ impl Preview {
     /// the mutex, refreshes the index, and returns the new [`WorkspaceInfo`].
     fn switch(&self, ws: Workspace) -> WorkspaceInfo {
         self.generation.fetch_add(1, Ordering::AcqRel);
-        let old_watcher = {
-            let mut state = self.state.lock().unwrap();
-            state.install_workspace(ws)
-        };
+        let old_watcher = self.state.install_workspace(ws);
         drop(old_watcher);
         self.workspace()
+    }
+}
+
+const UI_FONT_STEMS: &[&str] = &[
+    "JetBrainsMono-Regular",
+    "JetBrainsMono-Medium",
+    "JetBrainsMono-Bold",
+    "JetBrainsMono-Italic",
+    "JetBrainsMono-BoldItalic",
+];
+
+pub(crate) fn load_ui_fonts_from(dirs: &[PathBuf]) -> Vec<Vec<u8>> {
+    let mut found_ttf: Vec<Option<PathBuf>> = vec![None; UI_FONT_STEMS.len()];
+    let mut found_otf: Vec<Option<PathBuf>> = vec![None; UI_FONT_STEMS.len()];
+    let mut fallback: Vec<PathBuf> = Vec::new();
+
+    for dir in dirs {
+        scan_ui_fonts_dir(dir, 0, &mut found_ttf, &mut found_otf, &mut fallback);
+    }
+
+    let mut chosen: Vec<PathBuf> = Vec::new();
+    for i in 0..UI_FONT_STEMS.len() {
+        if let Some(p) = found_ttf[i].take().or_else(|| found_otf[i].take()) {
+            chosen.push(p);
+        }
+    }
+    if chosen.is_empty() {
+        fallback.sort();
+        fallback.dedup();
+        chosen = fallback;
+    }
+
+    chosen
+        .into_iter()
+        .filter_map(|p| std::fs::read(p).ok())
+        .filter(|b| !b.is_empty())
+        .collect()
+}
+
+fn scan_ui_fonts_dir(
+    dir: &Path,
+    depth: usize,
+    found_ttf: &mut [Option<PathBuf>],
+    found_otf: &mut [Option<PathBuf>],
+    fallback: &mut Vec<PathBuf>,
+) {
+    if depth > 4 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            scan_ui_fonts_dir(&path, depth + 1, found_ttf, found_otf, fallback);
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        let is_ttf = ext.eq_ignore_ascii_case("ttf");
+        let is_otf = ext.eq_ignore_ascii_case("otf");
+        if !is_ttf && !is_otf {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if let Some(idx) = UI_FONT_STEMS
+            .iter()
+            .position(|target| stem.eq_ignore_ascii_case(target))
+        {
+            let slot = if is_ttf {
+                &mut found_ttf[idx]
+            } else {
+                &mut found_otf[idx]
+            };
+            if slot.is_none() {
+                *slot = Some(path);
+            }
+        } else if stem.starts_with("JetBrainsMono") && !stem.starts_with("JetBrainsMonoNL") {
+            fallback.push(path);
+        }
     }
 }
 

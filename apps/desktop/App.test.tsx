@@ -1,6 +1,29 @@
 // `nsh test` runs this file in a headless runner it builds with the crate.
 import { expect, test } from "nsh/test";
 import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation/native";
+import {
+  abbreviateHome,
+  cleanSample,
+  clampRatio,
+  computeView,
+  contentToPage,
+  dropIndex,
+  errorCopy,
+  exportAction,
+  fitZoomFor,
+  GAP,
+  labels,
+  minimalEdit,
+  moveItem,
+  pageAt,
+  pageTopFor,
+  pathBase,
+  ratingTier,
+  ratioOf,
+  revealState,
+  validId,
+  windowTitle,
+} from "./src/ui/logic";
 
 // The pixels are shared by every Preview, so each test uses scales of its own. Every
 // test opens the contest-zh fixture read-only.
@@ -249,4 +272,108 @@ test("wakes nextChange cleanly when Preview is disposed", async () => {
   const ev2 = await pendingParked;
   expect(ev2.kind).toBe("closed");
   expect(ev2.paths.length).toBe(0);
+});
+
+// ── UI state logic (src/ui/logic.ts) ─────────────────────────────────────────
+
+const A4 = { width: 595.28, height: 841.89 };
+
+test("preview geometry: fit, page tops, the page in view, and a click's page point", () => {
+  const z = fitZoomFor([A4], 600 + 2 * GAP);
+  expect(Math.abs(z * A4.width - 600) < 1e-9).toBe(true);
+  const pages = [A4, A4, A4];
+  expect(pageTopFor(pages, 1, 2)).toBe(2 * (A4.height + GAP));
+  expect(pageAt(pages, 1, 0, 800)).toBe(0);
+  expect(pageAt(pages, 1, pageTopFor(pages, 1, 1) + 10, 800)).toBe(1);
+  const hit = contentToPage(pages, 1, 20, 20 + 100, GAP + A4.height + GAP + 50);
+  expect(hit?.page).toBe(1);
+  expect(Math.abs(hit!.xPt - 100) < 1e-9 && Math.abs(hit!.yPt - 50) < 1e-9).toBe(true);
+  expect(contentToPage(pages, 1, 20, 5, GAP + 10)).toBe(null);
+  const view = computeView(pages, 1, 0, 0, { width: 700, height: 400 });
+  expect(view.map((v) => v.page).join()).toBe("0,1");
+  expect(view[1].width).toBe(0);
+});
+
+test("ratings fall into the 7 tiers and unrated", () => {
+  expect(ratingTier(null)).toBe("unrated");
+  expect(ratingTier(800)).toBe("newbie");
+  expect(ratingTier(1200)).toBe("pupil");
+  expect(ratingTier(1899)).toBe("expert");
+  expect(ratingTier(2100)).toBe("master");
+  expect(ratingTier(3500)).toBe("grandmaster");
+});
+
+test("drag reordering: where a row lands and the order after it, labels follow", () => {
+  const slots = [0, 40, 80, 120].map((top) => ({ top, height: 40 }));
+  expect(dropIndex(slots, 3, 5)).toBe(0); // above the first row's middle
+  expect(dropIndex(slots, 0, 70)).toBe(1);
+  expect(dropIndex(slots, 0, 200)).toBe(3);
+  expect(dropIndex(slots, 1, 50)).toBe(1); // stays
+  expect(moveItem(["a", "b", "c", "d"], 3, 0).join()).toBe("d,a,b,c");
+  expect(moveItem(["a", "b", "c"], 0, 2).join()).toBe("b,c,a");
+  expect(labels(3).join()).toBe("A,B,C");
+  expect(labels(30).length).toBe(26);
+});
+
+test("samples are cleaned of BOM and carriage returns", () => {
+  expect(cleanSample("\uFEFF1 2\r\n3 4\r\n")).toBe("1 2\n3 4\n");
+  expect(cleanSample("a\rb")).toBe("a\nb");
+});
+
+test("the export button reveals only a fresh PDF of the current book", () => {
+  const f = (exists: boolean, fresh: boolean) => ({ relPath: "", absPath: "", exists, fresh });
+  const status = { statements: f(true, true), editorial: f(true, false) };
+  expect(exportAction(status, "statements")).toBe("reveal");
+  expect(exportAction(status, "editorial")).toBe("export");
+  expect(exportAction(undefined, "statements")).toBe("export");
+  expect(revealState(status, "editorial")).toBe("stale");
+  expect(revealState({ statements: f(false, false), editorial: f(false, false) }, "statements")).toBe("none");
+});
+
+test("the window title names what is open", () => {
+  expect(windowTitle({ workspace: false, space: "problems" })).toBe("XCPC Workstation");
+  expect(windowTitle({ workspace: true, space: "contests" })).toBe("比赛");
+  expect(windowTitle({ workspace: true, workspaceName: "icpc-2026", space: "contests" })).toBe("比赛 — icpc-2026");
+  expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum", label: "A", contestName: "春季训练赛" } })).toBe(
+    "A. Two Sum — 春季训练赛",
+  );
+  expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum" } })).toBe("Two Sum");
+});
+
+test("path helpers handle POSIX, macOS, and Windows paths", () => {
+  expect(pathBase("/home/alice/xcpc-ws/")).toBe("xcpc-ws");
+  expect(pathBase("C:\\Users\\alice\\xcpc-ws\\")).toBe("xcpc-ws");
+  expect(abbreviateHome("/home/alice/work")).toBe("~/work");
+  expect(abbreviateHome("/Users/alice/work")).toBe("~/work");
+  expect(abbreviateHome("C:\\Users\\alice\\work")).toBe("~\\work");
+});
+
+test("an external change lands as one minimal edit", () => {
+  const e = minimalEdit("line one\nline two\nline three", "line one\nline 2\nline three");
+  expect(e?.text).toBe("2");
+  expect(e?.range.start.line).toBe(1);
+  expect(e?.range.start.column).toBe(5);
+  expect(e?.range.end.column).toBe(8);
+  expect(minimalEdit("same", "same")).toBe(null);
+  const tail = minimalEdit("abc", "abcdef");
+  expect(tail?.text).toBe("def");
+  expect(tail?.range.start.column).toBe(3);
+});
+
+test("rule refusals read as facts, errors hide codes, IDs validate", () => {
+  expect(errorCopy("contest_frozen").rule).toBe(true);
+  expect(errorCopy("problem_referenced").next !== undefined).toBe(true);
+  expect(errorCopy("io").rule).toBe(false);
+  expect(/[a-z_]{4,}/.test(errorCopy("io").message)).toBe(false);
+  expect(errorCopy(undefined, "x already exists").message).toBe("同名 ID 已存在");
+  expect(validId("two-sum")).toBe(true);
+  expect(validId("Two")).toBe(false);
+  expect(validId("-a")).toBe(false);
+});
+
+test("the split ratio is kept within its range", () => {
+  expect(clampRatio(undefined)).toBe(0.5);
+  expect(clampRatio(0.95)).toBe(0.9);
+  expect(ratioOf([300, 700])).toBe(0.3);
+  expect(ratioOf([500])).toBe(undefined);
 });

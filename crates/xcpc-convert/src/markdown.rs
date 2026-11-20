@@ -46,7 +46,8 @@ enum Capture {
     Image(String),
 }
 
-pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnostic>) {
+/// The Markdown dialect: GFM with math, no smart punctuation.
+pub(crate) fn options() -> Options {
     let mut options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -55,6 +56,11 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
         | Options::ENABLE_SUPERSCRIPT
         | Options::ENABLE_SUBSCRIPT;
     options.remove(Options::ENABLE_SMART_PUNCTUATION);
+    options
+}
+
+pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnostic>) {
+    let options = options();
     let mut stack: Vec<Open> = Vec::new();
     let mut samples = body.samples.clone();
     // The section we are in: after the input and output sections, the next other
