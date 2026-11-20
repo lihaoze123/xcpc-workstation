@@ -8,64 +8,9 @@
 //! samples table goes where the statement asks for it, or after the input and output.
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use xcpc_domain::{SectionKind, recognize_section};
 
 use crate::{Diagnostic, Out, string};
-
-/// What a statement's headings mean.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Section {
-    /// The template's section with this key (`input`, `note`, …).
-    Known(&'static str),
-    /// The samples go here (`## 样例`).
-    Samples,
-    /// The description, which has no heading (`## 题目描述`): dropped.
-    Legend,
-}
-
-/// Recognizes a statement heading by its words, Chinese or English.
-pub(crate) fn section(title: &str) -> Option<Section> {
-    let t = title
-        .trim()
-        .trim_end_matches([':', '：'])
-        .trim()
-        .to_lowercase();
-    let known = |key| Some(Section::Known(key));
-    match t.as_str() {
-        "输入" | "输入格式" | "输入描述" | "输入数据" | "input" | "input format" | "input data" => {
-            known("input")
-        }
-        "输出" | "输出格式" | "输出描述" | "输出数据" | "output" | "output format"
-        | "output data" => known("output"),
-        "交互"
-        | "交互格式"
-        | "交互协议"
-        | "交互方式"
-        | "interaction"
-        | "interaction protocol"
-        | "interactive protocol" => known("interaction"),
-        "提示" | "说明" | "备注" | "注释" | "注意" | "note" | "notes" | "hint" | "hints" => {
-            known("note")
-        }
-        "样例解释" | "样例说明" | "explanation" | "explanations" | "sample explanation" => {
-            known("explanation")
-        }
-        "评分" | "评分方式" | "计分方式" | "scoring" => known("scoring"),
-        "约束" | "数据范围" | "数据范围与约定" | "数据规模与约定" | "constraints" => {
-            known("constraints")
-        }
-        "背景" | "题目背景" | "背景知识" | "background" => known("background"),
-        "题目要求" | "specification" => known("specification"),
-        "图表说明" | "illustration" => known("illustration"),
-        "子任务" | "subtasks" | "subtask" => known("subtasks"),
-        "样例" | "样例输入输出" | "示例" | "example" | "examples" | "sample" | "samples" => {
-            Some(Section::Samples)
-        }
-        "题目描述" | "题面" | "描述" | "description" | "legend" | "statement" => {
-            Some(Section::Legend)
-        }
-        _ => None,
-    }
-}
 
 /// How to convert one Markdown file.
 pub(crate) struct Body<'a> {
@@ -203,7 +148,14 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                     let path = match picture(body.dir, &dest_url) {
                         Ok(path) => path,
                         Err(message) => {
-                            warn(diagnostics, range.start, message);
+                            diagnostics.push(Diagnostic::at_with_code(
+                                body.path,
+                                body.text,
+                                range.start,
+                                true,
+                                Some(xcpc_lint::code::MISSING_IMAGE),
+                                message,
+                            ));
                             String::new()
                         }
                     };
@@ -230,21 +182,21 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                             let meaning = if body.editorial {
                                 None
                             } else {
-                                section(&plain)
+                                recognize_section(&plain)
                             };
                             let io = matches!(
                                 meaning,
-                                Some(Section::Known("input" | "output" | "interaction"))
+                                Some(SectionKind::Known("input" | "output" | "interaction"))
                             );
-                            if in_io && !io && meaning != Some(Section::Samples) {
+                            if in_io && !io && meaning != Some(SectionKind::Samples) {
                                 place_samples(out, &mut samples);
                             }
                             in_io |= io;
                             match meaning {
-                                Some(Section::Known(key)) => {
+                                Some(SectionKind::Known(key)) => {
                                     out.block(&format!("#section({})", string(key)))
                                 }
-                                Some(Section::Samples) => {
+                                Some(SectionKind::Samples) => {
                                     if samples.is_some() {
                                         place_samples(out, &mut samples);
                                     } else {
@@ -255,7 +207,7 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                                         );
                                     }
                                 }
-                                Some(Section::Legend) => {}
+                                Some(SectionKind::Legend) => {}
                                 None if body.editorial => {
                                     out.block(&format!("#subsection[{}]", markup.trim()))
                                 }
@@ -431,33 +383,7 @@ pub(crate) fn modernize(code: &str) -> String {
 
 /// A picture's path for Typst: relative to the problem's directory, and in it.
 fn picture(dir: &str, url: &str) -> Result<String, String> {
-    if url.contains("://") || url.starts_with("data:") {
-        return Err(format!(
-            "picture {url:?}: only files of the problem can be shown"
-        ));
-    }
-    let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
-    let base = parts.len();
-    for part in url.split('/') {
-        match part {
-            "" | "." => {}
-            ".." if parts.len() > base => {
-                parts.pop();
-            }
-            ".." => {
-                return Err(format!(
-                    "picture {url:?} is outside the problem's directory"
-                ));
-            }
-            p => parts.push(p),
-        }
-    }
-    if url.starts_with('/') {
-        return Err(format!(
-            "picture {url:?}: write a path relative to the problem"
-        ));
-    }
-    Ok(format!("/{}", parts.join("/")))
+    xcpc_lint::resolve_image_path(dir, url).map(|rel| format!("/{rel}"))
 }
 
 #[cfg(test)]
@@ -499,9 +425,15 @@ mod tests {
 
     #[test]
     fn headings() {
-        assert_eq!(section("输入格式"), Some(Section::Known("input")));
-        assert_eq!(section(" Output: "), Some(Section::Known("output")));
-        assert_eq!(section("样例"), Some(Section::Samples));
-        assert_eq!(section("其他"), None);
+        assert_eq!(
+            recognize_section("输入格式"),
+            Some(SectionKind::Known("input"))
+        );
+        assert_eq!(
+            recognize_section(" Output: "),
+            Some(SectionKind::Known("output"))
+        );
+        assert_eq!(recognize_section("样例"), Some(SectionKind::Samples));
+        assert_eq!(recognize_section("其他"), None);
     }
 }

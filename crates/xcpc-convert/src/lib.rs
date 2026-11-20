@@ -15,6 +15,7 @@ pub mod publish;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub error: bool,
+    pub code: Option<String>,
     pub message: String,
     pub file: String,
     pub line: usize,
@@ -23,9 +24,21 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     fn at(path: &str, text: &str, offset: usize, error: bool, message: String) -> Self {
+        Self::at_with_code(path, text, offset, error, None, message)
+    }
+
+    fn at_with_code(
+        path: &str,
+        text: &str,
+        offset: usize,
+        error: bool,
+        code: Option<&str>,
+        message: String,
+    ) -> Self {
         let (line, column) = line_column(text, offset);
         Self {
             error,
+            code: code.map(str::to_owned),
             message,
             file: path.to_owned(),
             line,
@@ -47,8 +60,9 @@ fn line_column(text: &str, offset: usize) -> (usize, usize) {
 pub struct SourceMap {
     /// The workspace files converted, by index: path and text.
     files: Vec<(String, String)>,
-    /// `(offset in the generated source, file, offset in the file)`, by the first.
-    marks: Vec<(usize, usize, usize)>,
+    /// `(offset in the generated source, Some((file, offset in the file)))`, by the
+    /// first; `None` marks generated regions (e.g. between problems) with no Markdown source.
+    marks: Vec<(usize, Option<(usize, usize)>)>,
 }
 
 impl SourceMap {
@@ -59,7 +73,7 @@ impl SourceMap {
             .marks
             .partition_point(|m| m.0 <= offset)
             .checked_sub(1)?;
-        let (_, file, at) = self.marks[i];
+        let (file, at) = self.marks[i].1?;
         let (path, text) = &self.files[file];
         let (line, column) = line_column(text, at);
         Some((path, line, column))
@@ -199,6 +213,7 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
             None => {
                 diagnostics.push(Diagnostic {
                     error: false,
+                    code: None,
                     message: format!("problem {:?} has no statement", entry.problem.id),
                     file: format!("{}/statement.md", entry.problem.dir),
                     line: 1,
@@ -210,6 +225,7 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
             }
         }
         out.trim_end();
+        out.unmark();
         out.raw("\n]\n\n");
     }
     let set = entries
@@ -247,6 +263,7 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
         let Some(editorial) = &entry.problem.editorial else {
             diagnostics.push(Diagnostic {
                 error: false,
+                code: Some(xcpc_lint::code::MISSING_EDITORIAL.to_owned()),
                 message: format!(
                     "problem {} ({}) has no editorial",
                     entry.item.label, entry.problem.id
@@ -286,6 +303,7 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
             &mut diagnostics,
         );
         out.trim_end();
+        out.unmark();
         out.raw("\n]\n\n");
     }
     out.finish(set, diagnostics)
@@ -474,6 +492,14 @@ impl Out {
     }
 
     pub(crate) fn mark(&mut self, file: usize, at: usize) {
+        self.push_mark(Some((file, at)));
+    }
+
+    pub(crate) fn unmark(&mut self) {
+        self.push_mark(None);
+    }
+
+    fn push_mark(&mut self, target: Option<(usize, usize)>) {
         if self.captures.is_empty() {
             let here = self.buf.len();
             // Trimming may have taken back what earlier marks point past.
@@ -481,9 +507,9 @@ impl Out {
                 self.map.marks.pop();
             }
             if let Some(last) = self.map.marks.last_mut().filter(|m| m.0 == here) {
-                *last = (here, file, at);
+                *last = (here, target);
             } else {
-                self.map.marks.push((here, file, at));
+                self.map.marks.push((here, target));
             }
         }
     }

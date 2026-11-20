@@ -3,5 +3,16 @@
   "id": "dev.xcpc.workstation",
   "version": "0.1.0",
   "build": 1,
-  "rust": "."
+  "rust": ".",
+  "window": {
+    "titleBar": {
+      "style": "hidden",
+      "height": 44
+    },
+    "minSize": {
+      "width": 960,
+      "height": 640
+    },
+    "restoreBounds": true
+  }
 }

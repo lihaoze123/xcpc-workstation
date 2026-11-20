@@ -1,22 +1,38 @@
 //! `xcpc mcp`: the Model Context Protocol over stdio (newline-delimited JSON-RPC 2.0),
-//! the publishing tools of Phase 1 (docs/architecture.md §7.2):
+//! implementing all 10 publishing, library, and contest composition tools of Phase 1–2
+//! (docs/architecture.md §7.2):
 //!
-//! - `compile_and_diagnose`: diagnostics in workspace files, pages per problem,
-//!   overflows;
-//! - `render_page_png`: one page as an image, written nowhere;
-//! - `export_pdf`: the PDF, into the workspace (sandboxed; refused with `--read-only`).
+//! Read-only tools:
+//! - `compile_and_diagnose`: typeset + preflight lint (`xcpc-lint`), page map & overflows;
+//! - `render_page_png`: render one page to PNG in memory, writing nothing;
+//! - `search_problems`: scan workspace index and filter/search problem metadata (no body);
+//! - `get_problem`: parsed metadata, `statement*.md` / `editorial.md` text & SHA-256 hashes,
+//!   samples, and `solutions/` filenames;
+//! - `get_contest`: list all contests, or return one contest's metadata, frozen state,
+//!   per-problem overrides + compiled page ranges, and difficulty/tag statistics.
 //!
-//! There is no tool to unfreeze a contest, nor any other write.
+//! Write tools (refused under `--read-only`; frozen contests refused by Core):
+//! - `export_pdf`: export statements or editorial PDF into the workspace;
+//! - `write_problem`: atomically create/update whitelisted problem files with optional hash check;
+//! - `compose_contest`: create/update a contest's ordered problem list (`A..Z`, max 26) & metadata;
+//! - `set_override`: set or clear per-problem metadata overrides (`title`, `limits`, `show-metadata`);
+//! - `freeze_contest`: validate, export PDFs, and atomically snapshot-freeze a contest.
+//!
+//! Security boundary: unfreezing a contest is intentionally NOT exposed over MCP; it is only
+//! available to a human via the GUI or `xcpc contest unfreeze` with explicit confirmation.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 
 use anyhow::Result;
 use base64::Engine as _;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use xcpc_convert::publish::{self, Kind, Target};
-use xcpc_domain::Language;
+use xcpc_domain::{ContestMetaPatch, Language, LimitsPatch, OverridePatch, Patch, SearchQuery};
 use xcpc_engine::{Engine, FontOptions};
-use xcpc_storage::Workspace;
+use xcpc_storage::{Workspace, WorkspaceIndex};
+
+use crate::views;
 
 /// The protocol revisions this server speaks, newest first.
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -50,6 +66,12 @@ struct Server {
     engine: Engine,
 }
 
+type ToolErr = Option<(String, String)>;
+
+fn fail(code: &str, message: impl Into<String>) -> ToolErr {
+    Some((code.to_owned(), message.into()))
+}
+
 fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
@@ -70,16 +92,21 @@ impl Server {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": "xcpc", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Typesets the problems and contests of an XCPC workspace in olymp-classic. \
+                    "instructions": "Manages and typesets problems and contests of an XCPC workspace in olymp-classic. \
                         Problems live in problems/<id>/ (problem.toml, statement.md, samples/, editorial.md); \
-                        contests in contests/<id>/contest.toml. Diagnostics point into those files.",
+                        contests live in contests/<id>/contest.toml. Diagnostics include preflight lint findings \
+                        and point into workspace files. Frozen contests are strictly read-only; unfreezing is \
+                        restricted to human confirmation in the GUI or CLI and is never available over MCP.",
                 })
             }
             "ping" => json!({}),
             "tools/list" => json!({ "tools": tools() }),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                let args = match params.get("arguments") {
+                    None | Some(Value::Null) => json!({}),
+                    Some(v) => v.clone(),
+                };
                 match self.call(name, &args) {
                     Ok(result) => result,
                     Err(Some((code, message))) => json!({
@@ -95,74 +122,372 @@ impl Server {
     }
 
     /// A tool's result; `Err(None)` for a tool that does not exist.
-    fn call(&mut self, name: &str, args: &Value) -> Result<Value, Option<(String, String)>> {
-        let fail = |code: &str, message: String| Some((code.to_owned(), message));
-        let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
-        let doc = publish::document(&self.ws, &what.target, what.kind, what.language)
-            .map_err(|e| fail(e.code(), e.to_string()))?;
+    fn call(&mut self, name: &str, args: &Value) -> Result<Value, ToolErr> {
+        let Some(obj) = args.as_object() else {
+            return if is_known_tool(name) {
+                Err(fail("invalid_arguments", "`arguments` must be an object"))
+            } else {
+                Err(None)
+            };
+        };
+
         match name {
-            "compile_and_diagnose" => {
-                let (_, report) = publish::compile(&mut self.engine, &doc);
-                Ok(structured(
-                    serde_json::to_value(&report).expect("serializable"),
-                ))
-            }
-            "render_page_png" => {
-                let page = args.get("page").and_then(Value::as_u64).unwrap_or(1) as usize;
-                let scale = args
-                    .get("scale")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(1.5)
-                    .clamp(0.5, 4.0) as f32;
-                let (compiled, report) = publish::compile(&mut self.engine, &doc);
-                let Some(compiled) = compiled else {
-                    return Ok(structured(
-                        serde_json::to_value(&report).expect("serializable"),
-                    ));
-                };
-                let png = page
-                    .checked_sub(1)
-                    .and_then(|p| compiled.render_png(p, scale))
-                    .ok_or_else(|| {
-                        fail(
-                            "no_such_page",
-                            format!("page {page} of {}", compiled.page_count()),
-                        )
-                    })?;
-                Ok(json!({
-                    "content": [
-                        { "type": "image", "mimeType": "image/png", "data": base64::engine::general_purpose::STANDARD.encode(png) },
-                        { "type": "text", "text": format!("page {page} of {}", compiled.page_count()) },
-                    ],
-                }))
-            }
-            "export_pdf" => {
-                let output = match args.get("output").and_then(Value::as_str) {
-                    Some(path) => path.to_owned(),
-                    None => publish::default_output(&what.target, what.kind),
-                };
-                self.ws
-                    .check_writable(&output)
-                    .map_err(|e| fail(e.code(), e.to_string()))?;
-                let (compiled, report) = publish::compile(&mut self.engine, &doc);
-                let mut value = serde_json::to_value(&report).expect("serializable");
-                if let (Some(compiled), true) = (compiled, report.ok) {
-                    let pdf = compiled.pdf().map_err(|e| {
-                        fail(
-                            "pdf_failed",
-                            e.first().map(|d| d.message.clone()).unwrap_or_default(),
-                        )
-                    })?;
-                    self.ws
-                        .write(&output, &pdf)
-                        .map_err(|e| fail(e.code(), e.to_string()))?;
-                    value["output"] = json!(output);
-                }
-                Ok(structured(value))
-            }
+            "compile_and_diagnose" => self.tool_compile_and_diagnose(obj),
+            "render_page_png" => self.tool_render_page_png(obj),
+            "export_pdf" => self.tool_export_pdf(obj),
+            "search_problems" => self.tool_search_problems(obj),
+            "get_problem" => self.tool_get_problem(obj),
+            "get_contest" => self.tool_get_contest(obj),
+            "write_problem" => self.tool_write_problem(obj),
+            "compose_contest" => self.tool_compose_contest(obj),
+            "set_override" => self.tool_set_override(obj),
+            "freeze_contest" => self.tool_freeze_contest(obj),
             _ => Err(None),
         }
     }
+
+    fn tool_compile_and_diagnose(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
+        let (_, _, report) = publish::check(
+            &self.ws,
+            &mut self.engine,
+            &what.target,
+            what.kind,
+            what.language,
+            None,
+        )
+        .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(
+            serde_json::to_value(&report).expect("serializable"),
+        ))
+    }
+
+    fn tool_render_page_png(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
+        let page = match args.get("page") {
+            None | Some(Value::Null) => 1usize,
+            Some(v) => v
+                .as_u64()
+                .ok_or_else(|| fail("invalid_arguments", "`page` must be a positive integer"))?
+                as usize,
+        };
+        let scale = match args.get("scale") {
+            None | Some(Value::Null) => 1.5_f32,
+            Some(v) => {
+                let s = v
+                    .as_f64()
+                    .filter(|n| n.is_finite())
+                    .ok_or_else(|| fail("invalid_arguments", "`scale` must be a finite number"))?;
+                s.clamp(0.5, 4.0) as f32
+            }
+        };
+        let (compiled, _, report) = publish::check(
+            &self.ws,
+            &mut self.engine,
+            &what.target,
+            what.kind,
+            what.language,
+            None,
+        )
+        .map_err(|e| fail(e.code(), e.to_string()))?;
+        let Some(compiled) = compiled else {
+            return Ok(structured(
+                serde_json::to_value(&report).expect("serializable"),
+            ));
+        };
+        let png = page
+            .checked_sub(1)
+            .and_then(|p| compiled.render_png(p, scale))
+            .ok_or_else(|| {
+                fail(
+                    "no_such_page",
+                    format!("page {page} of {}", compiled.page_count()),
+                )
+            })?;
+        Ok(json!({
+            "content": [
+                { "type": "image", "mimeType": "image/png", "data": base64::engine::general_purpose::STANDARD.encode(png) },
+                { "type": "text", "text": format!("page {page} of {}", compiled.page_count()) },
+            ],
+        }))
+    }
+
+    fn tool_export_pdf(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
+        let output = match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
+            Some(path) => path,
+            None => publish::default_output(&what.target, what.kind),
+        };
+        self.ws
+            .check_writable(&output)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let (compiled, _, report) = publish::check(
+            &self.ws,
+            &mut self.engine,
+            &what.target,
+            what.kind,
+            what.language,
+            None,
+        )
+        .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&report).expect("serializable");
+        if let (Some(compiled), true) = (compiled, report.ok) {
+            let pdf = compiled.pdf().map_err(|e| {
+                fail(
+                    "pdf_failed",
+                    e.first().map(|d| d.message.clone()).unwrap_or_default(),
+                )
+            })?;
+            self.ws
+                .write(&output, &pdf)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+            value["output"] = json!(output);
+        }
+        Ok(structured(value))
+    }
+
+    fn tool_search_problems(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let query = opt_str(args, "query").map_err(|m| fail("invalid_arguments", m))?;
+        let text = opt_str(args, "text").map_err(|m| fail("invalid_arguments", m))?;
+        let tags = opt_str_vec(args, "tags").map_err(|m| fail("invalid_arguments", m))?;
+        let rating_min = opt_u32(args, "rating_min").map_err(|m| fail("invalid_arguments", m))?;
+        let rating_max = opt_u32(args, "rating_max").map_err(|m| fail("invalid_arguments", m))?;
+        let platform = opt_str(args, "platform").map_err(|m| fail("invalid_arguments", m))?;
+
+        let index = WorkspaceIndex::scan(&self.ws).map_err(|e| fail(e.code(), e.to_string()))?;
+        let search = SearchQuery {
+            text: query.or(text),
+            tags,
+            rating_min,
+            rating_max,
+            platform,
+        };
+        let problems = index.search_problems(&search);
+        Ok(structured(json!({
+            "ok": true,
+            "problems": problems,
+        })))
+    }
+
+    fn tool_get_problem(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let detail =
+            views::problem_detail(&self.ws, &id).map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(
+            serde_json::to_value(&detail).expect("serializable"),
+        ))
+    }
+
+    fn tool_get_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let id = opt_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        match id {
+            None => {
+                let contests =
+                    views::list_contests(&self.ws).map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "contests": contests,
+                })))
+            }
+            Some(id) => {
+                let detail = views::contest_detail(&self.ws, &mut self.engine, &id)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(
+                    serde_json::to_value(&detail).expect("serializable"),
+                ))
+            }
+        }
+    }
+
+    fn tool_write_problem(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let files_obj = args
+            .get("files")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                fail(
+                    "invalid_arguments",
+                    "`files` is required and must be an object mapping relative paths to strings",
+                )
+            })?;
+        let mut files = BTreeMap::new();
+        for (k, v) in files_obj {
+            let content = v.as_str().ok_or_else(|| {
+                fail(
+                    "invalid_arguments",
+                    format!("`files[{k:?}]` must be a string"),
+                )
+            })?;
+            files.insert(k.clone(), content.to_owned());
+        }
+        let expected_hash =
+            opt_str(args, "expected_hash").map_err(|m| fail("invalid_arguments", m))?;
+
+        let hashes = self
+            .ws
+            .write_problem_files(&id, &files, expected_hash.as_deref())
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(json!({
+            "ok": true,
+            "id": id,
+            "hashes": hashes,
+        })))
+    }
+
+    fn tool_compose_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        const ALLOWED_KEYS: &[&str] = &[
+            "id",
+            "problems",
+            "name",
+            "location",
+            "date",
+            "author",
+            "language",
+            "show-metadata",
+            "show_metadata",
+            "cover",
+            "blank-pages",
+            "blank_pages",
+        ];
+        reject_unknown_keys(args, ALLOWED_KEYS, "compose_contest")
+            .map_err(|m| fail("invalid_arguments", m))?;
+
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let problems = req_str_vec(args, "problems").map_err(|m| fail("invalid_arguments", m))?;
+
+        let name = opt_str(args, "name").map_err(|m| fail("invalid_arguments", m))?;
+        let location = patch_str(args, "location").map_err(|m| fail("invalid_arguments", m))?;
+        let date = patch_str(args, "date").map_err(|m| fail("invalid_arguments", m))?;
+        let author = patch_str(args, "author").map_err(|m| fail("invalid_arguments", m))?;
+        let language = match opt_str(args, "language").map_err(|m| fail("invalid_arguments", m))? {
+            None => None,
+            Some(l) => Some(
+                Language::parse(&l)
+                    .ok_or_else(|| fail("invalid_arguments", format!("unknown language {l:?}")))?,
+            ),
+        };
+        let show_metadata = opt_bool_alias(args, "show-metadata", "show_metadata")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let cover = patch_bool(args, "cover").map_err(|m| fail("invalid_arguments", m))?;
+        let blank_pages = opt_bool_alias(args, "blank-pages", "blank_pages")
+            .map_err(|m| fail("invalid_arguments", m))?;
+
+        let patch = ContestMetaPatch {
+            name,
+            location,
+            date,
+            author,
+            language,
+            show_metadata,
+            cover,
+            blank_pages,
+        };
+        let has_patch = patch != ContestMetaPatch::default();
+        let contest = self
+            .ws
+            .compose_contest(&id, &problems, has_patch.then_some(&patch))
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+
+        Ok(structured(json!({
+            "ok": true,
+            "id": contest.id,
+            "dir": contest.dir,
+            "meta": contest.meta,
+        })))
+    }
+
+    fn tool_set_override(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let contest_id = req_str(args, "contest").map_err(|m| fail("invalid_arguments", m))?;
+        let label = req_str(args, "label").map_err(|m| fail("invalid_arguments", m))?;
+        let fields = args
+            .get("fields")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                fail(
+                    "invalid_arguments",
+                    "`fields` is required and must be an object",
+                )
+            })?;
+        reject_unknown_keys(
+            fields,
+            &["title", "limits", "show-metadata", "show_metadata"],
+            "fields",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let title = patch_str(fields, "title").map_err(|m| fail("invalid_arguments", m))?;
+        let show_metadata = patch_bool_alias(fields, "show-metadata", "show_metadata")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let limits = match fields.get("limits") {
+            None => LimitsPatch::default(),
+            Some(Value::Null) => LimitsPatch::clear_all(),
+            Some(Value::Object(lim_obj)) => {
+                reject_unknown_keys(lim_obj, &["time", "memory", "input", "output"], "limits")
+                    .map_err(|m| fail("invalid_arguments", m))?;
+                LimitsPatch {
+                    time: patch_str(lim_obj, "time").map_err(|m| fail("invalid_arguments", m))?,
+                    memory: patch_str(lim_obj, "memory")
+                        .map_err(|m| fail("invalid_arguments", m))?,
+                    input: patch_str(lim_obj, "input").map_err(|m| fail("invalid_arguments", m))?,
+                    output: patch_str(lim_obj, "output")
+                        .map_err(|m| fail("invalid_arguments", m))?,
+                }
+            }
+            Some(_) => {
+                return Err(fail(
+                    "invalid_arguments",
+                    "`fields.limits` must be an object or null",
+                ));
+            }
+        };
+
+        let patch = OverridePatch {
+            title,
+            limits,
+            show_metadata,
+        };
+        let contest = self
+            .ws
+            .set_override(&contest_id, &label, &patch)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let item = contest.meta.problems.iter().find(|p| p.label == label);
+
+        Ok(structured(json!({
+            "ok": true,
+            "contest": contest.id,
+            "label": label,
+            "item": item,
+            "meta": contest.meta,
+        })))
+    }
+
+    fn tool_freeze_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let outcome = publish::freeze_contest(&self.ws, &mut self.engine, &id)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&outcome.report).expect("serializable");
+        value["id"] = json!(id);
+        value["frozen"] = json!(outcome.frozen);
+        value["outputs"] = json!(outcome.outputs);
+        value["ok"] = json!(outcome.frozen);
+        Ok(structured(value))
+    }
+}
+
+fn is_known_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "compile_and_diagnose"
+            | "render_page_png"
+            | "export_pdf"
+            | "search_problems"
+            | "get_problem"
+            | "get_contest"
+            | "write_problem"
+            | "compose_contest"
+            | "set_override"
+            | "freeze_contest"
+    )
 }
 
 /// A result carrying `value` both as structured content and as text.
@@ -175,6 +500,130 @@ fn structured(value: Value) -> Value {
     })
 }
 
+fn reject_unknown_keys(
+    obj: &Map<String, Value>,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), String> {
+    for key in obj.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(format!("unknown field {key:?} in {context}"));
+        }
+    }
+    Ok(())
+}
+
+fn req_str(obj: &Map<String, Value>, key: &str) -> Result<String, String> {
+    obj.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("`{key}` is required and must be a string"))
+}
+
+fn opt_str(obj: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(format!("`{key}` must be a string")),
+    }
+}
+
+fn opt_u32(obj: &Map<String, Value>, key: &str) -> Result<Option<u32>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => {
+            let n = v
+                .as_u64()
+                .ok_or_else(|| format!("`{key}` must be a non-negative integer"))?;
+            u32::try_from(n)
+                .map(Some)
+                .map_err(|_| format!("`{key}` is out of range"))
+        }
+    }
+}
+
+fn opt_bool_alias(
+    obj: &Map<String, Value>,
+    primary: &str,
+    alias: &str,
+) -> Result<Option<bool>, String> {
+    let p = obj.get(primary);
+    let a = obj.get(alias);
+    if p.is_some() && a.is_some() {
+        return Err(format!("specify only one of `{primary}` or `{alias}`"));
+    }
+    match p.or(a) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(format!("`{primary}` must be a boolean")),
+    }
+}
+
+fn patch_str(obj: &Map<String, Value>, key: &str) -> Result<Patch<String>, String> {
+    match obj.get(key) {
+        None => Ok(Patch::Keep),
+        Some(Value::Null) => Ok(Patch::Clear),
+        Some(Value::String(s)) => Ok(Patch::Set(s.clone())),
+        Some(_) => Err(format!("`{key}` must be a string or null")),
+    }
+}
+
+fn patch_bool(obj: &Map<String, Value>, key: &str) -> Result<Patch<bool>, String> {
+    match obj.get(key) {
+        None => Ok(Patch::Keep),
+        Some(Value::Null) => Ok(Patch::Clear),
+        Some(Value::Bool(b)) => Ok(Patch::Set(*b)),
+        Some(_) => Err(format!("`{key}` must be a boolean or null")),
+    }
+}
+
+fn patch_bool_alias(
+    obj: &Map<String, Value>,
+    primary: &str,
+    alias: &str,
+) -> Result<Patch<bool>, String> {
+    let p = obj.get(primary);
+    let a = obj.get(alias);
+    if p.is_some() && a.is_some() {
+        return Err(format!("specify only one of `{primary}` or `{alias}`"));
+    }
+    match p.or(a) {
+        None => Ok(Patch::Keep),
+        Some(Value::Null) => Ok(Patch::Clear),
+        Some(Value::Bool(b)) => Ok(Patch::Set(*b)),
+        Some(_) => Err(format!("`{primary}` must be a boolean or null")),
+    }
+}
+
+fn opt_str_vec(obj: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("`{key}` must be an array of strings"))
+            })
+            .collect(),
+        Some(_) => Err(format!("`{key}` must be an array of strings")),
+    }
+}
+
+fn req_str_vec(obj: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+    let arr = obj
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("`{key}` is required and must be an array of strings"))?;
+    arr.iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("`{key}` must be an array of strings"))
+        })
+        .collect()
+}
+
 struct What {
     target: Target,
     kind: Kind,
@@ -182,23 +631,19 @@ struct What {
 }
 
 impl What {
-    fn parse(args: &Value) -> Result<Self, String> {
-        let id = args
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or("`id` is required")?
-            .to_owned();
+    fn parse(args: &Map<String, Value>) -> Result<Self, String> {
+        let id = req_str(args, "id")?;
         let target = match args.get("target").and_then(Value::as_str) {
             Some("problem") => Target::Problem(id),
             Some("contest") => Target::Contest(id),
             _ => return Err("`target` must be \"problem\" or \"contest\"".into()),
         };
-        let kind = match args.get("book").and_then(Value::as_str) {
+        let kind = match opt_str(args, "book")?.as_deref() {
             None | Some("statements") => Kind::Statements,
             Some("editorial") => Kind::Editorial,
             Some(other) => return Err(format!("unknown book {other:?}")),
         };
-        let language = match args.get("language").and_then(Value::as_str) {
+        let language = match opt_str(args, "language")?.as_deref() {
             None => None,
             Some(l) => Some(Language::parse(l).ok_or_else(|| format!("unknown language {l:?}"))?),
         };
@@ -229,9 +674,9 @@ fn tools() -> Value {
         {
             "name": "compile_and_diagnose",
             "title": "Compile and diagnose",
-            "description": "Typeset a problem or contest and report errors and warnings with their place in the workspace files \
-                (statement.md line and column), the total page count, the pages of each problem, and content that runs past \
-                the text area. Writes nothing.",
+            "description": "Typeset a problem or contest and report compile errors, preflight lint findings \
+                (missing problem/image errors; sample, I/O section, editorial, and overflow warnings) with \
+                workspace file locations, total page count, and pages per problem. Writes nothing.",
             "inputSchema": with(json!({})),
             "annotations": { "readOnlyHint": true },
         },
@@ -249,11 +694,160 @@ fn tools() -> Value {
             "name": "export_pdf",
             "title": "Export PDF",
             "description": "Typeset a problem (single statement), a contest (the whole book with its cover) or either's editorial \
-                book, and write the PDF into the workspace. Nothing is written when there are errors.",
+                book, and write the PDF into the workspace. Nothing is written when there are compile or lint errors.",
             "inputSchema": with(json!({
                 "output": { "type": "string", "description": "Where to write it, relative to the workspace (default build/<id>.pdf or build/<id>-editorial.pdf)." },
             })),
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "search_problems",
+            "title": "Search problems",
+            "description": "Search the workspace problem library by optional text, tags, rating range, or source platform. \
+                Returns metadata summaries only (ID, title, rating, tags, sources, editorial/solution presence; no statement body).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Free-text query matched against ID, title, author, tags, sources, statements, and editorial." },
+                    "text": { "type": "string", "description": "Alias for `query`." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Required tags (a problem must have all listed tags)." },
+                    "rating_min": { "type": "integer", "minimum": 0, "description": "Minimum rating (inclusive)." },
+                    "rating_max": { "type": "integer", "minimum": 0, "description": "Maximum rating (inclusive)." },
+                    "platform": { "type": "string", "description": "Filter by external source platform (e.g. codeforces, atcoder, luogu)." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "get_problem",
+            "title": "Get problem",
+            "description": "Read a problem's parsed metadata, full text and SHA-256 content hashes of statement*.md and editorial.md, \
+                samples, and solutions/ filenames.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (directory name under problems/)." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "get_contest",
+            "title": "Get contest",
+            "description": "List all contests when `id` is omitted, or return one contest's metadata, frozen state, \
+                problem list (label, ID, effective title, overrides, compiled page start/count), and difficulty/tag statistics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID (directory name under contests/). Omit to list all contests." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "write_problem",
+            "title": "Write problem files",
+            "description": "Atomically create or update whitelisted files inside problems/<id>/ (problem.toml, statement*.md, \
+                editorial.md, samples/*, solutions/*, generators/*, tests/*, checker.cpp, validator.cpp, interactor.cpp). \
+                Validates problem.toml syntax and optionally checks expected_hash (SHA-256) to detect concurrent edits.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                    "files": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Map of problem-relative file paths to full UTF-8 contents.",
+                    },
+                    "expected_hash": { "type": "string", "description": "Optional expected SHA-256 hex digest of the primary target file on disk (empty string if missing)." },
+                },
+                "required": ["id", "files"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "compose_contest",
+            "title": "Compose contest",
+            "description": "Create or update a contest's ordered problem list (max 26, labelled A..Z) and optional metadata. \
+                Preserves existing overrides on kept problems and removes dropped problems. Refuses frozen contests.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID (slug under contests/). Created if absent." },
+                    "problems": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Ordered problem IDs (max 26).",
+                    },
+                    "name": { "type": "string", "description": "Contest display name." },
+                    "location": { "type": ["string", "null"], "description": "Contest location (null to clear)." },
+                    "date": { "type": ["string", "null"], "description": "Contest date (null to clear)." },
+                    "author": { "type": ["string", "null"], "description": "Cover author line (null to clear)." },
+                    "language": { "type": "string", "enum": ["chinese", "english"], "description": "Contest language." },
+                    "show-metadata": { "type": "boolean", "description": "Show limits table by default." },
+                    "cover": { "type": ["boolean", "null"], "description": "Show cover page (null for default: >= 2 problems)." },
+                    "blank-pages": { "type": "boolean", "description": "Start every problem on an odd page." },
+                },
+                "required": ["id", "problems"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "set_override",
+            "title": "Set contest problem override",
+            "description": "Set or clear metadata overrides (title, limits, show-metadata) for one problem in a contest. \
+                Pass null for a field to delete its override; matching the library's original value also clears the override.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "contest": { "type": "string", "description": "Contest ID." },
+                    "label": { "type": "string", "description": "Problem label in the contest (e.g. A, B, C)." },
+                    "fields": {
+                        "type": "object",
+                        "description": "Override fields to update; null removes the override.",
+                        "properties": {
+                            "title": { "type": ["string", "null"], "description": "Override title, or null to clear." },
+                            "show-metadata": { "type": ["boolean", "null"], "description": "Override limits-table visibility, or null to clear." },
+                            "limits": {
+                                "type": ["object", "null"],
+                                "description": "Override limit fields, or null to clear all limit overrides.",
+                                "properties": {
+                                    "time": { "type": ["string", "null"] },
+                                    "memory": { "type": ["string", "null"] },
+                                    "input": { "type": ["string", "null"] },
+                                    "output": { "type": ["string", "null"] },
+                                },
+                                "additionalProperties": false,
+                            },
+                        },
+                        "additionalProperties": false,
+                    },
+                },
+                "required": ["contest", "label", "fields"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "freeze_contest",
+            "title": "Freeze contest",
+            "description": "Validate, compile, export snapshot PDFs, and freeze a contest into a read-only archive. \
+                Refuses to freeze if any compile or lint error exists; warnings do not block freezing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID to freeze." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
         },
     ])
 }
@@ -270,7 +864,7 @@ mod tests {
         fs::create_dir_all(prob.join("samples")).unwrap();
         fs::write(
             prob.join("problem.toml"),
-            "title = \"A + B\"\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n",
+            "title = \"A + B\"\nrating = 800\ntags = [\"math\"]\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n",
         )
         .unwrap();
         fs::write(
@@ -287,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_and_list_tools() {
+    fn initialize_and_list_all_ten_tools_without_unfreeze() {
         let (_dir, mut server) = sample_workspace(false);
         let init = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-11-25" } }))
@@ -297,16 +891,36 @@ mod tests {
         let list = server
             .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
             .unwrap();
-        let names: Vec<&str> = list["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+        let tools = list["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
-            vec!["compile_and_diagnose", "render_page_png", "export_pdf"]
+            vec![
+                "compile_and_diagnose",
+                "render_page_png",
+                "export_pdf",
+                "search_problems",
+                "get_problem",
+                "get_contest",
+                "write_problem",
+                "compose_contest",
+                "set_override",
+                "freeze_contest",
+            ]
         );
+        assert!(
+            !names.iter().any(|n| n.contains("unfreeze")),
+            "MCP must never expose any unfreeze tool: {names:?}"
+        );
+
+        // Calling an unfreeze tool name directly must return JSON-RPC unknown tool (-32602).
+        let unfreeze = server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": { "name": "unfreeze_contest", "arguments": { "id": "any" } }
+            }))
+            .unwrap();
+        assert_eq!(unfreeze["error"]["code"], -32602);
     }
 
     #[test]

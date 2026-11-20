@@ -53,8 +53,13 @@ test("reports an error in the Markdown with its place, and keeps no pages", asyn
 
 test("refuses to save in a read-only workspace", () => {
   const preview = open();
-  expect(preview.read(C).readOnly).toBe(true);
-  expect(preview.save(C, "x")).toMatch(/read-only/);
+  const file = preview.read(C);
+  expect(file.readOnly).toBe(true);
+  expect(file.hash.length).toBe(64);
+  const res = preview.save(C, "x", file.hash);
+  expect(res.ok).toBe(false);
+  expect(res.conflict).toBe(false);
+  expect(res.error ?? "").toMatch(/read-only/);
 });
 
 test("rasterizes only the pages an edit changed", async () => {
@@ -115,4 +120,121 @@ test("an edit rasterizes again only the tiles it touches", async () => {
   expect(edited.rendered > 1 && edited.rendered < 5).toBe(true);
   const kept = edited.pages[1].layers.filter((l) => first.pages[1].layers.some((f) => f.key === l.key));
   expect(kept.length).toBe(13 - edited.rendered);
+});
+
+test("reuses compiled document when only view or scale changes", async () => {
+  const preview = open();
+  const sample = preview.read(C).text;
+  const first = await preview.compile(contest(sample), 0.9, inView([0]));
+  expect(first.compileMs > 0).toBe(true);
+  expect(first.pages.length).toBe(5);
+  expect(first.rendered).toBe(1);
+  // Out-of-view pages have not lazily computed fingerprints yet.
+  expect(first.pages[1].layers.length).toBe(0);
+
+  // Only scale and view changed: skips publish::document_with + compile completely.
+  const zoomed = await preview.compile(contest(sample), 1.3, inView([1]));
+  expect(zoomed.compileMs).toBe(0);
+  expect(zoomed.rendered).toBe(1);
+  expect(zoomed.pages[0].layers[0].key).toBe(first.pages[0].layers[0].key);
+  expect(zoomed.pages[2].layers.length).toBe(0);
+
+  // Scrolling back over already-rasterized page 1 keeps compileMs === 0.
+  const scrolled = await preview.compile(contest(sample), 1.3, inView([0, 1]));
+  expect(scrolled.compileMs).toBe(0);
+  expect(scrolled.rendered).toBe(1);
+
+  // Editing text invalidates the compiled cache and recompiles.
+  const edited = await preview.compile(contest(sample + "\n"), 1.3, inView([0, 1]));
+  expect(edited.compileMs > 0).toBe(true);
+});
+
+test("supersedes older in-flight compile calls with the latest generation", async () => {
+  const preview = open();
+  const sample = preview.read(C).text;
+  const p1 = preview.compile(contest(sample), 4.0, inView([0, 1, 2], { x: 0, y: 0, width: 600, height: 850 }));
+  const p2 = preview.compile(contest(sample), 1.0, inView([0]));
+  const [stale, latest] = await Promise.all([p1, p2]);
+  expect(stale.pages.length).toBe(0);
+  expect(latest.error ?? undefined).toBe(undefined);
+  expect(latest.pages.length).toBe(5);
+  expect(latest.pages[0].layers.length).toBe(1);
+});
+
+test("exposes Phase 2 search, detail, stats, fuzzy jump, locateClick and MCP snippet", async () => {
+  const preview = open();
+  const compiled = await preview.compile(contest(), 1, inView([1]));
+  expect(compiled.starts[0].id).toBe("contest-zh-a");
+  expect(compiled.starts[0].first).toBe(2);
+  expect(compiled.starts[0].count >= 1).toBe(true);
+
+  // Locate a body point on page 1 (0-based, Problem A) back to Markdown.
+  let hit = null;
+  for (let y = 120; y < 500 && !hit; y += 16) {
+    for (let x = 80; x < 450 && !hit; x += 32) {
+      hit = preview.locateClick(1, x, y);
+    }
+  }
+  expect(hit !== null).toBe(true);
+  expect(hit!.file).toBe(A);
+  expect(hit!.line >= 1 && hit!.column >= 1).toBe(true);
+
+  // Problem library search, facets, and details.
+  const all = preview.searchProblems({});
+  expect(all.length).toBe(3);
+  const facets = preview.workspaceFacets();
+  expect(Array.isArray(facets.tags)).toBe(true);
+  expect(Array.isArray(facets.platforms)).toBe(true);
+  const pDetail = preview.problemDetail("contest-zh-a");
+  expect(pDetail.error ?? undefined).toBe(undefined);
+  expect(pDetail.statement.path).toBe(A);
+  expect(pDetail.statement.hash.length).toBe(64);
+  expect(pDetail.referencingContests.join()).toBe("contest-zh");
+
+  // Contest detail, stats, and active-contest fuzzy jump.
+  const cDetail = preview.contestDetail("contest-zh");
+  expect(cDetail.error ?? undefined).toBe(undefined);
+  expect(cDetail.items.length).toBe(3);
+  expect(cDetail.items[0].overriddenTitle).toBe(false);
+  const stats = preview.contestStats("contest-zh");
+  expect(stats.problemCount).toBe(3);
+  expect(stats.ratingDistribution.length).toBe(8);
+
+  const labelHits = preview.fuzzyJump("B", "contest-zh");
+  expect(labelHits[0].kind).toBe("contest_item");
+  expect(labelHits[0].label).toBe("B");
+  expect(labelHits[0].id).toBe("contest-zh-b");
+
+  // Tri-state patch decoding across QuickJS FFI (hits read-only guard without PropError).
+  const ovRes = preview.setOverride("contest-zh", "A", { title: "Override", time: null, showMetadata: false });
+  expect(ovRes.ok).toBe(false);
+  expect(ovRes.code).toBe("read_only");
+
+  // MCP config snippet & preferences.
+  const snippet = JSON.parse(preview.mcpConfigSnippet());
+  expect(snippet.mcpServers.xcpc.command).toBe("xcpc");
+  const prefs = preview.loadPrefs();
+  expect(prefs.splitRatio).toBe(0.5);
+  preview.savePrefs({ ...prefs, splitRatio: 0.45, propsOpen: false });
+  expect(preview.loadPrefs().splitRatio).toBe(0.45);
+  expect(preview.loadPrefs().propsOpen).toBe(false);
+});
+
+test("wakes nextChange cleanly when Preview is disposed", async () => {
+  // 1. Disposed immediately before first poll.
+  const immediate = open();
+  const pendingImmediate = immediate.nextChange();
+  immediate.dispose();
+  const ev1 = await pendingImmediate;
+  expect(ev1.kind).toBe("closed");
+  expect(ev1.paths.length).toBe(0);
+
+  // 2. Disposed while parked inside blocking mpsc::recv().
+  const parked = open();
+  const pendingParked = parked.nextChange();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  parked.dispose();
+  const ev2 = await pendingParked;
+  expect(ev2.kind).toBe("closed");
+  expect(ev2.paths.length).toBe(0);
 });

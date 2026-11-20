@@ -4,9 +4,12 @@
 //! [`document`] reads a problem or a contest and converts it; [`compile`] typesets it
 //! with an [`Engine`] rooted at the workspace and reports diagnostics in workspace
 //! files (`problems/a/statement.md:3:5`), where the problems start, and overflows.
+//! [`check`] combines conversion, compilation, overflow checks and `xcpc-lint` into one
+//! deduplicated [`Report`]; [`locate_point`] maps preview coordinates back to Markdown;
+//! [`freeze_contest`] validates, builds PDFs and atomically archives a contest snapshot.
 
 use serde::Serialize;
-use xcpc_domain::Language;
+use xcpc_domain::{Language, Statement, TextFile, check_id};
 use xcpc_engine::{Compiled, Engine};
 use xcpc_storage::{Error, Workspace};
 
@@ -67,13 +70,45 @@ pub fn document_with(
 ) -> Result<Document, Error> {
     let overlay = |problem: &mut xcpc_domain::Problem| {
         let Some((path, text)) = unsaved else { return };
-        let files = problem
-            .statements
-            .iter_mut()
-            .map(|s| &mut s.file)
-            .chain(problem.editorial.as_mut());
-        for file in files.filter(|f| f.path == path) {
-            file.text = text.to_owned();
+        let mut matched = false;
+        for stmt in &mut problem.statements {
+            if stmt.file.path == path {
+                stmt.file.text = text.to_owned();
+                matched = true;
+            }
+        }
+        if let Some(ed) = problem.editorial.as_mut()
+            && ed.path == path
+        {
+            ed.text = text.to_owned();
+            matched = true;
+        }
+        if !matched && !text.is_empty() {
+            let ed_path = format!("{}/editorial.md", problem.dir);
+            if path == ed_path {
+                problem.editorial = Some(TextFile {
+                    path: ed_path,
+                    text: text.to_owned(),
+                });
+                return;
+            }
+            for (lang, name) in [
+                (None, "statement.md"),
+                (Some(Language::Chinese), "statement.zh.md"),
+                (Some(Language::English), "statement.en.md"),
+            ] {
+                let stmt_path = format!("{}/{name}", problem.dir);
+                if path == stmt_path {
+                    problem.statements.push(Statement {
+                        language: lang,
+                        file: TextFile {
+                            path: stmt_path,
+                            text: text.to_owned(),
+                        },
+                    });
+                    break;
+                }
+            }
         }
     };
     match target {
@@ -117,6 +152,9 @@ pub fn document_with(
 pub struct Diagnostic {
     /// `error` or `warning`.
     pub severity: &'static str,
+    /// Stable machine-readable rule code when emitted by preflight/lint checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     pub message: String,
     /// A workspace file (`problems/a/statement.md`), or a bundled template
     /// (`/xcpc/olymp-classic.typ`); none when it points nowhere.
@@ -175,6 +213,22 @@ pub struct Report {
     pub compile_ms: u64,
 }
 
+/// A 1-based location inside a workspace Markdown source file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SourceLocation {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+/// Result of [`freeze_contest`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FreezeOutcome {
+    pub frozen: bool,
+    pub report: Report,
+    pub outputs: Vec<String>,
+}
+
 /// Typesets `doc` with `engine` (rooted at the workspace).
 pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report) {
     engine.set_main(&doc.source);
@@ -183,6 +237,7 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
         .iter()
         .map(|d| Diagnostic {
             severity: if d.error { "error" } else { "warning" },
+            code: d.code.clone(),
             message: d.message.clone(),
             file: Some(d.file.clone()),
             line: Some(d.line),
@@ -194,6 +249,7 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
     let map = |d: &xcpc_engine::Diagnostic| {
         let mut out = Diagnostic {
             severity: if d.error { "error" } else { "warning" },
+            code: None,
             message: d.message.clone(),
             file: d.file.clone(),
             line: d.line,
@@ -246,6 +302,318 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
                 compile_ms,
             };
             (None, report)
+        }
+    }
+}
+
+/// Runs full preflight checking (conversion, compilation, overflow detection and
+/// `xcpc-lint`) for `target`, merging and deduplicating all diagnostics into one
+/// [`Report`].
+///
+/// - If `target` itself (`problem <id>` or `contest <id>`) does not exist, returns
+///   `Err(Error::NotFound)`.
+/// - If a contest references one or more missing problems, records `missing_problem`
+///   error(s) instead of returning `Err(Error::NotFound)`, still runs lint on every
+///   remaining existing problem, and returns `Ok((None, None, report))` with
+///   `report.ok == false`.
+pub fn check(
+    ws: &Workspace,
+    engine: &mut Engine,
+    target: &Target,
+    kind: Kind,
+    language: Option<Language>,
+    unsaved: Option<(&str, &str)>,
+) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
+    check_inner(
+        ws,
+        engine,
+        target,
+        kind,
+        language,
+        unsaved,
+        kind == Kind::Editorial,
+    )
+}
+
+fn check_inner(
+    ws: &Workspace,
+    engine: &mut Engine,
+    target: &Target,
+    kind: Kind,
+    language: Option<Language>,
+    unsaved: Option<(&str, &str)>,
+    check_editorial: bool,
+) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
+    let lint_opts = xcpc_lint::LintOptions {
+        language,
+        check_editorial,
+        unsaved,
+    };
+    let lint_findings = match target {
+        Target::Problem(id) => xcpc_lint::lint_problem(ws, id, &lint_opts)?,
+        Target::Contest(id) => xcpc_lint::lint_contest(ws, id, &lint_opts)?,
+    };
+
+    let has_missing_problem = lint_findings
+        .iter()
+        .any(|f| f.code == xcpc_lint::code::MISSING_PROBLEM);
+    if has_missing_problem {
+        let mut diagnostics = Vec::new();
+        merge_diagnostics(
+            &mut diagnostics,
+            lint_findings.into_iter().map(from_lint).collect(),
+        );
+        let report = Report {
+            ok: !diagnostics.iter().any(Diagnostic::is_error),
+            pages: None,
+            problems: Vec::new(),
+            diagnostics,
+            compile_ms: 0,
+        };
+        return Ok((None, None, report));
+    }
+
+    let doc = document_with(ws, target, kind, language, unsaved)?;
+    engine.reset_files();
+    let (compiled, mut report) = compile(engine, &doc);
+    merge_diagnostics(
+        &mut report.diagnostics,
+        lint_findings.into_iter().map(from_lint).collect(),
+    );
+    report.ok = compiled.is_some() && !report.diagnostics.iter().any(Diagnostic::is_error);
+    Ok((compiled, Some(doc), report))
+}
+
+/// Maps a point `(x_pt, y_pt)` (typographic points from the top-left of 0-based `page`)
+/// on a rendered preview page back to its Markdown source file, line and column (1-based).
+///
+/// Expects `engine` to currently hold `doc.source` (as set by [`compile`] or [`check`]).
+pub fn locate_point(
+    engine: &Engine,
+    compiled: &Compiled,
+    doc: &Document,
+    page: usize,
+    x_pt: f64,
+    y_pt: f64,
+) -> Option<SourceLocation> {
+    let offset = engine.locate_point(compiled, page, x_pt, y_pt)?;
+    let (file, line, column) = doc.map.locate(offset)?;
+    Some(SourceLocation {
+        file: file.to_owned(),
+        line,
+        column,
+    })
+}
+
+/// Validates, compiles, exports PDFs and atomically freezes `contest_id`.
+///
+/// - Enforces non-read-only workspace, contest existence and unfrozen status.
+/// - Runs full statements compilation and preflight lint (including `missing_editorial`
+///   warnings). Any error (`missing_problem`, `missing_image`, compile error) aborts
+///   without touching disk; warnings never block freezing.
+/// - Exports the statements PDF, and if at least one problem has `editorial.md`,
+///   compiles and exports the editorial PDF too (aborting without writing if editorial
+///   compilation produces any error).
+/// - Atomically commits the snapshot and flips `frozen = true` via
+///   [`Workspace::freeze_commit`].
+pub fn freeze_contest(
+    ws: &Workspace,
+    engine: &mut Engine,
+    contest_id: &str,
+) -> Result<FreezeOutcome, Error> {
+    check_id(contest_id)?;
+    if ws.is_read_only() {
+        return Err(Error::ReadOnly);
+    }
+    let contest = ws.load_contest(contest_id)?;
+    if contest.meta.frozen {
+        return Err(Error::AlreadyFrozen(contest_id.to_owned()));
+    }
+
+    let target = Target::Contest(contest_id.to_owned());
+    let (compiled_stmts, _doc_stmts, mut report) =
+        check_inner(ws, engine, &target, Kind::Statements, None, None, true)?;
+
+    let Some(compiled_stmts) = compiled_stmts.filter(|_| report.ok) else {
+        report.ok = false;
+        return Ok(FreezeOutcome {
+            frozen: false,
+            report,
+            outputs: Vec::new(),
+        });
+    };
+
+    let statements_pdf = match compiled_stmts.pdf() {
+        Ok(pdf) => pdf,
+        Err(errs) => {
+            report.ok = false;
+            merge_diagnostics(
+                &mut report.diagnostics,
+                errs.into_iter().map(from_engine_plain).collect(),
+            );
+            return Ok(FreezeOutcome {
+                frozen: false,
+                report,
+                outputs: Vec::new(),
+            });
+        }
+    };
+
+    let problems = ws.contest_problems(&contest)?;
+    let has_any_editorial = problems.iter().any(|(_, p)| p.editorial.is_some());
+    let editorial_pdf = if has_any_editorial {
+        let ed_doc = document(ws, &target, Kind::Editorial, None)?;
+        engine.reset_files();
+        let (compiled_ed, ed_report) = compile(engine, &ed_doc);
+        report.compile_ms = report.compile_ms.saturating_add(ed_report.compile_ms);
+        merge_diagnostics(&mut report.diagnostics, ed_report.diagnostics);
+        let Some(compiled_ed) = compiled_ed.filter(|_| ed_report.ok) else {
+            report.ok = false;
+            return Ok(FreezeOutcome {
+                frozen: false,
+                report,
+                outputs: Vec::new(),
+            });
+        };
+        match compiled_ed.pdf() {
+            Ok(pdf) => Some(pdf),
+            Err(errs) => {
+                report.ok = false;
+                merge_diagnostics(
+                    &mut report.diagnostics,
+                    errs.into_iter().map(from_engine_plain).collect(),
+                );
+                return Ok(FreezeOutcome {
+                    frozen: false,
+                    report,
+                    outputs: Vec::new(),
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    ws.freeze_commit(contest_id, &statements_pdf, editorial_pdf.as_deref())?;
+
+    let mut outputs = vec![format!("contests/{contest_id}/snapshot/{contest_id}.pdf")];
+    if editorial_pdf.is_some() {
+        outputs.push(format!(
+            "contests/{contest_id}/snapshot/{contest_id}-editorial.pdf"
+        ));
+    }
+    report.ok = !report.diagnostics.iter().any(Diagnostic::is_error);
+
+    Ok(FreezeOutcome {
+        frozen: true,
+        report,
+        outputs,
+    })
+}
+
+fn from_lint(finding: xcpc_lint::Finding) -> Diagnostic {
+    Diagnostic {
+        severity: finding.severity.as_str(),
+        code: Some(finding.code),
+        message: finding.message,
+        file: finding.file,
+        line: finding.line,
+        column: finding.column,
+        page: None,
+        hints: Vec::new(),
+    }
+}
+
+fn from_engine_plain(d: xcpc_engine::Diagnostic) -> Diagnostic {
+    Diagnostic {
+        severity: if d.error { "error" } else { "warning" },
+        code: None,
+        message: d.message,
+        file: d.file,
+        line: d.line,
+        column: d.column,
+        page: d.page,
+        hints: d.hints,
+    }
+}
+
+fn is_typst_image_load_error(d: &Diagnostic) -> bool {
+    d.is_error()
+        && d.code.is_none()
+        && (d.message.contains("file not found") || d.message.contains("failed to load file"))
+}
+
+fn extract_paren_path(message: &str) -> Option<&str> {
+    let start = message.rfind('(')?;
+    let end = message.rfind(')')?;
+    (end > start + 1).then(|| &message[start + 1..end])
+}
+
+/// Merges `incoming` diagnostics into `existing`, avoiding duplicates across
+/// converter diagnostics, Typst compile diagnostics, and `xcpc-lint` findings.
+fn merge_diagnostics(existing: &mut Vec<Diagnostic>, incoming: Vec<Diagnostic>) {
+    for diag in incoming {
+        match diag.code.as_deref() {
+            Some(xcpc_lint::code::MISSING_IMAGE) => {
+                if existing.iter().any(|e| {
+                    e.code.as_deref() == Some(xcpc_lint::code::MISSING_IMAGE)
+                        && e.file == diag.file
+                        && e.line == diag.line
+                        && e.column == diag.column
+                }) {
+                    continue;
+                }
+                let mut replaced = false;
+                let mut i = 0;
+                while i < existing.len() {
+                    let exact_loc = is_typst_image_load_error(&existing[i])
+                        && existing[i].file == diag.file
+                        && existing[i].line == diag.line
+                        && existing[i].column == diag.column;
+                    let same_line_path = !exact_loc
+                        && is_typst_image_load_error(&existing[i])
+                        && existing[i].file == diag.file
+                        && existing[i].line == diag.line
+                        && extract_paren_path(&diag.message)
+                            .is_some_and(|p| existing[i].message.contains(p));
+                    if exact_loc || same_line_path {
+                        if !replaced {
+                            existing[i] = diag.clone();
+                            replaced = true;
+                            i += 1;
+                        } else {
+                            existing.remove(i);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                if !replaced {
+                    existing.push(diag);
+                }
+            }
+            Some(xcpc_lint::code::MISSING_EDITORIAL) => {
+                if existing.iter().any(|e| {
+                    e.code.as_deref() == Some(xcpc_lint::code::MISSING_EDITORIAL)
+                        && e.file == diag.file
+                }) {
+                    continue;
+                }
+                existing.push(diag);
+            }
+            _ => {
+                if !existing.iter().any(|e| {
+                    e.severity == diag.severity
+                        && e.code == diag.code
+                        && e.file == diag.file
+                        && e.line == diag.line
+                        && e.column == diag.column
+                        && e.page == diag.page
+                        && e.message == diag.message
+                }) {
+                    existing.push(diag);
+                }
+            }
         }
     }
 }

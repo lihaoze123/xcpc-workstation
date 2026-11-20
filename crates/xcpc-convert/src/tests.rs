@@ -145,6 +145,11 @@ fn pictures_map_into_the_problem() {
     let doc = body("![图](assets/a.png) ![坏](../q/b.png)\n", &[]);
     assert!(inner(&doc).starts_with("#box(image(\"/problems/p/assets/a.png\", alt: \"图\"));"));
     assert_eq!(doc.diagnostics.len(), 1);
+    assert!(doc.diagnostics[0].error);
+    assert_eq!(
+        doc.diagnostics[0].code.as_deref(),
+        Some(xcpc_lint::code::MISSING_IMAGE)
+    );
     assert_eq!(
         (doc.diagnostics[0].line, doc.diagnostics[0].column),
         (1, 20)
@@ -170,6 +175,56 @@ fn the_source_map_points_back() {
     let at = doc.source.find("#m(\"n\")").unwrap();
     assert_eq!(doc.map.locate(at), Some(("problems/p/statement.md", 5, 5)));
     assert_eq!(doc.map.locate(0), None);
+}
+
+#[test]
+fn source_map_unmarks_generated_wrappers_between_problems() {
+    let mut a = problem("题 A 第一行。\n", &[]);
+    a.id = "pa".into();
+    a.dir = "problems/pa".into();
+    a.statements[0].file.path = "problems/pa/statement.md".into();
+
+    let mut b = problem("题 B 第一行。\n", &[]);
+    b.id = "pb".into();
+    b.dir = "problems/pb".into();
+    b.meta.title = "UniqueTitleB".into();
+    b.statements[0].file.path = "problems/pb/statement.md".into();
+
+    let meta = ContestMeta {
+        name: "C".into(),
+        ..Default::default()
+    };
+    let entries = [
+        Entry {
+            item: ContestItem {
+                id: "pa".into(),
+                label: "A".into(),
+                ..Default::default()
+            },
+            problem: &a,
+        },
+        Entry {
+            item: ContestItem {
+                id: "pb".into(),
+                label: "B".into(),
+                ..Default::default()
+            },
+            problem: &b,
+        },
+    ];
+    let doc = statements(&Book::contest(&meta), &entries);
+    let at_a = doc.source.find("题 A 第一行").unwrap();
+    let at_b_header = doc.source.find("UniqueTitleB").unwrap();
+    let at_b = doc.source.find("题 B 第一行").unwrap();
+    assert_eq!(
+        doc.map.locate(at_a),
+        Some(("problems/pa/statement.md", 1, 1))
+    );
+    assert_eq!(doc.map.locate(at_b_header), None);
+    assert_eq!(
+        doc.map.locate(at_b),
+        Some(("problems/pb/statement.md", 1, 1))
+    );
 }
 
 #[test]

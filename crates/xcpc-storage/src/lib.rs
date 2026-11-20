@@ -11,17 +11,68 @@
 //!
 //! Errors carry a stable [`Error::code`] for `--json` and MCP.
 
+use std::collections::{BTreeSet, HashSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 
+use sha2::{Digest, Sha256};
 use xcpc_domain::{
-    ContestItem, ContestMeta, Language, Problem, ProblemMeta, Sample, Statement, TextFile, check_id,
+    ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, Problem, ProblemMeta, Sample,
+    SampleInventory, Statement, TextFile, check_id,
 };
+
+pub mod edit;
+pub mod index;
+pub mod watcher;
+
+pub use index::WorkspaceIndex;
+pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
 /// The file that marks a workspace's root.
 pub const WORKSPACE_FILE: &str = "workspace.toml";
+
+/// Static workspace-level `AGENTS.md` written by [`init_workspace`] when absent.
+/// Once created, it belongs to the user and is never overwritten.
+pub const WORKSPACE_AGENTS_MD: &str = r#"# XCPC Workspace Guide
+
+This directory is an **XCPC Workstation** workspace (`workspace.toml` marks the root).
+
+## Directory Layout
+
+```text
+workspace.toml           # Workspace root marker & settings
+problems/<slug>/         # One directory per problem (slug = immutable ID)
+  problem.toml           # Metadata, [limits], [[source]] (never store training status here)
+  statement.md           # Or statement.zh.md / statement.en.md (Markdown + $LaTeX$)
+  editorial.md           # Optional A4 editorial
+  samples/               # 01.in, 01.ans, 02.in, 02.ans, ... (do not paste samples into statement.md)
+  assets/                # Figures referenced by relative path: ![](assets/fig.png)
+contests/<id>/
+  contest.toml           # Contest metadata, ordered [[problem]] live refs + metadata overrides
+  snapshot/              # Created when frozen (read-only archive, committed to Git)
+build/                   # Generated PDFs & temporary outputs (gitignored)
+.xcpc/                   # Local caches & derived data (gitignored)
+```
+
+## Authoring Rules
+
+- **Problem IDs**: lowercase ASCII letters, digits, `-`, `_`, starting with a letter or digit (`<= 64` chars). Never rename a problem directory after creation.
+- **Statements**: use level-2 Markdown headings (`## 输入格式` / `## Input`, `## 输出格式` / `## Output`, `## 交互` / `## Interaction`, `## 提示` / `## Note`). Samples are rendered automatically from `samples/`.
+- **Contests**: live references with metadata-only overrides (`title`, `[problem.limits]`, `show-metadata`). Labels `A`–`Z` (max 26 problems) follow the order in `contest.toml`.
+- **Frozen contests**: strictly read-only (including `snapshot/`). Unfreezing requires human confirmation via the GUI or `xcpc contest unfreeze` and is not available over MCP.
+
+## CLI & MCP
+
+- `xcpc check <problem|contest> <id> [--editorial] [--json]`
+- `xcpc build <problem|contest> <id> [--editorial]`
+- `xcpc render <problem|contest> <id> [--page N]`
+- `xcpc search` / `xcpc show` / `xcpc contest compose|override|freeze|unfreeze`
+- `xcpc mcp [--read-only]`
+"#;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -43,6 +94,22 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("{path}: modified on disk (expected {expected}, actual {actual})")]
+    Conflict {
+        path: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("contest has {0} problems (maximum is {MAX_CONTEST_PROBLEMS})")]
+    TooManyProblems(usize),
+    #[error("problem {id:?} is referenced by unfrozen contest(s): {}", contests.join(", "))]
+    Referenced { id: String, contests: Vec<String> },
+    #[error("contest {0:?} is already frozen")]
+    AlreadyFrozen(String),
+    #[error("contest {0:?} is not frozen")]
+    NotFrozen(String),
+    #[error("path {0:?} is not allowed")]
+    DisallowedPath(String),
 }
 
 impl Error {
@@ -56,11 +123,84 @@ impl Error {
             Error::ReadOnly => "read_only",
             Error::Invalid { .. } => "invalid_file",
             Error::Io { .. } => "io",
+            Error::Conflict { .. } => "conflict",
+            Error::TooManyProblems(_) => "too_many_problems",
+            Error::Referenced { .. } => "problem_referenced",
+            Error::AlreadyFrozen(_) => "already_frozen",
+            Error::NotFrozen(_) => "not_frozen",
+            Error::DisallowedPath(_) => "disallowed_path",
         }
     }
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Computes the lowercase hexadecimal SHA-256 digest of `bytes`.
+pub fn content_hash(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+/// Initializes an XCPC workspace at `dir` (creating `dir` if needed).
+///
+/// Creates `workspace.toml` (only if absent), `problems/`, `contests/`, `.gitignore`
+/// (ensuring `build/` and `.xcpc/` are present), and an embedded static `AGENTS.md`
+/// (**never** overwriting an existing `AGENTS.md`).
+pub fn init_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {
+    let dir = dir.as_ref();
+    fs::create_dir_all(dir).map_err(|e| io(dir.display(), e))?;
+    for sub in ["problems", "contests"] {
+        let p = dir.join(sub);
+        fs::create_dir_all(&p).map_err(|e| io(p.display(), e))?;
+    }
+
+    let ws_file = dir.join(WORKSPACE_FILE);
+    if fs::symlink_metadata(&ws_file).is_err() {
+        write_atomic(&ws_file, b"").map_err(|e| io(ws_file.display(), e))?;
+    }
+
+    let gitignore = dir.join(".gitignore");
+    match fs::read_to_string(&gitignore) {
+        Ok(existing) => {
+            let mut lines: Vec<&str> = existing.lines().map(str::trim).collect();
+            let mut appended = String::new();
+            for entry in ["build/", ".xcpc/"] {
+                let bare = entry.trim_end_matches('/');
+                if !lines.iter().any(|l| *l == entry || *l == bare) {
+                    appended.push_str(entry);
+                    appended.push('\n');
+                    lines.push(entry);
+                }
+            }
+            if !appended.is_empty() {
+                let mut updated = existing;
+                if !updated.is_empty() && !updated.ends_with('\n') {
+                    updated.push('\n');
+                }
+                updated.push_str(&appended);
+                write_atomic(&gitignore, updated.as_bytes())
+                    .map_err(|e| io(gitignore.display(), e))?;
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            write_atomic(&gitignore, b"build/\n.xcpc/\n")
+                .map_err(|e| io(gitignore.display(), e))?;
+        }
+        Err(e) => return Err(io(gitignore.display(), e)),
+    }
+
+    let agents = dir.join("AGENTS.md");
+    if fs::symlink_metadata(&agents).is_err() {
+        write_atomic(&agents, WORKSPACE_AGENTS_MD.as_bytes())
+            .map_err(|e| io(agents.display(), e))?;
+    }
+
+    Workspace::open(dir, false)
+}
 
 /// A contest as loaded from `contests/<id>/contest.toml`.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +216,7 @@ pub struct Contest {
 pub struct Workspace {
     root: PathBuf,
     read_only: bool,
+    self_writes: Option<SelfWriteTracker>,
 }
 
 impl Workspace {
@@ -86,7 +227,11 @@ impl Workspace {
         if !root.is_dir() {
             return Err(Error::NotFound(root.display().to_string()));
         }
-        Ok(Self { root, read_only })
+        Ok(Self {
+            root,
+            read_only,
+            self_writes: None,
+        })
     }
 
     /// The workspace `start` is in: the nearest directory at or above it with a
@@ -109,6 +254,24 @@ impl Workspace {
 
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// Returns a handle to this workspace wired to `tracker` so writes performed through
+    /// it are automatically suppressed by a [`WorkspaceWatcher`].
+    pub fn with_write_tracker(&self, tracker: SelfWriteTracker) -> Self {
+        Self {
+            root: self.root.clone(),
+            read_only: self.read_only,
+            self_writes: Some(tracker),
+        }
+    }
+
+    /// Starts recursively watching this workspace and returns `(tracked_ws, watcher, rx)`.
+    /// Writes through `tracked_ws` are automatically filtered out as self-writes.
+    pub fn watch(&self) -> Result<(Self, WorkspaceWatcher, mpsc::Receiver<WatchEvent>)> {
+        let (watcher, rx) = WorkspaceWatcher::start(&self.root)?;
+        let tracked = self.with_write_tracker(watcher.tracker());
+        Ok((tracked, watcher, rx))
     }
 
     /// The path on disk of `rel` (relative to the workspace, `/`-separated), if it stays
@@ -134,6 +297,15 @@ impl Workspace {
         Ok(path)
     }
 
+    /// Reads raw bytes of a workspace file.
+    pub fn read_bytes(&self, rel: &str) -> Result<Vec<u8>> {
+        let path = self.resolve(rel)?;
+        fs::read(&path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::NotFound(rel.to_owned()),
+            _ => io(rel, e),
+        })
+    }
+
     /// Reads a text file.
     pub fn read_text(&self, rel: &str) -> Result<String> {
         let path = self.resolve(rel)?;
@@ -141,6 +313,13 @@ impl Workspace {
             std::io::ErrorKind::NotFound => Error::NotFound(rel.to_owned()),
             _ => io(rel, e),
         })
+    }
+
+    /// Reads a text file together with its lowercase SHA-256 hex digest.
+    pub fn read_text_with_hash(&self, rel: &str) -> Result<(String, String)> {
+        let text = self.read_text(rel)?;
+        let hash = content_hash(text.as_bytes());
+        Ok((text, hash))
     }
 
     fn read_optional(&self, rel: &str) -> Result<Option<String>> {
@@ -172,14 +351,68 @@ impl Workspace {
 
     /// Writes `bytes` to `rel` atomically, creating its directory.
     pub fn write(&self, rel: &str, bytes: &[u8]) -> Result<()> {
+        self.write_checked(rel, bytes, None).map(|_| ())
+    }
+
+    /// Atomically writes `bytes` to `rel`, returning its new SHA-256 hex digest.
+    ///
+    /// When `expected_hash` is `Some(expected)`, verifies that the file currently on
+    /// disk hashes to `expected` (with `""` matching a missing file) and returns
+    /// [`Error::Conflict`] if another writer modified it.
+    pub fn write_checked(
+        &self,
+        rel: &str,
+        bytes: &[u8],
+        expected_hash: Option<&str>,
+    ) -> Result<String> {
         self.check_writable(rel)?;
         let path = self.resolve(rel)?;
+
+        if let Some(expected) = expected_hash {
+            let actual = match fs::read(&path) {
+                Ok(existing) => content_hash(&existing),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(io(rel, e)),
+            };
+            if actual != expected {
+                return Err(Error::Conflict {
+                    path: rel.to_owned(),
+                    expected: expected.to_owned(),
+                    actual,
+                });
+            }
+        }
+
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).map_err(|e| io(rel, e))?;
             // Creating it may have gone through a link: check again.
             self.resolve(rel)?;
         }
-        write_atomic(&path, bytes).map_err(|e| io(rel, e))
+        self.commit_atomic(rel, &path, bytes)
+    }
+
+    /// Internal write path used exclusively by [`Workspace::unfreeze_contest`] to flip
+    /// `frozen = false` on a frozen contest while still enforcing read-only & sandbox.
+    pub(crate) fn write_unfreeze_bypass(&self, rel: &str, bytes: &[u8]) -> Result<String> {
+        if self.read_only {
+            return Err(Error::ReadOnly);
+        }
+        let path = self.resolve(rel)?;
+        self.commit_atomic(rel, &path, bytes)
+    }
+
+    fn commit_atomic(&self, rel: &str, path: &Path, bytes: &[u8]) -> Result<String> {
+        let new_hash = content_hash(bytes);
+        if let Some(tracker) = &self.self_writes {
+            tracker.record(rel, &new_hash);
+        }
+        if let Err(e) = write_atomic(path, bytes) {
+            if let Some(tracker) = &self.self_writes {
+                tracker.unrecord(rel);
+            }
+            return Err(io(rel, e));
+        }
+        Ok(new_hash)
     }
 
     // ---- Problems ----------------------------------------------------------------------
@@ -233,6 +466,9 @@ impl Workspace {
     }
 
     /// `samples/<name>.in` with `<name>.ans` (or `.out`), sorted by name.
+    ///
+    /// Unpaired `.in` files are gracefully skipped so compilation can proceed and
+    /// `xcpc-lint` can report them as warnings via [`Self::inspect_samples`].
     fn load_samples(&self, dir: &str) -> Result<Vec<Sample>> {
         let path = self.resolve(dir)?;
         let entries = match fs::read_dir(&path) {
@@ -243,29 +479,158 @@ impl Workspace {
         let mut names: Vec<String> = entries
             .filter_map(|e| e.ok())
             .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| !n.starts_with('.'))
             .filter_map(|n| n.strip_suffix(".in").map(str::to_owned))
+            .filter(|stem| !stem.is_empty())
             .collect();
         names.sort();
-        names
-            .into_iter()
-            .map(|name| {
-                let input = self.read_text(&format!("{dir}/{name}.in"))?;
-                let output = match self.read_optional(&format!("{dir}/{name}.ans"))? {
+        let mut samples = Vec::with_capacity(names.len());
+        for name in names {
+            let output = match self.read_optional(&format!("{dir}/{name}.ans"))? {
+                Some(text) => text,
+                None => match self.read_optional(&format!("{dir}/{name}.out"))? {
                     Some(text) => text,
-                    None => self
-                        .read_optional(&format!("{dir}/{name}.out"))?
-                        .ok_or_else(|| Error::Invalid {
-                            path: format!("{dir}/{name}.in"),
-                            message: format!("no {name}.ans (or {name}.out) beside it"),
-                        })?,
+                    None => continue,
+                },
+            };
+            let input = self.read_text(&format!("{dir}/{name}.in"))?;
+            samples.push(Sample {
+                name,
+                input,
+                output,
+            });
+        }
+        Ok(samples)
+    }
+
+    /// Inspects a `samples/` directory for valid pairs, orphan `.in` / `.ans` / `.out`
+    /// files, and whether the paired stems are contiguously numbered from `01`.
+    pub fn inspect_samples(&self, dir: &str) -> Result<SampleInventory> {
+        let path = self.resolve(dir)?;
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SampleInventory::default());
+            }
+            Err(e) => return Err(io(dir, e)),
+        };
+
+        let mut inputs: BTreeSet<String> = BTreeSet::new();
+        let mut ans_outputs: BTreeSet<String> = BTreeSet::new();
+        let mut out_outputs: BTreeSet<String> = BTreeSet::new();
+
+        for entry in entries {
+            let entry = entry.map_err(|e| io(dir, e))?;
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            if !self.resolve(&format!("{dir}/{name}"))?.is_file() {
+                continue;
+            }
+            if let Some(stem) = name.strip_suffix(".in").filter(|s| !s.is_empty()) {
+                inputs.insert(stem.to_owned());
+            } else if let Some(stem) = name.strip_suffix(".ans").filter(|s| !s.is_empty()) {
+                ans_outputs.insert(stem.to_owned());
+            } else if let Some(stem) = name.strip_suffix(".out").filter(|s| !s.is_empty()) {
+                out_outputs.insert(stem.to_owned());
+            }
+        }
+
+        let mut pairs = Vec::new();
+        let mut orphan_inputs = Vec::new();
+        for stem in &inputs {
+            if ans_outputs.contains(stem) || out_outputs.contains(stem) {
+                pairs.push(stem.clone());
+            } else {
+                orphan_inputs.push(format!("{stem}.in"));
+            }
+        }
+
+        let mut orphan_outputs = Vec::new();
+        for stem in &ans_outputs {
+            if !inputs.contains(stem) {
+                orphan_outputs.push(format!("{stem}.ans"));
+            }
+        }
+        for stem in &out_outputs {
+            if !inputs.contains(stem) {
+                orphan_outputs.push(format!("{stem}.out"));
+            }
+        }
+        orphan_outputs.sort();
+
+        let non_contiguous = pairs
+            .iter()
+            .enumerate()
+            .any(|(i, stem)| *stem != format!("{:02}", i + 1));
+
+        Ok(SampleInventory {
+            pairs,
+            orphan_inputs,
+            orphan_outputs,
+            non_contiguous,
+        })
+    }
+
+    /// Saves `samples` into `problems/<id>/samples/` as `01.in`/`01.ans`..`NN.in`/`NN.ans`.
+    ///
+    /// Strips UTF-8 BOM (`\u{FEFF}`) and `\r`, writes all target files atomically before
+    /// pruning surplus old sample files (so reordering never loses data), and removes any
+    /// stale `.out` / out-of-range sample files.
+    pub fn save_samples(&self, id: &str, samples: &[(String, String)]) -> Result<()> {
+        check_id(id)?;
+        if self.read_only {
+            return Err(Error::ReadOnly);
+        }
+        let meta_rel = format!("problems/{id}/problem.toml");
+        if !self.resolve(&meta_rel)?.is_file() {
+            return Err(Error::NotFound(format!("problem {id:?}")));
+        }
+
+        let samples_dir_rel = format!("problems/{id}/samples");
+        let samples_dir = self.resolve(&samples_dir_rel)?;
+
+        let mut written: HashSet<String> = HashSet::with_capacity(samples.len() * 2);
+        for (idx, (input, output)) in samples.iter().enumerate() {
+            let stem = format!("{:02}", idx + 1);
+            let in_name = format!("{stem}.in");
+            let ans_name = format!("{stem}.ans");
+            let clean_in = clean_sample_text(input);
+            let clean_out = clean_sample_text(output);
+            self.write(&format!("{samples_dir_rel}/{in_name}"), clean_in.as_bytes())?;
+            self.write(
+                &format!("{samples_dir_rel}/{ans_name}"),
+                clean_out.as_bytes(),
+            )?;
+            written.insert(in_name);
+            written.insert(ans_name);
+        }
+
+        if samples_dir.is_dir() {
+            let entries = fs::read_dir(&samples_dir).map_err(|e| io(&samples_dir_rel, e))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| io(&samples_dir_rel, e))?;
+                let Ok(name) = entry.file_name().into_string() else {
+                    continue;
                 };
-                Ok(Sample {
-                    name,
-                    input,
-                    output,
-                })
-            })
-            .collect()
+                if name.starts_with('.') {
+                    continue;
+                }
+                let is_sample_ext =
+                    name.ends_with(".in") || name.ends_with(".ans") || name.ends_with(".out");
+                if is_sample_ext && !written.contains(&name) {
+                    let file_rel = format!("{samples_dir_rel}/{name}");
+                    let file_path = self.resolve(&file_rel)?;
+                    if file_path.is_file() {
+                        fs::remove_file(&file_path).map_err(|e| io(&file_rel, e))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Writes a problem's `problem.toml`.
@@ -329,9 +694,8 @@ impl Workspace {
             .collect()
     }
 
-    /// Writes a contest's `contest.toml`. Freezing goes through here; nothing may
-    /// write a frozen one, unfreezing included (that is the GUI's and the CLI's, with
-    /// a confirmation, in a later phase).
+    /// Writes a contest's `contest.toml`. Freezing goes through [`Self::freeze_commit`];
+    /// nothing may write a frozen contest except [`Self::unfreeze_contest`].
     pub fn save_contest_meta(&self, id: &str, meta: &ContestMeta) -> Result<()> {
         check_id(id)?;
         let text = toml::to_string(meta).expect("contest metadata serializes");
@@ -356,19 +720,23 @@ impl Workspace {
     }
 }
 
+fn clean_sample_text(s: &str) -> String {
+    s.replace(['\u{FEFF}', '\r'], "")
+}
+
 /// A problem's label in a contest: `A`, `B`, …, `A1`.
 fn is_label(label: &str) -> bool {
     !label.is_empty() && label.len() <= 8 && label.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-fn parse_toml<T: serde::de::DeserializeOwned>(path: &str, text: &str) -> Result<T> {
+pub(crate) fn parse_toml<T: serde::de::DeserializeOwned>(path: &str, text: &str) -> Result<T> {
     toml::from_str(text).map_err(|e| Error::Invalid {
         path: path.to_owned(),
         message: e.to_string().trim_end().to_owned(),
     })
 }
 
-fn io(path: impl std::fmt::Display, source: std::io::Error) -> Error {
+pub(crate) fn io(path: impl std::fmt::Display, source: std::io::Error) -> Error {
     Error::Io {
         path: path.to_string(),
         source,

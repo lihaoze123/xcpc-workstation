@@ -1,32 +1,45 @@
 //! The desktop shell's Rust side: what `App.tsx` imports from `xcpc-workstation/native`.
 //! Their TypeScript declarations are generated into `.nsh/types/xcpc-workstation/native.d.ts`.
 //!
-//! Only glue lives here: the workspace is `xcpc-storage`'s, publishing is
-//! `xcpc-convert`'s, typesetting `xcpc-engine`'s.
+//! Only glue lives here: the workspace, index and file watcher are `xcpc-storage`'s,
+//! publishing and preflight lint are `xcpc-convert`'s, typesetting is `xcpc-engine`'s.
 //!
 //! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files:
 //! rasterizing a page takes a fraction of what encoding it as PNG would. A page shows as
 //! layers ([`PreviewLayer`]): the whole page at the scale the app asks for, up to
-//! [`BASE_SCALE`]; sharper, the whole page at that scale and over it tiles of [`TILE`]
-//! pixels at the scale asked for, covering the part in view. Pixels are kept by key:
-//! a whole page's by its span-free fingerprint and the scale, a tile's by the
-//! fingerprint of what draws in it, the scale and its place. So what an edit did not
-//! change is neither rasterized nor uploaded again: typing redraws the tiles it touches,
-//! and the small whole-page layer under them. Pages out of view keep a whole-page layer they have at
-//! another scale, or show none until they come into view.
+//! `BASE_SCALE`; sharper, the whole page at that scale and over it tiles of 512 pixels at
+//! the scale asked for, covering the part in view. Pixels are kept in a 96 MiB LRU cache
+//! preferring base layers over tiles, and stale render tasks abort immediately via an
+//! `AtomicU64` generation counter.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+mod cache;
+mod page_image;
+mod prefs;
+mod state;
+mod types;
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use nsh_base as _;
-use nsh_core::element::ImageSrc;
 use nsh_core::file_dialog::OpenDialog;
-use nsh_core::geometry::relative;
 use nsh_core::prelude::*;
-use xcpc_convert::publish::{self, Kind, Target};
-use xcpc_engine::{Compiled, Engine, FontOptions};
 use xcpc_storage::Workspace;
+
+use crate::cache::CancelToken;
+use crate::state::State;
+
+pub use crate::page_image::{PageImage, PageImageProps};
+pub use crate::types::{
+    ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
+    ContestStatsJs, FreezeResultJs, FuzzyHitJs, LimitsJs, OverridePatchJs, PickedFolder,
+    PreviewDiagnostic, PreviewLayer, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
+    PreviewView, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
+    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+};
 
 /// The crate's UI set (`nsh.json` `"rust"`).
 #[native_module("xcpc-workstation/native")]
@@ -35,238 +48,43 @@ fn native(registry: &mut Registry) {
     registry.register::<PageImage>();
 }
 
-/// The most pixels per point of a whole-page layer: sharper than this, the part in view
-/// is tiled over it (an A4 page at 1.5 is 893 × 1263 pixels, 4.5 MB).
-const BASE_SCALE: f32 = 1.5;
-
-/// The side of a tile in pixels.
-const TILE: u32 = 512;
-
-/// The rasterized layers by key, for [`PageImage`]: those of the last two results (the
-/// screen may still show the older one).
-static PIXELS: LazyLock<Mutex<HashMap<String, ImageSrc>>> = LazyLock::new(Default::default);
-
-/// Pixels to draw over a page.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewLayer {
-    /// Its pixels, named by what the page draws, the scale and the tile.
-    pub key: String,
-    /// Where it goes, as fractions of the page's width and height.
-    pub left: f64,
-    pub top: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-/// One rendered page.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewPage {
-    /// Its size in typographic points.
-    pub width: f64,
-    pub height: f64,
-    /// What `PageImage` draws, bottom first: the whole page, then tiles. None for a
-    /// page out of view that has no pixels yet.
-    pub layers: Vec<PreviewLayer>,
-}
-
-/// The part of a page in view, in its points: tiled when the scale asks for more than a
-/// whole-page layer has. A page listed with an empty part gets a whole-page layer only.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewView {
-    /// The page (0-based).
-    pub page: u32,
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-/// A problem or contest of the workspace to typeset, with the file the editor has
-/// open as it is there (saved or not).
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewRequest {
-    /// `"problem"` or `"contest"`.
-    pub target: String,
-    pub id: String,
-    /// `"statements"` or `"editorial"`.
-    pub book: String,
-    /// The open file, relative to the workspace, and its text; an empty path for none.
-    pub path: String,
-    pub text: String,
-}
-
-impl PreviewRequest {
-    fn target(&self) -> Target {
-        match self.target.as_str() {
-            "contest" => Target::Contest(self.id.clone()),
-            _ => Target::Problem(self.id.clone()),
-        }
-    }
-
-    fn kind(&self) -> Kind {
-        if self.book == "editorial" {
-            Kind::Editorial
-        } else {
-            Kind::Statements
-        }
-    }
-
-    fn unsaved(&self) -> Option<(&str, &str)> {
-        (!self.path.is_empty()).then_some((self.path.as_str(), self.text.as_str()))
-    }
-}
-
-/// A diagnostic, in a workspace file when it points into one.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewDiagnostic {
-    /// `"error"` or `"warning"`.
-    pub severity: String,
-    pub message: String,
-    /// The file (relative to the workspace), and the line and column (1-based).
-    #[prop(skip_none)]
-    pub file: Option<String>,
-    #[prop(skip_none)]
-    pub line: Option<u32>,
-    #[prop(skip_none)]
-    pub column: Option<u32>,
-    /// The page (0-based) a layout warning is about.
-    #[prop(skip_none)]
-    pub page: Option<u32>,
-}
-
-/// Where a problem starts.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewStart {
-    pub label: String,
-    /// The page, 0-based.
-    pub page: u32,
-}
-
-/// What a compilation gave.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct PreviewResult {
-    /// The pages; empty when compilation failed.
-    pub pages: Vec<PreviewPage>,
-    /// The first error, as the user should read it, if any.
-    #[prop(skip_none)]
-    pub error: Option<String>,
-    /// Errors and warnings.
-    pub diagnostics: Vec<PreviewDiagnostic>,
-    /// Where each problem starts.
-    pub starts: Vec<PreviewStart>,
-    /// Milliseconds spent typesetting and rasterizing, and how many layers were rasterized.
-    pub compile_ms: f64,
-    pub render_ms: f64,
-    pub rendered: u32,
-}
-
-/// A problem of the workspace.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct WorkspaceProblem {
-    pub id: String,
-    pub title: String,
-    /// The statement and editorial files, relative to the workspace.
-    pub statement: String,
-    pub editorial: String,
-}
-
-/// A problem of a contest.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct WorkspaceItem {
-    pub label: String,
-    pub id: String,
-    pub title: String,
-    /// Its statement (in the contest's language) and editorial files, relative to the
-    /// workspace: the library's, or the snapshot's once the contest is frozen.
-    pub statement: String,
-    pub editorial: String,
-}
-
-/// A contest of the workspace.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct WorkspaceContest {
-    pub id: String,
-    pub name: String,
-    pub frozen: bool,
-    pub items: Vec<WorkspaceItem>,
-}
-
-/// The open workspace.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct WorkspaceInfo {
-    /// Its directory; empty when none is open.
-    pub root: String,
-    pub read_only: bool,
-    /// What could not be read, or why the folder picked is no workspace.
-    #[prop(skip_none)]
-    pub error: Option<String>,
-    pub problems: Vec<WorkspaceProblem>,
-    pub contests: Vec<WorkspaceContest>,
-}
-
-/// A file of the workspace as the editor opens it.
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
-pub struct WorkspaceFile {
-    pub path: String,
-    /// Its text; empty for a file that does not exist yet.
-    pub text: String,
-    /// Edits cannot be saved (a frozen contest, a read-only workspace).
-    pub read_only: bool,
-    #[prop(skip_none)]
-    pub error: Option<String>,
-}
-
-/// The workspace and its preview: reads and saves files, compiles a problem or a
-/// contest with `xcpc-convert` off the UI thread and rasterizes what is in view for
-/// [`PageImage`] to show.
+/// The workspace bridge and preview engine: reads and saves files with SHA-256 conflict
+/// detection, watches external changes, maintains the in-memory workspace index, exposes
+/// Phase 2 semantic operations, compiles with `publish::check` off the UI thread, and
+/// rasterizes visible pages for [`PageImage`].
 #[class]
 pub struct Preview {
     state: Arc<Mutex<State>>,
+    /// Generation counter incremented on every `Preview::compile` (before taking `state`)
+    /// so in-flight tile rasterization aborts as soon as a newer request arrives.
+    generation: Arc<AtomicU64>,
 }
 
-struct State {
-    workspace: Option<Workspace>,
-    /// Where the workspace opened last is kept.
-    data_dir: Option<std::path::PathBuf>,
-    engine: Engine,
-    /// The keys of the last two results.
-    live: [HashSet<String>; 2],
-}
-
-/// A layer to rasterize: a whole page, or a region of it in pixels.
-struct Job {
-    page: usize,
-    scale: f32,
-    region: Option<[u32; 4]>,
-    key: String,
+impl Drop for Preview {
+    fn drop(&mut self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        // Stop the watcher before dropping our `Arc<State>` so any pending `next_change`
+        // blocking on `mpsc::Receiver::recv()` wakes up immediately and never leaks.
+        let old_watcher = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.stop_watcher());
+        drop(old_watcher);
+    }
 }
 
 #[class]
 impl Preview {
     #[allow(clippy::new_without_default)] // the JS constructor
-    /// A preview with the statement fonts of `XCPC_FONT_DIRS`, of the workspace
-    /// `XCPC_WORKSPACE` names, else the one the current directory is in, else the one
-    /// opened last (if it is still there). `data_dir` (JS's `process.dataDir`) is where
-    /// the last one is kept; none, nothing is kept.
+    /// Opens the workspace named by `XCPC_WORKSPACE`, else the one containing the current
+    /// directory, else the most recent workspace recorded in `<dataDir>/prefs.json` (or
+    /// legacy `last-workspace`). Pass `process.dataDir` for persistence; `null` disables it.
     pub fn new(data_dir: Option<String>) -> Self {
-        let data_dir = data_dir.map(std::path::PathBuf::from);
-        let workspace = match std::env::var_os("XCPC_WORKSPACE") {
-            Some(dir) => Workspace::open(dir, false).ok(),
-            None => Workspace::discover(".", false)
-                .ok()
-                .or_else(|| Workspace::open(last_workspace(data_dir.as_deref()?)?, false).ok()),
-        };
-        if let (Some(ws), Some(dir)) = (&workspace, &data_dir) {
-            remember_workspace(dir, ws);
-        }
-        let root = workspace.as_ref().map(|w| w.root().to_path_buf());
+        let data_dir = data_dir.map(PathBuf::from);
         Preview {
-            state: Arc::new(Mutex::new(State {
-                workspace,
-                engine: Engine::new(&FontOptions::from_env(), root),
-                data_dir,
-                live: Default::default(),
-            })),
+            state: Arc::new(Mutex::new(State::new(data_dir))),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -279,6 +97,8 @@ impl Preview {
         .to_owned()
     }
 
+    // ---- Workspace & settings ----------------------------------------------------------
+
     /// Opens the workspace at `path` instead.
     pub fn open_workspace(&self, path: String, read_only: bool) -> WorkspaceInfo {
         match Workspace::open(&path, read_only) {
@@ -290,11 +110,88 @@ impl Preview {
         }
     }
 
+    /// Initializes a new XCPC workspace at `path` (creating `workspace.toml`, `problems/`,
+    /// `contests/`, `.gitignore`, and a static `AGENTS.md` if absent) and switches to it.
+    pub fn init_workspace(&self, path: String) -> WorkspaceInfo {
+        match xcpc_storage::init_workspace(&path) {
+            Ok(ws) => self.switch(ws),
+            Err(e) => WorkspaceInfo {
+                error: Some(e.to_string()),
+                ..self.workspace()
+            },
+        }
+    }
+
+    /// Opens the system folder picker and reports whether the selected directory belongs to
+    /// an existing workspace (`isWorkspace`, `workspaceRoot`), allowing the GUI to offer
+    /// initializing a new workspace when `isWorkspace` is false.
+    pub async fn pick_folder(this: Instance<Self>) -> PickedFolder {
+        if this.is_disposed() {
+            return PickedFolder {
+                cancelled: true,
+                ..Default::default()
+            };
+        }
+        let start = this.with(|p| {
+            p.state
+                .lock()
+                .unwrap()
+                .workspace
+                .as_ref()
+                .map(|w| w.root().to_path_buf())
+        });
+        let mut dialog = OpenDialog::folders()
+            .title("选择工作区目录")
+            .button_label("选择");
+        if let Some(dir) = start.as_ref().and_then(|r| r.parent()) {
+            dialog = dialog.directory(dir);
+        }
+        match pick_paths(dialog).await {
+            Ok(Some(paths)) => {
+                let Some(dir) = paths.into_iter().next() else {
+                    return PickedFolder {
+                        cancelled: true,
+                        ..Default::default()
+                    };
+                };
+                let path = dir.display().to_string();
+                match Workspace::discover(&dir, false) {
+                    Ok(ws) => PickedFolder {
+                        cancelled: false,
+                        path,
+                        workspace_root: Some(ws.root().display().to_string()),
+                        is_workspace: true,
+                        error: None,
+                    },
+                    Err(_) => PickedFolder {
+                        cancelled: false,
+                        path,
+                        workspace_root: None,
+                        is_workspace: false,
+                        error: None,
+                    },
+                }
+            }
+            Ok(None) => PickedFolder {
+                cancelled: true,
+                ..Default::default()
+            },
+            Err(e) => PickedFolder {
+                cancelled: false,
+                error: Some(e),
+                ..Default::default()
+            },
+        }
+    }
+
     /// Asks for a folder with the system's dialog and opens the workspace it is in
     /// (it, or the nearest folder above it with a `workspace.toml`). Cancelled, the
     /// workspace stays as it was; a folder in no workspace leaves it too, with the
     /// error said.
     pub async fn pick_workspace(this: Instance<Self>) -> WorkspaceInfo {
+        if this.is_disposed() {
+            return WorkspaceInfo::default();
+        }
         let start = this.with(|p| {
             p.state
                 .lock()
@@ -310,6 +207,9 @@ impl Preview {
             dialog = dialog.directory(dir);
         }
         let picked = pick_paths(dialog).await;
+        if this.is_disposed() {
+            return WorkspaceInfo::default();
+        }
         this.with(|p| {
             let dir = match picked {
                 Ok(Some(paths)) => paths.into_iter().next(),
@@ -321,14 +221,11 @@ impl Preview {
                     };
                 }
             };
-            let Some(dir) = dir else { return p.workspace() };
+            let Some(dir) = dir else {
+                return p.workspace();
+            };
             match Workspace::discover(&dir, false) {
-                Ok(ws) => {
-                    if let Some(dir) = &p.state.lock().unwrap().data_dir {
-                        remember_workspace(dir, &ws);
-                    }
-                    p.switch(ws)
-                }
+                Ok(ws) => p.switch(ws),
                 Err(_) => WorkspaceInfo {
                     error: Some(format!(
                         "{} 不在工作区里（没有 workspace.toml）",
@@ -342,70 +239,157 @@ impl Preview {
 
     /// What the workspace has.
     pub fn workspace(&self) -> WorkspaceInfo {
-        self.info()
+        self.state.lock().unwrap().info()
     }
 
-    /// Reads a file of the workspace for the editor.
+    /// Recently opened workspace directories, most recent first.
+    pub fn recent_workspaces(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .prefs
+            .app
+            .recent_workspaces
+            .clone()
+    }
+
+    /// Generates the ready-to-paste JSON snippet for configuring `xcpc mcp` against the
+    /// currently open workspace.
+    pub fn mcp_config_snippet(&self) -> String {
+        self.state.lock().unwrap().mcp_config_snippet()
+    }
+
+    // ---- File read / save & live watcher -----------------------------------------------
+
+    /// Reads a file of the workspace for the editor together with its SHA-256 content hash
+    /// (empty string when the file does not exist yet).
     pub fn read(&self, path: String) -> WorkspaceFile {
-        let state = self.state.lock().unwrap();
-        let Some(ws) = &state.workspace else {
-            return WorkspaceFile {
-                path,
-                read_only: true,
-                ..Default::default()
+        self.state.lock().unwrap().read(path)
+    }
+
+    /// Atomically saves a workspace file, checking `expectedHash` when provided.
+    ///
+    /// Returns `{ conflict: true }` without overwriting when the file changed on disk since
+    /// `expectedHash`. Successful writes are recorded in `SelfWriteTracker` so they are not
+    /// echoed back by `nextChange()`, incrementally refresh the index, and invalidate the
+    /// compiled preview cache.
+    pub fn save(&self, path: String, text: String, expected_hash: Option<String>) -> SaveResult {
+        self.state.lock().unwrap().save(path, text, expected_hash)
+    }
+
+    /// Long-polling async notification of external filesystem changes inside the active
+    /// workspace. Blocks off the UI thread with zero polling until an external change
+    /// arrives or the watcher stops (workspace switch or `Preview` disposal).
+    ///
+    /// When `"changed"` or `"rescan"` resolves, the in-memory `WorkspaceIndex` and compiled
+    /// preview cache have already been updated. When `"closed"` resolves, callers should stop
+    /// the watch loop (and start a fresh one after switching workspaces).
+    pub async fn next_change(this: Instance<Self>) -> WatchEventJs {
+        if this.is_disposed() {
+            return WatchEventJs {
+                kind: "closed".into(),
+                paths: Vec::new(),
+            };
+        }
+        let (weak_state, session) = this.with(|p| {
+            let session = p.state.lock().unwrap().watch_session.clone();
+            (Arc::downgrade(&p.state), session)
+        });
+        let Some(session) = session else {
+            return WatchEventJs {
+                kind: "closed".into(),
+                paths: Vec::new(),
             };
         };
-        let read_only = ws.check_writable(&path).is_err();
-        match ws.read_text(&path) {
-            Ok(text) => WorkspaceFile {
-                path,
-                text,
-                read_only,
-                error: None,
-            },
-            Err(xcpc_storage::Error::NotFound(_)) => WorkspaceFile {
-                path,
-                read_only,
-                ..Default::default()
-            },
-            Err(e) => WorkspaceFile {
-                path,
-                read_only: true,
-                error: Some(e.to_string()),
-                ..Default::default()
-            },
-        }
+        let session_id = session.id;
+        let rx = session.rx;
+        blocking(move || {
+            let event = {
+                let guard = match rx.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        return WatchEventJs {
+                            kind: "closed".into(),
+                            paths: Vec::new(),
+                        };
+                    }
+                };
+                match guard.recv() {
+                    Ok(ev) => ev,
+                    Err(_) => {
+                        return WatchEventJs {
+                            kind: "closed".into(),
+                            paths: Vec::new(),
+                        };
+                    }
+                }
+            };
+            let Some(state) = weak_state.upgrade() else {
+                return WatchEventJs {
+                    kind: "closed".into(),
+                    paths: Vec::new(),
+                };
+            };
+            let mut state = state.lock().unwrap();
+            state.apply_watch_event(session_id, event)
+        })
+        .await
+        .unwrap_or_else(|_| WatchEventJs {
+            kind: "closed".into(),
+            paths: Vec::new(),
+        })
     }
 
-    /// Saves a file of the workspace (atomically); the error, if it could not.
-    pub fn save(&self, path: String, text: String) -> Option<String> {
-        let state = self.state.lock().unwrap();
-        let ws = state.workspace.as_ref()?;
-        ws.write(&path, text.as_bytes())
-            .err()
-            .map(|e| e.to_string())
-    }
+    // ---- Preview compile, locateClick & export -----------------------------------------
 
-    /// Compiles `request` and rasterizes the pages in `view` for `scale` pixels per point.
-    /// Compiling what did not change is all but free, so call it again when the view or
-    /// the scale changes.
+    /// Compiles `request` via `publish::check` (including `xcpc-lint` diagnostics) and
+    /// rasterizes the pages in `view` for `scale` pixels per point. View/scale-only changes
+    /// reuse the cached compilation with zero recompile cost.
     pub async fn compile(
         this: Instance<Self>,
         request: PreviewRequest,
         scale: f64,
         view: Vec<PreviewView>,
     ) -> PreviewResult {
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.lock().unwrap().run(&request, scale as f32, &view))
-            .await
-            .unwrap_or_else(|e| PreviewResult {
-                error: Some(format!("preview task failed: {e}")),
-                ..Default::default()
-            })
+        if this.is_disposed() {
+            return PreviewResult::default();
+        }
+        let (state, generation) = this.with(|p| (p.state.clone(), p.generation.clone()));
+        let my_gen = generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        blocking(move || {
+            let cancel = CancelToken {
+                generation: my_gen,
+                latest: &generation,
+            };
+            if cancel.is_cancelled() {
+                return PreviewResult::default();
+            }
+            state
+                .lock()
+                .unwrap()
+                .run(&request, scale as f32, &view, cancel)
+        })
+        .await
+        .unwrap_or_else(|e| PreviewResult {
+            error: Some(format!("preview task failed: {e}")),
+            ..Default::default()
+        })
+    }
+
+    /// Maps a click at `(xPt, yPt)` (typographic points from the top-left of 0-based `page`)
+    /// on the currently cached preview back to its 1-based Markdown source location.
+    pub fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
+        self.state.lock().unwrap().locate_click(page, x_pt, y_pt)
     }
 
     /// Exports `request`'s PDF to `build/` in the workspace: its path, or why not.
     pub async fn export(this: Instance<Self>, request: PreviewRequest) -> WorkspaceFile {
+        if this.is_disposed() {
+            return WorkspaceFile {
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
         let state = this.with(|p| p.state.clone());
         blocking(move || state.lock().unwrap().export(&request))
             .await
@@ -414,459 +398,176 @@ impl Preview {
                 ..Default::default()
             })
     }
+
+    // ---- Problem library & editing -----------------------------------------------------
+
+    /// Searches indexed problems using structured filters and normalized text matching.
+    pub fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
+        self.state.lock().unwrap().search_problems(query)
+    }
+
+    /// Returns sorted distinct tags and external platforms across all indexed problems.
+    pub fn workspace_facets(&self) -> WorkspaceFacets {
+        self.state.lock().unwrap().workspace_facets()
+    }
+
+    /// Loads full problem details: metadata, statements & editorial with hashes, samples,
+    /// solution filenames, and referencing contests.
+    pub fn problem_detail(&self, id: String) -> ProblemDetailJs {
+        self.state.lock().unwrap().problem_detail(&id)
+    }
+
+    /// Reads one solution file under `problems/<id>/solutions/<name>` read-only.
+    pub fn read_solution(&self, id: String, name: String) -> WorkspaceFile {
+        self.state.lock().unwrap().read_solution(&id, &name)
+    }
+
+    /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton, and
+    /// an empty `samples/` directory, refreshing the in-memory index.
+    pub fn create_problem(&self, id: String, title: String) -> ActionResult {
+        self.state.lock().unwrap().create_problem(&id, &title)
+    }
+
+    /// Partially updates `problems/<id>/problem.toml` via `toml_edit`, preserving comments,
+    /// key order, and unknown fields.
+    pub fn update_problem_meta(&self, id: String, patch: ProblemMetaPatchJs) -> ActionResult {
+        self.state.lock().unwrap().update_problem_meta(&id, patch)
+    }
+
+    /// Deletes a problem from the library. Refuses with `code: "problem_referenced"` and
+    /// `referencingContests` when any unfrozen contest references it.
+    pub fn delete_problem(&self, id: String) -> ActionResult {
+        self.state.lock().unwrap().delete_problem(&id)
+    }
+
+    /// Saves `samples` into `problems/<id>/samples/` as `01.in`/`01.ans`..`NN.in`/`NN.ans`,
+    /// stripping UTF-8 BOM and `\r` atomically and refreshing cache and index.
+    pub fn save_samples(&self, id: String, samples: Vec<SamplePairJs>) -> ActionResult {
+        self.state.lock().unwrap().save_samples(&id, samples)
+    }
+
+    // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
+
+    /// Loads full contest metadata and per-item effective/original values with override flags.
+    pub fn contest_detail(&self, id: String) -> ContestDetailJs {
+        self.state.lock().unwrap().contest_detail(&id)
+    }
+
+    /// Computes 8-tier difficulty distribution and tag counts for `id`.
+    pub fn contest_stats(&self, id: String) -> ContestStatsJs {
+        self.state.lock().unwrap().contest_stats(&id)
+    }
+
+    /// Creates a new empty contest via `compose_contest(id, [], { name })`, refusing if `id`
+    /// already exists.
+    pub fn create_contest(&self, id: String, name: String) -> ActionResult {
+        self.state.lock().unwrap().create_contest(&id, &name)
+    }
+
+    /// Sets the ordered problem list for contest `id`, re-labelling `A..Z`, preserving
+    /// existing overrides on kept problems, and removing overrides for dropped problems.
+    pub fn compose_contest(&self, id: String, problem_ids: Vec<String>) -> ActionResult {
+        self.state
+            .lock()
+            .unwrap()
+            .compose_contest(&id, &problem_ids)
+    }
+
+    /// Partially updates `contests/<id>/contest.toml` metadata via `toml_edit`.
+    pub fn update_contest_meta(&self, id: String, patch: ContestMetaPatchJs) -> ActionResult {
+        self.state.lock().unwrap().update_contest_meta(&id, patch)
+    }
+
+    /// Sets or clears metadata overrides for `label` inside `contestId`. Passing `null`
+    /// deletes that override; passing the original library/contest value auto-deletes it.
+    pub fn set_override(
+        &self,
+        contest_id: String,
+        label: String,
+        patch: OverridePatchJs,
+    ) -> ActionResult {
+        self.state
+            .lock()
+            .unwrap()
+            .set_override(&contest_id, &label, patch)
+    }
+
+    /// Compiles statements (and optional editorial), checks preflight lint, and atomically
+    /// freezes `id` into `contests/<id>/snapshot/` off the UI thread.
+    pub async fn freeze_contest(this: Instance<Self>, id: String) -> FreezeResultJs {
+        if this.is_disposed() {
+            return FreezeResultJs {
+                ok: false,
+                frozen: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.lock().unwrap().freeze_contest(&id))
+            .await
+            .unwrap_or_else(|e| FreezeResultJs {
+                ok: false,
+                frozen: false,
+                error: Some(format!("freeze task failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Byte-for-byte diff between a frozen contest's snapshot and the live library, for the
+    /// unfreeze confirmation dialog.
+    pub fn unfreeze_diff(&self, id: String) -> UnfreezeDiffResultJs {
+        self.state.lock().unwrap().unfreeze_diff(&id)
+    }
+
+    /// Unfreezes a frozen contest (GUI-only, after human confirmation), deleting `snapshot/`
+    /// and restoring live references.
+    pub fn unfreeze_contest(&self, id: String) -> ActionResult {
+        self.state.lock().unwrap().unfreeze_contest(&id)
+    }
+
+    // ---- Cmd+K fuzzy jump, Frecency & preferences --------------------------------------
+
+    /// Fuzzy-searches problems, contests, and (when `activeContest` is given) the active
+    /// contest's problem labels, ranked with persisted Frecency.
+    pub fn fuzzy_jump(&self, query: String, active_contest: Option<String>) -> Vec<FuzzyHitJs> {
+        self.state
+            .lock()
+            .unwrap()
+            .fuzzy_jump(&query, active_contest.as_deref())
+    }
+
+    /// Records a visit (`"problem:<id>"`, `"contest:<id>"`, or
+    /// `"contest_item:<contestId>:<label>"`) for Frecency ranking and persists `prefs.json`.
+    pub fn record_visit(&self, key: String) {
+        self.state.lock().unwrap().record_visit(&key);
+    }
+
+    /// Loads persisted desktop preferences from `<dataDir>/prefs.json`.
+    pub fn load_prefs(&self) -> AppPrefsJs {
+        self.state.lock().unwrap().load_prefs()
+    }
+
+    /// Persists desktop preferences atomically to `<dataDir>/prefs.json` (preserving
+    /// persisted Frecency history).
+    pub fn save_prefs(&self, prefs: AppPrefsJs) {
+        self.state.lock().unwrap().save_prefs(prefs);
+    }
 }
 
 impl Preview {
-    /// Makes `ws` the workspace: the engine resolves its files from now on.
+    /// Makes `ws` the active workspace: cancels in-flight renders, swaps watcher outside
+    /// the mutex, refreshes the index, and returns the new [`WorkspaceInfo`].
     fn switch(&self, ws: Workspace) -> WorkspaceInfo {
-        {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        let old_watcher = {
             let mut state = self.state.lock().unwrap();
-            state.engine.set_root(Some(ws.root().to_path_buf()));
-            state.workspace = Some(ws);
-        }
-        self.info()
-    }
-
-    fn info(&self) -> WorkspaceInfo {
-        let state = self.state.lock().unwrap();
-        // None open is a state (an empty root), not an error.
-        let Some(ws) = &state.workspace else {
-            return WorkspaceInfo::default();
+            state.install_workspace(ws)
         };
-        let mut info = WorkspaceInfo {
-            root: ws.root().display().to_string(),
-            read_only: ws.is_read_only(),
-            ..Default::default()
-        };
-        let mut errors = Vec::new();
-        for id in ws.list_problems().unwrap_or_default() {
-            match ws.load_problem(&id) {
-                Ok(p) => info.problems.push(WorkspaceProblem {
-                    statement: statement_path(&p, p.default_language()),
-                    editorial: format!("{}/editorial.md", p.dir),
-                    id,
-                    title: p.meta.title,
-                }),
-                Err(e) => errors.push(e.to_string()),
-            }
-        }
-        for id in ws.list_contests().unwrap_or_default() {
-            let contest = match ws.load_contest(&id) {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    continue;
-                }
-            };
-            let items = match ws.contest_problems(&contest) {
-                Ok(list) => list
-                    .into_iter()
-                    .map(|(item, p)| WorkspaceItem {
-                        title: item.apply(&p.meta).title,
-                        statement: statement_path(&p, contest.meta.language),
-                        editorial: format!("{}/editorial.md", p.dir),
-                        label: item.label,
-                        id: item.id,
-                    })
-                    .collect(),
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            info.contests.push(WorkspaceContest {
-                id,
-                name: contest.meta.name,
-                frozen: contest.meta.frozen,
-                items,
-            });
-        }
-        info.error = errors.into_iter().next();
-        info
+        drop(old_watcher);
+        self.workspace()
     }
 }
 
-impl State {
-    fn compile(
-        &mut self,
-        request: &PreviewRequest,
-    ) -> Result<(Option<Compiled>, publish::Report), String> {
-        let ws = self.workspace.as_ref().ok_or("no workspace")?;
-        let doc = publish::document_with(
-            ws,
-            &request.target(),
-            request.kind(),
-            None,
-            request.unsaved(),
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(publish::compile(&mut self.engine, &doc))
-    }
-
-    fn export(&mut self, request: &PreviewRequest) -> WorkspaceFile {
-        let path = publish::default_output(&request.target(), request.kind());
-        let fail = |error: String| WorkspaceFile {
-            path: path.clone(),
-            error: Some(error),
-            ..Default::default()
-        };
-        let (compiled, report) = match self.compile(request) {
-            Ok(r) => r,
-            Err(e) => return fail(e),
-        };
-        let Some(compiled) = compiled.filter(|_| report.ok) else {
-            return fail(first_error(&report).unwrap_or_default());
-        };
-        let pdf = match compiled.pdf() {
-            Ok(pdf) => pdf,
-            Err(e) => return fail(e.first().map(|d| d.message.clone()).unwrap_or_default()),
-        };
-        let ws = self.workspace.as_ref().expect("compiled in it");
-        match ws.write(&path, &pdf) {
-            Ok(()) => WorkspaceFile {
-                path: ws.root().join(&path).display().to_string(),
-                ..Default::default()
-            },
-            Err(e) => fail(e.to_string()),
-        }
-    }
-
-    fn run(&mut self, request: &PreviewRequest, scale: f32, view: &[PreviewView]) -> PreviewResult {
-        let start = Instant::now();
-        let compiled = self.compile(request);
-        let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let (compiled, report) = match compiled {
-            Ok(r) => r,
-            Err(error) => {
-                return PreviewResult {
-                    error: Some(error),
-                    compile_ms,
-                    ..Default::default()
-                };
-            }
-        };
-        let diagnostics = report
-            .diagnostics
-            .iter()
-            .map(|d| PreviewDiagnostic {
-                severity: d.severity.into(),
-                message: d.message.clone(),
-                file: d.file.clone(),
-                line: d.line.map(|l| l as u32),
-                column: d.column.map(|c| c as u32),
-                page: d.page.map(|p| p as u32 - 1),
-            })
-            .collect();
-        let starts = report
-            .problems
-            .iter()
-            .map(|p| PreviewStart {
-                label: p.label.clone(),
-                page: p.first as u32 - 1,
-            })
-            .collect();
-        let error = first_error(&report);
-        let Some(compiled) = compiled else {
-            return PreviewResult {
-                error,
-                diagnostics,
-                compile_ms,
-                ..Default::default()
-            };
-        };
-        let mut result = self.rasterize(&compiled, scale, view);
-        result.error = error;
-        result.diagnostics = diagnostics;
-        result.starts = starts;
-        result.compile_ms = compile_ms;
-        result
-    }
-
-    fn rasterize(
-        &mut self,
-        compiled: &Compiled,
-        scale: f32,
-        view: &[PreviewView],
-    ) -> PreviewResult {
-        let compile_ms = 0.0;
-        let start = Instant::now();
-        let base = scale.min(BASE_SCALE);
-        let mut pages = Vec::with_capacity(compiled.page_count());
-        let mut jobs = Vec::new();
-        {
-            let pixels = PIXELS.lock().unwrap();
-            for i in 0..compiled.page_count() {
-                let fingerprint = compiled.page_fingerprint(i).unwrap_or_default();
-                let (width, height) = compiled.page_size(i).unwrap_or_default();
-                let mut layers = Vec::new();
-                let mut add =
-                    |key: String, region: Option<[u32; 4]>, s: f32, layers: &mut Vec<_>| {
-                        let [x, y, w, h] = region.map_or([0.0, 0.0, width, height], |r| {
-                            r.map(|v| f64::from(v) / f64::from(s))
-                        });
-                        if !pixels.contains_key(&key) {
-                            jobs.push(Job {
-                                page: i,
-                                scale: s,
-                                region,
-                                key: key.clone(),
-                            });
-                        }
-                        layers.push(PreviewLayer {
-                            key,
-                            left: x / width,
-                            top: y / height,
-                            width: (w / width).min(1.0 - x / width),
-                            height: (h / height).min(1.0 - y / height),
-                        });
-                    };
-                match view.iter().find(|v| v.page as usize == i) {
-                    Some(part) => {
-                        add(
-                            format!("{fingerprint:032x}@{base}"),
-                            None,
-                            base,
-                            &mut layers,
-                        );
-                        if scale > base {
-                            let regions = tiles(part, scale, (width, height));
-                            let prints = compiled
-                                .region_fingerprints(i, scale, &regions)
-                                .unwrap_or_default();
-                            for (region, print) in regions.into_iter().zip(prints) {
-                                let [x, y, ..] = region;
-                                let key = format!("{print:032x}@{scale}#{x},{y}");
-                                add(key, Some(region), scale, &mut layers);
-                            }
-                        }
-                    }
-                    None => {
-                        if let Some(key) = nearest(&pixels, fingerprint, scale) {
-                            layers.push(PreviewLayer {
-                                key,
-                                width: 1.0,
-                                height: 1.0,
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-                pages.push(PreviewPage {
-                    width,
-                    height,
-                    layers,
-                });
-            }
-        }
-        let rendered = render(compiled, &jobs);
-        PIXELS.lock().unwrap().extend(rendered);
-        let render_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-        let keys = pages
-            .iter()
-            .flat_map(|p| p.layers.iter().map(|l| l.key.clone()))
-            .collect();
-        self.retire(keys);
-        PreviewResult {
-            pages,
-            compile_ms,
-            render_ms,
-            rendered: jobs.len() as u32,
-            ..Default::default()
-        }
-    }
-
-    /// Keeps the pixels of this result and the one before; drops the rest.
-    fn retire(&mut self, current: HashSet<String>) {
-        let [_, last] = std::mem::take(&mut self.live);
-        PIXELS
-            .lock()
-            .unwrap()
-            .retain(|k, _| current.contains(k) || last.contains(k));
-        self.live = [last, current];
-    }
-}
-
-/// Where the workspace opened last is kept: a line in the app's data directory.
-fn last_workspace_file(data_dir: &std::path::Path) -> std::path::PathBuf {
-    data_dir.join("last-workspace")
-}
-
-/// The workspace opened last, if any.
-fn last_workspace(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let text = std::fs::read_to_string(last_workspace_file(data_dir)).ok()?;
-    Some(std::path::PathBuf::from(text.trim_end_matches('\n')))
-}
-
-/// Keeps `ws` as the one to open next time (what cannot be written is let go: the
-/// next start just asks).
-fn remember_workspace(data_dir: &std::path::Path, ws: &Workspace) {
-    let _ = std::fs::create_dir_all(data_dir);
-    let file = last_workspace_file(data_dir);
-    let _ = xcpc_storage::write_atomic(&file, format!("{}\n", ws.root().display()).as_bytes());
-}
-
-/// The statement file set in `language` (`statement.md` for a problem that has none yet).
-fn statement_path(p: &xcpc_domain::Problem, language: xcpc_domain::Language) -> String {
-    p.statement(language)
-        .map(|s| s.file.path.clone())
-        .unwrap_or_else(|| format!("{}/statement.md", p.dir))
-}
-
-/// The first error, `file:line: message`.
-fn first_error(report: &publish::Report) -> Option<String> {
-    let d = report.diagnostics.iter().find(|d| d.is_error())?;
-    Some(match (&d.file, d.line) {
-        (Some(f), Some(l)) => format!("{f}:{l}: {}", d.message),
-        _ => d.message.clone(),
-    })
-}
-
-/// The tiles (pixel regions `[x, y, width, height]`) of a page of `size` points at
-/// `scale` covering `part` and half a tile around it.
-fn tiles(part: &PreviewView, scale: f32, (width, height): (f64, f64)) -> Vec<[u32; 4]> {
-    if part.width <= 0.0 || part.height <= 0.0 {
-        return Vec::new();
-    }
-    let s = f64::from(scale);
-    let (pw, ph) = ((width * s).round() as u32, (height * s).round() as u32);
-    let margin = f64::from(TILE / 2);
-    let span = |from: f64, len: f64, max: u32| {
-        let a = ((from * s - margin).max(0.0) as u32 / TILE).min(max.saturating_sub(1) / TILE);
-        let b = (((from + len) * s + margin).max(0.0) as u32).min(max.saturating_sub(1)) / TILE;
-        a..=b
-    };
-    let mut out = Vec::new();
-    for ty in span(part.y, part.height, ph) {
-        for tx in span(part.x, part.width, pw) {
-            let (x, y) = (tx * TILE, ty * TILE);
-            out.push([x, y, TILE.min(pw - x), TILE.min(ph - y)]);
-        }
-    }
-    out
-}
-
-/// The key of the whole-page layer of the page `fingerprint` at the scale nearest
-/// `scale`, if any.
-fn nearest(pixels: &HashMap<String, ImageSrc>, fingerprint: u128, scale: f32) -> Option<String> {
-    let prefix = format!("{fingerprint:032x}@");
-    pixels
-        .keys()
-        .filter_map(|k| Some((k, k.strip_prefix(&prefix)?.parse::<f32>().ok()?)))
-        .min_by(|(_, a), (_, b)| (*a / scale).ln().abs().total_cmp(&(*b / scale).ln().abs()))
-        .map(|(k, _)| k.clone())
-}
-
-/// Rasterizes `jobs` in parallel into pixel buffers, by key.
-fn render(compiled: &Compiled, jobs: &[Job]) -> Vec<(String, ImageSrc)> {
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(jobs.len().max(1));
-    std::thread::scope(|s| {
-        let tasks: Vec<_> = jobs
-            .chunks(jobs.len().div_ceil(threads).max(1))
-            .map(|chunk| {
-                s.spawn(move || {
-                    chunk
-                        .iter()
-                        .filter_map(|job| {
-                            let pixmap = match job.region {
-                                None => compiled.render(job.page, job.scale)?,
-                                Some(r) => compiled.render_region(job.page, job.scale, r)?,
-                            };
-                            let (w, h) = (pixmap.width(), pixmap.height());
-                            // Pages are opaque, so premultiplied RGBA is straight RGBA.
-                            Some((job.key.clone(), ImageSrc::rgba(w, h, pixmap.take())))
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        tasks
-            .into_iter()
-            .flat_map(|t| t.join().unwrap_or_default())
-            .collect()
-    })
-}
-
-/// The props of [`PageImage`].
-#[derive(Debug, Clone, PartialEq, Props)]
-pub struct PageImageProps {
-    /// A page's `layers` from `Preview.compile`.
-    #[prop(default)]
-    pub layers: Prop<Vec<PreviewLayer>>,
-}
-
-/// A page `Preview.compile` rasterized, its layers stretched over the box (size it as the
-/// page). New layers show together once all of them have loaded; until then the layers
-/// they replace stay, so the page never goes blank (nor blurred, by a new whole-page
-/// layer over old tiles) while an edit or a zoom lands.
-#[component]
-pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement {
-    // The keys whose image has loaded; the layers laid out (the current ones over the
-    // ones they replace); and the keys of those drawn.
-    let ready = signal(HashSet::<String>::new());
-    let shown = signal(Vec::<PreviewLayer>::new());
-    let live = signal(HashSet::<String>::new());
-    let settle = move |current: &[PreviewLayer]| {
-        if current
-            .iter()
-            .all(|l| ready.with_untracked(|r| r.contains(&l.key)))
-        {
-            shown.set(current.to_vec());
-            let keep: HashSet<String> = current.iter().map(|l| l.key.clone()).collect();
-            ready.update(|r| r.retain(|k| keep.contains(k)));
-            live.set(keep);
-        }
-    };
-    effect(move || {
-        let current = props.layers.get();
-        untracked(|| {
-            let mut next: Vec<PreviewLayer> = shown
-                .get_untracked()
-                .into_iter()
-                .filter(|l| !current.iter().any(|c| c.key == l.key))
-                .collect();
-            next.extend(current.iter().cloned());
-            shown.set(next);
-            settle(&current);
-        });
-    });
-    view().relative().size_full().child(each(
-        move || shown.get(),
-        |layer: &PreviewLayer| layer.key.clone(),
-        move |layer, _| {
-            let layer = layer.get_untracked();
-            let key = layer.key.clone();
-            let src = PIXELS
-                .lock()
-                .unwrap()
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| ImageSrc::from(""));
-            let arrived = move |key: &String| {
-                ready.update(|r| {
-                    r.insert(key.clone());
-                });
-                untracked(|| settle(&props.layers.get_untracked()));
-            };
-            let is_live = {
-                let key = key.clone();
-                move || live.with(|r| r.contains(&key))
-            };
-            image(src)
-                .absolute()
-                .left(relative(layer.left as f32))
-                .top(relative(layer.top as f32))
-                .w(relative(layer.width as f32))
-                .h(relative(layer.height as f32))
-                .opacity(move || if is_live() { 1.0_f32 } else { 0.0 })
-                .on_load({
-                    let key = key.clone();
-                    move |_: &Size<DevicePixels>| arrived(&key)
-                })
-                // One that fails holds nothing up.
-                .on_error(move |_: &str| arrived(&key))
-        },
-    ))
-}
+#[cfg(test)]
+mod tests;

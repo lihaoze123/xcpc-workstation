@@ -21,6 +21,7 @@ use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
 
 mod fingerprint;
+mod locate;
 mod overflow;
 
 pub use typst_render::render as render_page_raw;
@@ -435,6 +436,18 @@ impl Engine {
                 warnings,
             }),
         }
+    }
+
+    /// Resolves a point `(x_pt, y_pt)` (typographic points from the top-left of 0-based
+    /// `page`) to the corresponding byte offset in the main source (`/main.typ`).
+    pub fn locate_point(
+        &self,
+        compiled: &Compiled,
+        page: usize,
+        x_pt: f64,
+        y_pt: f64,
+    ) -> Option<usize> {
+        locate::point(&self.main, compiled, page, x_pt, y_pt)
     }
 
     fn diagnostics(&self, list: &[SourceDiagnostic]) -> Vec<Diagnostic> {
