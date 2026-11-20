@@ -8,7 +8,7 @@
 | 应用框架 | **NSH 0.6（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
 | UI 组件 | **以 `nsh/base` 为基础**，需要时可以基于 NSH 自己写组件（如预览页面的 `PageImage`）：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
 | 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 加载字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF |
-| 题面字体 | Latin Modern 和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供，见 [statement-style.md](./statement-style.md#17-字体) |
+| 题面字体 | Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供；release 构建内嵌 Latin Modern 与 JetBrains Mono，见 [statement-style.md](./statement-style.md#17-字体) |
 | 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）+ `mitex`；LaTeX 输入用 `tylax`；导出为 Markdown 用 `typlite`/`tylax` |
 | 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite 派生数据 |
 | 凭据 | 系统钥匙串（`keyring`） |

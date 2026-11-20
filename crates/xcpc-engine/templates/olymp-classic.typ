@@ -39,6 +39,7 @@
 // Bold sans exists only at the 10pt design size; CJK bold is FZ Hei.
 #let bold-sans(size, body) = text(font: with-cjk("Latin Modern Sans", "FZHei-B01"), weight: "bold", size: size, body)
 #let mono-font = with-cjk("Latin Modern Mono 12", "FZFangSong-Z02")
+#let code-font = with-cjk("JetBrains Mono", "FZFangSong-Z02")
 #let mono(body) = text(font: mono-font, body)
 
 // ---- Words ----------------------------------------------------------------------------
@@ -244,7 +245,7 @@
 #let editorial-style(body) = {
   set raw(theme: "/xcpc/mono.tmTheme")
   show raw.where(block: true): it => {
-    set text(font: with-cjk(optical("Latin Modern Mono", sizes.small), "FZFangSong-Z02"), size: sizes.small, ..strut(sizes.small))
+    set text(font: code-font, size: sizes.small, ..strut(sizes.small))
     set par(justify: false, first-line-indent: 0pt)
     block(above: bigskip, below: bigskip, inset: (left: parindent), width: 100%, it)
   }
@@ -284,15 +285,20 @@
   // olymp.sty: no space between paragraphs in Chinese, \parskip = 1ex (0.43em in Latin Modern) otherwise.
   set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
   set text(font: with-cjk("Latin Modern Roman 12", "FZShuSong-Z01"), size: sizes.normal)
-  show raw: set text(font: mono-font, size: sizes.normal)
+  show raw.where(block: false): set text(font: mono-font, size: sizes.normal)
+  show raw.where(block: true): set text(font: code-font, size: sizes.normal)
   // ctex's founder fontset: CJK bold is FZ Hei, CJK italic FZ Kai.
   show strong: set text(font: with-cjk("Latin Modern Roman 12", "FZHei-B01"))
   show emph: set text(font: with-cjk("Latin Modern Roman 12", "FZKai-Z03"))
-  // Highlighted raw emits strong/emph; keep monospace inside raw (Latin Modern Mono 10pt
-  // ships bold and italic faces, whereas 12pt has only regular).
-  show raw: it => {
-    show strong: set text(font: with-cjk("Latin Modern Mono", "FZHei-B01"))
-    show emph: set text(font: with-cjk("Latin Modern Mono", "FZKai-Z03"))
+  // Highlighted raw emits strong/emph; keep monospace inside raw.
+  show raw.where(block: false): it => {
+    show strong: set text(font: with-cjk("Latin Modern Mono 12", "FZHei-B01"))
+    show emph: set text(font: with-cjk("Latin Modern Mono 12", "FZKai-Z03"))
+    it
+  }
+  show raw.where(block: true): it => {
+    show strong: set text(font: with-cjk("JetBrains Mono", "FZHei-B01"))
+    show emph: set text(font: with-cjk("JetBrains Mono", "FZKai-Z03"))
     it
   }
   show math.equation: set text(font: "Latin Modern Math")
