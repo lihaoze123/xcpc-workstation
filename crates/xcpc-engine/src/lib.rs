@@ -101,6 +101,33 @@ impl Compiled {
         Some(typst_render::render(page, &options))
     }
 
+    /// Renders the pixels `x..x + width`, `y..y + height` of one page (0-based) at
+    /// `pixel_per_pt`: a tile of what [`Self::render`] gives, the same pixels.
+    pub fn render_region(
+        &self,
+        page: usize,
+        pixel_per_pt: f32,
+        [x, y, width, height]: [u32; 4],
+    ) -> Option<tiny_skia::Pixmap> {
+        let page = self.document.pages().get(page)?;
+        let pt = |px: u32| typst::layout::Abs::pt(f64::from(px) / f64::from(pixel_per_pt));
+        let mut frame = typst::layout::Frame::hard(typst::layout::Size::new(pt(width), pt(height)));
+        frame.push_frame(
+            typst::layout::Point::new(-pt(x), -pt(y)),
+            page.frame.clone(),
+        );
+        let tile = typst_layout::Page {
+            frame,
+            bleed: Default::default(),
+            ..page.clone()
+        };
+        let options = typst_render::RenderOptions {
+            pixel_per_pt: (pixel_per_pt as f64).into(),
+            ..Default::default()
+        };
+        Some(typst_render::render(&tile, &options))
+    }
+
     /// Renders one page (0-based) as an SVG document whose units are points.
     pub fn render_svg(&self, page: usize) -> Option<String> {
         let page = self.document.pages().get(page)?;

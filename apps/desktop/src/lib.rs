@@ -4,19 +4,21 @@
 //! Only glue lives here; typesetting is `xcpc-engine`'s.
 //!
 //! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files:
-//! rasterizing a page takes a fraction of what encoding it as PNG would. They are kept
-//! by key (a page's span-free fingerprint and the scale), so a page an edit did not
-//! change is neither rasterized again nor uploaded again. Only the pages the app says
-//! are in view are rasterized at the scale it asks for; the others keep the pixels they
-//! have at another scale, or show none until they come into view.
+//! rasterizing a page takes a fraction of what encoding it as PNG would. A page shows as
+//! layers ([`PreviewLayer`]): the whole page at the scale the app asks for, up to
+//! [`WHOLE_SCALE`]; sharper, the whole page at [`BASE_SCALE`] and over it tiles of
+//! [`TILE`] pixels at the scale asked for, covering the part in view. Pixels are kept by key (the page's span-free
+//! fingerprint, the scale and the tile), so what an edit did not change is neither
+//! rasterized nor uploaded again. Pages out of view keep a whole-page layer they have at
+//! another scale, or show none until they come into view.
 
 use std::collections::{HashMap, HashSet};
-use std::ops::RangeInclusive;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use nsh_base as _;
 use nsh_core::element::ImageSrc;
+use nsh_core::geometry::relative;
 use nsh_core::prelude::*;
 use xcpc_engine::{Compiled, Engine, FontOptions};
 
@@ -30,18 +32,51 @@ fn native(registry: &mut Registry) {
 /// The Phase 0 sample: a hand-written contest in `olymp-classic`.
 const SAMPLE: &str = include_str!("../../../tests/fixtures/olymp-ref/contest-zh/main.typ");
 
-/// The rasterized pages by key, for [`PageImage`]: the pages of the last two results
-/// (the screen may still show the older one).
+/// The most pixels per point of a whole-page layer: sharper than this, the part in view
+/// is tiled (an A4 page at 3 is 1786 × 2526 pixels, 18 MB).
+const WHOLE_SCALE: f32 = 3.0;
+
+/// The scale of the whole-page layer under tiles (an A4 page at 2 is 8 MB).
+const BASE_SCALE: f32 = 2.0;
+
+/// The side of a tile in pixels.
+const TILE: u32 = 512;
+
+/// The rasterized layers by key, for [`PageImage`]: those of the last two results (the
+/// screen may still show the older one).
 static PIXELS: LazyLock<Mutex<HashMap<String, ImageSrc>>> = LazyLock::new(Default::default);
+
+/// Pixels to draw over a page.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct PreviewLayer {
+    /// Its pixels, named by what the page draws, the scale and the tile.
+    pub key: String,
+    /// Where it goes, as fractions of the page's width and height.
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
 
 /// One rendered page.
 #[derive(Debug, Clone, Default, PartialEq, JsObject)]
 pub struct PreviewPage {
-    /// Its pixels for `PageImage`'s `page`. Named by what the page draws and the scale,
-    /// so a page an edit did not change keeps its key (and its texture). Empty for a page
-    /// out of view that has no pixels yet.
-    pub key: String,
     /// Its size in typographic points.
+    pub width: f64,
+    pub height: f64,
+    /// What `PageImage` draws, bottom first: the whole page, then tiles. None for a
+    /// page out of view that has no pixels yet.
+    pub layers: Vec<PreviewLayer>,
+}
+
+/// The part of a page in view, in its points: tiled when the scale asks for more than a
+/// whole-page layer has. A page listed with an empty part gets a whole-page layer only.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct PreviewView {
+    /// The page (0-based).
+    pub page: u32,
+    pub x: f64,
+    pub y: f64,
     pub width: f64,
     pub height: f64,
 }
@@ -54,14 +89,14 @@ pub struct PreviewResult {
     /// The first error, `line:column: message`, if any.
     #[prop(skip_none)]
     pub error: Option<String>,
-    /// Milliseconds spent typesetting and rasterizing, and how many pages were rasterized.
+    /// Milliseconds spent typesetting and rasterizing, and how many layers were rasterized.
     pub compile_ms: f64,
     pub render_ms: f64,
     pub rendered: u32,
 }
 
 /// A Typst preview: compiles a source with `xcpc-engine` off the UI thread and rasterizes
-/// the pages that changed for [`PageImage`] to show.
+/// what is in view for [`PageImage`] to show.
 #[class]
 pub struct Preview {
     state: Arc<Mutex<State>>,
@@ -71,6 +106,14 @@ struct State {
     engine: Engine,
     /// The keys of the last two results.
     live: [HashSet<String>; 2],
+}
+
+/// A layer to rasterize: a whole page, or a region of it in pixels.
+struct Job {
+    page: usize,
+    scale: f32,
+    region: Option<[u32; 4]>,
+    key: String,
 }
 
 #[class]
@@ -91,19 +134,17 @@ impl Preview {
         SAMPLE.to_owned()
     }
 
-    /// Compiles `source` and rasterizes the pages `first..=last` (0-based, those in view)
-    /// at `scale` pixels per point. Compiling a source that did not change is all but
-    /// free, so call it again when other pages come into view or the scale changes.
+    /// Compiles `source` and rasterizes the pages in `view` for `scale` pixels per point.
+    /// Compiling a source that did not change is all but free, so call it again when the
+    /// view or the scale changes.
     pub async fn compile(
         this: Instance<Self>,
         source: String,
         scale: f64,
-        first: u32,
-        last: u32,
+        view: Vec<PreviewView>,
     ) -> PreviewResult {
         let state = this.with(|p| p.state.clone());
-        let view = first as usize..=last as usize;
-        blocking(move || state.lock().unwrap().run(&source, scale as f32, view))
+        blocking(move || state.lock().unwrap().run(&source, scale as f32, &view))
             .await
             .unwrap_or_else(|e| PreviewResult {
                 error: Some(format!("preview task failed: {e}")),
@@ -113,7 +154,7 @@ impl Preview {
 }
 
 impl State {
-    fn run(&mut self, source: &str, scale: f32, view: RangeInclusive<usize>) -> PreviewResult {
+    fn run(&mut self, source: &str, scale: f32, view: &[PreviewView]) -> PreviewResult {
         let start = Instant::now();
         self.engine.set_main(source);
         let compiled = self.engine.compile();
@@ -134,51 +175,89 @@ impl State {
         };
 
         let start = Instant::now();
-        let mut keys: Vec<String> = Vec::with_capacity(compiled.page_count());
-        let mut missing = Vec::new();
+        let base = if scale <= WHOLE_SCALE {
+            scale
+        } else {
+            BASE_SCALE
+        };
+        let mut pages = Vec::with_capacity(compiled.page_count());
+        let mut jobs = Vec::new();
         {
             let pixels = PIXELS.lock().unwrap();
             for i in 0..compiled.page_count() {
                 let fingerprint = compiled.page_fingerprint(i).unwrap_or_default();
-                let key = format!("{fingerprint:032x}@{scale}");
-                if view.contains(&i) {
-                    if !pixels.contains_key(&key) {
-                        missing.push(i);
-                    }
-                    keys.push(key);
-                } else {
-                    keys.push(nearest(&pixels, fingerprint, scale).unwrap_or_default());
-                }
-            }
-        }
-        let rendered = render_pages(&compiled, scale, &missing);
-        {
-            let mut pixels = PIXELS.lock().unwrap();
-            for (i, src) in rendered {
-                pixels.insert(keys[i].clone(), src);
-            }
-        }
-        let render_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-        let pages = keys
-            .iter()
-            .enumerate()
-            .map(|(i, key)| {
                 let (width, height) = compiled.page_size(i).unwrap_or_default();
-                PreviewPage {
-                    key: key.clone(),
+                let mut layers = Vec::new();
+                let mut add =
+                    |key: String, region: Option<[u32; 4]>, s: f32, layers: &mut Vec<_>| {
+                        let [x, y, w, h] = region.map_or([0.0, 0.0, width, height], |r| {
+                            r.map(|v| f64::from(v) / f64::from(s))
+                        });
+                        if !pixels.contains_key(&key) {
+                            jobs.push(Job {
+                                page: i,
+                                scale: s,
+                                region,
+                                key: key.clone(),
+                            });
+                        }
+                        layers.push(PreviewLayer {
+                            key,
+                            left: x / width,
+                            top: y / height,
+                            width: (w / width).min(1.0 - x / width),
+                            height: (h / height).min(1.0 - y / height),
+                        });
+                    };
+                match view.iter().find(|v| v.page as usize == i) {
+                    Some(part) => {
+                        add(
+                            format!("{fingerprint:032x}@{base}"),
+                            None,
+                            base,
+                            &mut layers,
+                        );
+                        if scale > base {
+                            for region in tiles(part, scale, (width, height)) {
+                                let [x, y, ..] = region;
+                                let key = format!("{fingerprint:032x}@{scale}#{x},{y}");
+                                add(key, Some(region), scale, &mut layers);
+                            }
+                        }
+                    }
+                    None => {
+                        if let Some(key) = nearest(&pixels, fingerprint, scale) {
+                            layers.push(PreviewLayer {
+                                key,
+                                width: 1.0,
+                                height: 1.0,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+                pages.push(PreviewPage {
                     width,
                     height,
-                }
-            })
+                    layers,
+                });
+            }
+        }
+        let rendered = render(&compiled, &jobs);
+        PIXELS.lock().unwrap().extend(rendered);
+        let render_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        let keys = pages
+            .iter()
+            .flat_map(|p| p.layers.iter().map(|l| l.key.clone()))
             .collect();
-        self.retire(keys.into_iter().filter(|k| !k.is_empty()).collect());
+        self.retire(keys);
         PreviewResult {
             pages,
             error: None,
             compile_ms,
             render_ms,
-            rendered: missing.len() as u32,
+            rendered: jobs.len() as u32,
         }
     }
 
@@ -193,7 +272,32 @@ impl State {
     }
 }
 
-/// The key of the pixels of the page `fingerprint` at the scale nearest `scale`, if any.
+/// The tiles (pixel regions `[x, y, width, height]`) of a page of `size` points at
+/// `scale` covering `part` and half a tile around it.
+fn tiles(part: &PreviewView, scale: f32, (width, height): (f64, f64)) -> Vec<[u32; 4]> {
+    if part.width <= 0.0 || part.height <= 0.0 {
+        return Vec::new();
+    }
+    let s = f64::from(scale);
+    let (pw, ph) = ((width * s).round() as u32, (height * s).round() as u32);
+    let margin = f64::from(TILE / 2);
+    let span = |from: f64, len: f64, max: u32| {
+        let a = ((from * s - margin).max(0.0) as u32 / TILE).min(max.saturating_sub(1) / TILE);
+        let b = (((from + len) * s + margin).max(0.0) as u32).min(max.saturating_sub(1)) / TILE;
+        a..=b
+    };
+    let mut out = Vec::new();
+    for ty in span(part.y, part.height, ph) {
+        for tx in span(part.x, part.width, pw) {
+            let (x, y) = (tx * TILE, ty * TILE);
+            out.push([x, y, TILE.min(pw - x), TILE.min(ph - y)]);
+        }
+    }
+    out
+}
+
+/// The key of the whole-page layer of the page `fingerprint` at the scale nearest
+/// `scale`, if any.
 fn nearest(pixels: &HashMap<String, ImageSrc>, fingerprint: u128, scale: f32) -> Option<String> {
     let prefix = format!("{fingerprint:032x}@");
     pixels
@@ -203,23 +307,26 @@ fn nearest(pixels: &HashMap<String, ImageSrc>, fingerprint: u128, scale: f32) ->
         .map(|(k, _)| k.clone())
 }
 
-/// Rasterizes `pages` in parallel into pixel buffers.
-fn render_pages(compiled: &Compiled, scale: f32, pages: &[usize]) -> Vec<(usize, ImageSrc)> {
+/// Rasterizes `jobs` in parallel into pixel buffers, by key.
+fn render(compiled: &Compiled, jobs: &[Job]) -> Vec<(String, ImageSrc)> {
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
-        .min(pages.len().max(1));
+        .min(jobs.len().max(1));
     std::thread::scope(|s| {
-        let tasks: Vec<_> = pages
-            .chunks(pages.len().div_ceil(threads).max(1))
+        let tasks: Vec<_> = jobs
+            .chunks(jobs.len().div_ceil(threads).max(1))
             .map(|chunk| {
                 s.spawn(move || {
                     chunk
                         .iter()
-                        .filter_map(|&i| {
-                            let pixmap = compiled.render(i, scale)?;
+                        .filter_map(|job| {
+                            let pixmap = match job.region {
+                                None => compiled.render(job.page, job.scale)?,
+                                Some(r) => compiled.render_region(job.page, job.scale, r)?,
+                            };
                             let (w, h) = (pixmap.width(), pixmap.height());
                             // Pages are opaque, so premultiplied RGBA is straight RGBA.
-                            Some((i, ImageSrc::rgba(w, h, pixmap.take())))
+                            Some((job.key.clone(), ImageSrc::rgba(w, h, pixmap.take())))
                         })
                         .collect::<Vec<_>>()
                 })
@@ -235,22 +342,78 @@ fn render_pages(compiled: &Compiled, scale: f32, pages: &[usize]) -> Vec<(usize,
 /// The props of [`PageImage`].
 #[derive(Debug, Clone, PartialEq, Props)]
 pub struct PageImageProps {
-    /// A page's `key` from `Preview.compile`.
+    /// A page's `layers` from `Preview.compile`.
     #[prop(default)]
-    pub page: Prop<SharedString>,
+    pub layers: Prop<Vec<PreviewLayer>>,
 }
 
-/// A page `Preview.compile` rasterized, stretched over its box (size it to the page's
-/// size in points). It shows nothing for a key whose pixels are gone.
+/// A page `Preview.compile` rasterized, its layers stretched over the box (size it as the
+/// page). New layers show once they have loaded: until all of them have, the layers they
+/// replace stay under them, so the page never goes blank while an edit or a zoom lands.
 #[component]
 pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement {
-    image(move || {
-        let key = props.page.get();
-        PIXELS
-            .lock()
-            .unwrap()
-            .get(key.as_ref())
-            .cloned()
-            .unwrap_or_else(|| ImageSrc::from(""))
-    })
+    // The keys whose image has loaded, and the layers drawn: the current ones over the
+    // ones they replace.
+    let ready = signal(HashSet::<String>::new());
+    let shown = signal(Vec::<PreviewLayer>::new());
+    let settle = move |current: &[PreviewLayer]| {
+        if current
+            .iter()
+            .all(|l| ready.with_untracked(|r| r.contains(&l.key)))
+        {
+            shown.set(current.to_vec());
+            let keep: HashSet<&String> = current.iter().map(|l| &l.key).collect();
+            ready.update(|r| r.retain(|k| keep.contains(k)));
+        }
+    };
+    effect(move || {
+        let current = props.layers.get();
+        untracked(|| {
+            let mut next: Vec<PreviewLayer> = shown
+                .get_untracked()
+                .into_iter()
+                .filter(|l| !current.iter().any(|c| c.key == l.key))
+                .collect();
+            next.extend(current.iter().cloned());
+            shown.set(next);
+            settle(&current);
+        });
+    });
+    view().relative().size_full().child(each(
+        move || shown.get(),
+        |layer: &PreviewLayer| layer.key.clone(),
+        move |layer, _| {
+            let layer = layer.get_untracked();
+            let key = layer.key.clone();
+            let src = PIXELS
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| ImageSrc::from(""));
+            let arrived = move |key: &String| {
+                ready.update(|r| {
+                    r.insert(key.clone());
+                });
+                untracked(|| settle(&props.layers.get_untracked()));
+            };
+            let is_ready = {
+                let key = key.clone();
+                move || ready.with(|r| r.contains(&key))
+            };
+            image(src)
+                .absolute()
+                .left(relative(layer.left as f32))
+                .top(relative(layer.top as f32))
+                .w(relative(layer.width as f32))
+                .h(relative(layer.height as f32))
+                .opacity(move || if is_ready() { 1.0_f32 } else { 0.0 })
+                .on_load({
+                    let key = key.clone();
+                    move |_: &Size<DevicePixels>| arrived(&key)
+                })
+                // One that fails holds nothing up.
+                .on_error(move |_: &str| arrived(&key))
+        },
+    ))
 }
