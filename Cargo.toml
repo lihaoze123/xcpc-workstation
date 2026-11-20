@@ -8,6 +8,9 @@ version = "0.1.0"
 publish = false
 
 [workspace.dependencies]
+xcpc-domain = { path = "crates/xcpc-domain" }
+xcpc-storage = { path = "crates/xcpc-storage" }
+xcpc-convert = { path = "crates/xcpc-convert" }
 xcpc-engine = { path = "crates/xcpc-engine" }
 
 nsh-core = "0.6.0"
@@ -29,3 +32,8 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "1"
+tempfile = "3"
+base64 = "0.22"
+pulldown-cmark = { version = "0.13", default-features = false }
+mitex = "0.2.4"
