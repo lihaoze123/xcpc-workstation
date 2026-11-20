@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use xcpc_engine::{Engine, FontOptions};
 
-const SAMPLE: &str = include_str!("../../../tests/fixtures/olymp-ref/contest-zh/main.typ");
+const SAMPLE: &str = include_str!("../tests/contest-zh.typ");
 
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0

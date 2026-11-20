@@ -21,6 +21,7 @@
 #let strut(size) = (top-edge: 0.7 * 1.57 * size, bottom-edge: -0.3 * 1.57 * size)
 #let parindent = 2em                          // ctex
 #let smallskip = tex(3)
+#let bigskip = tex(12)
 #let tabcolsep = tex(6)
 #let rule = 0.4pt
 
@@ -48,21 +49,38 @@
     time-limit: "时间限制", memory-limit: "内存限制", stdin: "标准输入", stdout: "标准输出",
     input: "输入格式", output: "输出格式", interaction: "交互", example: "样例", examples: "样例",
     explanation: "样例解释", note: "提示", notes: "提示", scoring: "评分", constraints: "约束",
+    background: "背景知识", specification: "题目要求", illustration: "图表说明", subtasks: "子任务",
+    tutorial: "题目解答", blank: "此页故意留白",
   ),
   english: (
     problem: "Problem", input-file: "Input file:", output-file: "Output file:",
     time-limit: "Time limit:", memory-limit: "Memory limit:", stdin: "standard input", stdout: "standard output",
     input: "Input", output: "Output", interaction: "Interaction Protocol", example: "Example", examples: "Examples",
     explanation: "Explanation", note: "Note", notes: "Notes", scoring: "Scoring", constraints: "Constraints",
+    background: "Background", specification: "Specification", illustration: "Illustration", subtasks: "Subtasks",
+    tutorial: "Problem Tutorial", blank: "This page is intentionally left blank",
   ),
 )
 #let lang-state = state("xcpc-language", "chinese")
+#let blank-state = state("xcpc-blank-pages", false)
 #let word(key) = context words.at(lang-state.get()).at(key)
+
+// \problemend with `intentionallyblankpages`: every problem starts on an odd page; an
+// even page before one says it is blank, in \problemheadfont, centered on the page.
+#let blank-page(last: false) = {
+  v(1fr)
+  align(center, serif(size: sizes.LARGE, word("blank")))
+  v(1fr)
+  if not last { pagebreak() }
+}
+#let blank-page-if-even() = context if blank-state.get() and calc.even(counter(page).get().first()) {
+  blank-page()
+}
 
 // ---- Statement parts ------------------------------------------------------------------
 
 // \smallbreak\smallskip before, \smallskip after; weak spacing merges with the glue
-// before it, as \smallbreak does.
+// before it, as \smallbreak does. A heading the template has no word for gives its title.
 #let section(key, title: none) = {
   v(2 * smallskip, weak: true)
   block(sticky: true, below: smallskip, bold-sans(sizes.Large, if title == none { word(key) } else { title }))
@@ -95,17 +113,29 @@
   body,
 ) = {
   pagebreak(weak: true)
+  blank-page-if-even()
   [#metadata((label: label, title: title)) <xcpc-problem>]
   block(sticky: true, below: 3mm, bold-sans(sizes.LARGE)[#word("problem") #label. #title])
   if show-metadata {
+    // No file name: standard input and output, which the reference sets as file names.
+    let file(name, key) = mono(if name == none { word(key) } else { name })
     let rows = (
-      ("input-file", mono(input)), ("output-file", mono(output)),
+      ("input-file", file(input, "stdin")), ("output-file", file(output, "stdout")),
       ("time-limit", time-limit), ("memory-limit", memory-limit),
     ).filter(((_, v)) => v != none)
     // tabular{l@{\extracolsep{1cm}}l}, set at olymp.sty's 6.5mm indent.
     pad(left: 6.5mm + tabcolsep, grid(columns: 2, column-gutter: 1cm, ..rows.map(((k, v)) => (word(k), v)).flatten()))
   }
   v(2mm)
+  body
+}
+
+// \begin{tutorial}{title}: \bigskip, then the head in \problemheadfont, bold sans:
+// `Problem Tutorial: “title”` (olymp.sty's form for languages other than Russian).
+#let tutorial(label: none, title: none, body) = {
+  v(bigskip, weak: true)
+  [#metadata((label: label, title: title)) <xcpc-tutorial>]
+  block(sticky: true, bold-sans(sizes.LARGE)[#word("tutorial"): “#title”])
   body
 }
 
@@ -155,10 +185,12 @@
   author: none,
   language: "chinese",
   show-cover: true,
+  blank-pages: false,
   body,
 ) = {
   let chinese = language == "chinese"
   lang-state.update(language)
+  blank-state.update(blank-pages)
   set document(title: name)
   set text(lang: if chinese { "zh" } else { "en" }, region: if chinese { "cn" } else { none })
 
@@ -168,8 +200,10 @@
   set text(font: with-cjk("Latin Modern Roman 12", "FZShuSong-Z01"), size: sizes.normal)
   show raw: set text(font: mono-font, size: sizes.normal)
   show math.equation: set text(font: "Latin Modern Math")
-  // olymp.sty's `chinese` option makes \le and \ge slanted.
-  show math.equation: it => if chinese { show "≤": "⩽"; show "≥": "⩾"; it } else { it }
+  // olymp.sty's `chinese` option makes \le and \ge slanted. The replacement keeps the
+  // relation's class: a bare text would lose its spacing after a closing `)` or `^9`.
+  let slanted(s) = math.class("relation", s)
+  show math.equation: it => if chinese { show "≤": slanted(sym.lt.eq.slant); show "≥": slanted(sym.gt.eq.slant); it } else { it }
   // itemize: \leftmargini 2.5em, \labelsep 0.5em, \topsep + \partopsep around.
   set list(marker: box(width: 2em, align(right)[•]), indent: 0pt, body-indent: 0.5em, spacing: 0pt)
   show list: set block(above: tex(12), below: tex(12))
@@ -208,5 +242,16 @@
     counter(page).update(0)
     cover(name, author, date)
   }
+  // Where the text may go, for the engine's overflow check.
+  [#metadata((left: text-left, top: text-top, width: text-width, height: text-height)) <xcpc-text-area>]
   body
+  // The last problem's \problemend: the book ends on an even page. The parity is the
+  // end of the text's, not where the blank page itself would start.
+  if blank-pages {
+    [#metadata(none) <xcpc-end>]
+    context if calc.odd(counter(page).at(query(<xcpc-end>).last().location()).first()) {
+      pagebreak()
+      blank-page(last: true)
+    }
+  }
 }
