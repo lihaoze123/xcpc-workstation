@@ -303,7 +303,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["compile_and_diagnose", "render_page_png", "export_pdf"]);
+        assert_eq!(
+            names,
+            vec!["compile_and_diagnose", "render_page_png", "export_pdf"]
+        );
     }
 
     #[test]
