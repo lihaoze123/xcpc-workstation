@@ -2,7 +2,7 @@
 
 use xcpc_engine::{Engine, FontOptions};
 
-const SAMPLE: &str = include_str!("../../../tests/fixtures/olymp-ref/contest-zh/main.typ");
+const SAMPLE: &str = include_str!("contest-zh.typ");
 
 #[test]
 fn region_matches_whole_page() {
@@ -74,8 +74,8 @@ fn equal_region_fingerprints_render_equal_pixels() {
     // A word in a paragraph, a formula, and a sample (a table).
     for (from, to) in [
         ("这是一道签到题", "这是一道很简单的签到题"),
-        ("$-10^9 <= a,b <= 10^9$", "$-10^18 <= a,b <= 10^18$"),
-        ("(\"1 2\", \"3\")", "(\"1 2\", \"4\")"),
+        ("1 0 ^(9 )", "1 0 ^(1 8 )"),
+        ("(\"1 2\\n\", \"3\\n\")", "(\"1 2\\n\", \"4\\n\")"),
     ] {
         let edited = SAMPLE.replace(from, to);
         assert_ne!(edited, SAMPLE, "{from}");

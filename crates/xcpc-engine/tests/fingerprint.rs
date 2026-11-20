@@ -3,7 +3,7 @@
 
 use xcpc_engine::{Engine, FontOptions};
 
-const SAMPLE: &str = include_str!("../../../tests/fixtures/olymp-ref/contest-zh/main.typ");
+const SAMPLE: &str = include_str!("contest-zh.typ");
 
 fn fingerprints(engine: &mut Engine, source: &str) -> Vec<u128> {
     engine.set_main(source);

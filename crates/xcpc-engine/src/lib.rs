@@ -19,14 +19,34 @@ use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
 
 mod fingerprint;
+mod overflow;
 
 pub use typst_render::render as render_page_raw;
 
-/// The bundled templates, addressable from Typst as `/xcpc/<name>`.
-const TEMPLATES: &[(&str, &str)] = &[(
-    "/xcpc/olymp-classic.typ",
-    include_str!("../templates/olymp-classic.typ"),
-)];
+/// The bundled templates, addressable from Typst as `/xcpc/<name>`: `olymp-classic`,
+/// what the Markdown converter emits calls (`markdown.typ`), and MiTeX's scope for it.
+const TEMPLATES: &[(&str, &str)] = &[
+    (
+        "/xcpc/olymp-classic.typ",
+        include_str!("../templates/olymp-classic.typ"),
+    ),
+    (
+        "/xcpc/markdown.typ",
+        include_str!("../templates/markdown.typ"),
+    ),
+    (
+        "/xcpc/mitex/mod.typ",
+        include_str!("../templates/mitex/mod.typ"),
+    ),
+    (
+        "/xcpc/mitex/prelude.typ",
+        include_str!("../templates/mitex/prelude.typ"),
+    ),
+    (
+        "/xcpc/mitex/latex/standard.typ",
+        include_str!("../templates/mitex/latex/standard.typ"),
+    ),
+];
 
 /// Path of the main source inside the virtual project.
 const MAIN_PATH: &str = "/main.typ";
@@ -60,9 +80,12 @@ pub struct Diagnostic {
     pub message: String,
     /// The file the diagnostic points into, as a virtual path (`/main.typ`).
     pub file: Option<String>,
-    /// 1-based line and column in that file.
+    /// 1-based line and column in that file, and the byte offset.
     pub line: Option<usize>,
     pub column: Option<usize>,
+    pub offset: Option<usize>,
+    /// The page (1-based, physical) a layout warning is about.
+    pub page: Option<usize>,
     pub hints: Vec<String>,
 }
 
@@ -76,6 +99,34 @@ pub struct Compiled {
 impl Compiled {
     pub fn page_count(&self) -> usize {
         self.document.pages().len()
+    }
+
+    /// The physical page (1-based) each element labelled `label` (`xcpc-problem`,
+    /// `xcpc-tutorial`) starts on, with its metadata's `label` field: where each problem
+    /// begins.
+    pub fn starts(&self, label: &str) -> Vec<(String, usize)> {
+        use typst::introspection::Introspector;
+        let Some(label) = typst::foundations::Label::new(typst::utils::PicoStr::intern(label))
+        else {
+            return Vec::new();
+        };
+        let introspector = self.document.introspector();
+        introspector
+            .query(&typst::foundations::Selector::Label(label))
+            .iter()
+            .filter_map(|c| {
+                let page = introspector.page(c.location()?)?.get();
+                let value = c.get_by_name("value").ok()?;
+                let name = match value {
+                    typst::foundations::Value::Dict(d) => match d.get("label").ok()? {
+                        typst::foundations::Value::Str(s) => s.to_string(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                Some((name, page))
+            })
+            .collect()
     }
 
     /// A fingerprint of what one page (0-based) draws, blind to source positions:
@@ -155,7 +206,7 @@ impl Compiled {
     /// Exports the whole document as PDF.
     pub fn pdf(&self) -> Result<Vec<u8>, Vec<Diagnostic>> {
         typst_pdf::pdf(&self.document, &typst_pdf::PdfOptions::default())
-            .map_err(|errors| errors.iter().map(|d| plain_diagnostic(d)).collect())
+            .map_err(|errors| errors.iter().map(plain_diagnostic).collect())
     }
 }
 
@@ -212,16 +263,31 @@ impl Engine {
         }
     }
 
+    /// Resolves the project's files against `root` from now on.
+    pub fn set_root(&mut self, root: Option<PathBuf>) {
+        self.root = root;
+        self.reset_files();
+    }
+
     /// Forgets cached disk files (call after they change on disk).
     pub fn reset_files(&mut self) {
         self.files.lock().unwrap().clear();
     }
 
-    /// Compiles the main source.
+    /// Compiles the main source. The warnings include content that overflows the text
+    /// area the template declares.
     pub fn compile(&self) -> Result<Compiled, CompileError> {
         let start = Instant::now();
         let warned = typst::compile::<PagedDocument>(self);
-        let warnings = self.diagnostics(&warned.warnings);
+        let mut warnings = self.diagnostics(&warned.warnings);
+        if let Ok(document) = &warned.output {
+            warnings.extend(overflow::check(document).into_iter().map(|o| {
+                let mut d = self.locate(o.span);
+                d.message = o.message;
+                d.page = Some(o.page);
+                d
+            }));
+        }
         match warned.output {
             Ok(document) => Ok(Compiled {
                 document,
@@ -238,27 +304,74 @@ impl Engine {
     fn diagnostics(&self, list: &[SourceDiagnostic]) -> Vec<Diagnostic> {
         list.iter()
             .map(|d| {
-                let mut out = plain_diagnostic(d);
-                if let Some(id) = d.span.id() {
-                    out.file = Some(id.vpath().get_with_slash().to_string());
-                    if let (Some(range), Ok(source)) = (self.range(d.span), self.source(id)) {
-                        let lines = source.lines();
-                        out.line = lines.byte_to_line(range.start).map(|l| l + 1);
-                        out.column = lines.byte_to_column(range.start).map(|c| c + 1);
-                    }
-                }
+                // In a bundled template (a helper the document called), point at the
+                // call in the main source instead: that is the user's code.
+                let main = self.main.id();
+                let span = if d
+                    .span
+                    .id()
+                    .is_some_and(|id| id != main && template(id).is_some())
+                {
+                    d.trace
+                        .iter()
+                        .map(|t| typst::syntax::DiagSpan::from(t.span))
+                        .find(|s| s.id() == Some(main))
+                        .unwrap_or(d.span)
+                } else {
+                    d.span
+                };
+                let mut out = self.locate(span);
+                let plain = plain_diagnostic(d);
+                out.error = plain.error;
+                out.message = plain.message;
+                out.hints = plain.hints;
                 out
             })
             .collect()
     }
 
+    /// A diagnostic without a message at `span`.
+    fn locate(&self, span: impl Into<typst::syntax::DiagSpan>) -> Diagnostic {
+        let span = span.into();
+        let mut out = Diagnostic {
+            error: false,
+            message: String::new(),
+            file: None,
+            line: None,
+            column: None,
+            offset: None,
+            page: None,
+            hints: Vec::new(),
+        };
+        if let Some(id) = span.id() {
+            out.file = Some(id.vpath().get_with_slash().to_string());
+            if let (Some(range), Ok(source)) = (self.range(span), self.source(id)) {
+                let lines = source.lines();
+                out.offset = Some(range.start);
+                out.line = lines.byte_to_line(range.start).map(|l| l + 1);
+                out.column = lines.byte_to_column(range.start).map(|c| c + 1);
+            }
+        }
+        out
+    }
+
+    /// A file of the project, if it is inside the root, links followed.
     fn read_disk(&self, id: FileId) -> FileResult<Bytes> {
         let root = self.root.as_deref().ok_or_else(|| not_found(id))?;
         let path = id
             .vpath()
             .realize(root)
             .map_err(|_| FileError::AccessDenied)?;
-        std::fs::read(&path)
+        let real = path
+            .canonicalize()
+            .map_err(|e| FileError::from_io(e, &path))?;
+        let real_root = root
+            .canonicalize()
+            .map_err(|e| FileError::from_io(e, root))?;
+        if !real.starts_with(&real_root) {
+            return Err(FileError::AccessDenied);
+        }
+        std::fs::read(&real)
             .map(Bytes::new)
             .map_err(|e| FileError::from_io(e, &path))
     }
@@ -271,6 +384,8 @@ fn plain_diagnostic(d: &SourceDiagnostic) -> Diagnostic {
         file: None,
         line: None,
         column: None,
+        offset: None,
+        page: None,
         hints: d.hints.iter().map(|h| h.v.to_string()).collect(),
     }
 }

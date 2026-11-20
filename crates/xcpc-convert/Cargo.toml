@@ -1,0 +1,16 @@
+[package]
+name = "xcpc-convert"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+xcpc-domain.workspace = true
+pulldown-cmark.workspace = true
+mitex.workspace = true
+xcpc-storage.workspace = true
+xcpc-engine.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
