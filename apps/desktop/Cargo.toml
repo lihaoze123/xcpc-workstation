@@ -8,3 +8,6 @@ publish.workspace = true
 nsh-core.workspace = true
 nsh-base.workspace = true
 xcpc-engine.workspace = true
+xcpc-storage.workspace = true
+xcpc-convert.workspace = true
+xcpc-domain.workspace = true

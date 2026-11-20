@@ -6,7 +6,7 @@
 
 `olymp-classic` 的**唯一基准**是 [`lihaoze123/polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)，固定在 commit `10f99594ff6a92e73c96f1f4ae235717049c8446`。这个仓库是 `GassaFM/olymp.sty` 加上中文适配。
 
-- **基准 PDF**：用该 commit 的 `olymp.sty` 和 `ctexart` 模板，通过 `tectonic` 编译生成（`scripts/build-olymp-ref.sh`），和对应的 Typst 源文件一起存放在 `tests/fixtures/olymp-ref/<用例>/`。生成时 `ctexart` 使用 `fontset=founder`，并把 fontconfig 限定为锁定的字体，确保和引擎读取同一套字体文件。
+- **基准 PDF**：用该 commit 的 `olymp.sty` 和 `ctexart` 模板，通过 `tectonic` 编译生成（`scripts/build-olymp-ref.sh`），存放在 `tests/fixtures/olymp-ref/<用例>/`。同一目录下有两份内容相同的输入：参考模板的 Markdown（`contest.md`、`problems/`）和我们的工作区（`workspace/`，由 `scripts/fixture-to-workspace.py` 转换得到）。回归比较的是工作区经过完整链路（Markdown 转换 → `olymp-classic`）出的 PDF。生成时 `ctexart` 使用 `fontset=founder`，并把 fontconfig 限定为锁定的字体，确保和引擎读取同一套字体文件。
 - **验收标准：看起来一样。** 把同一份内容的基准 PDF 和我们的 PDF 逐页并排对照，版式、字体、字号、层级、间距的比例都一致，正常阅读时看不出差别。**不要求**逐点重合：TeX 和 Typst 的断行、行距计算、数学排版本来就不同，这些差异予以尊重，不去模拟。但也不能差得太远：页眉、页脚、题头、表格这些固定元素的位置，应当和基准基本重合。
 - **冲突时的处理**：本文的描述与基准 PDF 不一致时，以基准 PDF 为准，并修正本文。
 
@@ -24,7 +24,8 @@
 - 版心（`olymp.sty`，纵向 12pt）：`\textwidth=175mm`、`\textheight=245mm`、`\hoffset=-20mm`、`\voffset=-35mm`、`\headheight=2cm`、`\headsep=6mm`。
 - **页眉**：左侧赛名，右侧日期；下方间隔 `2pt` 后是一条 `\hrule`（0.4pt）。封面页不显示页眉（`\thispagestyle{empty}`）。
 - **页脚**：一条 `\hrule`，间隔 `6pt` 后用无衬线字体居中显示 `Page X of Y`。**中文模式下也是 `Page X of Y`**，因为 `\kw@Page` 和 `\kw@of` 在中文模式下没有翻译。封面的页码计为 0，所以第一道题从第 1 页开始。
-- 每道题结束后另起一页（`\clearpage`）。可选的 `intentionallyblankpages` 会在奇偶页需要时插入「此页故意留白」。
+- 每道题结束后另起一页（`\clearpage`）。可选的 `intentionallyblankpages`（`contest.toml` 的 `blank-pages`）让每道题从奇数页开始，空出的偶数页在版心正中用 `\LARGE` 写「此页故意留白」；最后一题之后同样补齐，所以整本是偶数页。
+- **单题**：与参考模板的独立题面（`problem.template.tex`）一致，页眉左侧是「题面预览」（英文题面留空），右侧没有日期，没有封面，题号是 A。
 
 ### 1.3 题头与限制表
 
@@ -33,12 +34,14 @@
 - 中文模式下的字段名（不带冒号）依次为：`输入文件` / `输出文件`（文件名用等宽字体）、`时间限制`、`内存限制`。还可以加 `题目作者`、`题目开发者`、`题目来源`。
 - `show-metadata = false` 时整张限制表都不显示。参考模板的 Polygon 模板（`statements.ftl`）默认就是隐藏的。
 - 正文字号 `\normalsize`，首行缩进 `2em`。
+- **限制的写法**：`problem.toml` 里写 `time = "1s"`、`memory = "256MB"`，出版时按语言写成 `1 秒` / `256 MB`（中文）或 `1 second` / `256 megabytes`（英文），与参考模板的用例一致；不认识的写法原样输出。没有写输入输出文件名时显示 `标准输入` / `标准输出`（`standard input` / `standard output`）。
 
 ### 1.4 章节标题
 
 - 字号 `\Large`，粗体无衬线，前面留 `\smallbreak\smallskip`，后面留 `\smallskip`，并且禁止在标题后分页（Typst 中对应 `sticky: true`）。
 - 中文关键词：`输入格式`、`输出格式`、`交互`、`样例`、`样例解释`、`提示`、`评分`、`约束`、`子任务 N`、`背景知识`、`题目要求`、`图表说明`。
-- 中文模式把 `\le` / `\ge` 替换为 `\leqslant` / `\geqslant`（`⩽` / `⩾`）。
+- 中文模式把 `\le` / `\ge` 替换为 `\leqslant` / `\geqslant`（`⩽` / `⩾`）。替换后的符号仍是关系符（`math.class("relation", …)`），否则紧跟在 `)` 或上标后面时会丢掉两侧的间距。
+- **数学公式**：Markdown 里的 TeX 公式由 `mitex` 转成 Typst 数学代码，在 MiTeX 的作用域里求值。这个作用域（MiTeX 0.2.4 的 `specs/`，Apache-2.0）随引擎内嵌在 `/xcpc/mitex/`，只改了两处：不依赖 `@preview/xarrow` 包，以及去掉 Typst 0.15 已删除的 `kai` 符号。
 
 ### 1.5 样例表
 
@@ -88,6 +91,11 @@
 ## 3. 题解册
 
 题解只输出 **A4 文字版**，沿用 `olymp-classic` 的版式，题头关键词用 `Problem Tutorial` 或 `题目解答`。每题一节，内容来自 `editorial.md`。**不做幻灯片。**
+
+- 按 `olymp.sty` 的 `tutorial` 环境排：前面空 `\bigskip`，题头是 `\LARGE` 粗体无衬线的 `题目解答: “题名”`（英文 `Problem Tutorial: “Title”`），不带题号；各题之间不分页。
+- 页眉、页脚与题面相同，没有封面，也不插入留白页。没有 `editorial.md` 的题跳过，并给出警告。
+- 题解里的二级标题都按普通小节输出，不做章节识别。
+- 参考模板只有 Beamer 版题解，没有 A4 题解的基准 PDF，所以题解册暂不做视觉回归。
 
 ## 4. 题面体检与印刷前预检（`xcpc-lint`，Phase 2）
 

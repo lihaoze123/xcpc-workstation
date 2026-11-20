@@ -1,0 +1,8 @@
+title = "集邮"
+rating = 800
+tags = ["implementation"]
+author = "示例"
+
+[limits]
+time = "1s"
+memory = "256MB"

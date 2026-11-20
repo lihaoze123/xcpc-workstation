@@ -74,6 +74,10 @@ id = "CF1999A"
 
 识别出的章节会映射为 `olymp-classic` 的关键词（如 `输入格式`）。无法识别的二级标题按普通小节原样输出。样例章节由模板根据 `samples/` 自动生成。
 
+- **识别的标题**（去掉末尾冒号，英文不分大小写）：`输入`/`输入格式`/`Input`、`输出`/`输出格式`/`Output`、`交互`/`交互协议`/`Interaction`、`提示`/`说明`/`备注`/`Note(s)`/`Hint`、`样例解释`/`样例说明`/`Explanation`、`评分`/`Scoring`、`约束`/`数据范围`/`Constraints`、`背景`/`题目背景`/`Background`、`题目要求`/`Specification`、`图表说明`/`Illustration`、`子任务`/`Subtasks`。`题目描述`/`Description` 会被去掉，因为描述本来就没有标题。完整列表见 `xcpc-convert` 的 `markdown::section`。
+- **样例的位置**：默认放在输入、输出、交互这几节之后，下一个其他章节之前；题面里没有这几节时放在最后。需要放在别处时写一个 `## 样例`（或 `Examples`）标题，样例表就放在那里，标题下面的正文接在表后。`samples/` 为空时不生成样例章节。
+- 三级及更深的标题输出为加粗的段落。配图写相对题目目录的路径（`![](assets/a.png)`），不能指向题目目录之外，也不能是网络地址。
+
 ### 2.2 训练状态（运行时派生）
 
 训练状态**不写进任何内容文件**，在运行时由两部分合并得出：
@@ -84,6 +88,31 @@ id = "CF1999A"
 合并规则是取最高状态：`ac` / `upsolved` > `attempted` > `todo`。任意一个 source 有 AC，这道题就算 AC。
 
 ## 3. 比赛（Contest）
+
+```toml
+# contests/icpc-2026-regional/contest.toml
+name = "ICPC 2026 Regional"
+location = "上海"             # 可选
+date = "2026 年 11 月 20 日"  # 可选，页眉右侧和封面
+author = "命题组"             # 可选，封面作者行，默认「出题人」
+language = "chinese"          # chinese | english
+show-metadata = true          # 限制表，可按题覆写
+cover = true                  # 默认：不少于 2 道题时有封面
+blank-pages = false           # 每题从奇数页开始，空出的偶数页写「此页故意留白」
+frozen = false                # 冻结后只读，从 snapshot/ 渲染
+
+[[problem]]
+id = "cf-1999a"               # 题库中的题目 ID
+label = "A"
+
+[[problem]]
+id = "my-segment-tree-beats"
+label = "B"
+title = "线段树"              # 以下为元数据覆写，都可省略
+show-metadata = false
+[problem.limits]
+time = "2s"
+```
 
 - **活引用**：`contest.toml` 按顺序列出题目 ID 和题号（A/B/C…）。题库中修正一处错别字，所有引用该题且**未冻结**的比赛都会同步更新。
 - **元数据覆写**：可以按题覆写**元数据**，包括 `title`、`limits`（时间、内存、输入输出文件名）、`show-metadata`。**题面正文、样例、配图不能覆写**；需要改动时，在题库里 fork 出一道新题，再在比赛中引用新题。

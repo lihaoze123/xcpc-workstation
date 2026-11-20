@@ -1,0 +1,7 @@
+title = "猜钥匙"
+rating = 1500
+tags = ["interactive", "binary search"]
+
+[limits]
+time = "1s"
+memory = "256MB"

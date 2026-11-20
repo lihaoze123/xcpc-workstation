@@ -1,0 +1,7 @@
+name = "XCPC Open Cup"
+date = "March 8, 2026"
+language = "english"
+
+[[problem]]
+id = "matrix-walk"
+label = "A"
