@@ -56,6 +56,47 @@ const TEMPLATES: &[(&str, &str)] = &[
 /// Path of the main source inside the virtual project.
 const MAIN_PATH: &str = "/main.typ";
 
+#[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+const BUNDLED_FONT_BYTES: &[&[u8]] = &[
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman10-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman10-bold.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman10-italic.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman10-bolditalic.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman12-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman12-bold.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman12-italic.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman17-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans10-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans10-bold.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans10-oblique.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans10-boldoblique.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans12-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans12-oblique.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans17-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmsans17-oblique.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmmono10-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmmono10-italic.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmmono12-regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/latinmodern-math.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Regular.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Italic.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Bold.otf")),
+    include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/fonts/JetBrainsMono-BoldItalic.otf"
+    )),
+];
+
+#[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+fn bundled_fonts() -> impl Iterator<Item = (Font, typst::text::FontInfo)> {
+    BUNDLED_FONT_BYTES.iter().flat_map(|&data| {
+        Font::iter(Bytes::new(data)).map(|font| {
+            let info = font.info().clone();
+            (font, info)
+        })
+    })
+}
+
 /// Where fonts come from.
 #[derive(Debug, Clone, Default)]
 pub struct FontOptions {
@@ -240,6 +281,8 @@ impl Engine {
         for dir in &fonts.dirs {
             store.extend(typst_kit::fonts::scan(dir));
         }
+        #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+        store.extend(bundled_fonts());
         if fonts.system {
             store.extend(typst_kit::fonts::system());
         }

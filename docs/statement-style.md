@@ -64,14 +64,16 @@
 
 | 用途 | 字体 | 来源 |
 | :--- | :--- | :--- |
-| 西文正文 / 标题 / 等宽 | Latin Modern Roman / Sans / Mono（与 XeLaTeX 默认一致） | nixpkgs `lmodern` |
+| 西文正文 / 标题 | Latin Modern Roman / Sans（与 XeLaTeX 默认一致） | nixpkgs `lmodern` |
+| 等宽（样例、文件名与行内代码） | Latin Modern Mono 12（与基准一致） | nixpkgs `lmodern` |
+| 代码块（`raw.where(block: true)`） | JetBrains Mono（带粗体与斜体字形） | nixpkgs `jetbrains-mono` |
 | 数学 | Latin Modern Math（基准实际用的是 Computer Modern Type1：CMR/CMMI/CMSY/MSAM，字形相近，但盒子尺寸和间距略有不同） | nixpkgs `lmodern` |
 | 中文正文（宋体） | 方正书宋 `FZShuSong-Z01` | `foundertype-ctex-fonts` |
 | 中文标题（黑体，含 `\heiti`） | 方正黑体 `FZHei-B01` | 同上 |
 | 中文作者行（楷体，`\kaishu`） | 方正楷体 `FZKai-Z03` | 同上 |
 | 仿宋（`\fangsong`） | 方正仿宋 `FZFangSong-Z02` | 同上 |
 
-- 方正字体包来自 `github:brsvh/chinese-fonts-overlay`，在 `flake.nix` 中锁定版本。开发环境通过 `XCPC_FONT_DIRS` 提供字体目录，引擎**优先**从这些目录加载字体，保证在任何机器上排版结果一致。
+- 方正字体包来自 `github:brsvh/chinese-fonts-overlay`，在 `flake.nix` 中锁定版本。开发环境通过 `XCPC_FONT_DIRS` 提供字体目录，引擎**优先**从这些目录加载字体，保证在任何机器上排版结果一致；release 构建同时内嵌 Latin Modern 与 JetBrains Mono 字体作为兜底。
 - 运行时如果找不到上述字体，回退到系统字体（`fontdb`）中的思源宋体 / 思源黑体，并在诊断信息中给出警告。
 
 ## 2. 主题定制
@@ -99,7 +101,7 @@
 - **页眉**：左侧赛名（单题时为「题解」），右侧本页所属的题，如「B　灯笼街」。
 - **题头**：题号与题名之间空 1em，`\LARGE` 粗体无衬线。下方空 `2\smallskip` 是一行 `\small` 浅灰无衬线的元信息：作者（「作者 X」/ `by X`）、标签、来源（如 `Codeforces 1999A`），各项之间只空 1.5em；没有元信息时不占行。不印 rating。题头之后空 `2\bigskip` 接正文。
 - **正文**：字号、行距、首行缩进与题面相同。`##` 是 `\large` 粗体无衬线的小节，比题面册的小节低一级，前空 `\bigskip`、后空 `\smallskip`；`###` 及更深的标题像 `\paragraph` 一样与段落同行起头（粗体，后空 1em）。题解里不做章节识别。
-- **代码块**：等宽、`\small`，整体缩进一个段首缩进（2em），不加底色、线和行号，可以跨页。单色高亮（`templates/mono.tmTheme`）：关键字粗体，注释斜体深灰，其余黑色，黑白打印同样清楚。
+- **代码块**：等宽（JetBrains Mono）、`\small`，整体缩进一个段首缩进（2em），不加底色、线和行号，可以跨页。单色高亮（`templates/mono.tmTheme`）：关键字粗体，注释斜体深灰，其余黑色，黑白打印同样清楚。
 - **引用块**：按 LaTeX `quote` 环境，左右各缩进 `\leftmargini`（2.5em），首行不再缩进。
 - **表格**：不加线，表头粗体。
 - 中文粗体用方正黑体、斜体用方正楷体，与 ctex `fontset=founder` 一致（题面册同样如此）。

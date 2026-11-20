@@ -20,7 +20,7 @@
 ## 开发环境与命令
 
 - 用 `nix develop` 进入开发环境（direnv 会通过 `.envrc` 自动加载）。环境提供 fenix stable Rust、clang/cmake/pkg-config、**NSH 0.6.0**、`tectonic`，以及 Linux 上的 GTK4/WebKitGTK/GStreamer。
-- **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern 和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
+- **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体；release 构建同时内嵌 Latin Modern 与 JetBrains Mono。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
 - NSH CLI：`nsh init`（本项目用 `--template mixed`）、`nsh dev`、`nsh run --target …`、`nsh check`（`nsh.json` 声明了 `"rust"` 时会先跑 `cargo check`）、`nsh test`（先跑 Rust 的 `cargo test`，再无头运行 `*.test.tsx`）、`nsh build`、`nsh package`。细节用 `nsh <cmd> --help` 查看。查 NSH 的 API 时读 `.nsh/types/nsh/{index,base}.d.ts`；那里只有 JS 侧的接口，Rust 侧还有更多（文件对话框、在文件管理器中显示等），查 `~/.cargo/registry/src/*/nsh-core-0.6.0/src`。
 - 依赖 `XCPC_FONT_DIRS` 的命令（`xcpc`、`nsh test`、`nsh dev`）要在开发环境里运行；不在 direnv 下时用 `nix develop -c <cmd>`。
 - 依赖的 `opt-level = 2` 写在 `.cargo/config.toml` 而不是 `Cargo.toml`：`nsh` 为桌面宿主生成的 `apps/desktop/.nsh/rust` 是另一个 workspace，读不到根 `Cargo.toml` 的 profile。

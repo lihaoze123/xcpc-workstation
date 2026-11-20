@@ -139,6 +139,7 @@
           # olymp.sty reference PDFs (built with tectonic) read the very same files.
           statementFonts = [
             pkgs.lmodern
+            pkgs.jetbrains-mono
             chinese-fonts-overlay.packages.${system}.foundertype-ctex-fonts
           ];
           # Only the pinned fonts: no /etc/fonts, no user or profile directories.
