@@ -1,0 +1,15 @@
+name = "XCPC Workstation Open Cup"
+location = "Shanghai"
+date = "November 20, 2026"
+author = "Problem Setters"
+language = "english"
+show-metadata = true
+
+[[problem]]
+id = "contest-en-a"
+label = "A"
+
+[[problem]]
+id = "contest-en-b"
+label = "B"
+show-metadata = false
