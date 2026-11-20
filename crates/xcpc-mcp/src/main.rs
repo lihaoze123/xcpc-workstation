@@ -1,21 +1,38 @@
-//! `xcpc`: the headless entry point (CLI now, `xcpc mcp` later).
+//! `xcpc`: the headless entry point, a shell over the Core crates.
 //!
-//! Exit codes: 0 success, 1 compilation errors, 2 usage or I/O errors.
+//! - `xcpc build|check|render <problem|contest> <id>`: publish from the workspace;
+//! - `xcpc list`, `xcpc fonts`;
+//! - `xcpc mcp`: the same over MCP (stdio).
+//!
+//! With `--json`, stdout carries one JSON object. Exit codes: 0 success, 1 the
+//! document has errors, 2 usage, workspace or I/O errors.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use xcpc_engine::{Compiled, Diagnostic, Engine, FontOptions};
+use serde_json::json;
+use xcpc_convert::publish::{self, Kind, Report, Target};
+use xcpc_domain::Language;
+use xcpc_engine::{Engine, FontOptions};
+use xcpc_storage::Workspace;
+
+mod mcp;
 
 #[derive(Parser)]
 #[command(name = "xcpc", version, about = "XCPC Workstation command line")]
 struct Cli {
-    /// Print machine-readable JSON on stdout.
+    /// Print one machine-readable JSON object on stdout.
     #[arg(long, global = true)]
     json: bool,
+    /// The workspace (default: $XCPC_WORKSPACE, else the one the current directory is in).
+    #[arg(long, short, global = true)]
+    workspace: Option<PathBuf>,
+    /// Refuse every write to the workspace.
+    #[arg(long, global = true)]
+    read_only: bool,
     /// Also use the operating system's fonts (after XCPC_FONT_DIRS).
     #[arg(long, global = true)]
     system_fonts: bool,
@@ -25,19 +42,30 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Compile a Typst file and report diagnostics; optionally write a PDF.
-    Compile {
-        input: PathBuf,
-        /// Write the PDF here.
-        #[arg(long)]
-        pdf: Option<PathBuf>,
-    },
-    /// Compile a Typst file and render pages to PNG.
-    Render {
-        input: PathBuf,
-        /// Output directory; pages are written as `page-<n>.png` (1-based).
+    /// Typeset a problem or a contest and write its PDF.
+    Build {
+        #[command(flatten)]
+        what: What,
+        /// Write the PDF here (default: build/<id>.pdf in the workspace).
         #[arg(long, short)]
-        out: PathBuf,
+        out: Option<PathBuf>,
+        /// Also write the generated Typst source here.
+        #[arg(long)]
+        emit_typst: Option<PathBuf>,
+    },
+    /// Typeset and report diagnostics, pages and overflows; write nothing.
+    Check {
+        #[command(flatten)]
+        what: What,
+    },
+    /// Typeset and render pages to PNG.
+    Render {
+        #[command(flatten)]
+        what: What,
+        /// Output directory (default: build/<id>/ in the workspace); pages are
+        /// `page-<n>.png` (1-based).
+        #[arg(long, short)]
+        out: Option<PathBuf>,
         /// Pixels per point (2.0 ≈ 144 dpi).
         #[arg(long, default_value_t = 2.0)]
         scale: f32,
@@ -45,180 +73,307 @@ enum Command {
         #[arg(long)]
         page: Option<usize>,
     },
+    /// List the workspace's problems and contests.
+    List,
     /// List the font families the engine sees.
     Fonts,
+    /// Serve MCP on stdin and stdout.
+    Mcp,
 }
 
-#[derive(Serialize)]
-struct Report {
-    ok: bool,
-    pages: Option<usize>,
-    compile_ms: Option<u128>,
-    errors: Vec<JsonDiagnostic>,
-    warnings: Vec<JsonDiagnostic>,
-    outputs: Vec<PathBuf>,
+#[derive(Args)]
+struct What {
+    kind: TargetKind,
+    id: String,
+    /// The editorial book instead of the statements.
+    #[arg(long)]
+    editorial: bool,
+    /// The language to set a single problem in (a contest has its own).
+    #[arg(long)]
+    language: Option<Lang>,
 }
 
-#[derive(Serialize)]
-struct JsonDiagnostic {
-    message: String,
-    file: Option<String>,
-    line: Option<usize>,
-    column: Option<usize>,
-    hints: Vec<String>,
+#[derive(Clone, Copy, ValueEnum)]
+enum TargetKind {
+    Problem,
+    Contest,
 }
 
-impl From<&Diagnostic> for JsonDiagnostic {
-    fn from(d: &Diagnostic) -> Self {
-        Self {
-            message: d.message.clone(),
-            file: d.file.clone(),
-            line: d.line,
-            column: d.column,
-            hints: d.hints.clone(),
+#[derive(Clone, Copy, ValueEnum)]
+enum Lang {
+    Chinese,
+    English,
+}
+
+impl What {
+    fn target(&self) -> Target {
+        match self.kind {
+            TargetKind::Problem => Target::Problem(self.id.clone()),
+            TargetKind::Contest => Target::Contest(self.id.clone()),
         }
     }
+
+    fn kind(&self) -> Kind {
+        if self.editorial {
+            Kind::Editorial
+        } else {
+            Kind::Statements
+        }
+    }
+
+    fn language(&self) -> Option<Language> {
+        self.language.map(|l| match l {
+            Lang::Chinese => Language::Chinese,
+            Lang::English => Language::English,
+        })
+    }
+}
+
+/// An error with a machine-readable code.
+#[derive(Debug)]
+struct Fatal {
+    code: &'static str,
+    message: String,
+}
+
+impl From<xcpc_storage::Error> for Fatal {
+    fn from(e: xcpc_storage::Error) -> Self {
+        Fatal {
+            code: e.code(),
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<anyhow::Error> for Fatal {
+    fn from(e: anyhow::Error) -> Self {
+        match e.downcast::<xcpc_storage::Error>() {
+            Ok(e) => e.into(),
+            Err(e) => Fatal {
+                code: "failed",
+                message: format!("{e:#}"),
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Output {
+    #[serde(flatten)]
+    report: Report,
+    outputs: Vec<String>,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli) {
-        Ok(report) => {
-            let ok = report.ok;
-            print_report(&cli, &report);
-            if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
-        }
-        Err(err) => {
+        Ok(code) => code,
+        Err(e) => {
             if cli.json {
-                println!("{}", serde_json::json!({ "ok": false, "fatal": format!("{err:#}") }));
+                println!(
+                    "{}",
+                    json!({ "ok": false, "error": { "code": e.code, "message": e.message } })
+                );
             } else {
-                eprintln!("error: {err:#}");
+                eprintln!("error: {}", e.message);
             }
             ExitCode::from(2)
         }
     }
 }
 
-fn run(cli: &Cli) -> Result<Report> {
-    let input = match &cli.command {
-        Command::Compile { input, .. } | Command::Render { input, .. } => input,
-        Command::Fonts => {
-            let mut fonts = FontOptions::from_env();
-            fonts.system |= cli.system_fonts;
-            for (family, faces) in Engine::new(&fonts, None).font_families() {
-                println!("{family}\t{faces}");
-            }
-            std::process::exit(0);
-        }
-    };
-    let compiled = compile(input, cli.system_fonts)?;
-    let mut compiled = match compiled {
-        Ok(c) => c,
-        Err(report) => return Ok(report),
-    };
-    match &cli.command {
-        Command::Compile { pdf, .. } => {
-            if let Some(path) = pdf {
-                let bytes = compiled.document.pdf().map_err(|errors| {
-                    anyhow::anyhow!("PDF export failed: {}", errors[0].message)
-                })?;
-                write_atomic(path, &bytes)?;
-                compiled.report.outputs.push(path.clone());
-            }
-        }
-        Command::Fonts => unreachable!("handled above"),
-        Command::Render { out, scale, page, .. } => {
-            std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
-            let pages: Vec<usize> = match page {
-                Some(p) => vec![p.checked_sub(1).context("pages are 1-based")?],
-                None => (0..compiled.document.page_count()).collect(),
-            };
-            for index in pages {
-                let png = compiled
-                    .document
-                    .render_png(index, *scale)
-                    .with_context(|| format!("no page {}", index + 1))?;
-                let path = out.join(format!("page-{}.png", index + 1));
-                write_atomic(&path, &png)?;
-                compiled.report.outputs.push(path);
-            }
-        }
-    }
-    Ok(compiled.report)
-}
-
-struct Success {
-    document: Compiled,
-    report: Report,
-}
-
-fn compile(input: &Path, system_fonts: bool) -> Result<Result<Success, Report>> {
-    let text = std::fs::read_to_string(input)
-        .with_context(|| format!("reading {}", input.display()))?;
-    let root = input
-        .canonicalize()
-        .with_context(|| format!("resolving {}", input.display()))?
-        .parent()
-        .map(Path::to_path_buf);
+fn fonts(cli: &Cli) -> FontOptions {
     let mut fonts = FontOptions::from_env();
-    fonts.system |= system_fonts;
-    let mut engine = Engine::new(&fonts, root);
-    engine.set_main(&text);
-    Ok(match engine.compile() {
-        Ok(document) => {
-            let report = Report {
-                ok: true,
-                pages: Some(document.page_count()),
-                compile_ms: Some(document.duration.as_millis()),
-                errors: vec![],
-                warnings: document.warnings.iter().map(Into::into).collect(),
-                outputs: vec![],
-            };
-            Ok(Success { document, report })
-        }
-        Err(err) => Err(Report {
-            ok: false,
-            pages: None,
-            compile_ms: None,
-            errors: err.errors.iter().map(Into::into).collect(),
-            warnings: err.warnings.iter().map(Into::into).collect(),
-            outputs: vec![],
-        }),
-    })
+    fonts.system |= cli.system_fonts;
+    fonts
 }
 
-fn print_report(cli: &Cli, report: &Report) {
-    if cli.json {
-        println!("{}", serde_json::to_string_pretty(report).expect("serializable report"));
-        return;
+fn open_workspace(cli: &Cli) -> Result<Workspace, Fatal> {
+    let ws = match (&cli.workspace, std::env::var_os("XCPC_WORKSPACE")) {
+        (Some(dir), _) => Workspace::open(dir, cli.read_only)?,
+        (None, Some(dir)) => Workspace::open(dir, cli.read_only)?,
+        (None, None) => Workspace::discover(".", cli.read_only)?,
+    };
+    Ok(ws)
+}
+
+fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
+    match &cli.command {
+        Command::Fonts => {
+            let families = Engine::new(&fonts(cli), None).font_families();
+            if cli.json {
+                let list: Vec<_> = families
+                    .iter()
+                    .map(|(f, n)| json!({ "family": f, "faces": n }))
+                    .collect();
+                println!("{}", json!({ "ok": true, "fonts": list }));
+            } else {
+                for (family, faces) in families {
+                    println!("{family}\t{faces}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::List => {
+            let ws = open_workspace(cli)?;
+            let problems = ws.list_problems()?;
+            let contests = ws.list_contests()?;
+            if cli.json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "problems": problems, "contests": contests })
+                );
+            } else {
+                for id in problems {
+                    println!("problem\t{id}");
+                }
+                for id in contests {
+                    println!("contest\t{id}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Mcp => {
+            let ws = open_workspace(cli)?;
+            mcp::serve(ws, fonts(cli)).map_err(Fatal::from)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Build {
+            what,
+            out,
+            emit_typst,
+        } => {
+            let ws = open_workspace(cli)?;
+            let target = what.target();
+            let doc = publish::document(&ws, &target, what.kind(), what.language())?;
+            if let Some(path) = emit_typst {
+                xcpc_storage::write_atomic(path, doc.source.as_bytes())
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+            let mut engine = publish::engine(&ws, &fonts(cli));
+            let (compiled, report) = publish::compile(&mut engine, &doc);
+            let mut outputs = Vec::new();
+            if let (Some(compiled), true) = (compiled, report.ok) {
+                let pdf = compiled
+                    .pdf()
+                    .map_err(|e| anyhow::anyhow!("PDF export failed: {}", e[0].message))?;
+                outputs.push(write_output(
+                    &ws,
+                    out.as_ref(),
+                    &publish::default_output(&target, what.kind()),
+                    &pdf,
+                )?);
+            }
+            Ok(finish(cli, Output { report, outputs }))
+        }
+        Command::Check { what } => {
+            let ws = open_workspace(cli)?;
+            let doc = publish::document(&ws, &what.target(), what.kind(), what.language())?;
+            let mut engine = publish::engine(&ws, &fonts(cli));
+            let (_, report) = publish::compile(&mut engine, &doc);
+            Ok(finish(
+                cli,
+                Output {
+                    report,
+                    outputs: Vec::new(),
+                },
+            ))
+        }
+        Command::Render {
+            what,
+            out,
+            scale,
+            page,
+        } => {
+            let ws = open_workspace(cli)?;
+            let target = what.target();
+            let doc = publish::document(&ws, &target, what.kind(), what.language())?;
+            let mut engine = publish::engine(&ws, &fonts(cli));
+            let (compiled, report) = publish::compile(&mut engine, &doc);
+            let mut outputs = Vec::new();
+            if let Some(compiled) = compiled {
+                let pages: Vec<usize> = match page {
+                    Some(p) => vec![p.checked_sub(1).context("pages are 1-based")?],
+                    None => (0..compiled.page_count()).collect(),
+                };
+                let dir = match what.kind() {
+                    Kind::Statements => format!("build/{}", target.id()),
+                    Kind::Editorial => format!("build/{}-editorial", target.id()),
+                };
+                for index in pages {
+                    let png = compiled
+                        .render_png(index, *scale)
+                        .with_context(|| format!("there is no page {}", index + 1))?;
+                    let name = format!("page-{}.png", index + 1);
+                    let path = out.as_ref().map(|d| d.join(&name));
+                    outputs.push(write_output(
+                        &ws,
+                        path.as_ref(),
+                        &format!("{dir}/{name}"),
+                        &png,
+                    )?);
+                }
+            }
+            Ok(finish(cli, Output { report, outputs }))
+        }
     }
-    for (kind, list) in [("error", &report.errors), ("warning", &report.warnings)] {
-        for d in list {
-            let at = match (&d.file, d.line, d.column) {
-                (Some(f), Some(l), Some(c)) => format!("{f}:{l}:{c}: "),
-                (Some(f), _, _) => format!("{f}: "),
-                _ => String::new(),
-            };
-            eprintln!("{kind}: {at}{}", d.message);
+}
+
+/// Writes to `explicit` (a path the user gave, anywhere), else to `default` in the
+/// workspace (atomic, sandboxed, refused when read-only).
+fn write_output(
+    ws: &Workspace,
+    explicit: Option<&PathBuf>,
+    default: &str,
+    bytes: &[u8],
+) -> Result<String, Fatal> {
+    match explicit {
+        Some(path) => {
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("creating {}", dir.display()))?;
+            }
+            xcpc_storage::write_atomic(path, bytes)
+                .with_context(|| format!("writing {}", path.display()))?;
+            Ok(path.display().to_string())
+        }
+        None => {
+            ws.write(default, bytes)?;
+            Ok(ws.root().join(default).display().to_string())
+        }
+    }
+}
+
+fn finish(cli: &Cli, out: Output) -> ExitCode {
+    let ok = out.report.ok;
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).expect("serializable")
+        );
+    } else {
+        for d in &out.report.diagnostics {
+            eprintln!("{}", d.display());
             for hint in &d.hints {
                 eprintln!("  hint: {hint}");
             }
         }
+        if let Some(pages) = out.report.pages {
+            eprintln!("{pages} page(s) in {} ms", out.report.compile_ms);
+        }
+        for p in &out.report.problems {
+            eprintln!(
+                "  {} {}: page {} ({} page(s))",
+                p.label, p.id, p.first, p.count
+            );
+        }
+        for path in &out.outputs {
+            eprintln!("wrote {path}");
+        }
     }
-    if let (Some(pages), Some(ms)) = (report.pages, report.compile_ms) {
-        eprintln!("{pages} page(s) in {ms} ms");
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
-    for path in &report.outputs {
-        eprintln!("wrote {}", path.display());
-    }
-}
-
-/// Writes through a temporary file in the same directory, then renames over `path`.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let name = path.file_name().context("output path has no file name")?;
-    let tmp = dir.join(format!(".{}.tmp-{}", name.to_string_lossy(), std::process::id()));
-    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("renaming to {}", path.display()))?;
-    Ok(())
 }

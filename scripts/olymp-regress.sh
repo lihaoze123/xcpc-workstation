@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Compile every olymp fixture with `xcpc` and set each page beside its reference.
+# Build every olymp fixture's workspace with `xcpc` (workspace → Markdown → Typst → PDF)
+# and set each page beside its reference.
 #
 #   scripts/olymp-regress.sh [OUT_DIR] [fixture-name...]
 #
@@ -18,7 +19,7 @@ cargo build -q -p xcpc-mcp
 status=0
 for n in "${names[@]}"; do
   dir=tests/fixtures/olymp-ref/$n
-  ./target/debug/xcpc compile "$dir/main.typ" --pdf "$out/$n.pdf" 2>/dev/null
+  ./target/debug/xcpc -w "$dir/workspace" --read-only build contest "$n" -o "$out/$n.pdf" 2>/dev/null
   ref_pages=$(pdfinfo "$dir/reference.pdf" | awk '/^Pages:/{print $2}')
   our_pages=$(pdfinfo "$out/$n.pdf" | awk '/^Pages:/{print $2}')
   if [[ $ref_pages != "$our_pages" ]]; then
