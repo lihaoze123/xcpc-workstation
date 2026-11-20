@@ -52,6 +52,16 @@
 - 比赛组卷：活引用、元数据覆写、难度和页数统计、冻结与人工解冻。
 - 完整的出版工作室：大纲、预览 HUD、`Cmd+K`。
 - `xcpc-lint`；补齐 MCP 的题库、组卷和体检工具；GUI 实时联动。
+- **现有桌面端隐患（Phase 2 统一修复）**：
+  1. 切题/切题解闪白：`apps/desktop/App.tsx` `choose()` 提前清空 `pages` 和 `zoom`，需改为 SWR 保留旧页直至新首帧到达，并按 `(target, id, book)` 记忆 `{ zoom, scrollY, panX }`。
+  2. 滚动/缩放重复读盘与编译：`apps/desktop/src/lib.rs` `State::run` 在仅 `scale`/`view` 变化触发 `due()` 时未复用上次 `Compiled`，需缓存 `Compiled` 直进 `rasterize()`。
+  3. 全文档指纹开销：`apps/desktop/src/lib.rs` 每次请求遍历全部页算 `page_fingerprint(i)`（122 页约 3ms），需改为仅对视口附近页按需懒计算。
+  4. 像素缓存过小且无任务取消：`apps/desktop/src/lib.rs` `PIXELS` 仅保留最近 2 次结果，翻页或反复缩放易驱逐重画，需升级为字节预算 LRU（64–128MB，优先保 `BASE_SCALE` 整页层）+ `AtomicU64` 代数计数器取消过期瓦片任务。
+  5. 缩放提交边角核验：核对 `apps/desktop/App.tsx` `commitZoom()` 在文档末尾附近放大时 `zoom.set` 与 `scrollTo` 是否稳定同帧提交。
+- **桌面端流畅度与 `safay` 风格落地**：
+  - 统一自绘顶栏（`TitleBarStyle::Hidden` + `.window_drag(true)`）、`<ResizablePanelGroup>`、原生帧时钟 `scrollTo({ animated: true })` 比赛内跳页、嵌套横向 `<Scroll>` 惯性平移；
+  - `notify` 热刷新时通过 `EditorRef` 原地更新并保留光标与滚动位置，禁止重建 `<Editor>`；
+  - 全面落地 [design-system.md §8.3](./design-system.md#83-nsh-06-linux-实践与避坑参考-giceksafay) 的零抖动微交互规范；后期按需补充 `tinymist` 风格双向源码↔预览同步（复用 `SourceMap` + `PagedDocument` `Span` + `EditorRef`）。
 
 ## Phase 3：训练与生态
 
@@ -70,10 +80,7 @@
 - Phase 5：参考 Hull 的声明式本地 Polygon（`wasmtime` 沙箱）。
 - 「最近打开的工作区」菜单（现在只记上一个），与完善 UI/UX 一起做。
 - 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到）：
-  - 100 页以上的文档每次编辑的增量编译要 45ms 以上：看 Typst 能否只从改动的那页往后重新分页，或者整本预览时只编译当前题。
-  - 每次请求都给所有页算指纹（122 页约 3ms），可以只算视口附近的页。
-  - 待确认：文档末尾附近 Ctrl + 滚轮放大时，`scrollTo` 是否先按旧的内容高度截断了范围（表现为跳动）。
-  - 横向平移没有惯性：可以嵌套一个横向 `<Scroll>`，或等 NSH 的 Linux 后端支持 `<Scroll>` 缩放。
+  - 100 页以上的文档每次编辑的增量编译要 45ms 以上：看 Typst 能否只从改动的那页往后重新分页，或者整本预览时只编译当前题（单题聚焦预览）。
   - 若以后要矢量预览：tinymist 的做法是 reflexo 矢量中间表示加 WGPU/Vello 绘制（`tinymist-viewer`），NSH 在 Linux 上的 `svg()`/`Painter` 是 UI 线程上的 Cairo 重放，不适合。
 
 ## 备选路线：真 TeX + rtex（已验证，暂不采用）
