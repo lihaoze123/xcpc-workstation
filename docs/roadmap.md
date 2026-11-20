@@ -45,28 +45,72 @@
 
 **明确推迟**：SQLite FTS5、`notify` 监听、LaTeX 输入、JSON Schema 和工作区 `AGENTS.md` 生成、`search_problems` / `upsert_problem`。
 
-## Phase 2：题库中心 + 组卷 + 出版工作室 + Linter
+## Phase 2：组卷 + 出版工作室 + 题库中心
 
-- 引入 `notify` 监听、FTS5 索引、JSON Schema 和工作区 `AGENTS.md`。
-- 题库中心：多维筛选，查看题解和代码，显示派生出的训练状态。
-- 比赛组卷：活引用、元数据覆写、难度和页数统计、冻结与人工解冻。
-- 完整的出版工作室：大纲、预览 HUD、`Cmd+K`。
-- `xcpc-lint`；补齐 MCP 的题库、组卷和体检工具；GUI 实时联动。
-- **现有桌面端隐患（Phase 2 统一修复）**：
-  1. 切题/切题解闪白：`apps/desktop/App.tsx` `choose()` 提前清空 `pages` 和 `zoom`，需改为 SWR 保留旧页直至新首帧到达，并按 `(target, id, book)` 记忆 `{ zoom, scrollY, panX }`。
-  2. 滚动/缩放重复读盘与编译：`apps/desktop/src/lib.rs` `State::run` 在仅 `scale`/`view` 变化触发 `due()` 时未复用上次 `Compiled`，需缓存 `Compiled` 直进 `rasterize()`。
-  3. 全文档指纹开销：`apps/desktop/src/lib.rs` 每次请求遍历全部页算 `page_fingerprint(i)`（122 页约 3ms），需改为仅对视口附近页按需懒计算。
-  4. 像素缓存过小且无任务取消：`apps/desktop/src/lib.rs` `PIXELS` 仅保留最近 2 次结果，翻页或反复缩放易驱逐重画，需升级为字节预算 LRU（64–128MB，优先保 `BASE_SCALE` 整页层）+ `AtomicU64` 代数计数器取消过期瓦片任务。
-  5. 缩放提交边角核验：核对 `apps/desktop/App.tsx` `commitZoom()` 在文档末尾附近放大时 `zoom.set` 与 `scrollTo` 是否稳定同帧提交。
-- **桌面端流畅度与 `safay` 风格落地**：
-  - 统一自绘顶栏（`TitleBarStyle::Hidden` + `.window_drag(true)`）、`<ResizablePanelGroup>`、原生帧时钟 `scrollTo({ animated: true })` 比赛内跳页、嵌套横向 `<Scroll>` 惯性平移；
-  - `notify` 热刷新时通过 `EditorRef` 原地更新并保留光标与滚动位置，禁止重建 `<Editor>`；
-  - 全面落地 [design-system.md §8.3](./design-system.md#83-nsh-06-linux-实践与避坑参考-giceksafay) 的零抖动微交互规范；后期按需补充 `tinymist` 风格双向源码↔预览同步（复用 `SourceMap` + `PagedDocument` `Span` + `EditorRef`）。
+**原则：做减法。** 意义不明确的功能直接不做；尚未正式发布，不考虑迁移和兼容。以下是 2026-11-20 讨论确认的范围和顺序。
 
-## Phase 3：训练与生态
+1. **修复现有桌面端隐患**（先做，后面的功能会放大它们）：
+   1. 切题/切题解闪白：`apps/desktop/App.tsx` `choose()` 提前清空 `pages` 和 `zoom`，需改为 SWR 保留旧页直至新首帧到达，并按 `(target, id, book)` 记忆 `{ zoom, scrollY, panX }`。
+   2. 滚动/缩放重复读盘与编译：`apps/desktop/src/lib.rs` `State::run` 在仅 `scale`/`view` 变化触发 `due()` 时未复用上次 `Compiled`，需缓存 `Compiled` 直进 `rasterize()`。
+   3. 全文档指纹开销：`apps/desktop/src/lib.rs` 每次请求遍历全部页算 `page_fingerprint(i)`（122 页约 3ms），需改为仅对视口附近页按需懒计算。
+   4. 像素缓存过小且无任务取消：`apps/desktop/src/lib.rs` `PIXELS` 仅保留最近 2 次结果，翻页或反复缩放易驱逐重画，需升级为字节预算 LRU（64–128MB，优先保 `BASE_SCALE` 整页层）+ `AtomicU64` 代数计数器取消过期瓦片任务。
+   5. 缩放提交边角核验：核对 `apps/desktop/App.tsx` `commitZoom()` 在文档末尾附近放大时 `zoom.set` 与 `scrollTo` 是否稳定同帧提交。
+2. **组卷与冻结**（Core + CLI + MCP）：
+   - TOML 写回一律用 `toml_edit` 局部修改，保留注释、顺序和未知字段。Core 提供语义操作（增删题、移动、设置/删除覆写、比赛元数据、冻结），GUI 只走这些操作。
+   - 题号由顺序决定，增删和移动后由 Core 重排为 A、B、C……；超过 26 题报错。
+   - 组题统计：每题起止页取真实编译结果；难度分布（按 rating 段位着色的横条，无 rating 记为未定）和标签计数。**不做按条件抽题**，交给 Agent 组合 `search_problems` + `compose_contest`。
+   - 冻结、解冻和删题规则见 [product.md](./product.md#3-比赛contest)。
+3. **出版工作室**：
+   - 自绘顶栏（`TitleBarStyle::Hidden` + `.window_drag(true)`）；大纲（含每题起始页码，`scrollTo({ animated: true })` 跳页）；编辑器与预览之间用 `<ResizablePanelGroup>`，比例记到应用数据目录。
+   - 编辑区三个 Tab：**题面 | 样例 | 题解**。样例面板左右两栏编辑 `.in` / `.ans`，增删、拖拽排序（原子批量重命名 `01..NN`），粘贴时清理 BOM 和 `\r`。不做结构化分区编辑。
+   - 右侧面板按上下文写入：比赛上下文里改标题、限制、`show-metadata` 一律写成覆写（细竖条标出，可还原，改回题库值时自动删除覆写）；单题上下文里改的是 `problem.toml`。冻结的比赛面板只读，只留解冻入口。
+   - 预览 HUD：缩放组、页码组、Preflight 徽章（无问题时不显示）。`Ctrl+点击` 预览跳到源码对应行（只做预览 → 源码这一个方向）。
+   - `Cmd+K`：跳转（题目、比赛、本比赛题号，Frecency 排序）和当前上下文可执行的动作（导出、冻结/解冻、新建题目/比赛、加入比赛、切 Tab、切换工作区）。新建题目时生成 `statement.md` 骨架和空 `samples/`。
+4. **题库中心与实时联动**：
+   - Core 内存索引（启动扫描 + `notify` 增量更新；CLI/MCP 每次启动现扫），结构化过滤 + 规范化子串匹配，`Cmd+K` 用模糊匹配。**不引入 SQLite / FTS5。**
+   - 列表（ID、标题、rating、标签、来源、有无题解/代码）、多维筛选、详情（题面与题解预览、`solutions/` 只读查看）、在出版工作室打开、加入比赛。**不显示训练状态**（Phase 4 与同步一起做），不显示「题单」分段。
+   - 外部修改只靠 `notify`（不做 IPC）。保存时比对内容哈希，磁盘已变则拒绝写入；编辑器无未保存改动时经 `EditorRef` 原地更新并保留光标和滚动，有未保存改动时显示一条冲突提示，二选一（载入外部版本 / 保留我的版本），不做合并。
+   - 导航只有 3 个空间：`Cmd+1` 题库、`Cmd+2` 比赛（只有本地组卷，不显示分段）、`Cmd+3` 设置（工作区、最近打开的工作区、MCP 接入配置片段）。启动时回到上次所在的空间和对象。
+5. **`xcpc-lint`、`xcpc init` 与 MCP**：
+   - lint 只收会让题册出错的规则。error（阻止冻结）：引用的题目不存在、编译错误、配图不存在。warning：溢出版心、样例不成对或编号不连续、缺输入/输出章节（有交互章节除外）、导出题解册或冻结时有题缺题解。不做风格检查、规则开关和忽略注释。lint 结果并进 `xcpc check` 和 `compile_and_diagnose`，不单设命令和工具。
+   - `xcpc init [dir]`：创建 `workspace.toml`、`problems/`、`contests/`、`.gitignore`（`build/`、`.xcpc/`）和一份内嵌的静态 `AGENTS.md`，之后不再覆盖。GUI 打开非工作区目录时可以在此新建。**不做 JSON Schema。**
+   - MCP 工具见 [architecture.md](./architecture.md#72-mcp-tools)；CLI 对应 `xcpc search`、`xcpc show`、`xcpc contest compose|override|freeze|unfreeze`。
+6. 全面落地 [design-system.md §8](./design-system.md#8-动效与流畅感fluidity) 的零抖动微交互规范。
+
+**不做**：结构化分区编辑、纸张反色、双页对开、HUD 自动淡出、嵌套横向 `<Scroll>` 惯性平移、编辑器 → 预览的行级跟随、按条件抽题、专门的 fork 功能、JSON Schema、SQLite 索引、本地 IPC。
+
+**验收**：release 构建下人工走完以下剧本；Core 语义操作（`toml_edit` 往返保留注释、题号重排、冻结/解冻、冲突检测、lint 规则）有单元测试，9 个 MCP 工具有集成测试，GUI 的 `*.test.tsx` 只覆盖关键状态逻辑。
+
+1. `xcpc init` 新建工作区；GUI 里用 `Cmd+K` 新建 4 道题，写题面、在样例面板加样例并拖拽排序、写题解。
+2. 题库中心按标签和 rating 筛选，加入新建的比赛。
+3. 出版工作室里拖拽调题序（题号重排）、给 B 题覆写时限再还原、用大纲和 HUD 跳页、`Ctrl+点击` 预览定位源码。
+4. Agent 通过 MCP 搜索、`write_problem` 改题面、`compose_contest` 加题；GUI 无闪白、不丢光标地刷新；有未保存输入时出现冲突提示。
+5. 删一张配图：HUD 徽章出现，冻结被拒绝；修复后冻结，面板只读，快照和两本 PDF 生成。
+6. 改题库里某道题后解冻，差异列表正确。
+7. 全程满足 §8 的流畅度铁律。
+
+## Phase 3：本地 Polygon（可复现的题目包）
+
+规格见 [product.md §7](./product.md#7-本地-polygon可复现的题目包phase-3)（2026-11-20 讨论确认）。
+
+1. **PoC 先行**，任何一项不过都回头重新讨论：
+   1. wasi-sdk 编译 testlib 和常见选手代码（`bits/stdc++.h` shim、`__int128`、wasm 异常）；
+   2. 同一个 wasm 在 x86_64 / aarch64、Linux / Windows 上的 tick 逐位相同；
+   3. 影子栈设为内存上限后，10^6 层递归能跑通；
+   4. fuel 计量相对原生的减速倍数（目标：生成 10^6 规模的数据在几秒之内）；
+   5. 交互调度的确定性。
+2. `Toolchain`（`xcpc.lock`、下载、校验、缓存）与 C/C++ `Language`。
+3. 运行器：wasmtime + fuel tick、内存上限、testlib 协议的 checker / validator、stdio 交互。
+4. `xcpc package build` / `stress`，三级内容哈希缓存，样例写回 `samples/`；lint 加入「标程超过时限 50%」和单独 `long` 的 warning。
+5. Polygon 导入（同时启用 `tylax` 处理 LaTeX 输入）。
+6. GUI 构建报告 Tab；MCP `build_package` / `stress_package`（`--read-only` 下不可用）。
+
+**不做**：Nix / Hull 互通、子任务与部分分、CPLib 专门支持、文件交互 / 通信题 / 提交答案题、自定义 judger、单独的 compile / run 子命令、判外部提交、wasm64。
+
+## Phase 4：训练与生态
 
 - Codeforces / AtCoder / QOJ 同步、训练看板、复盘与待补队列；训练类 MCP 工具。
-- Polygon 导入（同时启用 `tylax` 处理 LaTeX 输入），以及 Competitive Companion 收题。
+- Competitive Companion 收题。
 
 ## 待定（尚未排期）
 
@@ -77,8 +121,8 @@
 - 更多主题预设和定制体系。
 - 打包发布与 1,000+ 题规模的压测。
 - Web 版。
-- Phase 5：参考 Hull 的声明式本地 Polygon（`wasmtime` 沙箱）。
-- 「最近打开的工作区」菜单（现在只记上一个），与完善 UI/UX 一起做。
+- 选手开发调试环境：复用 `Toolchain` 层帮选手配好本机编译器、clangd、调试器（只保证版本一致，不在可复现契约之内）。
+- 题目包的更多语言（Python 等，经 `Language` 层加入）。
 - 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到）：
   - 100 页以上的文档每次编辑的增量编译要 45ms 以上：看 Typst 能否只从改动的那页往后重新分页，或者整本预览时只编译当前题（单题聚焦预览）。
   - 若以后要矢量预览：tinymist 的做法是 reflexo 矢量中间表示加 WGPU/Vello 绘制（`tinymist-viewer`），NSH 在 Linux 上的 `svg()`/`Painter` 是 UI 线程上的 Cairo 重放，不适合。

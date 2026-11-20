@@ -14,6 +14,7 @@
 | 凭据 | 系统钥匙串（`keyring`） |
 | Agent 接口 | `xcpc mcp`（stdio）+ `xcpc <subcommand> --json` |
 | 视觉基准 | `tectonic` 编译参考模板，生成基准 PDF |
+| 题目包（Phase 3） | 内嵌 `wasmtime`（fuel 计 tick）；wasi-sdk + `testlib.h` 由 `xcpc.lock` 锁定、按需下载 |
 
 ## 2. 总体结构
 
@@ -46,6 +47,7 @@ flowchart TD
         Engine["xcpc-engine: typst + comemo + fontdb"]
         Render["typst-render (像素缓冲 / PNG) & typst-pdf"]
         Pkg["xcpc-packages: Polygon / Companion / ..."]
+        Judge["xcpc-judge: 工具链 + wasm 运行器 + 构建 / 对拍"]
         Sync["xcpc-sync: 外部 OJ 同步"]
     end
 
@@ -55,12 +57,13 @@ flowchart TD
     Bridge <--> Core
     MCP <--> Core
     CLI <--> Core
-    MCP -.->|"文件监听 / 本地 IPC 热刷新"| UI
+    MCP -.->|"文件监听热刷新"| UI
     Store <--> Model
     Model --> Conv
     Conv --> Engine
     Engine --> Render
     Pkg <--> Model
+    Judge <--> Store
     Sync <--> Store
 ```
 
@@ -74,7 +77,8 @@ crates/
                   # publish 模块：读工作区 → 转换 → 编译 → 诊断映射回 Markdown，GUI / CLI / MCP 共用
   xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
   xcpc-lint       # 题面检查与印刷前预检（Phase 2）
-  xcpc-packages   # Polygon、Competitive Companion 等（后续阶段）
+  xcpc-judge      # 本地 Polygon（Phase 3）：Toolchain / Language、wasmtime 运行器、build / stress、缓存
+  xcpc-packages   # Polygon 导入（Phase 3）、Competitive Companion 等
   xcpc-sync       # 外部 OJ 同步（后续阶段）
   xcpc-mcp        # `xcpc` 二进制：CLI 子命令 + `xcpc mcp`
 apps/
@@ -151,15 +155,15 @@ erDiagram
 
 ## 5. 本地存储
 
-开放目录是**单一事实源**。SQLite 只存放派生索引和同步数据，删除后可以重建或重新同步。
+开放目录是**单一事实源**。题库检索用 Core 的内存索引，不落盘；SQLite 只存放外部 OJ 同步数据（Phase 4），删除后可以重新同步。
 
 ```text
 xcpc-workspace/
 ├── .xcpc/                    # 不进 Git
-│   ├── index.db              # FTS5 派生索引（Phase 2）
 │   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存
+├── xcpc.lock                 # 工具链锁定（Phase 3，进 Git）
 ├── workspace.toml            # 工作区配置、标签词典、OJ 账号（凭据存放在钥匙串）
-├── AGENTS.md                 # 工作区级 Agent 指南（Phase 2 起自动生成）
+├── AGENTS.md                 # 工作区级 Agent 指南（`xcpc init` 时写入的静态文本，之后归用户）
 ├── problems/
 │   └── cf-1999a/
 │       ├── problem.toml      # 元数据、限制、[[source]]；不含训练状态
@@ -167,12 +171,15 @@ xcpc-workspace/
 │       ├── editorial.md
 │       ├── samples/          # 01.in, 01.ans, ...
 │       ├── assets/
-│       └── code/
+│       ├── checker.cpp, validator.cpp, interactor.cpp   # 题目包（Phase 3），均可选
+│       ├── generators/
+│       ├── solutions/
+│       └── tests/            # 手写测试；生成的数据在 build/problems/<slug>/
 ├── contests/
 │   └── icpc-2026-regional/
 │       ├── contest.toml      # 元信息、题目引用、元数据覆写、出版开关
 │       ├── assets/
-│       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 当时的 PDF
+│       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 当时的两本 PDF（进 Git）
 ├── sheets/                   # 题单（后续阶段）
 ├── templates/                # 代码模板（TRD，后续阶段）
 └── training/
@@ -181,7 +188,9 @@ xcpc-workspace/
 
 - 工作区的根目录以 `workspace.toml` 为标志（Phase 1 可以是空文件）。`xcpc` 依次用 `--workspace`、`XCPC_WORKSPACE`、当前目录向上查找来确定工作区，桌面端用后两者。
 - 导出的 PDF 默认写到工作区的 `build/<id>.pdf` / `build/<id>-editorial.pdf`（派生物，建议加入 `.gitignore`）；CLI 的 `-o` 可以写到任意位置。
-- **Phase 1** 直接扫描目录（几十道题的规模足够）。**Phase 2** 起加入 `notify` 监听、`.xcpc/index.db` 增量索引，以及 `problem.toml` / `contest.toml` 的 JSON Schema 和工作区 `AGENTS.md` 生成。
+- **Phase 1** 直接扫描目录。**Phase 2** 起 Core 维护内存索引（元数据 + 题面/题解的规范化纯文本）：桌面端启动时扫描一遍，之后由 `notify` 增量更新；CLI 和 MCP 每次启动现扫。不引入 SQLite / FTS5，也不做 JSON Schema。
+- **TOML 写回**：一律用 `toml_edit` 做局部修改，保留注释、顺序和未知字段；读取仍用 `serde`。GUI 和 CLI 通过 Core 的语义操作写入（增删题、移动、设置/删除覆写、比赛元数据、冻结）。
+- **并发写入**：Core 记录每个打开文件上次读写时的内容哈希，保存前比对，磁盘已变则返回 `conflict`，不静默覆盖；自己写入引起的 `notify` 事件靠哈希过滤。
 
 ## 6. 格式转换管线
 
@@ -208,18 +217,30 @@ flowchart LR
 
 - `xcpc mcp`：stdio MCP 服务，不需要启动 GUI。
 - `xcpc <subcommand> --json`：输出结构化结果，退出码确定。
-- 桌面端打开同一工作区时，Agent 的写入会通过文件监听或本地 IPC 让 GUI 刷新（Phase 2）。
+- 桌面端打开同一工作区时，Agent 的写入通过 `notify` 文件监听让 GUI 刷新（Phase 2），不做本地 IPC。
 
 ### 7.2 MCP Tools
 
 | 分组 | Tools | 阶段 |
 | :--- | :--- | :--- |
-| 出版与视觉自检 | `compile_and_diagnose`（结构化诊断：错误位置、总页数、溢出警告）、`render_page_png`、`export_pdf`（单题 / 整本 / 题解册） | Phase 1 |
-| 题库与组卷 | `search_problems`、`get_problem` / `upsert_problem`、`list_contests` / `get_contest`、`compose_contest` / `update_contest_item`、`freeze_contest` | Phase 2 |
-| 体检 | `lint_problem` / `lint_contest` | Phase 2 |
-| 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 3 |
+| 出版与视觉自检 | `compile_and_diagnose`（结构化诊断：错误位置、总页数、溢出警告；Phase 2 起并入 lint 结果）、`render_page_png`、`export_pdf`（单题 / 整本 / 题解册） | Phase 1 |
+| 题库与组卷 | `search_problems`、`get_problem`、`get_contest`、`write_problem`、`compose_contest`、`set_override`、`freeze_contest` | Phase 2 |
+| 题目包 | `build_package`（结构化报告）、`stress_package`（反例种子与输入）；`--read-only` 下不可用 | Phase 3 |
+| 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 4 |
 
 **MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。
+
+Phase 2 的工具：
+
+- `search_problems`：可选的文本、标签、rating 区间、来源平台；返回元数据列表（ID、标题、rating、标签、来源、有无题解），不含正文。
+- `get_problem`：解析后的元数据、`statement*.md` / `editorial.md` 原文及其内容哈希、样例文件列表。
+- `get_contest`：不传 `id` 时列出所有比赛；传 `id` 时返回元数据、题目列表（label、ID、覆写、每题起止页）和是否冻结。
+- `write_problem`：`id`、`files: {相对路径: 内容}`、可选的 `expected_hash`。题目不存在就创建，存在就逐个原子写入；路径只能是题目目录内的 `problem.toml`、`statement*.md`、`editorial.md`、`samples/*`、`solutions/*`、`generators/*`、`tests/*`、`checker.cpp`、`validator.cpp`、`interactor.cpp`。`problem.toml` 给的是全文，Core 只校验能否解析。
+- `compose_contest`：`id`、有序的题目 ID 列表、可选的比赛元数据。比赛不存在就创建；保留下来的题保留覆写，移除的题连同覆写删除，题号由 Core 重排。
+- `set_override`：`contest`、`label`、`fields`（`title` / `limits` / `show-metadata`，`null` 表示删除该覆写）。
+- `freeze_contest`：冻结规则见 [product.md](./product.md#3-比赛contest)。
+
+对应的 CLI：`xcpc search`、`xcpc show`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`；lint 并入 `xcpc check`，不单设命令。
 
 Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
 

@@ -47,7 +47,17 @@ url = "https://codeforces.com/problemset/problem/1999/A"
 platform = "luogu"
 id = "CF1999A"
 
-# Phase 5 预留命名空间（subtasks / generators / validators / checkers / solutions），当前只做解析兼容
+# 题目包（Phase 3，见 §7）：只声明路径约定推导不出来的东西
+[[test]]                     # 有顺序，编号即顺序
+gen = "random"               # generators/random.cpp
+args = ["--n", "100000"]
+[[test]]
+file = "tests/handmade-1.in"
+
+[solutions.std]              # solutions/std.cpp
+main = true                  # 用它生成 .ans
+[solutions.brute]
+expect = ["tle", "ac"]       # 整题结论之一：ac / wa / tle / mle / re / any
 ```
 
 一道题包含以下资产：
@@ -56,7 +66,7 @@ id = "CF1999A"
 2. **样例**：`samples/01.in`、`samples/01.ans`……**只放在这里**，不写进题面正文，由模板渲染成样例章节。
 3. **配图**：`assets/`。
 4. **题解**：`editorial.md`，出版时排进 A4 题解册。
-5. **代码**：`code/`，存放标程、个人 AC 代码、对拍脚本等。
+5. **题目包**（Phase 3）：`solutions/`、`generators/`、`tests/`、`checker.cpp`、`validator.cpp`、`interactor.cpp`，见 §7。
 6. **元数据**：`problem.toml`，内容见上面的示例。**这里不存训练状态。**
 
 ### 2.1 题面结构
@@ -115,14 +125,17 @@ time = "2s"
 ```
 
 - **活引用**：`contest.toml` 按顺序列出题目 ID 和题号（A/B/C…）。题库中修正一处错别字，所有引用该题且**未冻结**的比赛都会同步更新。
-- **元数据覆写**：可以按题覆写**元数据**，包括 `title`、`limits`（时间、内存、输入输出文件名）、`show-metadata`。**题面正文、样例、配图不能覆写**；需要改动时，在题库里 fork 出一道新题，再在比赛中引用新题。
+- **元数据覆写**：可以按题覆写**元数据**，包括 `title`、`limits`（时间、内存、输入输出文件名）、`show-metadata`。**题面正文、样例、配图不能覆写**；需要改动时，在题库里复制出一道新题（不提供专门的 fork 功能），再在比赛中引用新题。
+- **题号由顺序决定**：增删和移动题目后，Core 按顺序重排为 A、B、C……并写回 `label`；超过 26 题报错。
 - **冻结快照**：
-  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`samples/`、`assets/`）复制到 `contests/<id>/snapshot/<label>/`，并保存当时导出的 PDF。之后比赛只从快照渲染。
+  - 冻结前完整编译并跑 lint，有 error 就拒绝冻结（warning 不拦截）。
+  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）复制到 `contests/<id>/snapshot/<label>/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，`contest.toml` 里的覆写不再生效。
   - 冻结后，Core 层对整场比赛强制只读，包括快照。
-  - **只能由人在 GUI 或 CLI 中解冻**（`xcpc contest unfreeze`，需要二次确认），解冻后删除快照目录，恢复活引用。**MCP 不提供解冻能力。**
-- **组题辅助**（Phase 2）：实时统计难度分布、标签覆盖率和预估页数；支持按条件抽题。
+  - **只能由人在 GUI 或 CLI 中解冻**（`xcpc contest unfreeze`，需要二次确认），确认时列出快照与题库当前版本有差异的题（题面已改、样例已改、题目已删除，逐文件比较字节），CLI 先打印差异再要求输入比赛 ID（`--yes` 跳过）。解冻后删除快照目录，恢复活引用。**MCP 不提供解冻能力。**
+- **删除题目**：被未冻结的比赛引用时拒绝删除并列出这些比赛；只被冻结的比赛引用时允许。
+- **组题辅助**（Phase 2）：每题起止页（取真实编译结果）、难度分布和标签计数。不做按条件抽题，交给 Agent 组合 `search_problems` 与 `compose_contest`。
 
-## 4. 个人训练与 OJ 同步（后续阶段）
+## 4. 个人训练与 OJ 同步（Phase 4）
 
 ### 4.1 分级同步（`xcpc-sync`）
 
@@ -162,6 +175,37 @@ time = "2s"
 | **QOJ / 通用 Markdown 包** | 支持 | 支持 | Markdown 题面 + 题解 + 静态资源 |
 | **PDF** | — | 完整 | 整本题册（封面、题表、补白）、单题、A4 题解册、TRD |
 
-## 7. 远期：Hull 式声明式本地 Polygon（Phase 5）
+## 7. 本地 Polygon：可复现的题目包（Phase 3）
 
-参考 [`rindag-devs/hull`](https://hull.aberter0x3f.top/)。`problem.toml` 预留了声明式命名空间（`subtasks` / `generators` / `validators` / `checkers` / `solutions`），Phase 1–4 不实现。远期计划基于 `wasmtime`（WASI/WASM 确定性沙箱）实现造数据、校验、Checker、多解法期望结果和对拍，兼容 Testlib / CPLib，并与 Hull 工程互通。
+设计参考 [`rindag-devs/hull`](https://hull.aberter0x3f.top/)，但**不依赖 Nix，也不与 Hull 工程互通**。可复现性做到 mise 那一层：工具链按版本加哈希锁定，用到时自动下载，不追求 Nix 级的封闭构建。
+
+### 7.1 可复现契约
+
+**同一个 xcpc 版本、同一份 `xcpc.lock`** 下：生成的测试数据逐字节相同，validator、checker 和各解法的判定相同，**tick 数也相同**，与机器和操作系统无关。
+
+- 所有程序用锁定的 wasi-sdk 编译为 WASI p1 的 wasm32，在 xcpc 内嵌的 wasmtime 中运行：时钟固定为 0，没有真实随机源。
+- **时间只用 tick**（wasmtime fuel），不测真实耗时。tick 上限 = `limits.time` × 1e10（与 Hull 相同），内存上限 = `limits.memory`（线性内存，栈与堆共享）。构建报告把 tick 换算成「≈ 秒」展示，用于判断标程占时限的比例。
+- 跨 xcpc 版本升级 wasmtime 后 fuel 计价可能变化，构建报告里记录运行器的计价版本，漂移时给提示，不做兼容。
+- 比赛对 `limits` 的覆写只影响题面，不影响题目包的判定。
+
+### 7.2 工具链
+
+- `Toolchain`：名字 + 版本 + 各平台 url/sha256 + 解包规则，锁在**工作区级**的 `xcpc.lock`，下载到 `~/.cache/xcpc/toolchains/`。第一次用到时，如果没有锁文件，就写入当前 xcpc 推荐的版本。
+- `Language`：用某个工具链把源码变成「wasm 模块 + 预打开目录」。现在只有 C/C++（wasi-sdk 加锁定版本的 `testlib.h`）。语言标准由后缀决定（`.17.cpp` / `.20.cpp` / `.23.cpp`，默认 C++20），固定 `-O2`。工具链提供 `bits/stdc++.h` shim；影子栈大小等于内存上限；开启 wasm 异常。
+- wasm32 是 ILP32，`long` 只有 32 位。这一点不消除：构建时打开转换警告，lint 对单独的 `long` 给 warning。
+- 以后加 Python（CPython 的 wasi 构建）时，只加一个 `Language` 和一个工具链条目，再给时限乘一个语言倍率。选手本机的开发调试环境（g++、clangd、gdb）也可以复用 `Toolchain` 层，但不在可复现契约之内（见路线图「待定」）。
+
+### 7.3 题目包
+
+- **路径约定**：`checker.cpp`（缺省时用内置的逐 token 比较）、`validator.cpp`、`interactor.cpp`（有它就是交互题）、`generators/<name>.cpp`、`solutions/<name>.cpp`、`tests/<name>.in`（手写测试）。
+- **`problem.toml` 只声明** `[[test]]`（`gen` + `args` 或 `file`，不支持循环和模板；`sample = true` 的测试构建后写回 `samples/`）和 `[solutions.<name>]`（`main = true` 表示标程；`expect` 是整题结论或结论列表）。**没有子任务和部分分**：整题结论取按测试顺序第一个非 AC 的结论，checker 返回部分分按 FAIL 处理。
+- **协议按 testlib**：checker 用 `checker <in> <out> <ans>` 加退出码；validator 只看退出码；generator 的随机数由参数决定。不专门支持 CPLib，也不做结构化输出。
+- **交互**：只支持 stdio 交互，interactor 按 testlib 的 `interactor <in> <out>` 约定。选手程序和 interactor 在同一个运行器里通过两条有界管道连接，按 fuel 让出、轮转调度，所以交互过程逐位可复现；双方互相等待判为 TLE。tick 和内存上限只算选手程序。不做文件交互、通信题、提交答案题和自定义 judger。
+
+### 7.4 操作
+
+- **构建** `xcpc package build <id>`：编译 → 生成 → validator 校验全部测试（含样例）→ 标程生成 `.ans` → 全部解法跑全部测试 → 对照 `expect`。任何一步不符合预期都算失败。标程最大 tick 超过时限的 50% 时给 warning。
+- **对拍** `xcpc package stress <id> --gen <name> --args "…" [--solutions a,b]`：把递增的种子追加为 generator 的最后一个参数，与标程比较，不一致时写出 `tests/stress-<n>.in`。
+- 产物放在 `build/problems/<slug>/`（测试数据、wasm、报告），不进 Git。缓存按内容哈希放在 `~/.cache/xcpc/`，编译、生成、运行三级缓存，跨工作区共享。
+- GUI：出版工作室单题上下文有第 4 个 Tab「构建报告」（行是测试，列是解法，单元格是判定和 tick），只在有 `solutions/` 时出现；失败汇入 Preflight 徽章。对拍只走 CLI 和 MCP。
+- **Polygon 导入**和本地 Polygon 同期做：testlib 程序落到约定路径，测试脚本展开成 `[[test]]`，解法 tag 映射为 `expect`，题面 LaTeX 用 `tylax` 转换。导入后跑一次构建即可验证。
