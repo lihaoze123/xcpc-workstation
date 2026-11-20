@@ -177,3 +177,22 @@ fn every_mitex_symbol_evaluates() {
     let errors: Vec<_> = report.diagnostics.iter().filter(|d| d.is_error()).collect();
     assert!(compiled.is_some() && errors.is_empty(), "{errors:#?}");
 }
+
+/// A table that fits on a page moves whole to the next one (the reference's way); one
+/// taller than a page breaks across pages instead of running off it.
+#[test]
+fn samples_taller_than_a_page_break_across_pages() {
+    let (dir, ws) = scratch("描述。\n\n## 输入格式\n\n很多行。\n\n## 输出格式\n\n很多行。\n");
+    let long: String = (1..=120).map(|i| format!("{i} {}\n", i * 7)).collect();
+    fs::write(dir.path().join("problems/p/samples/01.in"), &long).unwrap();
+    fs::write(dir.path().join("problems/p/samples/01.ans"), &long).unwrap();
+    let (compiled, report) = build(&ws, Target::Problem("p".into()), Kind::Statements);
+    assert!(report.ok, "{:?}", report.diagnostics);
+    let pages = compiled.unwrap().page_count();
+    assert!(pages >= 3, "{pages}");
+    assert!(
+        report.diagnostics.is_empty(),
+        "nothing runs off a page: {:?}",
+        report.diagnostics
+    );
+}

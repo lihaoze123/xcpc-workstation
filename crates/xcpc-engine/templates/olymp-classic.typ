@@ -86,20 +86,23 @@
   block(sticky: true, below: smallskip, bold-sans(sizes.Large, if title == none { word(key) } else { title }))
 }
 
-// One table for all samples, kept on one page (the heading moves with it).
+// One table for all samples, kept on one page (the heading moves with it), as the
+// reference's tabular is. A table taller than a whole page, which the reference lets
+// run off the page, breaks across pages instead, its head repeated on each.
 #let samples(..pairs) = {
   let pairs = pairs.pos()
   let cell(body) = raw(body.trim("\n", at: end))
   let head(key) = align(center, mono(text(weight: "bold", word(key))))
   let column = 0.43 * text-width + 2 * tabcolsep
-  section(if pairs.len() == 1 { "example" } else { "examples" })
-  block(breakable: false, below: smallskip, pad(left: parindent, table(
+  let body = pad(left: parindent, table(
     columns: (column, column),
     stroke: rule,
     inset: (x: tabcolsep, y: 0pt),
-    table.header(head("stdin"), head("stdout")),
+    table.header(head("stdin"), head("stdout"), repeat: true),
     ..pairs.map(((input, output)) => (cell(input), cell(output))).flatten(),
-  )))
+  ))
+  section(if pairs.len() == 1 { "example" } else { "examples" })
+  context block(breakable: measure(body, width: text-width).height > text-height, below: smallskip, body)
 }
 
 #let problem(
