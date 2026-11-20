@@ -1,0 +1,9 @@
+title = "Matrix Walk"
+rating = 2100
+tags = ["dp", "math"]
+
+[limits]
+time = "3s"
+memory = "1GB"
+input = "walk.in"
+output = "walk.out"

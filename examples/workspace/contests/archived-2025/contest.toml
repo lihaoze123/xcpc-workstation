@@ -1,0 +1,8 @@
+name = "2025 冬季选拔（已归档）"
+date = "2025 年 12 月 20 日"
+language = "chinese"
+frozen = true
+
+[[problem]]
+id = "stamp-collecting"
+label = "A"

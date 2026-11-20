@@ -36,6 +36,13 @@
 - 二进制 `xcpc`：`build` / `render` 等子命令（支持 `--json`），MCP 工具 `compile_and_diagnose`、`render_page_png`、`export_pdf`。
 - 最小桌面窗口：打开一道题或一场比赛，左边是编辑器，右边是页面预览。
 
+**进度**（2026-11-20）：以上各项都已有可用实现。
+
+- Core：`xcpc-domain`、`xcpc-storage`（路径沙箱含符号链接、原子写入、冻结与只读守卫）、`xcpc-convert`（Markdown 转换和 `publish` 管线，诊断映射回 Markdown 行列，版心溢出检查）。冻结和解冻操作本身属于 Phase 2，这里只实现了守卫和从快照渲染。
+- 视觉回归改为从用例的工作区走完整链路（`scripts/fixture-to-workspace.py`），3 套用例页数一致；与 Phase 0 手写 Typst 的输出逐像素相同。修正了中文模式 `⩽` 替换后丢失关系符间距的问题。
+- 题解册、留白页、单题没有基准 PDF，只有单元测试和人工看图。
+- 桌面端：选择题目或比赛，比赛内按题号切换编辑的文件并跳到对应页，题面 / 题解切换，编辑后 500ms 原子保存，诊断标在编辑器里，导出 PDF 到 `build/`。启动时打开 `XCPC_WORKSPACE` 或启动目录所在的工作区，都没有时显示「打开工作区」，用系统的文件夹选择器（nsh-core 的 `pick_paths`，只开放给 Rust）挑一个文件夹，它或它上方最近的带 `workspace.toml` 的目录就是工作区；顶栏的列表里也能换工作区。
+
 **明确推迟**：SQLite FTS5、`notify` 监听、LaTeX 输入、JSON Schema 和工作区 `AGENTS.md` 生成、`search_problems` / `upsert_problem`。
 
 ## Phase 2：题库中心 + 组卷 + 出版工作室 + Linter

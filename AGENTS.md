@@ -4,7 +4,7 @@
 
 ## 项目
 
-**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、训练看板，并原生支持 MCP。**当前优先级是出版**。Phase 0（技术验证）已完成：`crates/xcpc-engine`（Typst 引擎与内嵌的 `olymp-classic` 模板）、`crates/xcpc-mcp`（`xcpc` CLI）、`apps/desktop`（编辑器 + 页面预览的 PoC）和基准回归管线，下一步是 Phase 1。
+**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、训练看板，并原生支持 MCP。**当前优先级是出版**。Phase 0（技术验证）已完成，Phase 1（最短出版链路）已有完整实现：`crates/xcpc-domain`、`xcpc-storage`、`xcpc-convert`（含 `publish` 管线）、`xcpc-engine`（Typst 引擎，内嵌 `olymp-classic` 和 MiTeX 作用域）、`xcpc-mcp`（`xcpc` CLI 与 `xcpc mcp`）、`apps/desktop`（打开题目或比赛，编辑 + 预览），以及基准回归管线。
 
 完整规格在 `docs/` 下，按需阅读：
 
@@ -21,9 +21,10 @@
 
 - 用 `nix develop` 进入开发环境（direnv 会通过 `.envrc` 自动加载）。环境提供 fenix stable Rust、clang/cmake/pkg-config、**NSH 0.6.0**、`tectonic`，以及 Linux 上的 GTK4/WebKitGTK/GStreamer。
 - **题面字体**：环境变量 `XCPC_FONT_DIRS` 指向 Latin Modern 和方正（`foundertype-ctex-fonts`）的字体目录，引擎应优先从这里加载字体。`XCPC_FONTCONFIG_FILE` 是一份只包含这些字体的 fontconfig 配置，**只在**用 tectonic 生成基准 PDF 时作为 `FONTCONFIG_FILE` 使用，不要对整个 shell 设置（会影响 GUI）。
-- NSH CLI：`nsh init`（本项目用 `--template mixed`）、`nsh dev`、`nsh run --target …`、`nsh check`（`nsh.json` 声明了 `"rust"` 时会先跑 `cargo check`）、`nsh test`（先跑 Rust 的 `cargo test`，再无头运行 `*.test.tsx`）、`nsh build`、`nsh package`。细节用 `nsh <cmd> --help` 查看。查 NSH 的 API 时读 `.nsh/types/nsh/{index,base}.d.ts`。
+- NSH CLI：`nsh init`（本项目用 `--template mixed`）、`nsh dev`、`nsh run --target …`、`nsh check`（`nsh.json` 声明了 `"rust"` 时会先跑 `cargo check`）、`nsh test`（先跑 Rust 的 `cargo test`，再无头运行 `*.test.tsx`）、`nsh build`、`nsh package`。细节用 `nsh <cmd> --help` 查看。查 NSH 的 API 时读 `.nsh/types/nsh/{index,base}.d.ts`；那里只有 JS 侧的接口，Rust 侧还有更多（文件对话框、在文件管理器中显示等），查 `~/.cargo/registry/src/*/nsh-core-0.6.0/src`。
 - 依赖 `XCPC_FONT_DIRS` 的命令（`xcpc`、`nsh test`、`nsh dev`）要在开发环境里运行；不在 direnv 下时用 `nix develop -c <cmd>`。
 - 依赖的 `opt-level = 2` 写在 `.cargo/config.toml` 而不是 `Cargo.toml`：`nsh` 为桌面宿主生成的 `apps/desktop/.nsh/rust` 是另一个 workspace，读不到根 `Cargo.toml` 的 profile。
+- `xcpc`：`xcpc -w <工作区> build|check|render <problem|contest> <id> [--editorial] [--json]`、`xcpc list`、`xcpc mcp [--read-only]`；`build --emit-typst <文件>` 可以看生成的 Typst。基准用例的工作区在 `tests/fixtures/olymp-ref/<用例>/workspace/`，由 `scripts/fixture-to-workspace.py` 从参考模板的 Markdown 生成。桌面端用 `XCPC_WORKSPACE=<工作区> nsh dev`，或启动后用「打开工作区」选。NSH 的文件对话框等系统服务只开放给 Rust（`nsh_core::file_dialog`），JS 侧没有，需要时在 `apps/desktop/src/lib.rs` 里包一层。
 - Rust：`cargo build`、`cargo test -p <crate> <test_name>`（运行单个测试）、`cargo clippy`、`cargo fmt`。Nix 文件用 `nix fmt` 格式化。
 - 版本管理用 **jj**（与 Git colocated），不要用会改动仓库状态的 git 命令。
 - 只在 Linux 上开发和验收。

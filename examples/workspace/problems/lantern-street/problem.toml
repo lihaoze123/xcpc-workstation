@@ -1,0 +1,12 @@
+title = "灯笼街"
+rating = 1700
+tags = ["binary search", "greedy"]
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[[source]]
+platform = "codeforces"
+id = "0000Z"
+url = "https://codeforces.com/"

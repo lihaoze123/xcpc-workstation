@@ -1,0 +1,23 @@
+name = "2026 春季集训 · 第一场"
+location = "上海"
+date = "2026 年 3 月 1 日"
+author = "示例命题组"
+language = "chinese"
+blank-pages = true
+
+[[problem]]
+id = "stamp-collecting"
+label = "A"
+
+[[problem]]
+id = "lantern-street"
+label = "B"
+
+[[problem]]
+id = "guess-the-key"
+label = "C"
+title = "猜钥匙（交互）"   # 元数据覆写：只改本场的题名
+show-metadata = false
+
+[problem.limits]
+time = "2s"

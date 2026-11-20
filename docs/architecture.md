@@ -71,6 +71,7 @@ crates/
   xcpc-domain     # Problem、Contest（活引用 + 元数据覆写 + 冻结）、TrainingLog、状态派生规则
   xcpc-storage    # 开放目录读写、原子写入、冻结只读守卫、路径沙箱；后续加入 notify 监听和 SQLite 索引
   xcpc-convert    # Markdown + Math → Typst（pulldown-cmark + mitex）、章节识别、图片路径映射；后续加入 tylax
+                  # publish 模块：读工作区 → 转换 → 编译 → 诊断映射回 Markdown，GUI / CLI / MCP 共用
   xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
   xcpc-lint       # 题面检查与印刷前预检（Phase 2）
   xcpc-packages   # Polygon、Competitive Companion 等（后续阶段）
@@ -82,7 +83,7 @@ tests/fixtures/
   olymp-ref/      # 参考模板生成的基准 PDF 及其源文件
 ```
 
-依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`。`xcpc-mcp` 和 `apps/desktop` 只是外壳，不放业务逻辑。
+依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`，`convert` 的 `publish` 模块还依赖 `storage`。`xcpc-mcp` 和 `apps/desktop` 只是外壳，不放业务逻辑。
 
 ## 4. 领域模型
 
@@ -178,6 +179,8 @@ xcpc-workspace/
     └── logs.jsonl            # 追加写入的训练事件
 ```
 
+- 工作区的根目录以 `workspace.toml` 为标志（Phase 1 可以是空文件）。`xcpc` 依次用 `--workspace`、`XCPC_WORKSPACE`、当前目录向上查找来确定工作区，桌面端用后两者。
+- 导出的 PDF 默认写到工作区的 `build/<id>.pdf` / `build/<id>-editorial.pdf`（派生物，建议加入 `.gitignore`）；CLI 的 `-o` 可以写到任意位置。
 - **Phase 1** 直接扫描目录（几十道题的规模足够）。**Phase 2** 起加入 `notify` 监听、`.xcpc/index.db` 增量索引，以及 `problem.toml` / `contest.toml` 的 JSON Schema 和工作区 `AGENTS.md` 生成。
 
 ## 6. 格式转换管线
@@ -217,6 +220,8 @@ flowchart LR
 | 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 3 |
 
 **MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。
+
+Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
 
 ### 7.3 安全边界（在 Core 层强制执行）
 

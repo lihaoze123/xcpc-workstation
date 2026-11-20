@@ -1,8 +1,20 @@
-import { computed, effect, mount, pixelRatio, Scroll, type ScrollRef, signal, Text, View } from "nsh";
-import { Editor } from "nsh/base";
-import { PageImage, Preview, type PreviewPage, type PreviewView } from "xcpc-workstation/native";
+import { computed, effect, mount, pixelRatio, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
+import { Button, Editor, type EditorDiagnostic, Select, Toggle, ToggleGroup } from "nsh/base";
+import {
+  PageImage,
+  Preview,
+  type PreviewDiagnostic,
+  type PreviewPage,
+  type PreviewRequest,
+  type PreviewView,
+  type WorkspaceFile,
+  type WorkspaceInfo,
+} from "xcpc-workstation/native";
 
-// Phase 0: a Typst source on the left, its pages on the right.
+// Phase 1: a problem or a contest of the workspace. The bar picks it (and, in a contest,
+// the problem to edit) and the book; the editor holds one Markdown file, saved a moment
+// after each edit; the preview typesets the whole problem or contest with the editor's
+// text as it is, saved or not.
 //
 // The pages scroll in a native scroll view (momentum, moved on the UI thread) and are
 // laid out at the zoom's size; a zoom stretches what is there until sharper layers
@@ -17,7 +29,89 @@ const MAX_ZOOM = 8;
 const TILE = 512; // pixels, as the native side tiles
 const BASE_SCALE = 1.5; // above this the native side tiles the part in view
 
+/** What the bar picked: `problem:<id>` or `contest:<id>`. */
+type Pick = { target: "problem" | "contest"; id: string };
+type Book = "statements" | "editorial";
+const SAVE_AFTER = 500; // ms after the last edit
+const OPEN_WORKSPACE = "workspace:open"; // the bar's item that opens another workspace
+
+function parsePick(value: string | null | undefined): Pick | undefined {
+  const [target, id] = (value ?? "").split(":");
+  return (target === "problem" || target === "contest") && id ? { target, id } : undefined;
+}
+
 function App() {
+  const info = signal<WorkspaceInfo>(preview.workspace());
+  const pick = signal<Pick | undefined>(undefined);
+  const label = signal<string | undefined>(undefined); // the contest's problem in the editor
+  const book = signal<Book>("statements");
+  const file = signal<WorkspaceFile | undefined>(undefined);
+  const diagnostics = signal<PreviewDiagnostic[]>([]);
+  const saveError = signal<string | undefined>(undefined);
+
+  // The editor's text, kept outside signals: typing must not re-render the bar.
+  let text = "";
+  let saveTimer: number | undefined;
+  let dirty = false;
+
+  const contest = computed(() => {
+    const p = pick();
+    return p?.target === "contest" ? info().contests.find((c) => c.id === p.id) : undefined;
+  });
+  // The file to edit: the problem's, or the contest's problem's.
+  const path = computed(() => {
+    const p = pick();
+    if (!p) return undefined;
+    const files =
+      p.target === "problem"
+        ? info().problems.find((x) => x.id === p.id)
+        : contest()?.items.find((x) => x.label === label()) ?? contest()?.items[0];
+    if (!files) return undefined;
+    return book() === "editorial" ? files.editorial : files.statement;
+  });
+
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    const f = file();
+    if (!dirty || !f || f.readOnly) return;
+    dirty = false;
+    saveError.set(preview.save(f.path, text) ?? undefined);
+  }
+
+  // A new file: save the old one first, then read it (the editor is made anew for it,
+  // so undo never reaches into another file).
+  effect(() => {
+    const next = path();
+    untracked(() => {
+      save();
+      if (!next) {
+        file.set(undefined);
+        return;
+      }
+      const f = preview.read(next);
+      text = f.text;
+      file.set(f);
+      compile();
+    });
+  });
+
+  function request(): PreviewRequest | undefined {
+    const p = pick();
+    if (!p) return undefined;
+    const f = file();
+    return { target: p.target, id: p.id, book: book(), path: f?.path ?? "", text: f ? text : "" };
+  }
+
+  const editorDiagnostics = computed<EditorDiagnostic[]>(() =>
+    diagnostics()
+      .filter((d) => d.file === file()?.path && d.line != null)
+      .map((d) => {
+        const at = { line: d.line! - 1, column: (d.column ?? 1) - 1 };
+        return { range: { start: at, end: at }, severity: d.severity === "error" ? "error" : "warning", message: d.message };
+      }),
+  );
+
   const pages = signal<PreviewPage[]>([]);
   const error = signal<string | undefined>(undefined);
   const zoom = signal(0);           // 0 until the first fit
@@ -87,7 +181,8 @@ function App() {
     });
   }
 
-  let source = Preview.sample();
+  // Jump to a problem's first page once the next result says where it is.
+  let jumpTo: string | undefined;
   // One request at a time: what changes meanwhile (an edit, the view) makes one more
   // when it is back, with the source and view as they are then. Nothing waits for
   // typing to pause: a request takes about as long as a frame or two.
@@ -98,6 +193,8 @@ function App() {
       again = true;
       return;
     }
+    const req = request();
+    if (!req) return;
     running = true;
     const t = Date.now();
     const s = scale();
@@ -107,13 +204,18 @@ function App() {
       pages: list.map((v) => v.page).join(),
       tiles: new Map(list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)])),
     };
-    const result = await preview.compile(source, s, list);
+    const result = await preview.compile(req, s, list);
     running = false;
     console.log(`[preview] compile ${result.compileMs.toFixed(0)}ms, render ${result.rendered} layers ${result.renderMs.toFixed(0)}ms, round trip ${Date.now() - t}ms`);
     error.set(result.error ?? undefined);
-    if (!result.error) {
+    diagnostics.set(result.diagnostics);
+    // A failed compilation keeps the last pages.
+    if (result.pages.length > 0) {
       pages.set(result.pages);
       fit();
+      const start = jumpTo === undefined ? undefined : result.starts.find((x) => x.label === jumpTo);
+      jumpTo = undefined;
+      if (start) scrollTo(pageTop(start.page));
     }
     if (again) {
       again = false;
@@ -124,11 +226,37 @@ function App() {
   // The view needs other pixels: ask (the source is unchanged, so compiling again
   // costs next to nothing).
   effect(() => {
-    if (due()) compile();
+    if (due()) untracked(compile);
   });
 
   function scrollTo(y: number) {
     scroll?.scrollTo({ y, animated: false });
+  }
+
+  // Where page `index` starts in the scroll view.
+  function pageTop(index: number) {
+    const z = zoom();
+    return pages()
+      .slice(0, index)
+      .reduce((y, p) => y + (p.height + GAP) * z, 0);
+  }
+
+  async function exportPdf() {
+    save();
+    const req = request();
+    if (!req) return;
+    const out = await preview.export(req);
+    saveError.set(out.error ?? undefined);
+  }
+
+  // Another problem or contest: new pages, fitted again.
+  function choose(next: Pick | undefined) {
+    save();
+    pick.set(next);
+    label.set(undefined);
+    pages.set([]);
+    zoom.set(0);
+    scrollTo(0);
   }
 
   // Zooms to `next` keeping the content point under `at` (content coordinates) still.
@@ -152,19 +280,129 @@ function App() {
 
   let drag: { x: number; y: number } | undefined;
 
-  return (
-    <View style={{ flex: 1, flexDirection: "row" }} class="bg-background">
-      <View style={{ flex: 1 }}>
-        <Editor
-          style={{ flex: 1 }}
-          defaultValue={source}
-          language="typst"
-          softWrap
-          onChange={(e) => {
-            source = e.value;
-            compile();
-          }}
+  const items = computed(() => [
+    ...info().contests.map((c) => ({ value: `contest:${c.id}`, title: c.name, group: "比赛" })),
+    ...info().problems.map((p) => ({ value: `problem:${p.id}`, title: p.title, group: "题目" })),
+    { value: OPEN_WORKSPACE, title: "打开其他工作区…", group: "工作区" },
+  ]);
+
+  const pickError = signal<string | undefined>(undefined);
+  async function pickWorkspace() {
+    save();
+    const next = await preview.pickWorkspace();
+    pickError.set(next.root === "" ? next.error ?? undefined : undefined);
+    if (next.root !== "" && next.root !== info().root) choose(undefined);
+    saveError.set(next.root !== "" ? next.error ?? undefined : undefined);
+    info.set(next);
+  }
+
+  const empty = (
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12 }} class="bg-background">
+      <Button onPress={pickWorkspace} style={{ height: 32, paddingLeft: 14, paddingRight: 14, borderRadius: 8, justifyContent: "center" }} class="bg-primary">
+        <Text class="text-primary-foreground" style={{ fontSize: 13 }}>打开工作区</Text>
+      </Button>
+      {pickError() && <Text class="text-destructive" style={{ fontSize: 12 }}>{pickError()}</Text>}
+    </View>
+  );
+
+  const studio = (
+    <View style={{ flex: 1 }} class="bg-background">
+      <View
+        style={{ height: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 12, paddingRight: 12, borderBottomWidth: 1 }}
+        class="border-border"
+      >
+        <Select
+          style={{ width: 280 }}
+          items={items()}
+          value={pick() ? `${pick()!.target}:${pick()!.id}` : null}
+          placeholder="打开题目或比赛"
+          searchable
+          searchPlaceholder="搜索"
+          onChange={(e) => (e.value === OPEN_WORKSPACE ? pickWorkspace() : choose(parsePick(e.value)))}
+          trigger={
+            <View
+              style={{ height: 28, paddingLeft: 10, paddingRight: 10, borderRadius: 6, borderWidth: 1, flexDirection: "row", alignItems: "center" }}
+              class="border-border bg-background hover:bg-muted"
+            >
+              <Text style={{ flex: 1, fontSize: 13 }} class={pick() ? "" : "text-muted-foreground"}>
+                {items().find((i) => i.value === (pick() ? `${pick()!.target}:${pick()!.id}` : ""))?.title ?? "打开题目或比赛"}
+              </Text>
+              <Text class="text-muted-foreground" style={{ fontSize: 11 }}>▾</Text>
+            </View>
+          }
+          popupClass="bg-background border border-border rounded-[10px] p-1 shadow-md"
+          listClass="max-h-[420px]"
+          itemClass="h-8 px-2 rounded-[6px] justify-center text-[13px] focus:bg-muted selected:bg-accent"
+          groupClass="px-2 pt-2 pb-1 text-[11.5px] text-muted-foreground"
+          searchClass="h-8 px-2 mb-1 text-[13px] border-b border-border"
         />
+        {contest() && (
+          <ToggleGroup style={{ flexDirection: "row", gap: 2 }}>
+            <Each of={contest()!.items} key={(item) => item.label}>
+              {(item) => (
+                <Toggle
+                  pressed={(label() ?? contest()!.items[0]?.label) === item().label}
+                  onChange={() => {
+                    label.set(item().label);
+                    jumpTo = item().label;
+                  }}
+                  style={{ minWidth: 28, height: 28, borderRadius: 6, alignItems: "center", justifyContent: "center" }}
+                  class="aria-pressed:bg-accent"
+                >
+                  <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"] }}>{item().label}</Text>
+                </Toggle>
+              )}
+            </Each>
+          </ToggleGroup>
+        )}
+        <View style={{ flex: 1 }} />
+        {pick() && (
+          <ToggleGroup style={{ flexDirection: "row", gap: 2 }}>
+            <Toggle
+              pressed={book() === "statements"}
+              onChange={() => book.set("statements")}
+              style={{ height: 28, paddingLeft: 10, paddingRight: 10, borderRadius: 6, justifyContent: "center" }}
+              class="aria-pressed:bg-accent"
+            >
+              <Text style={{ fontSize: 13 }}>题面</Text>
+            </Toggle>
+            <Toggle
+              pressed={book() === "editorial"}
+              onChange={() => book.set("editorial")}
+              style={{ height: 28, paddingLeft: 10, paddingRight: 10, borderRadius: 6, justifyContent: "center" }}
+              class="aria-pressed:bg-accent"
+            >
+              <Text style={{ fontSize: 13 }}>题解</Text>
+            </Toggle>
+          </ToggleGroup>
+        )}
+        {pick() && (
+          <Button onPress={exportPdf} style={{ height: 28, paddingLeft: 10, paddingRight: 10, borderRadius: 6, justifyContent: "center" }} class="bg-primary">
+            <Text class="text-primary-foreground" style={{ fontSize: 13 }}>PDF</Text>
+          </Button>
+        )}
+      </View>
+      <View style={{ flex: 1, flexDirection: "row" }}>
+      <View style={{ flex: 1, borderRightWidth: 1 }} class="border-border">
+        <Each of={file() ? [file()!] : []} key={(f) => f.path}>
+          {(f) => (
+            <Editor
+              style={{ flex: 1 }}
+              defaultValue={f().text}
+              language="markdown"
+              softWrap
+              readOnly={f().readOnly}
+              diagnostics={editorDiagnostics()}
+              onChange={(e) => {
+                text = e.value;
+                dirty = true;
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(save, SAVE_AFTER);
+                compile();
+              }}
+            />
+          )}
+        </Each>
       </View>
       <View
         style={{ flex: 1 }}
@@ -227,14 +465,17 @@ function App() {
             </Each>
           </View>
         </Scroll>
-        {error() && (
+        {(error() || saveError()) && (
           <View style={{ position: "absolute", left: 12, right: 12, bottom: 12, padding: 8, borderRadius: 8 }} class="bg-background">
-            <Text class="text-destructive" style={{ fontSize: 12 }}>{error()}</Text>
+            <Text class="text-destructive" style={{ fontSize: 12 }}>{saveError() ?? error()}</Text>
           </View>
         )}
       </View>
+      </View>
     </View>
   );
+
+  return <View style={{ flex: 1 }}>{info().root === "" ? empty : studio}</View>;
 }
 
 mount(App);
