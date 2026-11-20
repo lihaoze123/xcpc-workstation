@@ -177,8 +177,16 @@ fn contest_overrides_and_editorials() {
     let mut p = problem("描述。\n", &[]);
     p.editorial = Some(TextFile {
         path: "problems/p/editorial.md".into(),
-        text: "## 做法\n\n贪心。\n".into(),
+        text: "## 做法\n\n贪心。\n\n### 引理 1\n\n成立。\n".into(),
     });
+    p.meta.author = Some("某人".into());
+    p.meta.rating = Some(1700);
+    p.meta.tags = vec!["greedy".into()];
+    p.meta.sources = vec![xcpc_domain::Source {
+        platform: "codeforces".into(),
+        id: "1A".into(),
+        url: None,
+    }];
     let q = problem("描述。\n", &[]);
     let meta = ContestMeta {
         name: "赛".into(),
@@ -210,11 +218,39 @@ fn contest_overrides_and_editorials() {
     assert!(doc.source.contains("show-metadata: false)"));
     assert!(doc.source.contains("show-cover: true"));
     let doc = editorials(&Book::contest(&meta), &entries);
+    // Author, tags and sources, not the rating; `##` a subsection, `###` run in.
     assert!(doc.source.contains(
-        "#tutorial(label: \"A\", title: \"新名\")[\n#section(none, title: [做法])\n\n贪心。\n]"
-    ));
+        "#tutorial(label: \"A\", title: \"新名\", meta: (\"作者 某人\",\"greedy\",\"Codeforces 1A\",))[\n\
+         #subsection[做法]\n\n贪心。\n\n#runin[引理 1];成立。\n]"
+    ), "{}", doc.source);
+    assert!(
+        doc.source
+            .contains("show-cover: true, blank-pages: false, book: \"editorial\"")
+    );
     assert!(!doc.source.contains("label: \"B\""));
     assert_eq!(doc.diagnostics.len(), 1);
+}
+
+#[test]
+fn a_single_problems_editorial_has_no_label_nor_name() {
+    let mut p = problem("描述。\n", &[]);
+    p.editorial = Some(TextFile {
+        path: "problems/p/editorial.md".into(),
+        text: "做法。\n".into(),
+    });
+    let doc = editorials(&Book::single(Language::Chinese), &[Entry::single(&p)]);
+    assert!(
+        doc.source.contains("contest.with(name: \"\""),
+        "{}",
+        doc.source
+    );
+    assert!(doc.source.contains("show-cover: false"));
+    assert!(
+        doc.source
+            .contains("#tutorial(label: none, title: \"Two \\\"Sum\\\"\", meta: ())[\n做法。\n]"),
+        "{}",
+        doc.source
+    );
 }
 
 #[test]

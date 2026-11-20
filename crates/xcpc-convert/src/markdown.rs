@@ -75,8 +75,9 @@ pub(crate) struct Body<'a> {
     pub path: &'a str,
     /// The problem's directory, relative to the workspace: pictures resolve against it.
     pub dir: &'a str,
-    /// Recognize statement sections (else every heading is a plain section).
-    pub sections: bool,
+    /// An editorial: headings are its own (`##` a subsection, deeper ones run in), not
+    /// a statement's sections.
+    pub editorial: bool,
     /// The samples table (`#samples(…)`), if there are samples.
     pub samples: Option<String>,
 }
@@ -226,7 +227,11 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                     out.mark(body.file, start);
                     match kind {
                         Capture::Heading(level) if level <= HeadingLevel::H2 => {
-                            let meaning = if body.sections { section(&plain) } else { None };
+                            let meaning = if body.editorial {
+                                None
+                            } else {
+                                section(&plain)
+                            };
                             let io = matches!(
                                 meaning,
                                 Some(Section::Known("input" | "output" | "interaction"))
@@ -251,9 +256,16 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                                     }
                                 }
                                 Some(Section::Legend) => {}
+                                None if body.editorial => {
+                                    out.block(&format!("#subsection[{}]", markup.trim()))
+                                }
                                 None => out
                                     .block(&format!("#section(none, title: [{}])", markup.trim())),
                             }
+                        }
+                        // A run-in head starts the paragraph after it.
+                        Capture::Heading(_) if body.editorial => {
+                            out.block_start(&format!("#runin[{}];", markup.trim()))
                         }
                         Capture::Heading(_) => {
                             out.block(&format!("#block(sticky: true, strong[{}])", markup.trim()))

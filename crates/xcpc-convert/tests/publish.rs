@@ -196,3 +196,49 @@ fn samples_taller_than_a_page_break_across_pages() {
         report.diagnostics
     );
 }
+
+/// A contest's editorial book: a title page with the contents, each editorial from a
+/// new page, problems without one left out.
+#[test]
+fn a_contests_editorial_book_has_a_title_page_and_a_page_per_problem() {
+    let (dir, ws) = scratch("描述。\n");
+    for (id, editorial) in [
+        ("q", Some("## 做法\n\n```cpp\nint main() {}\n```\n")),
+        ("r", None),
+        ("s", Some("> 引用。\n")),
+    ] {
+        let p = dir.path().join("problems").join(id);
+        fs::create_dir_all(&p).unwrap();
+        fs::write(
+            p.join("problem.toml"),
+            format!("title = \"{id}\"\ntags = [\"dp\"]\n"),
+        )
+        .unwrap();
+        fs::write(p.join("statement.md"), "描述。\n").unwrap();
+        if let Some(text) = editorial {
+            fs::write(p.join("editorial.md"), text).unwrap();
+        }
+    }
+    let c = dir.path().join("contests/c");
+    fs::create_dir_all(&c).unwrap();
+    fs::write(
+        c.join("contest.toml"),
+        "name = \"C\"\n[[problem]]\nid = \"q\"\nlabel = \"A\"\n[[problem]]\nid = \"r\"\nlabel = \"B\"\n[[problem]]\nid = \"s\"\nlabel = \"C\"\n",
+    )
+    .unwrap();
+    let (compiled, report) = build(&ws, Target::Contest("c".into()), Kind::Editorial);
+    assert!(compiled.is_some());
+    assert_eq!(report.pages, Some(3), "{:?}", report.diagnostics);
+    let pages: Vec<_> = report
+        .problems
+        .iter()
+        .map(|p| (p.label.as_str(), p.first))
+        .collect();
+    assert_eq!(pages, [("A", 2), ("C", 3)]);
+    assert_eq!(
+        report.diagnostics.len(),
+        1,
+        "B has none: {:?}",
+        report.diagnostics
+    );
+}

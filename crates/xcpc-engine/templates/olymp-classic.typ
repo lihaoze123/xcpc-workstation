@@ -50,7 +50,7 @@
     input: "输入格式", output: "输出格式", interaction: "交互", example: "样例", examples: "样例",
     explanation: "样例解释", note: "提示", notes: "提示", scoring: "评分", constraints: "约束",
     background: "背景知识", specification: "题目要求", illustration: "图表说明", subtasks: "子任务",
-    tutorial: "题目解答", blank: "此页故意留白",
+    blank: "此页故意留白", editorial: "题解",
   ),
   english: (
     problem: "Problem", input-file: "Input file:", output-file: "Output file:",
@@ -58,7 +58,7 @@
     input: "Input", output: "Output", interaction: "Interaction Protocol", example: "Example", examples: "Examples",
     explanation: "Explanation", note: "Note", notes: "Notes", scoring: "Scoring", constraints: "Constraints",
     background: "Background", specification: "Specification", illustration: "Illustration", subtasks: "Subtasks",
-    tutorial: "Problem Tutorial", blank: "This page is intentionally left blank",
+    blank: "This page is intentionally left blank", editorial: "Editorial",
   ),
 )
 #let lang-state = state("xcpc-language", "chinese")
@@ -133,15 +133,6 @@
   body
 }
 
-// \begin{tutorial}{title}: \bigskip, then the head in \problemheadfont, bold sans:
-// `Problem Tutorial: “title”` (olymp.sty's form for languages other than Russian).
-#let tutorial(label: none, title: none, body) = {
-  v(bigskip, weak: true)
-  [#metadata((label: label, title: title)) <xcpc-tutorial>]
-  block(sticky: true, bold-sans(sizes.LARGE)[#word("tutorial"): “#title”])
-  body
-}
-
 // ---- Cover ----------------------------------------------------------------------------
 
 // \maketitle (title \LARGE, author and date \large) and the problem list floating at the
@@ -179,6 +170,94 @@
   pagebreak()
 }
 
+// ---- Editorial book ------------------------------------------------------------------
+//
+// The reference has no A4 editorial (its tutorials are Beamer slides), so this is our
+// design, in the statements' book: the same page, fonts, sizes and running head and
+// foot. Inside it, hierarchy is size, weight and space, never ornaments: no rules, no
+// dots between things, no tinted boxes. Its measures are the design parameters above.
+
+#let muted = luma(40%)                        // the meta line and comments: dark enough to print
+
+// The title page: the cover's title, author and date, with "Editorial" for "Problem
+// Set", and at the bottom the contents (label, title, page), as the cover has its
+// problem list, set in the list's columns (1cm, 6cm) without its rules.
+#let title-page(name, author, date) = {
+  [#metadata(none) <xcpc-cover>]
+  v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  align(center, {
+    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), "FZHei-B01"), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
+    v(1.5em)
+    text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
+    v(1em)
+    text(..strut(sizes.large), serif(size: sizes.large, date))
+  })
+  place(bottom + center, float: true, context {
+    let rows = query(<xcpc-tutorial>).map(t => {
+      let at = t.location()
+      let go(body) = link(at, body)
+      (
+        go(bold-sans(sizes.small, t.value.label)),
+        go(serif(size: sizes.small, t.value.title)),
+        go(serif(size: sizes.small, text(number-width: "tabular", str(counter(page).at(at).first())))),
+      )
+    })
+    text(..strut(sizes.small), grid(
+      columns: (1cm, 6cm, 1cm),
+      align: (left, left, right),
+      ..rows.flatten(),
+    ))
+    v(2em + tex(9))
+  })
+  pagebreak()
+}
+
+// A problem's editorial, from a new page: the label and title as a problem's head,
+// then, quieter, what is known about it (author, tags, sources), set apart by space.
+// The head is also the PDF's bookmark.
+#let tutorial(label: none, title: none, meta: (), body) = {
+  pagebreak(weak: true)
+  [#metadata((label: label, title: title)) <xcpc-tutorial>]
+  place(hide(heading(level: 1, outlined: false, bookmarked: true, numbering: none)[#label #title]))
+  let head = if label == none { title } else [#label#h(1em)#title]
+  block(sticky: true, below: if meta.len() > 0 { 2 * smallskip } else { 2 * bigskip }, bold-sans(sizes.LARGE, head))
+  if meta.len() > 0 {
+    block(sticky: true, below: 2 * bigskip, text(fill: muted, sans(size: sizes.small, meta.join(h(1.5em)))))
+  }
+  body
+}
+
+// `##` in an editorial: one step below the statements' sections (the head is the top),
+// \large, with a \bigskip before it.
+#let subsection(title) = {
+  v(bigskip, weak: true)
+  block(sticky: true, below: smallskip, bold-sans(sizes.large, title))
+}
+
+// `###`: run in, as \paragraph is: bold, then the paragraph goes on after a quad.
+#let runin(title) = { strong(title); h(1em) }
+
+// What differs inside an editorial: code indented by the paragraph indent instead of
+// framed, code a size smaller with bold keywords and italic comments
+// (`mono.tmTheme`: prints in black and white), quotations as LaTeX's `quote`, tables
+// without rules.
+#let editorial-style(body) = {
+  set raw(theme: "/xcpc/mono.tmTheme")
+  show raw.where(block: true): it => {
+    set text(font: with-cjk(optical("Latin Modern Mono", sizes.small), "FZFangSong-Z02"), size: sizes.small, ..strut(sizes.small))
+    set par(justify: false, first-line-indent: 0pt)
+    block(above: bigskip, below: bigskip, inset: (left: parindent), width: 100%, it)
+  }
+  // quote: \leftmargini (2.5em) on both sides, its first line not indented again.
+  show quote.where(block: true): it => block(above: bigskip, below: bigskip, inset: (x: 2.5em), {
+    set par(first-line-indent: 0pt)
+    it.body
+  })
+  set table(stroke: none, inset: (x: tabcolsep, y: smallskip))
+  show table.cell.where(y: 0): strong
+  body
+}
+
 // ---- Contest --------------------------------------------------------------------------
 
 #let contest(
@@ -189,8 +268,12 @@
   language: "chinese",
   show-cover: true,
   blank-pages: false,
+  // "statements", or "editorial": a title page with the contents for the cover, and
+  // the problem in hand on the right of the running head instead of the date.
+  book: "statements",
   body,
 ) = {
+  let editorial = book == "editorial"
   let chinese = language == "chinese"
   lang-state.update(language)
   blank-state.update(blank-pages)
@@ -202,6 +285,16 @@
   set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
   set text(font: with-cjk("Latin Modern Roman 12", "FZShuSong-Z01"), size: sizes.normal)
   show raw: set text(font: mono-font, size: sizes.normal)
+  // ctex's founder fontset: CJK bold is FZ Hei, CJK italic FZ Kai.
+  show strong: set text(font: with-cjk("Latin Modern Roman 12", "FZHei-B01"))
+  show emph: set text(font: with-cjk("Latin Modern Roman 12", "FZKai-Z03"))
+  // Highlighted raw emits strong/emph; keep monospace inside raw (Latin Modern Mono 10pt
+  // ships bold and italic faces, whereas 12pt has only regular).
+  show raw: it => {
+    show strong: set text(font: with-cjk("Latin Modern Mono", "FZHei-B01"))
+    show emph: set text(font: with-cjk("Latin Modern Mono", "FZKai-Z03"))
+    it
+  }
   show math.equation: set text(font: "Latin Modern Math")
   // olymp.sty's `chinese` option makes \le and \ge slanted. The replacement keeps the
   // relation's class: a bare text would lose its spacing after a closing `)` or `^9`.
@@ -226,7 +319,16 @@
     header: context if not is-cover() {
       set par(first-line-indent: 0pt, spacing: 0pt)
       set block(spacing: 0pt)
-      let head = { serif(name); h(1fr); serif(date) }
+      let head = if editorial {
+        // The problem whose editorial this page is in: the last one started by here.
+        let current = query(<xcpc-tutorial>).filter(t => t.location().page() <= here().page()).at(-1, default: none)
+        serif(if name == none or name == "" { word("editorial") } else { name })
+        h(1fr)
+        if current != none {
+          let v = current.value
+          serif(if v.label == none { v.title } else [#v.label#h(1em)#v.title])
+        }
+      } else { serif(name); h(1fr); serif(date) }
       let depth = measure(text(top-edge: "baseline", bottom-edge: "bounds", head)).height
       block(text(top-edge: "bounds", bottom-edge: "baseline", head))
       block(height: 0pt, move(dy: depth + 2pt, line(length: 100%, stroke: rule)))
@@ -241,9 +343,10 @@
     },
   )
 
+  show: if editorial { editorial-style } else { it => it }
   if show-cover {
     counter(page).update(0)
-    cover(name, author, date)
+    if editorial { title-page(name, author, date) } else { cover(name, author, date) }
   }
   // Where the text may go, for the engine's overflow check.
   [#metadata((left: text-left, top: text-top, width: text-width, height: text-height)) <xcpc-text-area>]
