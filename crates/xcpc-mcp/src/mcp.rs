@@ -257,3 +257,102 @@ fn tools() -> Value {
         },
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn sample_workspace(read_only: bool) -> (tempfile::TempDir, Server) {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("workspace.toml"), "").unwrap();
+        let prob = dir.path().join("problems/a-plus-b");
+        fs::create_dir_all(prob.join("samples")).unwrap();
+        fs::write(
+            prob.join("problem.toml"),
+            "title = \"A + B\"\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n",
+        )
+        .unwrap();
+        fs::write(
+            prob.join("statement.md"),
+            "Compute $a + b$.\n\n## Input\n\nTwo integers.\n\n## Output\n\nTheir sum.\n",
+        )
+        .unwrap();
+        fs::write(prob.join("samples/01.in"), "1 2\n").unwrap();
+        fs::write(prob.join("samples/01.ans"), "3\n").unwrap();
+        let ws = Workspace::open(dir.path(), read_only).unwrap();
+        let fonts = FontOptions::from_env();
+        let engine = publish::engine(&ws, &fonts);
+        (dir, Server { ws, engine })
+    }
+
+    #[test]
+    fn initialize_and_list_tools() {
+        let (_dir, mut server) = sample_workspace(false);
+        let init = server
+            .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-11-25" } }))
+            .unwrap();
+        assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
+
+        let list = server
+            .handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
+            .unwrap();
+        let names: Vec<&str> = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["compile_and_diagnose", "render_page_png", "export_pdf"]);
+    }
+
+    #[test]
+    fn compile_render_and_export_respect_sandbox_and_read_only() {
+        let (dir, mut server) = sample_workspace(false);
+        let diag = server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "compile_and_diagnose", "arguments": { "target": "problem", "id": "a-plus-b" } }
+            }))
+            .unwrap();
+        assert_ne!(diag["result"]["isError"], true);
+        assert_eq!(diag["result"]["structuredContent"]["pages"], 1);
+
+        let png = server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": { "name": "render_page_png", "arguments": { "target": "problem", "id": "a-plus-b", "page": 1 } }
+            }))
+            .unwrap();
+        assert_ne!(png["result"]["isError"], true);
+        assert_eq!(png["result"]["content"][0]["mimeType"], "image/png");
+
+        let exported = server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": { "name": "export_pdf", "arguments": { "target": "problem", "id": "a-plus-b" } }
+            }))
+            .unwrap();
+        assert_ne!(exported["result"]["isError"], true);
+        assert!(dir.path().join("build/a-plus-b.pdf").is_file());
+
+        // Path traversal must be refused.
+        let escape = server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": { "name": "export_pdf", "arguments": { "target": "problem", "id": "a-plus-b", "output": "../escape.pdf" } }
+            }))
+            .unwrap();
+        assert_eq!(escape["result"]["isError"], true);
+
+        // Read-only workspace must refuse export_pdf.
+        let (_ro_dir, mut ro_server) = sample_workspace(true);
+        let ro_export = ro_server
+            .handle(&json!({
+                "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                "params": { "name": "export_pdf", "arguments": { "target": "problem", "id": "a-plus-b" } }
+            }))
+            .unwrap();
+        assert_eq!(ro_export["result"]["isError"], true);
+    }
+}
