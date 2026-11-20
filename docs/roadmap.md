@@ -17,7 +17,8 @@
   - 页面指纹改为不含 span 的内容哈希（`xcpc-engine` 的 `page_fingerprint`），编辑一处只有所在页需要重新光栅化。
   - 页面以像素缓冲（`ImageSrc::rgba`）交给 Rust 组件 `PageImage` 显示，不再编码 PNG、写文件、再解码；平移和缩放是容器的 `transform`，由 GSK 合成，缩放时先拉伸旧图，再换成新图。应用内改一个字到出图的往返：PNG + `Canvas` 约 60ms，像素缓冲约 14ms；平移时每帧不再有 `Canvas` 的 Cairo 重放（原来每帧 4–7ms）。
   - SVG 和 `Painter` 两条矢量通路在 Linux 上都由 Cairo 在 UI 线程上按显示缩放重放成位图，不随 `transform` 缩放（读 `nsh-platform-linux` 的 `canvas.rs` 得出，未实测），比在后台线程光栅化更差，暂不采用。
-  - 待做：**只光栅化可见页**。现在缩放跨过倍数档位时会把所有页按新倍数重画，倍数很大时单页可达上百 MB，图片到达那一帧在主线程上拷贝和上传要 80ms 以上。
+  - 只光栅化可见页（前后各多一页）：`Preview.compile` 带上可见范围，范围外的页沿用已有的、倍数最接近的图，没有就先留白。实测（120Hz 屏）平移满帧 120fps，每帧约 2ms；编辑可见页外的内容时不重画任何页。
+  - 待做：**分块光栅化**。缩放到很大倍数时，可见页每页仍有几十 MB，图到达那一帧要在主线程拷贝、上传，最慢约 76ms（这一秒掉到 30fps）。做法是只画视口内的分块：把页面帧平移、裁剪后交给 `typst-render`。
   - 复现：`cargo run --release -p xcpc-engine --example preview_bench`；应用内看日志里的 `[preview]` 行，帧开销用 `NSH_FPS=1`。
 - 滚轮平移正常。Ctrl+滚轮或捏合缩放、中文输入法、撤销/重做和长文档要人工验收。
 - 基准管线：3 套用例共 13 页，页数与基准一致，并排图看起来一样（`scripts/olymp-regress.sh`）。
