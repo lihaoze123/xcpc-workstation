@@ -10,59 +10,96 @@ export { token };
 // light gray `accent` (one step above the `muted` hover),
 // a warning's amber `chart-4`, solid danger button fill `chart-5` (split from
 // `destructive` text so dark-mode white-on-red buttons keep ≥4.5:1 contrast).
+const BASE_LIGHT_THEME: Record<string, string> = {
+  background: "#FAFAFA",
+  foreground: "#09090B",
+  card: "#FFFFFF",
+  "card-foreground": "#09090B",
+  popover: "#FFFFFF",
+  "popover-foreground": "#09090B",
+  muted: "#F4F4F5",
+  "muted-foreground": "#A1A1AA",
+  border: "#E4E4E7",
+  input: "#D4D4D8",
+  primary: "#0B6989",
+  "primary-foreground": "#FFFFFF",
+  accent: "#EBEBED",
+  "accent-foreground": "#09090B",
+  secondary: "#F4F4F5",
+  "secondary-foreground": "#52525B",
+  sidebar: "#E4E4E7",
+  "sidebar-primary": "#09546D",
+  "chart-4": "#B45309",
+  "chart-5": "#B91C1C",
+  ring: "#0B6989",
+  destructive: "#B91C1C",
+};
+
+const BASE_DARK_THEME: Record<string, string> = {
+  background: "#09090B",
+  foreground: "#FAFAFA",
+  card: "#111113",
+  "card-foreground": "#FAFAFA",
+  popover: "#18181B",
+  "popover-foreground": "#FAFAFA",
+  muted: "#18181B",
+  "muted-foreground": "#71717A",
+  border: "#27272A",
+  input: "#3F3F46",
+  primary: "#0E7FA6",
+  "primary-foreground": "#FFFFFF",
+  accent: "#232327",
+  "accent-foreground": "#FAFAFA",
+  secondary: "#18181B",
+  "secondary-foreground": "#A1A1AA",
+  sidebar: "#141417",
+  "sidebar-primary": "#118EB8",
+  "chart-4": "#FBBF24",
+  "chart-5": "#DC2626",
+  ring: "#249AC2",
+  destructive: "#F87171",
+};
+
 setTheme({
   cssVars: {
     theme: { radius: "8px" },
-    light: {
-      background: "#FAFAFA",
-      foreground: "#09090B",
-      card: "#FFFFFF",
-      "card-foreground": "#09090B",
-      popover: "#FFFFFF",
-      "popover-foreground": "#09090B",
-      muted: "#F4F4F5",
-      "muted-foreground": "#A1A1AA",
-      border: "#E4E4E7",
-      input: "#D4D4D8",
-      primary: "#0B6989",
-      "primary-foreground": "#FFFFFF",
-      accent: "#EBEBED",
-      "accent-foreground": "#09090B",
-      secondary: "#F4F4F5",
-      "secondary-foreground": "#52525B",
-      sidebar: "#E4E4E7",
-      "sidebar-primary": "#09546D",
-      "chart-4": "#B45309",
-      "chart-5": "#B91C1C",
-      ring: "#0B6989",
-      destructive: "#B91C1C",
-    },
-    dark: {
-      background: "#09090B",
-      foreground: "#FAFAFA",
-      card: "#111113",
-      "card-foreground": "#FAFAFA",
-      popover: "#18181B",
-      "popover-foreground": "#FAFAFA",
-      muted: "#18181B",
-      "muted-foreground": "#71717A",
-      border: "#27272A",
-      input: "#3F3F46",
-      primary: "#0E7FA6",
-      "primary-foreground": "#FFFFFF",
-      accent: "#232327",
-      "accent-foreground": "#FAFAFA",
-      secondary: "#18181B",
-      "secondary-foreground": "#A1A1AA",
-      sidebar: "#141417",
-      "sidebar-primary": "#118EB8",
-      "chart-4": "#FBBF24",
-      "chart-5": "#DC2626",
-      ring: "#249AC2",
-      destructive: "#F87171",
-    },
+    light: BASE_LIGHT_THEME,
+    dark: BASE_DARK_THEME,
   },
 });
+
+const customEditorFontFamily = signal<string | undefined>(undefined);
+
+/** Applies merged `theme.toml` overrides (global `<dataDir>/theme.toml` + workspace `.xcpc/theme.toml`). */
+export function applyThemeOverrides(overrides: {
+  lightColors: readonly { key: string; value: string }[];
+  darkColors: readonly { key: string; value: string }[];
+  radius?: number | null;
+  editorFontFamily?: string | null;
+  editorFontSize?: number | null;
+  editorLineHeight?: number | null;
+}): void {
+  const light = { ...BASE_LIGHT_THEME };
+  const dark = { ...BASE_DARK_THEME };
+  for (const { key, value } of overrides.lightColors) light[key] = value;
+  for (const { key, value } of overrides.darkColors) dark[key] = value;
+  const radiusPx = overrides.radius != null && Number.isFinite(overrides.radius) ? `${Math.round(overrides.radius)}px` : "8px";
+  setTheme({
+    cssVars: {
+      theme: { radius: radiusPx },
+      light,
+      dark,
+    },
+  });
+  customEditorFontFamily.set(overrides.editorFontFamily?.trim() || undefined);
+  if (overrides.editorFontSize != null && Number.isFinite(overrides.editorFontSize)) {
+    setEditorFontSize(overrides.editorFontSize);
+  }
+  if (overrides.editorLineHeight != null && Number.isFinite(overrides.editorLineHeight)) {
+    const ratio = overrides.editorLineHeight > 3 ? overrides.editorLineHeight / editorFontSize() : overrides.editorLineHeight;
+    setEditorLineHeight(ratio);
+  }
+}
 
 /** §8's curves. */
 export const EASE_STANDARD = "cubic-bezier(0.2, 0, 0, 1)";
@@ -113,8 +150,12 @@ export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans CJK SC', 'Source Han Sa
 /** Flipped to `true` after `registerFont` finishes loading bundled JetBrains Mono faces. */
 export const fontsReady = signal(false);
 
-/** Reactive editor font family: switches to `EDITOR_MONO` after `registerFont` completes so `Editor` invalidates its cached glyph-width metrics. */
-export const editorMono = computed(() => (fontsReady() ? EDITOR_MONO : "monospace"));
+/** Reactive editor font family: switches to `EDITOR_MONO` (or `theme.toml` override) after `registerFont` completes. */
+export const editorMono = computed(() => {
+  const custom = customEditorFontFamily();
+  if (custom) return `'${custom}', 'Noto Sans CJK SC', 'Source Han Sans SC', monospace`;
+  return fontsReady() ? EDITOR_MONO : "monospace";
+});
 
 /** Reactive monospace font family for read-only code views. */
 export const monoFont = computed(() => (fontsReady() ? MONO : "monospace"));

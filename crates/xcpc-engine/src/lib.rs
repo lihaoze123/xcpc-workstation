@@ -35,6 +35,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../templates/olymp-classic.typ"),
     ),
     (
+        "/xcpc/cnoi-classic.typ",
+        include_str!("../templates/cnoi-classic.typ"),
+    ),
+    (
         "/xcpc/markdown.typ",
         include_str!("../templates/markdown.typ"),
     ),

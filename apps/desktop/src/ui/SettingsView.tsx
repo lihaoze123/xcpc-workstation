@@ -459,6 +459,25 @@ function AppearancePane() {
             </Text>
           </View>
         </SectionRow>
+        <SectionRow
+          trailing={
+            <Btn
+              label="打开 theme.toml"
+              icon="palette"
+              onPress={() => void preview.openThemeFile()}
+              testID="open-theme-file"
+            />
+          }
+        >
+          <View style={{ gap: 2 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              主题定制
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              支持全局与工作区 .xcpc/theme.toml 覆写配色、字体与圆角
+            </Text>
+          </View>
+        </SectionRow>
       </Card>
 
       <Section

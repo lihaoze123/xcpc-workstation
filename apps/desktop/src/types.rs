@@ -767,6 +767,7 @@ impl ContestMetaPatchJs {
             show_metadata: self.show_metadata,
             cover: self.cover,
             blank_pages: self.blank_pages,
+            template: Patch::Keep,
         })
     }
 }

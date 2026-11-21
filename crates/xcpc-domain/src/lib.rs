@@ -130,6 +130,10 @@ pub struct ContestMeta {
     /// Start every problem on an odd page, with "this page is intentionally left blank".
     #[serde(default)]
     pub blank_pages: bool,
+    /// Optional template name (e.g. `"olymp-classic"`, `"cnoi-classic"`, or a custom
+    /// `templates/<name>.typ` in the workspace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     /// Archived: the contest renders from `snapshot/` and nothing in it may be written.
     #[serde(default)]
     pub frozen: bool,
@@ -441,6 +445,8 @@ pub struct ContestMetaPatch {
     pub cover: Patch<bool>,
     #[serde(default)]
     pub blank_pages: Option<bool>,
+    #[serde(default)]
+    pub template: Patch<String>,
 }
 
 /// Partial update for one `[[problem]]` item's metadata overrides inside `contest.toml`.

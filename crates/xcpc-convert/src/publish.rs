@@ -111,16 +111,60 @@ pub fn document_with(
             }
         }
     };
+    let resolve_book = |book: &mut Book, contest_template: Option<&str>| -> Option<crate::Diagnostic> {
+        book.preamble = ws.load_preamble();
+        let wanted = contest_template
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .or_else(|| ws.default_template());
+        let Some(name) = wanted else {
+            return None;
+        };
+        if check_id(&name).is_ok() && ws.has_custom_template(&name) {
+            book.template_import = Some(format!("/templates/{name}.typ"));
+            return None;
+        }
+        match name.as_str() {
+            "olymp-classic" => {
+                book.template_import = Some("/xcpc/olymp-classic.typ".into());
+                None
+            }
+            "cnoi-classic" => {
+                book.template_import = Some("/xcpc/cnoi-classic.typ".into());
+                None
+            }
+            _ => Some(crate::Diagnostic {
+                error: false,
+                code: Some("unknown_template".into()),
+                message: format!(
+                    "未找到模板「{name}」（已回退到 olymp-classic）；请在 templates/{name}.typ 中提供该模板"
+                ),
+                file: if contest_template.is_some() {
+                    format!("contests/{}/contest.toml", target.id())
+                } else {
+                    "workspace.toml".into()
+                },
+                line: 1,
+                column: 1,
+            }),
+        }
+    };
     match target {
         Target::Problem(id) => {
             let mut problem = ws.load_problem(id)?;
             overlay(&mut problem);
-            let book = Book::single(language.unwrap_or_else(|| problem.default_language()));
+            let mut book = Book::single(language.unwrap_or_else(|| problem.default_language()));
+            let warn = resolve_book(&mut book, None);
             let entries = [Entry::single(&problem)];
-            Ok(match kind {
+            let mut doc = match kind {
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
-            })
+            };
+            if let Some(w) = warn {
+                doc.diagnostics.push(w);
+            }
+            Ok(doc)
         }
         Target::Contest(id) => {
             let contest = ws.load_contest(id)?;
@@ -132,6 +176,7 @@ pub fn document_with(
             if let Some(language) = language {
                 book.language = language;
             }
+            let warn = resolve_book(&mut book, contest.meta.template.as_deref());
             let entries: Vec<Entry> = problems
                 .iter()
                 .map(|(item, problem)| Entry {
@@ -139,10 +184,14 @@ pub fn document_with(
                     problem,
                 })
                 .collect();
-            Ok(match kind {
+            let mut doc = match kind {
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
-            })
+            };
+            if let Some(w) = warn {
+                doc.diagnostics.push(w);
+            }
+            Ok(doc)
         }
     }
 }

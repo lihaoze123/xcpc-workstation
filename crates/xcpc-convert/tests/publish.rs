@@ -1279,3 +1279,61 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         );
     }
 }
+
+#[test]
+fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();
+
+    // 1. Switch workspace default template to built-in `cnoi-classic`.
+    fs::write(
+        dir.path().join("workspace.toml"),
+        "template = \"cnoi-classic\"\n",
+    )
+    .unwrap();
+
+    // 2. Add `.xcpc/preamble.typ` defining a custom macro & style tweak.
+    fs::create_dir_all(dir.path().join(".xcpc")).unwrap();
+    fs::write(
+        dir.path().join(".xcpc/preamble.typ"),
+        "#let xcpc-custom-badge(s) = strong(s)\n#set text(tracking: 0pt)\n",
+    )
+    .unwrap();
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    let (compiled, doc, report) = publish::check(
+        &ws,
+        &mut engine,
+        &Target::Contest("welcome-round".into()),
+        Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(report.ok, "cnoi-classic failed: {:#?}", report.diagnostics);
+    assert!(compiled.is_some());
+    let doc = doc.unwrap();
+    assert!(doc.source.contains("\"/xcpc/cnoi-classic.typ\""));
+    assert!(doc.source.contains("xcpc-custom-badge"));
+
+    // 3. Custom workspace `templates/my-oi.typ` takes precedence when selected.
+    fs::create_dir_all(dir.path().join("templates")).unwrap();
+    fs::write(
+        dir.path().join("templates/my-oi.typ"),
+        "#import \"/xcpc/cnoi-classic.typ\": *\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("workspace.toml"), "template = \"my-oi\"\n").unwrap();
+    let (compiled, doc, report) = publish::check(
+        &ws,
+        &mut engine,
+        &Target::Problem("lantern-walk".into()),
+        Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(compiled.is_some());
+    assert!(report.ok, "custom template failed: {:#?}", report.diagnostics);
+    assert!(doc.unwrap().source.contains("\"/templates/my-oi.typ\""));
+}

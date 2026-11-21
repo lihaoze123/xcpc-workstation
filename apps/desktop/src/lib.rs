@@ -17,6 +17,7 @@ mod page_image;
 mod prefs;
 mod snapshot;
 mod state;
+mod theme_config;
 mod types;
 
 use std::path::{Path, PathBuf};
@@ -33,6 +34,7 @@ use crate::cache::CancelToken;
 use crate::state::State;
 
 pub use crate::page_image::{PageImage, PageImageProps};
+pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
     AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
     ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
@@ -554,6 +556,32 @@ impl Preview {
             Err(err) => return err,
         };
         match reveal_path(abs).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
+    }
+
+    /// Loads merged theme overrides from `<dataDir>/theme.toml` and `<workspace>/.xcpc/theme.toml`.
+    pub fn load_theme_overrides(&self) -> ThemeOverridesJs {
+        let ws_root = self.state.workspace_root();
+        theme_config::load_theme_overrides(self.state.data_dir.as_deref(), ws_root.as_deref())
+    }
+
+    /// Ensures `theme.toml` exists (preferring workspace `.xcpc/theme.toml` if present,
+    /// else `<dataDir>/theme.toml`) and reveals it in the system file manager.
+    pub async fn open_theme_file(this: Instance<Self>) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let ensured = this.with(|p| {
+            let ws_root = p.state.workspace_root();
+            theme_config::ensure_theme_file(p.state.data_dir.as_deref(), ws_root.as_deref())
+        });
+        let path = match ensured {
+            Ok(p) => p,
+            Err(e) => return ActionResult::err("io", e),
+        };
+        match reveal_path(path).await {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }

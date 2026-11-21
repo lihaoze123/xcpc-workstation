@@ -341,6 +341,54 @@ impl Workspace {
         self.read_only
     }
 
+    /// Reads the optional `template = "<name>"` setting from `workspace.toml`.
+    pub fn default_template(&self) -> Option<String> {
+        let raw = fs::read_to_string(self.root.join(WORKSPACE_FILE)).ok()?;
+        let table: toml::Table = toml::from_str(&raw).ok()?;
+        table
+            .get("template")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    }
+
+    /// Reads `.xcpc/preamble.typ` from the workspace if present and non-empty.
+    pub fn load_preamble(&self) -> Option<String> {
+        let text = fs::read_to_string(self.root.join(".xcpc/preamble.typ")).ok()?;
+        (!text.trim().is_empty()).then_some(text)
+    }
+
+    /// Returns `true` when `templates/<name>.typ` exists inside the workspace.
+    pub fn has_custom_template(&self, name: &str) -> bool {
+        check_id(name).is_ok() && self.root.join("templates").join(format!("{name}.typ")).is_file()
+    }
+
+    /// Lists available template names: built-in templates plus workspace `templates/*.typ`.
+    pub fn list_templates(&self) -> Vec<String> {
+        let mut names = vec!["olymp-classic".to_owned(), "cnoi-classic".to_owned()];
+        if let Ok(entries) = fs::read_dir(self.root.join("templates")) {
+            let mut custom = Vec::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path.extension().and_then(|e| e.to_str()) == Some("typ")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && check_id(stem).is_ok()
+                {
+                    custom.push(stem.to_owned());
+                }
+            }
+            custom.sort();
+            for name in custom {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
     /// Returns a handle to this workspace wired to `tracker` so writes performed through
     /// it are automatically suppressed by a [`WorkspaceWatcher`].
     pub fn with_write_tracker(&self, tracker: SelfWriteTracker) -> Self {

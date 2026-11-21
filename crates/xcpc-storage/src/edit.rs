@@ -1023,6 +1023,13 @@ fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) 
     if let Some(blank) = patch.blank_pages {
         set_scalar(root, "blank-pages", Value::from(blank));
     }
+    match &patch.template {
+        Patch::Keep => {}
+        Patch::Set(t) => set_scalar(root, "template", Value::from(t.as_str())),
+        Patch::Clear => {
+            root.remove("template");
+        }
+    }
 }
 
 fn rewrite_contest_problem_tables(doc: &mut DocumentMut, problem_ids: &[String]) {

@@ -15,6 +15,7 @@ import { clampRatio } from "./logic";
 import {
   appearanceMode,
   applyAppearancePrefs,
+  applyThemeOverrides,
   DEFAULT_EDITOR_FONT_SIZE,
   DEFAULT_EDITOR_LIGATURES,
   DEFAULT_EDITOR_LINE_HEIGHT,
@@ -45,6 +46,16 @@ export function errorOf(res: ActionResult, context?: string): UiError | undefine
 // ── Workspace ────────────────────────────────────────────────────────────────
 
 export const info = signal<WorkspaceInfo>(preview.workspace());
+/** Reloads and applies merged `theme.toml` overrides (global + active workspace). */
+export function reloadThemeOverrides() {
+  try {
+    applyThemeOverrides(preview.loadThemeOverrides());
+  } catch {
+    // Headless test environments without theme file stay on default palette.
+  }
+}
+
+reloadThemeOverrides();
 /** Bumped whenever the workspace's content may have changed (ours or another's). */
 export const revision = signal(0);
 /** Bumped whenever the open workspace switches to a different root, so views clear stale filters/errors. */
@@ -201,7 +212,10 @@ function adopt(next: WorkspaceInfo, failContext: string) {
     info.set(next);
     revision.set(revision() + 1);
   });
-  if (switched) startWatch();
+  if (switched) {
+    startWatch();
+    reloadThemeOverrides();
+  }
   return true;
 }
 
@@ -344,6 +358,9 @@ export function startWatch() {
       const ev = await preview.nextChange();
       if (generation !== watchGeneration) return;
       if (ev.kind === "closed") return;
+      if (ev.kind === "rescan" || ev.paths.includes(".xcpc/theme.toml")) {
+        reloadThemeOverrides();
+      }
       refresh();
       for (const fn of listeners) fn(ev.paths, ev.kind === "rescan");
     }
