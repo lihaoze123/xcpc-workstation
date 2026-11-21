@@ -18,7 +18,7 @@ pub use assets::{
     list_problem_assets, rename_problem_asset, rewrite_asset_reference,
     set_asset_width_in_markdown, set_problem_asset_width, try_rewrite_asset_reference,
 };
-pub use markdown::markdown_with_samples;
+pub use markdown::{markdown_with_samples, math_to_typst};
 pub use spans::{Span, SpanKind, markdown_spans};
 
 /// A diagnostic in a workspace file (1-based line and column).

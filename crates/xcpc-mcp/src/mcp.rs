@@ -378,6 +378,7 @@ impl Server {
             date,
             author,
             language,
+            template: Patch::Keep,
             show_metadata,
             cover,
             blank_pages,

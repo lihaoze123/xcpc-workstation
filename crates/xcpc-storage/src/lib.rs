@@ -361,7 +361,12 @@ impl Workspace {
 
     /// Returns `true` when `templates/<name>.typ` exists inside the workspace.
     pub fn has_custom_template(&self, name: &str) -> bool {
-        check_id(name).is_ok() && self.root.join("templates").join(format!("{name}.typ")).is_file()
+        check_id(name).is_ok()
+            && self
+                .root
+                .join("templates")
+                .join(format!("{name}.typ"))
+                .is_file()
     }
 
     /// Lists available template names: built-in templates plus workspace `templates/*.typ`.

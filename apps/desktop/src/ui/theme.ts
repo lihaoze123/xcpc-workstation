@@ -242,6 +242,7 @@ export type AppearanceMode = "system" | "light" | "dark";
 export const DEFAULT_EDITOR_FONT_SIZE = 13.5;
 export const DEFAULT_EDITOR_LINE_HEIGHT = 1.55;
 export const DEFAULT_EDITOR_LIGATURES = true;
+export const DEFAULT_EDITOR_VIM_MODE = false;
 
 /** User-selected appearance mode: `"system"`, `"light"`, or `"dark"`. */
 export const appearanceMode = signal<AppearanceMode>("system");
@@ -254,6 +255,9 @@ export const editorLineHeight = signal<number>(DEFAULT_EDITOR_LINE_HEIGHT);
 
 /** Whether programming ligatures are enabled in the code/statement editor. */
 export const editorLigatures = signal<boolean>(DEFAULT_EDITOR_LIGATURES);
+
+/** Whether practical-subset Vim mode is enabled in the Markdown editor (default off). */
+export const editorVimMode = signal<boolean>(DEFAULT_EDITOR_VIM_MODE);
 
 /** Switches the app's appearance immediately via NSH's native `setColorScheme`. */
 export function setAppearanceMode(mode: AppearanceMode): void {
@@ -283,11 +287,17 @@ export function setEditorLigatures(enabled: boolean): void {
   editorLigatures.set(Boolean(enabled));
 }
 
+/** Toggles Vim practical-subset mode in the editor. */
+export function setEditorVimMode(enabled: boolean): void {
+  editorVimMode.set(Boolean(enabled));
+}
+
 export interface AppearancePrefs {
   appearance?: AppearanceMode;
   editorFontSize?: number;
   editorLineHeight?: number;
   editorLigatures?: boolean;
+  editorVimMode?: boolean;
 }
 
 /** Applies a batch of persisted appearance & editor typography preferences. */
@@ -297,5 +307,6 @@ export function applyAppearancePrefs(prefs: AppearancePrefs): void {
     if (prefs.editorFontSize !== undefined) setEditorFontSize(prefs.editorFontSize);
     if (prefs.editorLineHeight !== undefined) setEditorLineHeight(prefs.editorLineHeight);
     if (prefs.editorLigatures !== undefined) setEditorLigatures(prefs.editorLigatures);
+    if (prefs.editorVimMode !== undefined) setEditorVimMode(prefs.editorVimMode);
   });
 }

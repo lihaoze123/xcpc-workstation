@@ -28,11 +28,11 @@ use crate::snapshot;
 use crate::types::{
     ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
     ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
-    FreezeResultJs, FuzzyHitJs, OverridePatchJs, PdfFreshnessJs, PreviewLocationJs, PreviewRequest,
-    PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
-    ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult,
-    SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs,
-    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    FreezeResultJs, FuzzyHitJs, MathPreviewJs, OverridePatchJs, PdfFreshnessJs, PreviewLocationJs,
+    PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
+    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
+    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
     WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js, rating_tier_str,
     source_to_js,
 };
@@ -125,6 +125,8 @@ pub(crate) struct State {
     /// Lightweight UI-accessible snapshot of the latest compiled preview.
     pub(crate) snapshot: Mutex<Option<Arc<CachedSnapshot>>>,
     pub(crate) compiler: Mutex<CompilerState>,
+    /// Dedicated lightweight Typst engine for inline floating math previews (never contends with `compiler`).
+    pub(crate) math_engine: Mutex<Engine>,
 }
 
 impl Drop for State {
@@ -192,6 +194,7 @@ impl State {
                 cached: None,
                 active: HashSet::new(),
             }),
+            math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
         };
 
         if let Some(ws) = workspace {
@@ -1104,6 +1107,90 @@ impl State {
             &problem.samples,
             lang,
         ))
+    }
+
+    /// Compiles and rasterizes a single LaTeX math expression into the shared `PIXELS`
+    /// cache for the editor's floating mini math preview. Runs off the UI thread via
+    /// `math_engine` so it never contends with full-document preview compilation.
+    pub(crate) fn render_math_preview(
+        &self,
+        latex: &str,
+        display: bool,
+        dark: bool,
+        scale: f32,
+    ) -> MathPreviewJs {
+        let trimmed = latex.trim();
+        if trimmed.is_empty() {
+            return MathPreviewJs::default();
+        }
+        let typst_math = match xcpc_convert::math_to_typst(trimmed) {
+            Ok(code) if !code.is_empty() => code,
+            Ok(_) => return MathPreviewJs::default(),
+            Err(err) => {
+                return MathPreviewJs {
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let scale = scale.clamp(1.0, 3.5);
+        let fg = if dark { "#FAFAFA" } else { "#09090B" };
+        let fn_name = if display { "dm" } else { "m" };
+        let escaped = typst_math.replace('\\', "\\\\").replace('"', "\\\"");
+        let source = format!(
+            "#import \"/xcpc/markdown.typ\": m, dm\n\
+             #set page(width: auto, height: auto, margin: (x: 10pt, y: 7pt), fill: none)\n\
+             #set text(font: (\"Latin Modern Roman 12\", \"FZShuSong-Z01\", \"Source Han Serif SC\", \"Noto Serif CJK SC\"), size: 12pt, fill: rgb(\"{fg}\"))\n\
+             #show math.equation: set text(font: \"Latin Modern Math\")\n\
+             #{fn_name}(\"{escaped}\")\n"
+        );
+        let hash = content_hash(format!("{source}@{scale:.2}").as_bytes());
+        let key = format!("{}:math:{}", self.id, &hash[..16]);
+
+        let compiled = {
+            let mut engine = self.math_engine.lock().unwrap();
+            engine.set_main(&source);
+            match engine.compile() {
+                Ok(doc) => doc,
+                Err(err) => {
+                    let msg = err
+                        .errors
+                        .into_iter()
+                        .next()
+                        .map(|d| d.message)
+                        .unwrap_or_else(|| "公式渲染失败".into());
+                    return MathPreviewJs {
+                        error: Some(msg),
+                        ..Default::default()
+                    };
+                }
+            }
+        };
+        let Some((width, height)) = compiled.page_size(0) else {
+            return MathPreviewJs::default();
+        };
+        if !PIXELS.lock().unwrap().contains_and_touch(&key) {
+            let Some(pixmap) = compiled.render(0, scale) else {
+                return MathPreviewJs::default();
+            };
+            let (w, h) = (pixmap.width(), pixmap.height());
+            let bytes = (w as usize).saturating_mul(h as usize).saturating_mul(4);
+            let src = nsh_core::element::ImageSrc::rgba(w, h, pixmap.take());
+            let mut pixels = PIXELS.lock().unwrap();
+            pixels.insert(
+                key.clone(),
+                src,
+                bytes,
+                crate::cache::LayerKind::Tile,
+                self.id,
+            );
+        }
+        MathPreviewJs {
+            key,
+            width,
+            height,
+            error: None,
+        }
     }
 
     pub(crate) fn create_problem(&self, id: &str, title: &str) -> ActionResult {

@@ -1,7 +1,8 @@
 // `nsh test` runs this file in a headless runner it builds with the crate.
 import { expect, test } from "nsh/test";
 import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation/native";
-import { toggleHeadingLine, togglePrefixLine } from "./src/ui/studio/MarkdownEditor";
+import { extractMathAtCaret, toggleHeadingLine, togglePrefixLine } from "./src/ui/studio/MarkdownEditor";
+import { INITIAL_VIM_STATE, stepVim } from "./src/ui/studio/vim";
 import {
   matchSlashTrigger,
   matchesSlashCommand,
@@ -477,4 +478,110 @@ test("shortcuts disambiguate Ctrl+1/2/3 between home navigation and editor headi
     expect(Boolean(items[0].context && items[1].context)).toBe(true);
     expect(items[0].context !== items[1].context).toBe(true);
   }
+});
+
+test("extractMathAtCaret applies smart zero-noise trigger rules", () => {
+  const text = "给定 $n$ 和 $\\frac{a}{b}$ 以及\n$$\n\\sum_{i=1}^n i\n$$";
+  const spans = Preview.markdownSpans(text);
+
+  // Simple inline `$n$`: suppressed when side-by-side preview is visible, shown when hidden.
+  expect(extractMathAtCaret(text, spans, { line: 0, column: 4 }, false)).toBe(undefined);
+  expect(extractMathAtCaret(text, spans, { line: 0, column: 4 }, true)).toEqual({
+    latex: "n",
+    display: false,
+  });
+
+  // Inline math with LaTeX command `\\frac{a}{b}`: shown in both modes.
+  const fracCol = text.indexOf("\\frac") + 2;
+  expect(extractMathAtCaret(text, spans, { line: 0, column: fracCol }, false)).toEqual({
+    latex: "\\frac{a}{b}",
+    display: false,
+  });
+
+  // Display math `$$...$$`: shown in both modes.
+  expect(extractMathAtCaret(text, spans, { line: 2, column: 3 }, false)).toEqual({
+    latex: "\\sum_{i=1}^n i",
+    display: true,
+  });
+});
+
+test("stepVim handles core normal, insert, visual, yank/paste, and text objects", () => {
+  const noMod = { ctrl: false, alt: false, meta: false };
+  const ctrlMod = { ctrl: true, alt: false, meta: false };
+  const doc = ["hello $a+b$ world", "second (foo) line", "third line"];
+
+  // Motions: w, $, 0, j, G, gg
+  let st = INITIAL_VIM_STATE;
+  let r = stepVim(st, "w", noMod, doc, { line: 0, column: 0 });
+  expect(r.handled).toBe(true);
+  expect(r.selection?.head).toEqual({ line: 0, column: 6 });
+
+  r = stepVim(r.state, "$", noMod, doc, { line: 0, column: 6 });
+  expect(r.selection?.head).toEqual({ line: 0, column: doc[0].length - 1 });
+
+  r = stepVim(r.state, "0", noMod, doc, { line: 0, column: 10 });
+  expect(r.selection?.head).toEqual({ line: 0, column: 0 });
+
+  r = stepVim(r.state, "G", noMod, doc, { line: 0, column: 0 });
+  expect(r.selection?.head).toEqual({ line: 2, column: 0 });
+
+  r = stepVim(r.state, "g", noMod, doc, { line: 2, column: 0 });
+  expect(r.state.pending).toBe("g");
+  r = stepVim(r.state, "g", noMod, doc, { line: 2, column: 0 });
+  expect(r.selection?.head).toEqual({ line: 0, column: 0 });
+
+  // Insert & Escape: Esc in insert returns to normal; Esc in normal falls through.
+  r = stepVim(r.state, "i", noMod, doc, { line: 0, column: 2 });
+  expect(r.state.mode).toBe("insert");
+  r = stepVim(r.state, "Escape", noMod, doc, { line: 0, column: 2 });
+  expect(r.handled).toBe(true);
+  expect(r.state.mode).toBe("normal");
+  const escInNormal = stepVim(r.state, "Escape", noMod, doc, { line: 0, column: 1 });
+  expect(escInNormal.handled).toBe(false);
+
+  // Undo / redo commands
+  expect(stepVim(r.state, "u", noMod, doc, { line: 0, column: 0 }).command).toBe("undo");
+  expect(stepVim(r.state, "r", ctrlMod, doc, { line: 0, column: 0 }).command).toBe("redo");
+
+  // Text object: ci$ inside `$a+b$`
+  let cur = stepVim(INITIAL_VIM_STATE, "c", noMod, doc, { line: 0, column: 8 });
+  cur = stepVim(cur.state, "i", noMod, doc, { line: 0, column: 8 });
+  cur = stepVim(cur.state, "$", noMod, doc, { line: 0, column: 8 });
+  expect(cur.handled).toBe(true);
+  expect(cur.state.mode).toBe("insert");
+  expect(cur.state.register).toBe("a+b");
+  expect(cur.edit).toEqual({
+    range: { start: { line: 0, column: 7 }, end: { line: 0, column: 10 } },
+    text: "",
+  });
+
+  // Text object: di( inside `(foo)`
+  cur = stepVim(INITIAL_VIM_STATE, "d", noMod, doc, { line: 1, column: 9 });
+  cur = stepVim(cur.state, "i", noMod, doc, { line: 1, column: 9 });
+  cur = stepVim(cur.state, "(", noMod, doc, { line: 1, column: 9 });
+  expect(cur.state.mode).toBe("normal");
+  expect(cur.state.register).toBe("foo");
+  expect(cur.edit).toEqual({
+    range: { start: { line: 1, column: 8 }, end: { line: 1, column: 11 } },
+    text: "",
+  });
+
+  // Linewise yank & paste (yy -> p)
+  cur = stepVim(INITIAL_VIM_STATE, "y", noMod, doc, { line: 1, column: 0 });
+  cur = stepVim(cur.state, "y", noMod, doc, { line: 1, column: 0 });
+  expect(cur.state.registerLinewise).toBe(true);
+  expect(cur.state.register).toBe("second (foo) line");
+  const pasted = stepVim(cur.state, "p", noMod, doc, { line: 0, column: 0 });
+  expect(pasted.edit?.text).toBe("\nsecond (foo) line");
+  expect(pasted.selection?.head).toEqual({ line: 1, column: 0 });
+
+  // Visual mode delete (v -> l -> l -> d)
+  cur = stepVim(INITIAL_VIM_STATE, "v", noMod, doc, { line: 0, column: 0 });
+  expect(cur.state.mode).toBe("visual");
+  cur = stepVim(cur.state, "l", noMod, doc, { line: 0, column: 0 });
+  cur = stepVim(cur.state, "l", noMod, doc, { line: 0, column: 1 });
+  cur = stepVim(cur.state, "d", noMod, doc, { line: 0, column: 2 });
+  expect(cur.state.mode).toBe("normal");
+  expect(cur.state.register).toBe("hel");
+  expect(cur.edit?.range).toEqual({ start: { line: 0, column: 0 }, end: { line: 0, column: 3 } });
 });

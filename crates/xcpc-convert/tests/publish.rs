@@ -1334,6 +1334,10 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     )
     .unwrap();
     assert!(compiled.is_some());
-    assert!(report.ok, "custom template failed: {:#?}", report.diagnostics);
+    assert!(
+        report.ok,
+        "custom template failed: {:#?}",
+        report.diagnostics
+    );
     assert!(doc.unwrap().source.contains("\"/templates/my-oi.typ\""));
 }

@@ -670,6 +670,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                 date: date.clone().map_or(Patch::Keep, Patch::Set),
                 author: author.clone().map_or(Patch::Keep, Patch::Set),
                 language: language.map(Lang::into_language),
+                template: Patch::Keep,
                 show_metadata: *show_metadata,
                 cover: cover.map_or(Patch::Keep, Patch::Set),
                 blank_pages: *blank_pages,

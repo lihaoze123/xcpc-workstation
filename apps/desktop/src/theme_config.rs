@@ -110,10 +110,7 @@ pub(crate) fn load_theme_overrides(
             }
         }
         if let Some(rad) = table.get("radius").and_then(toml::Value::as_table) {
-            let v = rad
-                .get("base")
-                .or_else(|| rad.get("md"))
-                .and_then(as_f64);
+            let v = rad.get("base").or_else(|| rad.get("md")).and_then(as_f64);
             if let Some(r) = v
                 && r.is_finite()
                 && (0.0..=20.0).contains(&r)
@@ -184,7 +181,8 @@ pub(crate) fn ensure_theme_file(
             return Ok(ws_theme);
         }
     }
-    let dir = data_dir.ok_or_else(|| "当前环境未配置应用数据目录，无法创建 theme.toml".to_owned())?;
+    let dir =
+        data_dir.ok_or_else(|| "当前环境未配置应用数据目录，无法创建 theme.toml".to_owned())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("无法创建配置目录：{e}"))?;
     let path = dir.join("theme.toml");
     if !path.is_file() {

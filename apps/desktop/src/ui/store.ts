@@ -22,10 +22,12 @@ import {
   editorFontSize,
   editorLigatures,
   editorLineHeight,
+  editorVimMode,
   setAppearanceMode,
   setEditorFontSize,
   setEditorLigatures,
   setEditorLineHeight,
+  setEditorVimMode,
   type AppearanceMode,
   type AppearancePrefs,
 } from "./theme";
@@ -299,6 +301,7 @@ export function persistAppearancePrefs(): void {
     editorFontSize: editorFontSize(),
     editorLineHeight: editorLineHeight(),
     editorLigatures: editorLigatures(),
+    editorVimMode: editorVimMode(),
   };
   try {
     void Storage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
@@ -324,6 +327,11 @@ export function updateEditorLineHeight(lineHeight: number): void {
 
 export function updateEditorLigatures(enabled: boolean): void {
   setEditorLigatures(enabled);
+  persistAppearancePrefs();
+}
+
+export function updateEditorVimMode(enabled: boolean): void {
+  setEditorVimMode(enabled);
   persistAppearancePrefs();
 }
 

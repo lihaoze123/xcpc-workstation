@@ -2245,3 +2245,52 @@ fn about_info_exposes_build_and_runtime_diagnostics() {
     assert_eq!(info.arch, std::env::consts::ARCH);
     assert!(!info.font_source.is_empty());
 }
+
+#[test]
+fn theme_overrides_merge_global_and_workspace_layers() {
+    let data = TempDir::new("theme-global");
+    let ws = TempDir::new("theme-ws");
+    std::fs::write(
+        data.0.join("theme.toml"),
+        "[colors.light]\nprimary = \"#112233\"\nbackground = \"#fafafa\"\n[editor]\nfont_size = 15\n[radius]\nbase = 10\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(ws.0.join(".xcpc")).unwrap();
+    std::fs::write(
+        ws.0.join(".xcpc/theme.toml"),
+        "[colors.light]\nprimary = \"#445566\"\n[editor]\nfont_family = \"JetBrains Mono\"\n",
+    )
+    .unwrap();
+
+    let merged = crate::theme_config::load_theme_overrides(Some(&data.0), Some(&ws.0));
+    let find_light = |k: &str| {
+        merged
+            .light_colors
+            .iter()
+            .find(|c| c.key == k)
+            .map(|c| c.value.as_str())
+    };
+    assert_eq!(find_light("primary"), Some("#445566"));
+    assert_eq!(find_light("background"), Some("#fafafa"));
+    assert_eq!(merged.editor_font_family.as_deref(), Some("JetBrains Mono"));
+    assert_eq!(merged.editor_font_size, Some(15.0));
+    assert_eq!(merged.radius, Some(10.0));
+}
+
+#[test]
+fn math_preview_renders_formula_and_reports_syntax_errors() {
+    let (_dir, preview) = init_temp_preview("math-preview");
+    let ok = preview
+        .state
+        .render_math_preview("\\frac{a}{b} + \\sum_{i=1}^n i", true, false, 2.0);
+    assert!(ok.error.is_none(), "unexpected error: {:?}", ok.error);
+    assert!(ok.key.contains(":math:"));
+    assert!(ok.width > 0.0 && ok.height > 0.0);
+    assert!(crate::cache::PIXELS.lock().unwrap().get(&ok.key).is_some());
+
+    let bad = preview
+        .state
+        .render_math_preview("\\frac{a", false, false, 2.0);
+    assert!(bad.error.is_some());
+    assert!(bad.key.is_empty());
+}

@@ -5,7 +5,7 @@
 // image paste, restrained typing ergonomics (`$`/`` ` `` pairing, list continuation, Tab
 // indent), diagnostic hover tooltips via `Overlay`, and `overviewRuler` marks.
 
-import { cleanup, Clipboard, computed, effect, keymap, Overlay, reduceMotion, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
+import { cleanup, Clipboard, colorScheme, computed, effect, keymap, Overlay, pixelRatio, reduceMotion, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
 import {
   Editor,
   Input,
@@ -18,7 +18,8 @@ import {
   type EditorSearchResult,
   type EditorSelection,
 } from "nsh/base";
-import { Preview, type MarkdownSpanJs } from "xcpc-workstation/native";
+import { PageImage, Preview, type MarkdownSpanJs } from "xcpc-workstation/native";
+import { preview } from "../store";
 import { Btn, IconBtn, tip } from "../kit";
 import {
   EASE_STANDARD,
@@ -28,10 +29,19 @@ import {
   editorLigatures,
   editorLineHeight,
   editorMono,
+  editorVimMode,
   ms,
   popoverShadow,
   type EditorInk,
 } from "../theme";
+import {
+  INITIAL_VIM_STATE,
+  stepVim,
+  VIM_INSERT_CAPTURE_KEYS,
+  VIM_NORMAL_CAPTURE_KEYS,
+  type VimMode,
+  type VimState,
+} from "./vim";
 import {
   matchSlashTrigger,
   matchesSlashCommand,
@@ -117,6 +127,7 @@ export interface MarkdownEditorActions {
 export function MarkdownEditor(props: {
   active: () => boolean;
   hidden?: boolean;
+  previewHidden?: boolean;
   typewriter?: boolean;
   defaultValue: string;
   placeholder?: string;
@@ -127,6 +138,7 @@ export function MarkdownEditor(props: {
   onInsertImage?: () => void | Promise<void>;
   onPasteImage?: (ext: string, bytes: Uint8Array) => string | null | Promise<string | null>;
   onSlashActiveChange?: (active: boolean) => void;
+  onVimModeChange?: (mode: VimMode | undefined) => void;
   onChange: (value: string) => void;
 }) {
   let editor: EditorRef | undefined;
@@ -165,6 +177,130 @@ export function MarkdownEditor(props: {
   const slashNavSeq = signal(0);
   const emptyLineHint = signal<{ top: number; left: number; height: number } | undefined>(undefined);
   const emptyLineHintVisible = signal(false);
+  const mathPreview = signal<
+    | { key: string; width: number; height: number; error?: string | null; bounds: Bounds }
+    | undefined
+  >(undefined);
+  let mathPreviewTimer: number | undefined;
+  let mathPreviewSeq = 0;
+  const vimState = signal<VimState>(INITIAL_VIM_STATE);
+  const vimActive = computed(
+    () => editorVimMode() && !props.readOnly && !props.hidden && !slashState() && !findOpen(),
+  );
+  effect(() => {
+    const enabled = editorVimMode() && !props.readOnly;
+    if (!enabled) {
+      untracked(() => {
+        if (vimState().mode !== "normal" || vimState().pending) vimState.set(INITIAL_VIM_STATE);
+        props.onVimModeChange?.(undefined);
+      });
+      return;
+    }
+    props.onVimModeChange?.(vimState().mode);
+  });
+  cleanup(() => props.onVimModeChange?.(undefined));
+
+  const vimCaptureKeys = computed<string[] | undefined>(() => {
+    if (!vimActive()) return undefined;
+    return vimState().mode === "insert" ? VIM_INSERT_CAPTURE_KEYS : VIM_NORMAL_CAPTURE_KEYS;
+  });
+
+  function handleVimKeyDown(e: {
+    key: string;
+    modifiers: { control: boolean; alt: boolean; platform: boolean };
+  }) {
+    if (!untracked(vimActive) || !editor || !untracked(focused)) return;
+    const curSel = lastSelections[lastSelections.length - 1];
+    const head = curSel?.head ?? untracked(caret) ?? { line: 0, column: 0 };
+    const res = stepVim(
+      untracked(vimState),
+      e.key,
+      { ctrl: e.modifiers.control, alt: e.modifiers.alt, meta: e.modifiers.platform && !e.modifiers.control },
+      lines(),
+      head,
+    );
+    if (!res.handled) return;
+    vimState.set(res.state);
+    if (res.command === "undo") {
+      editor.run("undo");
+      return;
+    }
+    if (res.command === "redo") {
+      editor.run("redo");
+      return;
+    }
+    if (res.edit) {
+      applyEdit(editor, [res.edit]);
+    }
+    if (res.selection) {
+      editor.setSelections([res.selection]);
+      lastSelections = [res.selection];
+      const pos =
+        res.selection.anchor.line === res.selection.head.line &&
+        res.selection.anchor.column === res.selection.head.column
+          ? res.selection.head
+          : undefined;
+      caret.set(pos);
+    }
+  }
+
+  cleanup(() => {
+    clearTimeout(mathPreviewTimer);
+    mathPreviewSeq++;
+  });
+
+  // Smart floating mini math preview: triggers on any math span when preview is hidden,
+  // or on display math / LaTeX-command inline math when side-by-side preview is visible.
+  effect(() => {
+    const pos = caret();
+    const spans = mdSpans();
+    const isFocused = focused();
+    const hasSlash = !!slashState();
+    const hasFind = findOpen();
+    const isHidden = !!props.hidden;
+    const isPreviewHidden = !!props.previewHidden;
+    const dark = colorScheme() === "dark";
+    const dpr = pixelRatio();
+
+    clearTimeout(mathPreviewTimer);
+    mathPreviewTimer = undefined;
+    if (!isFocused || isHidden || hasSlash || hasFind || !pos) {
+      mathPreviewSeq++;
+      if (untracked(mathPreview)) mathPreview.set(undefined);
+      return;
+    }
+    const found = extractMathAtCaret(text, spans, pos, isPreviewHidden);
+    if (!found) {
+      mathPreviewSeq++;
+      if (untracked(mathPreview)) mathPreview.set(undefined);
+      return;
+    }
+    const seq = ++mathPreviewSeq;
+    const delay = isPreviewHidden ? 150 : 250;
+    mathPreviewTimer = setTimeout(() => {
+      mathPreviewTimer = undefined;
+      const ed = editor;
+      if (!ed || seq !== mathPreviewSeq) return;
+      const renderScale = Math.max(1.5, dpr * 1.5);
+      void Promise.all([
+        ed.caretBounds(),
+        preview.renderMathPreview(found.latex, found.display, dark, renderScale),
+      ]).then(([cb, res]) => {
+        if (seq !== mathPreviewSeq || !cb || !untracked(focused) || untracked(slashState)) return;
+        if (!res.key && !res.error) {
+          mathPreview.set(undefined);
+          return;
+        }
+        mathPreview.set({
+          key: res.key,
+          width: Math.min(460, Math.max(24, res.width)),
+          height: Math.min(200, Math.max(18, res.height)),
+          error: res.error,
+          bounds: cb.pageBounds,
+        });
+      });
+    }, delay);
+  });
 
   function setSlashActive(next: boolean) {
     if (slashActive === next) return;
@@ -1045,8 +1181,9 @@ export function MarkdownEditor(props: {
 
   // Bind typing ergonomics and clipboard image paste after `Editor`'s own focus keymap flushes,
   // so these handlers cleanly take precedence while this editor is focused and editable.
+  const canType = () => canFormat() && (!vimActive() || vimState().mode === "insert");
   effect(() => {
-    if (!canFormat()) return;
+    if (!canType()) return;
     let cancelled = false;
     const unbinds: (() => void)[] = [];
     queueMicrotask(() => {
@@ -1103,6 +1240,8 @@ export function MarkdownEditor(props: {
   return (
     <View
       style={{ flex: 1 }}
+      captureKeys={vimCaptureKeys()}
+      onKeyDown={handleVimKeyDown}
       onLayout={(e) => {
         editorHeight = e.bounds.size.height;
       }}
@@ -1374,6 +1513,40 @@ export function MarkdownEditor(props: {
           }}
         />
       </If>
+      <If when={mathPreview() && !slashState() && !hover()}>
+        <Overlay anchor={mathPreview()!.bounds} placement="top" align="start" offset={8} margin={10}>
+          <View
+            testID="math-mini-preview"
+            class="bg-popover border border-border"
+            style={{
+              maxWidth: 480,
+              paddingTop: 4,
+              paddingBottom: 4,
+              paddingLeft: 6,
+              paddingRight: 6,
+              borderRadius: 8,
+              boxShadow: popoverShadow(),
+              pointerEvents: "none",
+            }}
+          >
+            <If
+              when={!!mathPreview()!.key}
+              else={
+                <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-destructive">
+                  {mathPreview()!.error ?? "公式语法有误"}
+                </Text>
+              }
+            >
+              <View style={{ width: mathPreview()!.width, height: mathPreview()!.height, overflow: "hidden" }}>
+                <PageImage
+                  layers={[{ key: mathPreview()!.key, left: 0, top: 0, width: 1, height: 1 }]}
+                  style={{ width: "100%", height: "100%" }}
+                />
+              </View>
+            </If>
+          </View>
+        </Overlay>
+      </If>
       <If when={hover()}>
         {(h) => (
           <Overlay anchor={h().bounds} placement="top" align="start" offset={6} margin={8}>
@@ -1410,6 +1583,49 @@ export function MarkdownEditor(props: {
       </If>
     </View>
   );
+}
+
+/** Extracts the LaTeX body of the math span at `pos`, applying the smart zero-noise trigger rule. */
+export function extractMathAtCaret(
+  source: string,
+  spans: readonly MarkdownSpanJs[],
+  pos: EditorPosition,
+  previewHidden: boolean,
+): { latex: string; display: boolean } | undefined {
+  let matched: MarkdownSpanJs | undefined;
+  for (const s of spans) {
+    if (s.kind !== "inlineMath" && s.kind !== "displayMath") continue;
+    const start: EditorPosition = { line: s.startLine, column: s.startColumn };
+    const end: EditorPosition = { line: s.endLine, column: s.endColumn };
+    if (cmpPos(pos, start) >= 0 && cmpPos(pos, end) <= 0) {
+      matched = s;
+      break;
+    }
+  }
+  if (!matched) return undefined;
+  const ls = source.split("\n");
+  let raw = "";
+  if (matched.startLine === matched.endLine) {
+    raw = (ls[matched.startLine] ?? "").slice(matched.startColumn, matched.endColumn);
+  } else {
+    const parts: string[] = [];
+    for (let i = matched.startLine; i <= matched.endLine; i++) {
+      const lineStr = ls[i] ?? "";
+      if (i === matched.startLine) parts.push(lineStr.slice(matched.startColumn));
+      else if (i === matched.endLine) parts.push(lineStr.slice(0, matched.endColumn));
+      else parts.push(lineStr);
+    }
+    raw = parts.join("\n");
+  }
+  const display = matched.kind === "displayMath";
+  const delim = display ? "$$" : "$";
+  let inner = raw.trim();
+  if (inner.startsWith(delim)) inner = inner.slice(delim.length);
+  if (inner.endsWith(delim)) inner = inner.slice(0, inner.length - delim.length);
+  inner = inner.trim();
+  if (!inner) return undefined;
+  if (!previewHidden && !display && !inner.includes("\\")) return undefined;
+  return { latex: inner, display };
 }
 
 /** Computes the line-start edit to toggle or switch an ATX heading (`# ` .. `#### `). */

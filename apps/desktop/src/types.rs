@@ -37,6 +37,18 @@ pub struct PreviewPage {
     pub layers: Vec<PreviewLayer>,
 }
 
+/// Rendered inline/display math snippet for the editor's floating mini math preview.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct MathPreviewJs {
+    /// Pixel cache key for `PageImage` (empty when `error` is set).
+    pub key: String,
+    /// Rendered box width in typographic points.
+    pub width: f64,
+    /// Rendered box height in typographic points.
+    pub height: f64,
+    pub error: Option<String>,
+}
+
 /// The part of a page in view, in its points: tiled when the scale asks for more than a
 /// whole-page layer has. A page listed with an empty part gets a whole-page layer only.
 #[derive(Debug, Clone, Default, PartialEq, JsObject)]

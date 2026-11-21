@@ -484,6 +484,11 @@ fn picture(dir: &str, url: &str) -> Result<String, String> {
     xcpc_lint::resolve_image_path(dir, url).map(|rel| format!("/{rel}"))
 }
 
+/// Converts a LaTeX math expression into modernized Typst math code via `mitex`.
+pub fn math_to_typst(tex: &str) -> Result<String, String> {
+    mitex::convert_math(tex, None).map(|c| modernize(&c).trim().to_owned())
+}
+
 /// Formats `samples` as a standalone Markdown section and inserts it into `statement`
 /// without mutating the source file: replaces an explicit `## 样例` / `## Examples`
 /// placeholder heading if present, otherwise inserts before `## 提示` / `## 样例解释` /

@@ -111,16 +111,16 @@ pub fn document_with(
             }
         }
     };
-    let resolve_book = |book: &mut Book, contest_template: Option<&str>| -> Option<crate::Diagnostic> {
+    let resolve_book = |book: &mut Book,
+                        contest_template: Option<&str>|
+     -> Option<crate::Diagnostic> {
         book.preamble = ws.load_preamble();
         let wanted = contest_template
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .or_else(|| ws.default_template());
-        let Some(name) = wanted else {
-            return None;
-        };
+        let name = wanted?;
         if check_id(&name).is_ok() && ws.has_custom_template(&name) {
             book.template_import = Some(format!("/templates/{name}.typ"));
             return None;

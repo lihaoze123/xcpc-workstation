@@ -51,6 +51,7 @@ import {
   updateEditorFontSize,
   updateEditorLigatures,
   updateEditorLineHeight,
+  updateEditorVimMode,
   workspaceVersion,
   type SettingsSection,
   type UiError,
@@ -65,6 +66,7 @@ import {
   editorFontSize,
   editorLigatures,
   editorLineHeight,
+  editorVimMode,
   MONO,
   ms,
   type AppearanceMode,
@@ -551,6 +553,27 @@ function AppearancePane() {
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
               合并显示箭头与比较运算符等连字字形
+            </Text>
+          </View>
+        </SectionRow>
+
+        <SectionRow
+          trailing={
+            <Switch
+              testID="editor-vim-mode"
+              checked={editorVimMode()}
+              onChange={(e) => updateEditorVimMode(e.checked)}
+              trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
+              thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
+            />
+          }
+        >
+          <View style={{ gap: 2 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              Vim 模式
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              支持 Normal / Insert / Visual、常用移动与文本对象（ci$/ci(/ci"）
             </Text>
           </View>
         </SectionRow>

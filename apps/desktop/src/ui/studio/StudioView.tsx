@@ -53,6 +53,7 @@ import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
+import type { VimMode } from "./vim";
 import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
@@ -179,6 +180,7 @@ export function StudioView(props: { active: boolean }) {
   const exporting = signal<Book | undefined>(undefined);
   const exportedSeq = signal(0);
   const notice = signal<UiError | undefined>(undefined);
+  const vimMode = signal<VimMode | undefined>(undefined);
   const freeze = createFreeze();
   let canvas: CanvasController | undefined;
   let editorActions: MarkdownEditorActions | undefined;
@@ -971,6 +973,29 @@ export function StudioView(props: { active: boolean }) {
                       }
                     >
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+                        <If when={vimMode()}>
+                          {(m) => (
+                            <View
+                              testID="vim-mode-badge"
+                              class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
+                              style={{
+                                height: 20,
+                                paddingLeft: 6,
+                                paddingRight: 6,
+                                marginRight: 4,
+                                borderRadius: 4,
+                                justifyContent: "center",
+                              }}
+                            >
+                              <Text
+                                style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
+                                class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
+                              >
+                                {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
+                              </Text>
+                            </View>
+                          )}
+                        </If>
                         <IconBtn
                           icon="sigma"
                           size={26}
@@ -1041,6 +1066,7 @@ export function StudioView(props: { active: boolean }) {
                         <MarkdownEditor
                           active={() => props.active}
                           hidden={tab() === "samples"}
+                          previewHidden={previewHidden()}
                           typewriter={focusMode()}
                           onRef={(r) => {
                             editor = r;
@@ -1056,6 +1082,7 @@ export function StudioView(props: { active: boolean }) {
                           diagnostics={editorDiagnostics()}
                           onInsertImage={openAssets}
                           onPasteImage={pasteImageBytes}
+                          onVimModeChange={(m) => vimMode.set(m)}
                           onSlashActiveChange={(active) => {
                             slashActive = active;
                             if (active) {

@@ -38,13 +38,13 @@ pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
     AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
     ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, OverridePatchJs,
-    PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage,
-    PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs,
-    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs,
-    SamplePairJs, SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
+    OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
+    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
+    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
+    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 
 /// The crate's UI set (`nsh.json` `"rust"`).
@@ -454,6 +454,24 @@ impl Preview {
             error: Some(format!("preview task failed: {e}")),
             ..Default::default()
         })
+    }
+
+    /// Compiles and rasterizes a single LaTeX math expression off the UI thread for the
+    /// editor's floating mini math preview (`PageImage` reads its pixels by `key`).
+    pub async fn render_math_preview(
+        this: Instance<Self>,
+        latex: String,
+        display: bool,
+        dark: bool,
+        scale: f64,
+    ) -> MathPreviewJs {
+        if this.is_disposed() {
+            return MathPreviewJs::default();
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.render_math_preview(&latex, display, dark, scale as f32))
+            .await
+            .unwrap_or_default()
     }
 
     /// Maps a click at `(xPt, yPt)` (typographic points from the top-left of 0-based `page`)
