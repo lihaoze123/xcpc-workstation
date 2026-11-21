@@ -2,10 +2,10 @@
 // workspace; §6.3, §8.5). Plays a calm 1.53s (0.75x) entrance on the native frame clock:
 //   0–960ms    Icon plate + 3 draft papers fade in & fan out (-20° / -10° / 0°)
 //   640–1400ms Geometric yellow pencil glides in & settles
-//   900–1530ms Wordmark, 3 action buttons, and footer stagger in (opacity + translateY)
+//   900–1530ms Wordmark, 2 action buttons, status notice, and footer stagger in (opacity + translateY)
 // Any pointer press, keystroke, or scroll wheel snaps immediately to final; buttons
 // remain non-interactive while completely transparent (`opacity === 0`) to prevent blind
-// misclicks, and `replayOnly` keeps the 3 workspace entries non-destructive during replay.
+// misclicks, and `replayOnly` keeps the workspace entries non-destructive during replay.
 
 import {
   Animated,
@@ -23,20 +23,19 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { Btn, tip } from "./kit";
 import { EASE_EXPO_CURVE } from "./motion";
 import { formatAppVersion, readAboutInfo } from "./SettingsView";
-import { info, newWorkspace, openError, pickWorkspace } from "./store";
+import { info, openError, pickWorkspace, requestNewWorkspace } from "./store";
 
 export interface NoWorkspaceViewProps {
   onNew?: () => void;
   onOpen?: () => void;
-  onOpenExample?: () => void;
   /** Optional version override (defaults to `formatAppVersion(readAboutInfo())`). */
   version?: string;
-  /** When replayed from Settings -> About, display the 3 workspace buttons without switching workspaces. */
+  /** When replayed from Settings -> About, display the workspace buttons without switching workspaces. */
   replayOnly?: boolean;
 }
 
-const STAGGER_DELAYS = [900, 985, 1070, 1155, 1240] as const;
-const STAGGER_DURATION = 290;
+const STAGGER_DELAYS = [900, 1005, 1110, 1215] as const;
+const STAGGER_DURATION = 315;
 
 const FAST_FORWARD_KEYS: readonly string[] = [
   "space",
@@ -62,8 +61,8 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
   let unbindKeys: (() => void) | undefined;
   const stageTimers: number[] = [];
 
-  // 0: buttons hidden (opacity 0), 1..3: buttons 1..3 have started fading in.
-  const visibleStage = signal(shouldAnimate ? 0 : 3);
+  // 0: buttons hidden (opacity 0), 1..2: buttons 1..2 have started fading in.
+  const visibleStage = signal(shouldAnimate ? 0 : 2);
 
   const opacities = STAGGER_DELAYS.map(() => createAnimatedValue(shouldAnimate ? 0 : 1));
   const offsets = STAGGER_DELAYS.map(() => createAnimatedValue(shouldAnimate ? 6 : 0));
@@ -94,7 +93,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
     if (!animating) return;
     animating = false;
     stopUi();
-    visibleStage.set(3);
+    visibleStage.set(2);
     iconCtrl?.snapToFinal();
     for (let i = 0; i < STAGGER_DELAYS.length; i++) {
       opacities[i].set(1);
@@ -103,7 +102,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
   }
 
   if (shouldAnimate) {
-    for (let stage = 1; stage <= 3; stage++) {
+    for (let stage = 1; stage <= 2; stage++) {
       const s = stage;
       stageTimers.push(
         setTimeout(() => {
@@ -128,7 +127,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
       if (running === anim) running = undefined;
       if (finished) {
         animating = false;
-        visibleStage.set(3);
+        visibleStage.set(2);
         releaseKeymap();
       }
     });
@@ -148,7 +147,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
     }
     snapToFinal();
     if (props.onNew) props.onNew();
-    else void newWorkspace();
+    else requestNewWorkspace();
   };
 
   const handleOpen = () => {
@@ -159,15 +158,6 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
     snapToFinal();
     if (props.onOpen) props.onOpen();
     else void pickWorkspace();
-  };
-
-  const handleOpenExample = () => {
-    if (props.replayOnly || visibleStage() < 3) {
-      snapToFinal();
-      return;
-    }
-    snapToFinal();
-    props.onOpenExample?.();
   };
 
   const btnStyle = { width: 240, height: 36, borderRadius: 8 };
@@ -249,27 +239,21 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               textStyle={{ fontSize: 13.5, fontWeight: 500 }}
             />
           </View>
-          <View
-            style={{
-              pointerEvents: !props.replayOnly && visibleStage() >= 3 ? "auto" : "none",
-              opacity: opacities[3],
-              transform: [{ translateY: offsets[3] }],
-            }}
-          >
-            <Btn
-              testID="open-example"
-              variant="outline"
-              size="md"
-              label="打开示例"
-              onPress={handleOpenExample}
-              style={btnStyle}
-              textStyle={{ fontSize: 13.5, fontWeight: 500 }}
-            />
-          </View>
         </View>
 
-        {/* Fixed-height slot for missing-workspace / open errors so layout never shifts (§6.3). */}
-        <View style={{ minHeight: 36, width: 320, maxWidth: "90%", marginTop: 8, justifyContent: "center" }}>
+        {/* Fixed-height slot for missing-workspace / open errors, staggered with the final phase
+            so it never floats alone over the blank page during the icon reveal (§6.3). */}
+        <View
+          style={{
+            minHeight: 36,
+            width: 320,
+            maxWidth: "90%",
+            marginTop: 8,
+            justifyContent: "center",
+            opacity: opacities[3],
+            transform: [{ translateY: offsets[3] }],
+          }}
+        >
           <If
             when={!props.replayOnly && Boolean(openError())}
             else={
@@ -295,8 +279,8 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
           alignItems: "center",
           justifyContent: "center",
           gap: 16,
-          opacity: opacities[4],
-          transform: [{ translateY: offsets[4] }],
+          opacity: opacities[3],
+          transform: [{ translateY: offsets[3] }],
         }}
       >
         <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">

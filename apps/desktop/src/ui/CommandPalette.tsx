@@ -17,12 +17,11 @@ import {
   goSpace,
   hasWorkspace,
   info,
-  newWorkspace,
-  openExampleWorkspace,
   openStudio,
   paletteOpen,
   pickWorkspace,
   preview,
+  requestNewWorkspace,
   selectedProblem,
   studio,
   studioActions,
@@ -74,8 +73,7 @@ function actions(): Action[] {
     { id: "a:shortcuts", icon: "code", label: "快捷键速查", keywords: ["shortcut", "key", "help", "快捷键"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
     { id: "a:about", icon: "fileText", label: "关于", keywords: ["about", "version", "update", "关于", "版本", "更新"], run: () => goSettings("about"), when: hasWorkspace },
     { id: "a:open-workspace", icon: "folderOpen", label: "切换工作区", shortcut: "mod+o", run: () => void pickWorkspace() },
-    { id: "a:new-workspace", icon: "folderPlus", label: "新建工作区", run: () => void newWorkspace() },
-    { id: "a:open-example", icon: "folderPlus", label: "打开示例工作区", keywords: ["example", "demo", "sample", "示例"], run: () => void openExampleWorkspace() },
+    { id: "a:new-workspace", icon: "folderPlus", label: "新建工作区", run: () => requestNewWorkspace() },
   ];
   return list.filter((a) => !a.when || a.when());
 }

@@ -13,6 +13,7 @@ import { pathBase, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
 import { pageTransform, pageTransition } from "./src/ui/motion";
 import { NavRail } from "./src/ui/NavRail";
+import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
 import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/SettingsView";
 import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
@@ -25,13 +26,13 @@ import {
   hasWorkspace,
   hydrateAppearancePrefs,
   info,
-  newWorkspace,
+  newWorkspaceModalOpen,
   openError,
-  openExampleWorkspace,
   openRecent,
   paletteOpen,
   pickWorkspace,
   preview,
+  requestNewWorkspace,
   selectedContest,
   space,
   startWatch,
@@ -176,7 +177,7 @@ function App() {
   const onWorkspaceAction = (id: string) => {
     if (id.startsWith("recent:")) openRecent(id.slice("recent:".length));
     else if (id === "open") void pickWorkspace();
-    else if (id === "new") void newWorkspace();
+    else if (id === "new") requestNewWorkspace();
     else if (id === "reveal" && info().root) void preview.revealInFolder(info().root);
   };
 
@@ -293,7 +294,7 @@ function App() {
         else={
           <View style={{ flex: 1 }}>
             <TitleBar borderless />
-            <NoWorkspaceView version={appVersion} onOpenExample={() => void openExampleWorkspace()} />
+            <NoWorkspaceView version={appVersion} />
           </View>
         }
       >
@@ -337,6 +338,7 @@ function App() {
         <BrandReplayOverlay version={appVersion} />
       </If>
       <ShortcutsModal />
+      <NewWorkspaceModal open={newWorkspaceModalOpen()} onClose={() => newWorkspaceModalOpen.set(false)} />
     </View>
   );
 }

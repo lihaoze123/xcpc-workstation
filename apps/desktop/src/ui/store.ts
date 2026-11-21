@@ -96,6 +96,12 @@ export const space = signal<Space>(initialSpace());
 export type SettingsSection = "workspace" | "appearance" | "shortcuts" | "about";
 export const settingsSection = signal<SettingsSection>("workspace");
 export const brandReplayOpen = signal(false);
+export const newWorkspaceModalOpen = signal(false);
+
+/** Opens the "New Workspace" modal so the user can choose between template and empty workspace. */
+export function requestNewWorkspace() {
+  newWorkspaceModalOpen.set(true);
+}
 export const studio = signal<StudioTarget | undefined>(restoreStudio());
 export const book = signal<Book>(prefs.lastBook === "editorial" ? "editorial" : "statements");
 export const paletteOpen = signal(false);

@@ -39,11 +39,11 @@ import {
   brandReplayOpen,
   errorOf,
   info,
-  newWorkspace,
   openError,
   openRecent,
   pickWorkspace,
   preview,
+  requestNewWorkspace,
   resetEditorTypography,
   revision,
   settingsSection,
@@ -352,7 +352,7 @@ function WorkspacePane() {
         </If>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: 12, borderTopWidth: 1 }} class="border-border bg-muted/40">
           <Btn label="打开已有文件夹…" icon="folderOpen" onPress={() => void pickWorkspace()} />
-          <Btn label="新建工作区…" icon="folderPlus" onPress={() => void newWorkspace()} />
+          <Btn label="新建工作区…" icon="folderPlus" onPress={() => requestNewWorkspace()} />
         </View>
       </Section>
 
