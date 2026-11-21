@@ -1213,10 +1213,13 @@ export function MarkdownEditor(props: {
     queueMicrotask(() => {
       if (cancelled) return;
       unbinds.push(
-        keymap.bind("escape", () => dispatchVimKey("Escape", false), {
-          when: "always",
-          forFocus: true,
-        }),
+        keymap.bind(
+          {
+            escape: () => dispatchVimKey("Escape", false),
+            "ctrl+[": () => dispatchVimKey("Escape", false),
+          },
+          { when: "always", forFocus: true },
+        ),
       );
       if (mode !== "insert") {
         const table: Record<string, () => void> = {};
