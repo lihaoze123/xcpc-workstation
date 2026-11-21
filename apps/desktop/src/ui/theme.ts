@@ -145,7 +145,7 @@ export const UI_SANS = "'Inter', 'Source Han Sans SC', 'Noto Sans CJK SC', syste
 export const MONO = "'JetBrains Mono', 'Maple Mono', monospace";
 
 /** The monospaced family for the Markdown/code editor with CJK fallback (§5). */
-export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans CJK SC', 'Source Han Sans SC', monospace";
+export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', monospace";
 
 /** Flipped to `true` after `registerFont` finishes loading bundled JetBrains Mono faces. */
 export const fontsReady = signal(false);

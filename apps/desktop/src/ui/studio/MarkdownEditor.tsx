@@ -1426,10 +1426,18 @@ export function MarkdownEditor(props: {
             activeLine: "bg-muted/45",
             lineNumber: "text-muted-foreground/45",
             activeLineNumber: "text-secondary-foreground",
+            caret:
+              vimActive() && vimState().mode === "normal"
+                ? "bg-primary/35 border-l-2 border-primary"
+                : "bg-primary",
           }}
           styles={{
             lineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
             activeLineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
+            caret:
+              vimActive() && vimState().mode === "normal"
+                ? { width: Math.round(editorFontSize() * 0.6), borderRadius: 1.5 }
+                : { width: 2, borderRadius: 1 },
           }}
           scrollBeyondLastLine={120}
           onFocus={() => {
