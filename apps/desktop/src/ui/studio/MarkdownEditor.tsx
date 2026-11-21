@@ -162,6 +162,7 @@ export function MarkdownEditor(props: {
   >(undefined);
   const slashAnchor = signal<Bounds | undefined>(undefined);
   const slashActiveIndex = signal(0);
+  const slashNavSeq = signal(0);
   const emptyLineHint = signal<{ top: number; left: number; height: number } | undefined>(undefined);
   const emptyLineHintVisible = signal(false);
 
@@ -383,6 +384,7 @@ export function MarkdownEditor(props: {
     if (queryChanged) {
       slashActiveIndex.set(0);
       slashLastGridCol = 0;
+      slashNavSeq.set(untracked(slashNavSeq) + 1);
     } else if (untracked(slashActiveIndex) >= items.length) {
       slashActiveIndex.set(Math.max(0, items.length - 1));
     }
@@ -471,6 +473,7 @@ export function MarkdownEditor(props: {
     slashState.set({ ...st, query: nextQuery, items });
     slashActiveIndex.set(0);
     slashLastGridCol = 0;
+    slashNavSeq.set(untracked(slashNavSeq) + 1);
   }
 
   function handleSlashEmptyBackspace() {
@@ -512,10 +515,16 @@ export function MarkdownEditor(props: {
     const total = st.items.length;
     const idx = untracked(slashActiveIndex);
     const filtering = st.query.trim().length > 0;
+    const bump = () => slashNavSeq.set(untracked(slashNavSeq) + 1);
 
     if (filtering) {
-      if (dir === "down") slashActiveIndex.set((idx + 1) % total);
-      else if (dir === "up") slashActiveIndex.set((idx - 1 + total) % total);
+      if (dir === "down") {
+        slashActiveIndex.set((idx + 1) % total);
+        bump();
+      } else if (dir === "up") {
+        slashActiveIndex.set((idx - 1 + total) % total);
+        bump();
+      }
       return;
     }
 
@@ -523,12 +532,14 @@ export function MarkdownEditor(props: {
       const next = (idx - 1 + SLASH_BASIC_COUNT) % SLASH_BASIC_COUNT;
       slashLastGridCol = next;
       slashActiveIndex.set(next);
+      bump();
       return;
     }
     if (dir === "right" && idx < SLASH_BASIC_COUNT) {
       const next = (idx + 1) % SLASH_BASIC_COUNT;
       slashLastGridCol = next;
       slashActiveIndex.set(next);
+      bump();
       return;
     }
     if (dir === "down") {
@@ -540,6 +551,7 @@ export function MarkdownEditor(props: {
       } else {
         slashActiveIndex.set(slashLastGridCol);
       }
+      bump();
       return;
     }
     if (dir === "up") {
@@ -551,6 +563,7 @@ export function MarkdownEditor(props: {
         slashLastGridCol = idx;
         slashActiveIndex.set(total - 1);
       }
+      bump();
     }
   }
 
@@ -679,6 +692,63 @@ export function MarkdownEditor(props: {
     const pos = { line: top + caret.line, column: caret.column };
     editor.setSelections([{ anchor: pos, head: pos }]);
     editor.focus();
+  }
+
+  /** Toggles or switches the ATX heading level (`# ` .. `#### `) on the current line(s). */
+  async function toggleHeading(level: 1 | 2 | 3 | 4) {
+    const sel = await primary();
+    const ed = editor;
+    if (!sel || !ed || props.readOnly) return;
+    const [a, b] = order(sel);
+    const ls = lines();
+    const edits: { range: EditorRange; text: string }[] = [];
+    let firstDelta = 0;
+    let lastDelta = 0;
+    for (let line = a.line; line <= b.line; line++) {
+      const lineStr = ls[line] ?? "";
+      const res = toggleHeadingLine(lineStr, level);
+      edits.push({
+        range: { start: { line, column: 0 }, end: { line, column: res.replaceEnd } },
+        text: res.insert,
+      });
+      if (line === a.line) firstDelta = res.delta;
+      if (line === b.line) lastDelta = res.delta;
+    }
+    if (edits.length === 0) return;
+    applyEdit(ed, edits);
+    const nextA = { line: a.line, column: Math.max(0, a.column + firstDelta) };
+    const nextB = { line: b.line, column: Math.max(0, b.column + lastDelta) };
+    ed.setSelections([{ anchor: nextA, head: nextB }]);
+    ed.focus();
+  }
+
+  /** Toggles unordered list (`- `), ordered list (`1. `), or blockquote (`> `) on the current line(s). */
+  async function toggleLinePrefix(kind: "ul" | "ol" | "quote") {
+    const sel = await primary();
+    const ed = editor;
+    if (!sel || !ed || props.readOnly) return;
+    const [a, b] = order(sel);
+    const ls = lines();
+    const edits: { range: EditorRange; text: string }[] = [];
+    let firstDelta = 0;
+    let lastDelta = 0;
+    let orderIdx = 1;
+    for (let line = a.line; line <= b.line; line++) {
+      const lineStr = ls[line] ?? "";
+      const res = togglePrefixLine(lineStr, kind, orderIdx++);
+      edits.push({
+        range: { start: { line, column: res.replaceStart }, end: { line, column: res.replaceEnd } },
+        text: res.insert,
+      });
+      if (line === a.line) firstDelta = res.delta;
+      if (line === b.line) lastDelta = res.delta;
+    }
+    if (edits.length === 0) return;
+    applyEdit(ed, edits);
+    const nextA = { line: a.line, column: Math.max(0, a.column + firstDelta) };
+    const nextB = { line: b.line, column: Math.max(0, b.column + lastDelta) };
+    ed.setSelections([{ anchor: nextA, head: nextB }]);
+    ed.focus();
   }
 
   /** Inserts `![selectedText](rel)` (or `![](rel)` without selection) at the caret and focuses the editor. */
@@ -956,10 +1026,18 @@ export function MarkdownEditor(props: {
   const canFormat = () => props.active() && !props.hidden && focused() && !props.readOnly;
   keymap.bind(
     {
+      "mod+1": () => canFormat() && void toggleHeading(1),
+      "mod+2": () => canFormat() && void toggleHeading(2),
+      "mod+3": () => canFormat() && void toggleHeading(3),
+      "mod+4": () => canFormat() && void toggleHeading(4),
       "mod+b": () => canFormat() && void wrap("**"),
       "mod+shift+i": () => canFormat() && void wrap("*"),
+      "mod+`": () => canFormat() && void wrap("`"),
       "mod+m": () => canFormat() && void wrap("$"),
       "mod+shift+m": () => canFormat() && void block("$$\n\n$$", { line: 1, column: 0 }),
+      "mod+shift+8": () => canFormat() && void toggleLinePrefix("ul"),
+      "mod+shift+7": () => canFormat() && void toggleLinePrefix("ol"),
+      "mod+shift+.": () => canFormat() && void toggleLinePrefix("quote"),
       "mod+f": () => props.active() && !props.hidden && openFind(),
     },
     { when: "always" },
@@ -1276,6 +1354,7 @@ export function MarkdownEditor(props: {
           query={slashState()?.query ?? ""}
           items={slashState()?.items ?? SLASH_COMMANDS}
           activeIndex={slashActiveIndex()}
+          navSeq={slashNavSeq()}
           onQueryChange={updateSlashQuery}
           onActiveChange={(i) => {
             slashActiveIndex.set(i);
@@ -1331,6 +1410,62 @@ export function MarkdownEditor(props: {
       </If>
     </View>
   );
+}
+
+/** Computes the line-start edit to toggle or switch an ATX heading (`# ` .. `#### `). */
+export function toggleHeadingLine(
+  lineStr: string,
+  level: 1 | 2 | 3 | 4,
+): { replaceEnd: number; insert: string; delta: number } {
+  const target = `${"#".repeat(level)} `;
+  const m = lineStr.match(/^(#{1,6})\s+/);
+  if (m) {
+    if (m[1].length === level) {
+      return { replaceEnd: m[0].length, insert: "", delta: -m[0].length };
+    }
+    return { replaceEnd: m[0].length, insert: target, delta: target.length - m[0].length };
+  }
+  return { replaceEnd: 0, insert: target, delta: target.length };
+}
+
+/** Computes the line edit to toggle unordered list (`- `), ordered list (`1. `), or blockquote (`> `). */
+export function togglePrefixLine(
+  lineStr: string,
+  kind: "ul" | "ol" | "quote",
+  orderIndex = 1,
+): { replaceStart: number; replaceEnd: number; insert: string; delta: number } {
+  if (kind === "quote") {
+    const m = lineStr.match(/^(\s*)>\s?/);
+    if (m) {
+      const removed = m[0].length - m[1].length;
+      return { replaceStart: m[1].length, replaceEnd: m[0].length, insert: "", delta: -removed };
+    }
+    return { replaceStart: 0, replaceEnd: 0, insert: "> ", delta: 2 };
+  }
+  const indentMatch = lineStr.match(/^(\s*)/);
+  const indent = indentMatch ? indentMatch[1].length : 0;
+  const rest = lineStr.slice(indent);
+  if (kind === "ul") {
+    const ul = rest.match(/^[-*+]\s+/);
+    if (ul) {
+      return { replaceStart: indent, replaceEnd: indent + ul[0].length, insert: "", delta: -ul[0].length };
+    }
+    const ol = rest.match(/^\d+\.\s+/);
+    if (ol) {
+      return { replaceStart: indent, replaceEnd: indent + ol[0].length, insert: "- ", delta: 2 - ol[0].length };
+    }
+    return { replaceStart: indent, replaceEnd: indent, insert: "- ", delta: 2 };
+  }
+  const ol = rest.match(/^\d+\.\s+/);
+  if (ol) {
+    return { replaceStart: indent, replaceEnd: indent + ol[0].length, insert: "", delta: -ol[0].length };
+  }
+  const prefix = `${orderIndex}. `;
+  const ul = rest.match(/^[-*+]\s+/);
+  if (ul) {
+    return { replaceStart: indent, replaceEnd: indent + ul[0].length, insert: prefix, delta: prefix.length - ul[0].length };
+  }
+  return { replaceStart: indent, replaceEnd: indent, insert: prefix, delta: prefix.length };
 }
 
 function order(sel: EditorSelection) {

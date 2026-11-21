@@ -20,7 +20,7 @@ import {
 } from "nsh";
 import { Input } from "nsh/base";
 import { Icon, type IconName } from "../Icon";
-import { tip } from "../kit";
+import { Kbd, tip } from "../kit";
 import { colorTransition, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
@@ -34,6 +34,7 @@ export interface SlashCommand {
   readonly label: string;
   readonly description: string;
   readonly keywords: readonly string[];
+  readonly shortcut?: string;
   readonly icon?: IconName;
   readonly badge?: string;
   readonly tint: SlashTint;
@@ -49,6 +50,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "二级标题",
     description: "新增题面或题解章节",
     keywords: ["h2", "heading", "title", "section", "biaoti", "bt", "zhangjie", "zj"],
+    shortcut: "mod+2",
     badge: "H2",
     tint: "neutral",
     template: "## ",
@@ -60,6 +62,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "三级标题",
     description: "章节下的子标题",
     keywords: ["h3", "subheading", "zibiaoti", "zbt"],
+    shortcut: "mod+3",
     badge: "H3",
     tint: "neutral",
     template: "### ",
@@ -71,6 +74,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "无序列表",
     description: "项目符号列表",
     keywords: ["ul", "list", "bullet", "liebiao", "lb"],
+    shortcut: "mod+shift+8",
     icon: "list",
     tint: "neutral",
     template: "- ",
@@ -82,6 +86,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "有序列表",
     description: "数字编号列表",
     keywords: ["ol", "numbered", "ordered", "youxu", "yx"],
+    shortcut: "mod+shift+7",
     icon: "listOrdered",
     tint: "neutral",
     template: "1. ",
@@ -93,6 +98,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "引用块",
     description: "引用说明或摘录",
     keywords: ["quote", "blockquote", "yinyong", "yy"],
+    shortcut: "mod+shift+.",
     badge: "❝",
     tint: "neutral",
     template: "> ",
@@ -104,6 +110,7 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
     label: "行内公式",
     description: "正文行内 LaTeX 公式",
     keywords: ["inline", "math", "formula", "$", "hangnei", "hn", "gongshi", "gs"],
+    shortcut: "mod+m",
     badge: "$",
     tint: "ochre",
     template: "$$",
@@ -118,6 +125,7 @@ export const SLASH_COMMON_COMMANDS: readonly SlashCommand[] = [
     label: "行间公式",
     description: "居中显示的独立公式块",
     keywords: ["math", "formula", "equation", "display", "gongshi", "gs", "$$"],
+    shortcut: "mod+shift+m",
     icon: "sigma",
     tint: "ochre",
     template: "$$\n\n$$",
@@ -315,15 +323,21 @@ function tintPalette(tint: SlashTint, dark: boolean): TintPalette {
 }
 
 const ROW_HEIGHT = 42;
-const SECTION_HEADER_HEIGHT = 26;
-const BASIC_SECTION_HEIGHT = SECTION_HEADER_HEIGHT + 36;
+const ROW_GAP = 1;
+const GROUP_GAP = 2;
+const BASIC_HEADER_H = 22; // lineHeight 14 + paddingTop 4 + paddingBottom 4
+const BASIC_STRIP_H = 36; // height 32 + paddingBottom 4
+const COMMON_HEADER_H = 23; // lineHeight 14 + paddingTop 6 + paddingBottom 3
+const ADVANCED_HEADER_H = 25; // lineHeight 14 + paddingTop 8 + paddingBottom 3
 const MAX_LIST_HEIGHT = 340;
+const SCROLL_VIEWPORT_H = MAX_LIST_HEIGHT - 12;
 
 export function SlashPopover(props: {
   anchor: Bounds;
   query: string;
   items: readonly SlashCommand[];
   activeIndex: number;
+  navSeq: number;
   onQueryChange: (query: string) => void;
   onActiveChange: (index: number) => void;
   onSelect: (cmd: SlashCommand) => void;
@@ -341,6 +355,25 @@ export function SlashPopover(props: {
   let focusRaf: number | undefined;
   let blurTimer: number | undefined;
   let pointerInteractAt = 0;
+  let scrollY = 0;
+  let viewportH = SCROLL_VIEWPORT_H;
+  let lastMousePage: { x: number; y: number } | undefined;
+  let ignoreHoverUntilMouseMove = false;
+
+  function handlePointerHover(index: number, pagePosition: { x: number; y: number }) {
+    if (ignoreHoverUntilMouseMove) {
+      if (
+        lastMousePage &&
+        Math.abs(pagePosition.x - lastMousePage.x) <= 1 &&
+        Math.abs(pagePosition.y - lastMousePage.y) <= 1
+      ) {
+        return;
+      }
+      ignoreHoverUntilMouseMove = false;
+    }
+    lastMousePage = { x: pagePosition.x, y: pagePosition.y };
+    props.onActiveChange(index);
+  }
 
   // Trigger warm spring reveal and take keyboard focus so arrow/Enter/Tab keys are never
   // intercepted by the underlying Editor's native keymap.
@@ -358,39 +391,48 @@ export function SlashPopover(props: {
     if (blurTimer !== undefined) clearTimeout(blurTimer);
   });
 
-  // Keep the keyboard-selected row smoothly visible inside the scroll container.
+  // Scroll only on keyboard navigation or query changes (`navSeq`), never on mouse hover,
+  // and lock synthetic hover events caused by rows scrolling under a stationary cursor.
   effect(() => {
-    const idx = props.activeIndex;
-    const q = props.query.trim();
+    const seq = props.navSeq;
+    if (seq === 0) return;
+    ignoreHoverUntilMouseMove = true;
     untracked(() => {
       if (!scrollRef) return;
+      const idx = props.activeIndex;
+      const q = props.query.trim();
       if (!q && idx < SLASH_BASIC_COUNT) {
-        scrollRef.scrollTo({ x: 0, y: 0, animated: false });
+        if (scrollY > 0) {
+          scrollY = 0;
+          scrollRef.scrollTo({ x: 0, y: 0, animated: false });
+        }
         return;
       }
       let itemTop = 0;
       if (!q) {
         const listIdx = idx - SLASH_BASIC_COUNT;
         const commonCount = SLASH_COMMON_COMMANDS.length;
+        const commonStart = BASIC_HEADER_H + GROUP_GAP + BASIC_STRIP_H + GROUP_GAP + COMMON_HEADER_H + GROUP_GAP;
         if (listIdx < commonCount) {
-          itemTop = BASIC_SECTION_HEIGHT + SECTION_HEADER_HEIGHT + listIdx * ROW_HEIGHT;
+          itemTop = commonStart + listIdx * (ROW_HEIGHT + ROW_GAP);
         } else {
-          itemTop =
-            BASIC_SECTION_HEIGHT +
-            SECTION_HEADER_HEIGHT +
-            commonCount * ROW_HEIGHT +
-            SECTION_HEADER_HEIGHT +
-            (listIdx - commonCount) * ROW_HEIGHT;
+          const commonGroupH = commonCount * ROW_HEIGHT + Math.max(0, commonCount - 1) * ROW_GAP;
+          const advStart = commonStart + commonGroupH + GROUP_GAP + ADVANCED_HEADER_H + GROUP_GAP;
+          itemTop = advStart + (listIdx - commonCount) * (ROW_HEIGHT + ROW_GAP);
         }
       } else {
-        itemTop = idx * ROW_HEIGHT;
+        itemTop = idx * (ROW_HEIGHT + ROW_GAP);
       }
       const itemBottom = itemTop + ROW_HEIGHT;
-      const visibleH = MAX_LIST_HEIGHT - 12;
-      if (itemBottom > visibleH) {
-        scrollRef.scrollTo({ x: 0, y: Math.max(0, itemBottom - visibleH + 8), animated: false });
-      } else if (itemTop < 48) {
-        scrollRef.scrollTo({ x: 0, y: 0, animated: false });
+      const margin = 6;
+      if (itemTop < scrollY + margin) {
+        const nextY = Math.max(0, itemTop - margin);
+        scrollY = nextY;
+        scrollRef.scrollTo({ x: 0, y: nextY, animated: false });
+      } else if (itemBottom > scrollY + viewportH - margin) {
+        const nextY = Math.max(0, itemBottom - viewportH + margin);
+        scrollY = nextY;
+        scrollRef.scrollTo({ x: 0, y: nextY, animated: false });
       }
     });
   });
@@ -423,7 +465,7 @@ export function SlashPopover(props: {
       <View
         testID={`slash-item-${cmd.id}`}
         onPress={() => props.onSelect(cmd)}
-        onMouseEnter={() => props.onActiveChange(index())}
+        onMouseEnter={(e) => handlePointerHover(index(), e.pagePosition)}
         class={active() ? "bg-accent" : "hover:bg-muted/70"}
         style={{
           height: ROW_HEIGHT,
@@ -463,6 +505,11 @@ export function SlashPopover(props: {
             {cmd.description}
           </Text>
         </View>
+        <If when={Boolean(cmd.shortcut)}>
+          <View style={{ flexShrink: 0 }}>
+            <Kbd keys={cmd.shortcut!} faint />
+          </View>
+        </If>
       </View>
     );
   };
@@ -471,6 +518,16 @@ export function SlashPopover(props: {
     <Overlay anchor={props.anchor} placement="bottom" align="start" offset={6} margin={10}>
       <View
         testID="slash-popover"
+        onMouseMove={(e) => {
+          if (
+            !lastMousePage ||
+            Math.abs(e.pagePosition.x - lastMousePage.x) > 1 ||
+            Math.abs(e.pagePosition.y - lastMousePage.y) > 1
+          ) {
+            lastMousePage = { x: e.pagePosition.x, y: e.pagePosition.y };
+            ignoreHoverUntilMouseMove = false;
+          }
+        }}
         onResponderGrant={() => {
           pointerInteractAt = Date.now();
           props.onPointerInteract();
@@ -478,7 +535,7 @@ export function SlashPopover(props: {
         }}
         class="bg-popover border border-border"
         style={{
-          width: 276,
+          width: 288,
           maxHeight: MAX_LIST_HEIGHT + 36,
           borderRadius: 12,
           padding: 6,
@@ -550,7 +607,12 @@ export function SlashPopover(props: {
           ref={(r) => {
             scrollRef = r;
           }}
-          style={{ maxHeight: MAX_LIST_HEIGHT - 12 }}
+          style={{ maxHeight: SCROLL_VIEWPORT_H }}
+          onScroll={(e) => {
+            scrollY = e.offset.y;
+            if (e.size.height > 0) viewportH = e.size.height;
+            ignoreHoverUntilMouseMove = true;
+          }}
         >
           <If
             when={!isFiltering()}
@@ -565,7 +627,7 @@ export function SlashPopover(props: {
                   </View>
                 }
               >
-                <View style={{ gap: 1 }}>
+                <View style={{ gap: ROW_GAP }}>
                   <Each of={props.items} key={(cmd) => cmd.id}>
                     {(cmd, idx) => renderRow(cmd(), idx)}
                   </Each>
@@ -573,7 +635,7 @@ export function SlashPopover(props: {
               </If>
             }
           >
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: GROUP_GAP }}>
               {/* Top compact 6-icon "基础" strip */}
               <Text
                 style={{
@@ -596,8 +658,8 @@ export function SlashPopover(props: {
                       <View
                         testID={`slash-item-${cmd().id}`}
                         onPress={() => props.onSelect(cmd())}
-                        onMouseEnter={() => props.onActiveChange(idx())}
-                        tooltip={tip(cmd().label)}
+                        onMouseEnter={(e) => handlePointerHover(idx(), e.pagePosition)}
+                        tooltip={tip(cmd().label, cmd().shortcut)}
                         class={active() ? "bg-accent" : "hover:bg-muted/75"}
                         style={{
                           flex: 1,

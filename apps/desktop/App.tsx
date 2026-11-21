@@ -153,9 +153,9 @@ function App() {
   keymap.bind({
     "mod+k": () => hasWorkspace() && paletteOpen.set(!paletteOpen()),
     "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
-    "mod+1": () => hasWorkspace() && goSpace("problems"),
-    "mod+2": () => hasWorkspace() && goSpace("contests"),
-    "mod+3": () => hasWorkspace() && goSpace("settings"),
+    "mod+1": () => hasWorkspace() && !inStudio() && goSpace("problems"),
+    "mod+2": () => hasWorkspace() && !inStudio() && goSpace("contests"),
+    "mod+3": () => hasWorkspace() && !inStudio() && goSpace("settings"),
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 

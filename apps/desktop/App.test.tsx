@@ -1,6 +1,7 @@
 // `nsh test` runs this file in a headless runner it builds with the crate.
 import { expect, test } from "nsh/test";
 import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation/native";
+import { toggleHeadingLine, togglePrefixLine } from "./src/ui/studio/MarkdownEditor";
 import {
   matchSlashTrigger,
   matchesSlashCommand,
@@ -452,4 +453,28 @@ test("slash commands group cleanly and enforce strict prefix matching", () => {
   expect(h2Hits).toEqual(["h2", "hint", "interaction"]);
   const tuHits = SLASH_COMMANDS.filter((c) => matchesSlashCommand(c, "tu")).map((c) => c.id);
   expect(tuHits).toEqual(["image", "typst"]);
+});
+
+test("markdown heading and list prefix toggles handle add, switch, and remove cleanly", () => {
+  expect(toggleHeadingLine("题目描述", 2)).toEqual({ replaceEnd: 0, insert: "## ", delta: 3 });
+  expect(toggleHeadingLine("## 题目描述", 2)).toEqual({ replaceEnd: 3, insert: "", delta: -3 });
+  expect(toggleHeadingLine("## 题目描述", 3)).toEqual({ replaceEnd: 3, insert: "### ", delta: 1 });
+
+  expect(togglePrefixLine("第一项", "ul")).toEqual({ replaceStart: 0, replaceEnd: 0, insert: "- ", delta: 2 });
+  expect(togglePrefixLine("  - 第一项", "ul")).toEqual({ replaceStart: 2, replaceEnd: 4, insert: "", delta: -2 });
+  expect(togglePrefixLine("1. 第一项", "ul")).toEqual({ replaceStart: 0, replaceEnd: 3, insert: "- ", delta: -1 });
+  expect(togglePrefixLine("- 第一项", "ol", 2)).toEqual({ replaceStart: 0, replaceEnd: 2, insert: "2. ", delta: 1 });
+  expect(togglePrefixLine("引文", "quote")).toEqual({ replaceStart: 0, replaceEnd: 0, insert: "> ", delta: 2 });
+  expect(togglePrefixLine("> 引文", "quote")).toEqual({ replaceStart: 0, replaceEnd: 2, insert: "", delta: -2 });
+});
+
+test("shortcuts disambiguate Ctrl+1/2/3 between home navigation and editor headings", () => {
+  for (const key of ["mod+1", "mod+2", "mod+3"]) {
+    const items = filterShortcutGroups(key)
+      .flatMap((g) => g.items)
+      .filter((it) => it.keys === key);
+    expect(items.length).toBe(2);
+    expect(Boolean(items[0].context && items[1].context)).toBe(true);
+    expect(items[0].context !== items[1].context).toBe(true);
+  }
 });
