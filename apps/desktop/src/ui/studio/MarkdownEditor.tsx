@@ -1247,6 +1247,15 @@ export function MarkdownEditor(props: {
     });
   });
 
+  const vimNormalCaretWidth = computed(() => {
+    const size = editorFontSize();
+    const pos = caret();
+    if (!pos) return Math.round(size * 0.6);
+    const ch = (lines()[pos.line] ?? "")[pos.column] ?? "";
+    const isWide = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFFEF\u3000-\u303F]/.test(ch);
+    return isWide ? Math.round(size) : Math.round(size * 0.6);
+  });
+
   const matchLabel = () => {
     if (!findQuery()) return "";
     const r = searchResult();
@@ -1422,7 +1431,7 @@ export function MarkdownEditor(props: {
             activeLineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
             caret:
               vimActive() && vimState().mode === "normal"
-                ? { width: Math.round(editorFontSize() * 0.6), borderRadius: 1.5 }
+                ? { width: vimNormalCaretWidth(), borderRadius: 1.5 }
                 : { width: 2, borderRadius: 1 },
           }}
           scrollBeyondLastLine={120}
