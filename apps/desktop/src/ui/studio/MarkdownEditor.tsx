@@ -1199,33 +1199,23 @@ export function MarkdownEditor(props: {
     });
   });
 
-  // Vim keymap bindings: intercept keys BEFORE `<Editor>`'s hidden text input sink
-  // via `when: "always", forFocus: true`. In Insert mode only `escape` is bound so typing
-  // flows natively (including IME); in Normal/Visual modes all printable/editing keys are
-  // consumed by `stepVim` while `mod+*` and `alt+*` app shortcuts remain untouched.
+  // Vim keymap bindings: intercept printable/editing keys BEFORE `<Editor>`'s hidden text
+  // input sink via `when: "always", forFocus: true`. (`Escape` and `Ctrl+[` are intercepted
+  // by the Rust-side `<VimKeyBridge>` so they beat `<Editor>`'s built-in `mod+[` and
+  // `SingleSelection` Rust bindings.)
   effect(() => {
     if (!props.active() || !vimActive() || !focused()) return;
     const mode = vimState().mode;
+    if (mode === "insert") return;
     let cancelled = false;
     const unbinds: (() => void)[] = [];
     queueMicrotask(() => {
       if (cancelled) return;
-      unbinds.push(
-        keymap.bind(
-          {
-            escape: () => dispatchVimKey("Escape", false, true),
-            "ctrl+[": () => dispatchVimKey("Escape", false, false),
-          },
-          { when: "always", forFocus: true },
-        ),
-      );
-      if (mode !== "insert") {
-        const table: Record<string, () => void> = {};
-        for (const entry of VIM_NORMAL_KEYMAP) {
-          table[entry.stroke] = () => dispatchVimKey(entry.key, !!entry.ctrl);
-        }
-        unbinds.push(keymap.bind(table, { when: "always", forFocus: true, repeat: true }));
+      const table: Record<string, () => void> = {};
+      for (const entry of VIM_NORMAL_KEYMAP) {
+        table[entry.stroke] = () => dispatchVimKey(entry.key, !!entry.ctrl);
       }
+      unbinds.push(keymap.bind(table, { when: "always", forFocus: true, repeat: true }));
     });
     cleanup(() => {
       cancelled = true;
@@ -1283,10 +1273,6 @@ export function MarkdownEditor(props: {
         }
       }}
     >
-      <VimKeyBridge
-        active={props.active() && vimActive() && focused()}
-        onEscape={() => dispatchVimKey("Escape", false, false)}
-      />
       <If when={findOpen()}>
         <View
           testID="find-bar"
@@ -1454,6 +1440,17 @@ export function MarkdownEditor(props: {
           }}
           onSelectionChange={(e) => {
             lastSelections = e.selections;
+            const firstSel = e.selections[0];
+            if (
+              firstSel &&
+              firstSel.anchor.line === firstSel.head.line &&
+              firstSel.anchor.column === firstSel.head.column
+            ) {
+              const curVim = untracked(vimState);
+              if (curVim.mode === "visual" || curVim.mode === "visual-line") {
+                vimState.set({ ...curVim, mode: "normal", pending: "", visualAnchor: undefined, visualHead: undefined });
+              }
+            }
             const s = e.selections.length === 1 ? e.selections[0] : undefined;
             const pos = s && s.anchor.line === s.head.line && s.anchor.column === s.head.column ? s.head : undefined;
             caret.set(pos);
@@ -1492,6 +1489,12 @@ export function MarkdownEditor(props: {
             restyle();
             props.onChange(e.value);
           }}
+        />
+        <VimKeyBridge
+          active={props.active() && vimActive() && focused()}
+          mode={vimState().mode}
+          onEscape={() => dispatchVimKey("Escape", false, true)}
+          onCtrlBracket={() => dispatchVimKey("Escape", false, false)}
         />
         <If when={emptyLineHint()}>
           {(hint) => (
