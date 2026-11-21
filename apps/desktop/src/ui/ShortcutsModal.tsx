@@ -94,6 +94,61 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
       },
     ],
   },
+  {
+    id: "vim",
+    title: "Vim 模式",
+    items: [
+      {
+        id: "vim-escape",
+        label: "返回 Normal 模式",
+        context: "Insert / Visual",
+        gesture: { mac: "Esc / Ctrl+[", other: "Esc / Ctrl+[" },
+        keywords: ["vim", "normal", "escape", "ctrl+["],
+      },
+      {
+        id: "vim-motion",
+        label: "移动光标与按词跳转",
+        context: "Normal / Visual",
+        gesture: { mac: "h j k l / w b e / 0 $ / gg G", other: "h j k l / w b e / 0 $ / gg G" },
+        keywords: ["vim", "motion", "hjkl", "word", "移动"],
+      },
+      {
+        id: "vim-insert",
+        label: "进入 Insert 模式",
+        context: "Normal",
+        gesture: { mac: "i a I A o O", other: "i a I A o O" },
+        keywords: ["vim", "insert", "插入"],
+      },
+      {
+        id: "vim-edit",
+        label: "删除、复制与粘贴",
+        context: "Normal",
+        gesture: { mac: "x / dd / yy / p P", other: "x / dd / yy / p P" },
+        keywords: ["vim", "delete", "yank", "paste", "dd", "yy"],
+      },
+      {
+        id: "vim-undo",
+        label: "撤销与重做",
+        context: "Normal",
+        gesture: { mac: "u / Ctrl+r", other: "u / Ctrl+r" },
+        keywords: ["vim", "undo", "redo", "撤销", "重做"],
+      },
+      {
+        id: "vim-visual",
+        label: "字符 / 行可视选择",
+        context: "Normal",
+        gesture: { mac: "v / V（配合 d y c）", other: "v / V（配合 d y c）" },
+        keywords: ["vim", "visual", "select", "选择"],
+      },
+      {
+        id: "vim-text-obj",
+        label: "内部文本对象",
+        context: "Normal / Visual",
+        gesture: { mac: "vi / ci / di / yi + w $ () \"\" '' ``", other: "vi / ci / di / yi + w $ () \"\" '' ``" },
+        keywords: ["vim", "text object", "viw", "ciw", "ci$", "文本对象"],
+      },
+    ],
+  },
 ];
 
 /** Reactive open state for the global `Ctrl+/` shortcuts overlay. */

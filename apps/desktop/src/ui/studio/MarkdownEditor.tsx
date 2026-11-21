@@ -75,21 +75,19 @@ function decoration(s: MarkdownSpanJs, ink: EditorInk): EditorDecoration | undef
   const range = { start: { line: s.startLine, column: s.startColumn }, end: { line: s.endLine, column: s.endColumn } };
   switch (s.kind) {
     case "heading":
-      return { range, class: "font-semibold text-foreground" };
+      // Keep Regular weight so glyph advances match `<Editor>`'s Regular-400 `Metrics`
+      // (bold CJK/Latin glyphs diverge from caret & selection hit-testing).
+      return { range, class: "text-primary" };
     case "strong":
-      return { range, class: "font-semibold" };
+      return { range, class: "text-foreground underline decoration-muted-foreground/45" };
     case "emphasis":
       return { range, class: "italic" };
     case "strikethrough":
       return { range, class: "line-through text-secondary-foreground" };
-    case "inlineMath":
-      return { range, class: "text-foreground" };
     case "displayMath":
-      return { range, class: "text-foreground", lineClass: "bg-muted/35" };
+      return { range, lineClass: "bg-muted/35" };
     case "mathCommand":
       return { range, class: ink.mathCommand };
-    case "mathOperator":
-      return { range, class: ink.mathOperator };
     case "code":
       return { range, class: "bg-muted/75 text-foreground" };
     case "codeBlock":
@@ -208,7 +206,7 @@ export function MarkdownEditor(props: {
   });
   cleanup(() => props.onVimModeChange?.(undefined));
 
-  function dispatchVimKey(key: string, ctrl = false) {
+  function dispatchVimKey(key: string, ctrl = false, allowStudioEscape = false) {
     if (!untracked(vimActive) || !editor || !untracked(focused)) return;
     const curSel = lastSelections[lastSelections.length - 1];
     const head = curSel?.head ?? untracked(caret) ?? { line: 0, column: 0 };
@@ -220,7 +218,7 @@ export function MarkdownEditor(props: {
       head,
     );
     if (!res.handled) {
-      if (key === "Escape") props.onVimEscape?.();
+      if (allowStudioEscape && key === "Escape") props.onVimEscape?.();
       return;
     }
     vimState.set(res.state);
@@ -1215,8 +1213,8 @@ export function MarkdownEditor(props: {
       unbinds.push(
         keymap.bind(
           {
-            escape: () => dispatchVimKey("Escape", false),
-            "ctrl+[": () => dispatchVimKey("Escape", false),
+            escape: () => dispatchVimKey("Escape", false, true),
+            "ctrl+[": () => dispatchVimKey("Escape", false, false),
           },
           { when: "always", forFocus: true },
         ),
@@ -1287,7 +1285,7 @@ export function MarkdownEditor(props: {
     >
       <VimKeyBridge
         active={props.active() && vimActive() && focused()}
-        onEscape={() => dispatchVimKey("Escape", false)}
+        onEscape={() => dispatchVimKey("Escape", false, false)}
       />
       <If when={findOpen()}>
         <View
@@ -1414,7 +1412,7 @@ export function MarkdownEditor(props: {
           hardTabs={false}
           softWrap
           readOnly={props.readOnly}
-          fontFamily={editorLigatures() || editorMono() === "monospace" ? editorMono() : `'JetBrains Mono NL', ${editorMono()}`}
+          fontFamily={editorMono()}
           fontSize={editorFontSize()}
           lineHeight={Math.round(editorFontSize() * editorLineHeight())}
           activeLine

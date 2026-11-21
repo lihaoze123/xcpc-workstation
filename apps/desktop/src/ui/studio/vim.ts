@@ -14,6 +14,8 @@ export interface VimState {
   register: string;
   registerLinewise: boolean;
   visualAnchor?: EditorPosition;
+  /** True character-inclusive head in Visual / Visual-Line mode (never `<Editor>`'s `+1` end). */
+  visualHead?: EditorPosition;
 }
 
 export interface VimStepResult {
@@ -178,6 +180,17 @@ function sliceRange(lines: readonly string[], range: EditorRange): string {
 }
 
 function findInnerObject(lineStr: string, line: number, col: number, obj: string): EditorRange | undefined {
+  if (obj === "w") {
+    if (lineStr.length === 0) return undefined;
+    const c = Math.max(0, Math.min(lineStr.length - 1, col));
+    const kindOf = (ch: string) => (/\s/.test(ch) ? 0 : isWordChar(ch) ? 1 : 2);
+    const k = kindOf(lineStr[c]!);
+    let start = c;
+    while (start > 0 && kindOf(lineStr[start - 1]!) === k) start--;
+    let end = c + 1;
+    while (end < lineStr.length && kindOf(lineStr[end]!) === k) end++;
+    return { start: { line, column: start }, end: { line, column: end } };
+  }
   if (obj === "(" || obj === ")" || obj === "b") {
     let open = -1;
     let depth = 0;
@@ -294,9 +307,13 @@ export function stepVim(
   caret: EditorPosition,
 ): VimStepResult {
   const safeLines = lines.length > 0 ? lines : [""];
+  const rawPos =
+    (state.mode === "visual" || state.mode === "visual-line") && state.visualHead
+      ? state.visualHead
+      : caret;
   const pos: EditorPosition = {
-    line: clampLine(safeLines, caret.line),
-    column: Math.max(0, Math.min((safeLines[clampLine(safeLines, caret.line)] ?? "").length, caret.column)),
+    line: clampLine(safeLines, rawPos.line),
+    column: Math.max(0, Math.min((safeLines[clampLine(safeLines, rawPos.line)] ?? "").length, rawPos.column)),
   };
 
   // Never hijack meta/alt app shortcuts.
@@ -331,7 +348,7 @@ export function stepVim(
     if (state.mode === "visual" || state.mode === "visual-line") {
       const p = { line: pos.line, column: clampCol(safeLines[pos.line] ?? "", pos.column) };
       return {
-        state: { ...state, mode: "normal", pending: "", visualAnchor: undefined },
+        state: { ...state, mode: "normal", pending: "", visualAnchor: undefined, visualHead: undefined },
         handled: true,
         selection: { anchor: p, head: p },
       };
@@ -343,7 +360,23 @@ export function stepVim(
     return { state, handled: false };
   }
 
-  // Pending inner text-object (`ci`, `di`, `yi` + delimiter).
+  // Pending inner text-object in Visual mode (`viw`, `vi$`, `vi(`, `vi"`, `vi'`, `` vi` ``).
+  if ((state.mode === "visual" || state.mode === "visual-line") && state.pending === "i") {
+    const lineStr = safeLines[pos.line] ?? "";
+    const range = findInnerObject(lineStr, pos.line, pos.column, key);
+    if (!range || (range.start.line === range.end.line && range.start.column === range.end.column)) {
+      return { state: { ...state, pending: "" }, handled: true };
+    }
+    const anchor = range.start;
+    const head = { line: range.end.line, column: Math.max(range.start.column, range.end.column - 1) };
+    return {
+      state: { ...state, mode: "visual", pending: "", visualAnchor: anchor, visualHead: head },
+      handled: true,
+      selection: visualSelectionFor("visual", safeLines, anchor, head),
+    };
+  }
+
+  // Pending inner text-object (`ci`, `di`, `yi` + delimiter / `w`).
   if (state.pending === "ci" || state.pending === "di" || state.pending === "yi") {
     const op = state.pending[0]!;
     const lineStr = safeLines[pos.line] ?? "";
@@ -372,11 +405,15 @@ export function stepVim(
   if (state.pending === "g") {
     if (key === "g") {
       const target = { line: 0, column: 0 };
-      const sel =
-        state.mode === "visual" || state.mode === "visual-line"
-          ? visualSelectionFor(state.mode, safeLines, state.visualAnchor ?? pos, target)
-          : { anchor: target, head: target };
-      return { state: { ...state, pending: "" }, handled: true, selection: sel };
+      if (state.mode === "visual" || state.mode === "visual-line") {
+        const sel = visualSelectionFor(state.mode, safeLines, state.visualAnchor ?? pos, target);
+        return { state: { ...state, pending: "", visualHead: target }, handled: true, selection: sel };
+      }
+      return {
+        state: { ...state, pending: "", visualHead: undefined },
+        handled: true,
+        selection: { anchor: target, head: target },
+      };
     }
     return { state: { ...state, pending: "" }, handled: true };
   }
@@ -416,9 +453,20 @@ export function stepVim(
     return { state: { ...state, pending: "" }, handled: true };
   }
 
-  // Visual mode operations (`d`, `x`, `y`, `c`).
+  // Visual mode operations (`i` text-object prefix, `d`, `x`, `y`, `c`, `v`/`V` toggle).
   if (state.mode === "visual" || state.mode === "visual-line") {
     const anchor = state.visualAnchor ?? pos;
+    if (key === "i") {
+      return { state: { ...state, pending: "i" }, handled: true };
+    }
+    if ((key === "v" && state.mode === "visual") || (key === "V" && state.mode === "visual-line")) {
+      const p = { line: pos.line, column: clampCol(safeLines[pos.line] ?? "", pos.column) };
+      return {
+        state: { ...state, mode: "normal", pending: "", visualAnchor: undefined, visualHead: undefined },
+        handled: true,
+        selection: { anchor: p, head: p },
+      };
+    }
     if (key === "d" || key === "x" || key === "y" || key === "c") {
       const { range, linewise } = visualRangeOf(state.mode, safeLines, anchor, pos);
       const yanked = linewise
@@ -427,7 +475,7 @@ export function stepVim(
       if (key === "y") {
         const p = range.start;
         return {
-          state: { ...state, mode: "normal", pending: "", visualAnchor: undefined, register: yanked, registerLinewise: linewise },
+          state: { ...state, mode: "normal", pending: "", visualAnchor: undefined, visualHead: undefined, register: yanked, registerLinewise: linewise },
           handled: true,
           selection: { anchor: p, head: p },
         };
@@ -435,7 +483,7 @@ export function stepVim(
       const nextMode: VimMode = key === "c" ? "insert" : "normal";
       const nextPos = { line: range.start.line, column: linewise ? 0 : range.start.column };
       return {
-        state: { ...state, mode: nextMode, pending: "", visualAnchor: undefined, register: yanked, registerLinewise: linewise },
+        state: { ...state, mode: nextMode, pending: "", visualAnchor: undefined, visualHead: undefined, register: yanked, registerLinewise: linewise },
         handled: true,
         edit: { range, text: "" },
         selection: { anchor: nextPos, head: nextPos },
@@ -449,11 +497,15 @@ export function stepVim(
       line: clampLine(safeLines, target.line),
       column: clampCol(safeLines[clampLine(safeLines, target.line)] ?? "", target.column),
     };
-    const sel =
-      state.mode === "visual" || state.mode === "visual-line"
-        ? visualSelectionFor(state.mode, safeLines, state.visualAnchor ?? pos, clamped)
-        : { anchor: clamped, head: clamped };
-    return { state: { ...state, pending: "" }, handled: true, selection: sel };
+    if (state.mode === "visual" || state.mode === "visual-line") {
+      const sel = visualSelectionFor(state.mode, safeLines, state.visualAnchor ?? pos, clamped);
+      return { state: { ...state, pending: "", visualHead: clamped }, handled: true, selection: sel };
+    }
+    return {
+      state: { ...state, pending: "", visualHead: undefined },
+      handled: true,
+      selection: { anchor: clamped, head: clamped },
+    };
   };
 
   const curLineStr = safeLines[pos.line] ?? "";
@@ -579,11 +631,19 @@ export function stepVim(
       return { state, handled: true, command: "undo" };
     case "v": {
       const sel = visualSelectionFor("visual", safeLines, pos, pos);
-      return { state: { ...state, mode: "visual", pending: "", visualAnchor: pos }, handled: true, selection: sel };
+      return {
+        state: { ...state, mode: "visual", pending: "", visualAnchor: pos, visualHead: pos },
+        handled: true,
+        selection: sel,
+      };
     }
     case "V": {
       const sel = visualSelectionFor("visual-line", safeLines, pos, pos);
-      return { state: { ...state, mode: "visual-line", pending: "", visualAnchor: pos }, handled: true, selection: sel };
+      return {
+        state: { ...state, mode: "visual-line", pending: "", visualAnchor: pos, visualHead: pos },
+        handled: true,
+        selection: sel,
+      };
     }
     default:
       return { state, handled: false };

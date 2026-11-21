@@ -575,13 +575,33 @@ test("stepVim handles core normal, insert, visual, yank/paste, and text objects"
   expect(pasted.edit?.text).toBe("\nsecond (foo) line");
   expect(pasted.selection?.head).toEqual({ line: 1, column: 0 });
 
-  // Visual mode delete (v -> l -> l -> d)
+  // Visual mode delete (v -> l -> l -> d) and leftward motion (v -> h -> h)
   cur = stepVim(INITIAL_VIM_STATE, "v", noMod, doc, { line: 0, column: 0 });
   expect(cur.state.mode).toBe("visual");
-  cur = stepVim(cur.state, "l", noMod, doc, { line: 0, column: 0 });
   cur = stepVim(cur.state, "l", noMod, doc, { line: 0, column: 1 });
-  cur = stepVim(cur.state, "d", noMod, doc, { line: 0, column: 2 });
+  cur = stepVim(cur.state, "l", noMod, doc, { line: 0, column: 2 });
+  cur = stepVim(cur.state, "d", noMod, doc, { line: 0, column: 3 });
   expect(cur.state.mode).toBe("normal");
   expect(cur.state.register).toBe("hel");
   expect(cur.edit?.range).toEqual({ start: { line: 0, column: 0 }, end: { line: 0, column: 3 } });
+
+  // Visual mode `h` moves left cleanly even when editor selection head is `col + 1`
+  cur = stepVim(INITIAL_VIM_STATE, "v", noMod, doc, { line: 0, column: 4 });
+  expect(cur.selection).toEqual({ anchor: { line: 0, column: 4 }, head: { line: 0, column: 5 } });
+  cur = stepVim(cur.state, "h", noMod, doc, cur.selection!.head);
+  expect(cur.selection).toEqual({ anchor: { line: 0, column: 5 }, head: { line: 0, column: 3 } });
+  cur = stepVim(cur.state, "h", noMod, doc, cur.selection!.head);
+  expect(cur.selection).toEqual({ anchor: { line: 0, column: 5 }, head: { line: 0, column: 2 } });
+
+  // Visual inner word `viw` selects exact word `world`
+  const wCol = doc[0].indexOf("world") + 2;
+  cur = stepVim(INITIAL_VIM_STATE, "v", noMod, doc, { line: 0, column: wCol });
+  const vHead = cur.selection!.head;
+  cur = stepVim(cur.state, "i", noMod, doc, vHead);
+  cur = stepVim(cur.state, "w", noMod, doc, vHead);
+  expect(cur.state.mode).toBe("visual");
+  expect(cur.selection).toEqual({
+    anchor: { line: 0, column: doc[0].indexOf("world") },
+    head: { line: 0, column: doc[0].indexOf("world") + 5 },
+  });
 });
