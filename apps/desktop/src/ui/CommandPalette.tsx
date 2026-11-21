@@ -3,7 +3,7 @@
 // bar's search pill is (both centered on the window), its field over the pill; every
 // row has its icon on the left and its shortcut flush right. Jumps are recorded as visits.
 
-import { computed, signal, Text, View } from "nsh";
+import { Clipboard, computed, signal, Text, View } from "nsh";
 import { Command, type CommandEntry, type CommandItem } from "nsh/base";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
@@ -39,6 +39,26 @@ function actions(): Action[] {
   const list: Action[] = [
     { id: "a:export-statements", icon: "fileDown", label: "导出题面册", keywords: ["pdf", "export"], run: () => s!.exportBook("statements"), when: () => inStudio },
     { id: "a:export-editorial", icon: "fileDown", label: "导出题解册", keywords: ["pdf", "export"], run: () => s!.exportBook("editorial"), when: () => inStudio },
+    {
+      id: "a:copy-markdown-samples",
+      icon: "copy",
+      label: "复制带样例的 Markdown",
+      keywords: ["copy", "markdown", "md", "samples", "复制", "样例"],
+      run: () => {
+        if (inStudio) {
+          s!.copyMarkdownWithSamples();
+          return;
+        }
+        const id = selectedProblem();
+        if (!id) return;
+        try {
+          void Clipboard.writeText(preview.exportMarkdownWithSamples(id, null));
+        } catch {
+          // Ignore clipboard/load errors outside studio.
+        }
+      },
+      when: () => (inStudio ? s!.hasAssets() : !!selectedProblem()),
+    },
     { id: "a:reveal", icon: "folderOpen", label: "在文件夹中显示", keywords: ["reveal", "folder"], run: () => s!.reveal(), when: () => inStudio },
     { id: "a:tab-statement", icon: "fileText", label: "切到题面", shortcut: "alt+1", run: () => s!.setTab("statement"), when: () => inStudio },
     { id: "a:tab-samples", icon: "table", label: "切到样例", shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },

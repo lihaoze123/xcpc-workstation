@@ -1076,6 +1076,36 @@ impl State {
         }
     }
 
+    /// Assembles a standalone Markdown statement for `id` with its `samples/` embedded
+    /// before `## 提示` / `## Note` (without modifying the source file on disk).
+    pub(crate) fn export_markdown_with_samples(
+        &self,
+        id: &str,
+        unsaved_statement: Option<&str>,
+    ) -> Result<String, String> {
+        let ws = self
+            .core
+            .lock()
+            .unwrap()
+            .workspace
+            .clone()
+            .ok_or_else(|| "当前没有打开工作区".to_owned())?;
+        let problem = ws.load_problem(id).map_err(|e| e.human_message())?;
+        let lang = problem.default_language();
+        let stmt = match unsaved_statement {
+            Some(text) => text.to_owned(),
+            None => problem
+                .statement(lang)
+                .map(|s| s.file.text.clone())
+                .unwrap_or_default(),
+        };
+        Ok(xcpc_convert::markdown_with_samples(
+            &stmt,
+            &problem.samples,
+            lang,
+        ))
+    }
+
     pub(crate) fn create_problem(&self, id: &str, title: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {

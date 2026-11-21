@@ -484,6 +484,145 @@ fn picture(dir: &str, url: &str) -> Result<String, String> {
     xcpc_lint::resolve_image_path(dir, url).map(|rel| format!("/{rel}"))
 }
 
+/// Formats `samples` as a standalone Markdown section and inserts it into `statement`
+/// without mutating the source file: replaces an explicit `## 样例` / `## Examples`
+/// placeholder heading if present, otherwise inserts before `## 提示` / `## 样例解释` /
+/// `## Note` / `## Explanation`, or appends at the end.
+pub fn markdown_with_samples(
+    statement: &str,
+    samples: &[xcpc_domain::Sample],
+    language: xcpc_domain::Language,
+) -> String {
+    if samples.is_empty() {
+        return statement.to_owned();
+    }
+    let block = format_samples_markdown(samples, language);
+
+    // Locate H2 headings via `pulldown_cmark` so fenced code blocks are never misparsed.
+    let mut in_h2 = false;
+    let mut h2_start = 0usize;
+    let mut h2_text = String::new();
+    let mut samples_heading: Option<std::ops::Range<usize>> = None;
+    let mut before_note: Option<usize> = None;
+
+    for (event, range) in Parser::new_ext(statement, options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => {
+                in_h2 = true;
+                h2_start = range.start;
+                h2_text.clear();
+            }
+            Event::Text(t) | Event::Code(t) if in_h2 => {
+                h2_text.push_str(&t);
+            }
+            Event::End(TagEnd::Heading(HeadingLevel::H2)) if in_h2 => {
+                in_h2 = false;
+                match recognize_section(&h2_text) {
+                    Some(SectionKind::Samples) if samples_heading.is_none() => {
+                        samples_heading = Some(h2_start..range.end);
+                    }
+                    Some(SectionKind::Known("note" | "explanation")) if before_note.is_none() => {
+                        before_note = Some(h2_start);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(span) = samples_heading {
+        let prefix = statement[..span.start].trim_end();
+        let suffix = statement[span.end..].trim_start_matches(['\r', '\n']);
+        let mut out = String::with_capacity(statement.len() + block.len() + 4);
+        if !prefix.is_empty() {
+            out.push_str(prefix);
+            out.push_str("\n\n");
+        }
+        out.push_str(&block);
+        if !suffix.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(suffix);
+        } else {
+            out.push('\n');
+        }
+        return out;
+    }
+
+    if let Some(at) = before_note {
+        let prefix = statement[..at].trim_end();
+        let suffix = statement[at..].trim_start_matches(['\r', '\n']);
+        let mut out = String::with_capacity(statement.len() + block.len() + 4);
+        if !prefix.is_empty() {
+            out.push_str(prefix);
+            out.push_str("\n\n");
+        }
+        out.push_str(&block);
+        out.push_str("\n\n");
+        out.push_str(suffix);
+        return out;
+    }
+
+    let trimmed = statement.trim_end();
+    if trimmed.is_empty() {
+        return format!("{block}\n");
+    }
+    format!("{trimmed}\n\n{block}\n")
+}
+
+fn format_samples_markdown(
+    samples: &[xcpc_domain::Sample],
+    language: xcpc_domain::Language,
+) -> String {
+    let zh = language == xcpc_domain::Language::Chinese;
+    let mut out = String::new();
+    out.push_str(if zh { "## 样例" } else { "## Examples" });
+    for (idx, sample) in samples.iter().enumerate() {
+        let n = idx + 1;
+        out.push_str("\n\n");
+        if zh {
+            out.push_str(&format!("### 样例 {n} 输入\n\n"));
+        } else {
+            out.push_str(&format!("### Example {n} Input\n\n"));
+        }
+        push_fenced_block(&mut out, &sample.input);
+        out.push_str("\n\n");
+        if zh {
+            out.push_str(&format!("### 样例 {n} 输出\n\n"));
+        } else {
+            out.push_str(&format!("### Example {n} Output\n\n"));
+        }
+        push_fenced_block(&mut out, &sample.output);
+    }
+    out
+}
+
+fn push_fenced_block(out: &mut String, content: &str) {
+    let mut max_run = 0usize;
+    let mut run = 0usize;
+    for b in content.bytes() {
+        if b == b'`' {
+            run += 1;
+            max_run = max_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence_len = max_run.max(2) + 1;
+    let fence: String = "`".repeat(fence_len);
+    out.push_str(&fence);
+    out.push_str("text\n");
+    let body = content.trim_end_matches('\n');
+    out.push_str(body);
+    if !body.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,5 +672,36 @@ mod tests {
         );
         assert_eq!(recognize_section("样例"), Some(SectionKind::Samples));
         assert_eq!(recognize_section("其他"), None);
+    }
+
+    #[test]
+    fn markdown_with_samples_inserts_before_notes() {
+        let stmt = "给定 $a, b$。\n\n## 输入格式\n\n一行两个数。\n\n## 提示\n\n注意范围。\n";
+        let samples = vec![xcpc_domain::Sample {
+            name: "01".into(),
+            input: "1 2\n".into(),
+            output: "3\n".into(),
+        }];
+        let out = markdown_with_samples(stmt, &samples, xcpc_domain::Language::Chinese);
+        let idx_in = out.find("## 输入格式").unwrap();
+        let idx_samples = out.find("## 样例").unwrap();
+        let idx_note = out.find("## 提示").unwrap();
+        assert!(idx_in < idx_samples && idx_samples < idx_note);
+        assert!(out.contains("### 样例 1 输入\n\n```text\n1 2\n```"));
+        assert!(out.contains("### 样例 1 输出\n\n```text\n3\n```"));
+    }
+
+    #[test]
+    fn markdown_with_samples_replaces_explicit_placeholder_and_uses_english() {
+        let stmt = "## Input\n\nOne line.\n\n## Examples\n\n## Note\n\nHint.\n";
+        let samples = vec![xcpc_domain::Sample {
+            name: "01".into(),
+            input: "```raw```\n".into(),
+            output: "ok\n".into(),
+        }];
+        let out = markdown_with_samples(stmt, &samples, xcpc_domain::Language::English);
+        assert_eq!(out.matches("## Examples").count(), 1);
+        assert!(out.contains("````text\n```raw```\n````"));
+        assert!(out.contains("### Example 1 Output"));
     }
 }

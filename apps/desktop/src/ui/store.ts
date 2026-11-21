@@ -354,6 +354,7 @@ export function startWatch() {
 
 export type StudioActions = {
   exportBook(book: Book): void;
+  copyMarkdownWithSamples(): void;
   reveal(): void;
   freeze(): void;
   unfreeze(): void;

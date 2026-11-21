@@ -7,7 +7,7 @@
 // 200 ms contest) and auto-saves after 500 ms with SHA-256 conflict detection. Ctrl+click
 // on the preview locates Markdown source; Mod+Shift+L locates the preview from the caret.
 
-import { batch, cleanup, computed, effect, keymap, reduceMotion, signal, Text, untracked, View, windowSize } from "nsh";
+import { batch, cleanup, Clipboard, computed, effect, keymap, reduceMotion, signal, Text, untracked, View, windowSize } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type EditorDiagnostic, type EditorRef } from "nsh/base";
 import type {
   ActionResult,
@@ -795,6 +795,17 @@ export function StudioView(props: { active: boolean }) {
     untracked(() => {
       const nextActions = {
         exportBook: (b: Book) => void exportBook(b),
+        copyMarkdownWithSamples: () => {
+          const id = problemId();
+          if (!id) return;
+          const isEditingStatement = tab() === "statement" && !!file();
+          try {
+            const md = preview.exportMarkdownWithSamples(id, isEditingStatement ? text : null);
+            void Clipboard.writeText(md);
+          } catch (err) {
+            notice.set({ error: err instanceof Error ? err.message : String(err), context: "复制带样例 Markdown" });
+          }
+        },
         reveal: () => void reveal(book()),
         freeze: () => {
           const t = target();

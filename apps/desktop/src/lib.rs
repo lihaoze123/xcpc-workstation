@@ -582,6 +582,17 @@ impl Preview {
         self.state.read_solution(&id, &name)
     }
 
+    /// Assembles a standalone Markdown statement with `samples/` embedded before `## 提示` / `## Note`.
+    pub fn export_markdown_with_samples(
+        &self,
+        id: String,
+        unsaved_statement: Option<String>,
+    ) -> Result<String, JsError> {
+        self.state
+            .export_markdown_with_samples(&id, unsaved_statement.as_deref())
+            .map_err(JsError::Error)
+    }
+
     /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton, and
     /// an empty `samples/` directory, refreshing the in-memory index.
     pub fn create_problem(&self, id: String, title: String) -> ActionResult {

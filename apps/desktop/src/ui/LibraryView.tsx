@@ -4,7 +4,7 @@
 // prints (the paper preview of its statement or editorial) or its `solutions/` read-only,
 // with its sources, referencing contests, and actions.
 
-import { batch, cleanup, computed, effect, keymap, signal, Text, View, type InputRef } from "nsh";
+import { batch, cleanup, Clipboard, computed, effect, keymap, signal, Text, View, type InputRef } from "nsh";
 import {
   DataTable,
   Editor,
@@ -437,6 +437,16 @@ export function LibraryView(props: { active: boolean }) {
                   void DesktopMenu.popup(
                     [
                       { label: ro ? "查看" : "编辑", onSelect: () => openStudio({ target: "problem", id: row.id }) },
+                      {
+                        label: "复制带样例的 Markdown",
+                        onSelect: () => {
+                          try {
+                            void Clipboard.writeText(preview.exportMarkdownWithSamples(row.id, null));
+                          } catch {
+                            // Ignore errors when problem files are unreadable.
+                          }
+                        },
+                      },
                       { label: "加入比赛…", disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
                       { label: "在文件夹中显示", onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
                       { type: "separator" },
@@ -657,13 +667,20 @@ function ProblemInspector(props: { id: string; active: boolean }) {
               <AppMenu
                 align="end"
                 entries={[
+                  { id: "copyMd", label: "复制带样例的 Markdown", icon: "copy" },
                   { id: "add", label: "加入比赛…", icon: "listPlus", disabled: readOnly() },
                   { id: "reveal", label: "在文件夹中显示", icon: "folderOpen" },
                   { separator: true, id: "sep" },
                   { id: "delete", label: "删除题目…", icon: "trash", destructive: true, disabled: readOnly() },
                 ]}
                 onSelect={(id) => {
-                  if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
+                  if (id === "copyMd") {
+                    try {
+                      void Clipboard.writeText(preview.exportMarkdownWithSamples(props.id, null));
+                    } catch {
+                      // Ignore errors when problem files are unreadable.
+                    }
+                  } else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
                   else if (id === "reveal") void preview.revealInFolder(`problems/${props.id}`);
                   else if (id === "delete") dialog.set({ kind: "deleteProblem", problemId: props.id });
                 }}
