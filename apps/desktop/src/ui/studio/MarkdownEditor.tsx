@@ -158,6 +158,7 @@ export function MarkdownEditor(props: {
   let emptyHintRaf: number | undefined;
   const focused = signal(false);
   const caret = signal<EditorPosition | undefined>({ line: 0, column: 0 });
+  const textRev = signal(0);
   const mdSpans = signal<MarkdownSpanJs[]>(Preview.markdownSpans(text));
   const hover = signal<{ diagnostics: EditorDiagnostic[]; bounds: Bounds } | undefined>(undefined);
   const slashState = signal<
@@ -1248,6 +1249,7 @@ export function MarkdownEditor(props: {
   });
 
   const vimNormalCaretWidth = computed(() => {
+    textRev();
     const size = editorFontSize();
     const pos = caret();
     if (!pos) return Math.round(size * 0.6);
@@ -1496,6 +1498,7 @@ export function MarkdownEditor(props: {
               scheduleTypewriterScroll();
             }
             restyle();
+            textRev.set(untracked(textRev) + 1);
             props.onChange(e.value);
           }}
         />
