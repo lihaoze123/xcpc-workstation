@@ -448,11 +448,11 @@ export function AssetsGalleryModal(props: {
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
               <Btn
-                label="网格"
+                label="返回"
                 icon="arrowLeft"
                 variant="ghost"
                 size="sm"
-                tooltip={tip("返回网格", "escape")}
+                tooltip={tip("返回素材库", "escape")}
                 onPress={() => mode.set("grid")}
               />
               <If

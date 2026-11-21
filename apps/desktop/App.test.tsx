@@ -2,6 +2,14 @@
 import { expect, test } from "nsh/test";
 import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation/native";
 import {
+  matchSlashTrigger,
+  matchesSlashCommand,
+  SLASH_ADVANCED_COMMANDS,
+  SLASH_BASIC_COMMANDS,
+  SLASH_COMMANDS,
+  SLASH_COMMON_COMMANDS,
+} from "./src/ui/studio/SlashPopover";
+import {
   abbreviateHome,
   cleanSample,
   clampRatio,
@@ -425,4 +433,23 @@ test("shortcuts disambiguate the two Ctrl+F entries by context", () => {
   expect(items.length).toBe(2);
   expect(Boolean(items[0].context && items[1].context)).toBe(true);
   expect(items[0].context !== items[1].context).toBe(true);
+});
+
+test("slash commands group cleanly and enforce strict prefix matching", () => {
+  expect(SLASH_BASIC_COMMANDS.length).toBe(6);
+  expect(SLASH_COMMON_COMMANDS.length).toBe(4);
+  expect(SLASH_ADVANCED_COMMANDS.length).toBe(6);
+  expect(SLASH_COMMANDS.length).toBe(16);
+
+  expect(matchSlashTrigger("/", 1)).toEqual({ startColumn: 0, endColumn: 1, query: "" });
+  expect(matchSlashTrigger("hello /mat", 10)).toEqual({ startColumn: 6, endColumn: 10, query: "mat" });
+  expect(matchSlashTrigger("a/b", 3)).toBe(undefined);
+  expect(matchSlashTrigger("/ ", 2)).toBe(undefined);
+
+  const matHits = SLASH_COMMANDS.filter((c) => matchesSlashCommand(c, "mat")).map((c) => c.id);
+  expect(matHits).toEqual(["inline-math", "display-math", "cases", "matrix"]);
+  const h2Hits = SLASH_COMMANDS.filter((c) => matchesSlashCommand(c, "h2")).map((c) => c.id);
+  expect(h2Hits).toEqual(["h2", "hint", "interaction"]);
+  const tuHits = SLASH_COMMANDS.filter((c) => matchesSlashCommand(c, "tu")).map((c) => c.id);
+  expect(tuHits).toEqual(["image", "typst"]);
 });

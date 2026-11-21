@@ -5,13 +5,10 @@
 // image paste, restrained typing ergonomics (`$`/`` ` `` pairing, list continuation, Tab
 // indent), diagnostic hover tooltips via `Overlay`, and `overviewRuler` marks.
 
-import { cleanup, Clipboard, computed, effect, keymap, Overlay, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
+import { cleanup, Clipboard, computed, effect, keymap, Overlay, reduceMotion, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
 import {
   Editor,
   Input,
-  type EditorCompletionAcceptEvent,
-  type EditorCompletionItem,
-  type EditorCompletionRequest,
   type EditorDecoration,
   type EditorDiagnostic,
   type EditorPosition,
@@ -35,137 +32,14 @@ import {
   popoverShadow,
   type EditorInk,
 } from "../theme";
-
-interface SlashCommand {
-  readonly id: string;
-  readonly label: string;
-  readonly description: string;
-  readonly keywords: readonly string[];
-  readonly kind?: "image";
-  readonly template?: string;
-  readonly caret?: { readonly line: number; readonly column: number };
-}
-
-const SLASH_COMMANDS: readonly SlashCommand[] = [
-  {
-    id: "display-math",
-    label: "行间公式",
-    description: "居中显示的独立公式块",
-    keywords: ["math", "formula", "equation", "display", "gongshi", "gs", "$$"],
-    template: "$$\n\n$$",
-    caret: { line: 1, column: 0 },
-  },
-  {
-    id: "table",
-    label: "Markdown 表格",
-    description: "插入标准数据表格",
-    keywords: ["table", "grid", "markdown", "biaoge", "bg"],
-    template: "| 列 1 | 列 2 |\n| --- | --- |\n|  |  |",
-    caret: { line: 2, column: 2 },
-  },
-  {
-    id: "image",
-    label: "插入图片",
-    description: "从素材库选择或导入图片",
-    keywords: ["image", "img", "pic", "picture", "figure", "tupian", "tp"],
-    kind: "image",
-  },
-  {
-    id: "cpp",
-    label: "C++ 代码块",
-    description: "插入 C++ 源代码块",
-    keywords: ["cpp", "c++", "code", "source", "daima", "dm"],
-    template: "```cpp\n\n```",
-    caret: { line: 1, column: 0 },
-  },
-  {
-    id: "cases",
-    label: "分段函数",
-    description: "插入 cases 分段公式",
-    keywords: ["cases", "piecewise", "fenduan", "fd", "math"],
-    template: "$$\nf(x) = \\begin{cases}\n  , & x \\le 0 \\\\\n  , & x > 0\n\\end{cases}\n$$",
-    caret: { line: 2, column: 2 },
-  },
-  {
-    id: "matrix",
-    label: "矩阵",
-    description: "插入 bmatrix 方括号矩阵",
-    keywords: ["matrix", "bmatrix", "juzhen", "jz", "math"],
-    template: "$$\n\\begin{bmatrix}\n  a & b \\\\\n  c & d\n\\end{bmatrix}\n$$",
-    caret: { line: 2, column: 2 },
-  },
-  {
-    id: "subtasks",
-    label: "子任务评分表",
-    description: "插入 Subtask 分值与特殊性质表",
-    keywords: ["subtask", "subtasks", "score", "zirenwu", "zrw", "table"],
-    template:
-      "| 子任务 | 分值 | 特殊性质 |\n| :---: | :---: | --- |\n| 1 | 20 | $n \\le 10$ |\n| 2 | 30 | $n \\le 1000$ |\n| 3 | 50 | 无特殊限制 |",
-    caret: { line: 2, column: 15 },
-  },
-  {
-    id: "hint",
-    label: "提示章节",
-    description: "添加提示与数据范围章节",
-    keywords: ["hint", "note", "tishi", "ts", "tszj", "h2", "section"],
-    template: "## 提示\n\n",
-    caret: { line: 2, column: 0 },
-  },
-  {
-    id: "interaction",
-    label: "交互章节",
-    description: "添加交互题协议说明章节",
-    keywords: ["interaction", "interactive", "protocol", "jiaohu", "jh", "jhzj", "h2", "section"],
-    template: "## 交互方式\n\n",
-    caret: { line: 2, column: 0 },
-  },
-  {
-    id: "typst",
-    label: "原始 Typst 块",
-    description: "用 Typst 直接绘图或排版",
-    keywords: ["typst", "raw", "vector", "diagram", "tu", "yst"],
-    template: "```typst\n\n```",
-    caret: { line: 1, column: 0 },
-  },
-];
-
-/**
- * Parses a slash-command trigger immediately before `column` on `lineStr`.
- * Triggers only when `/` is at column 0 or preceded by whitespace, and the query
- * contains no whitespace or `/`.
- */
-function matchSlashTrigger(
-  lineStr: string,
-  column: number,
-): { startColumn: number; endColumn: number; query: string } | undefined {
-  if (column <= 0 || column > lineStr.length) return undefined;
-  const before = lineStr.slice(0, column);
-  const m = before.match(/(?:^|\s)\/([^\s/]*)$/);
-  if (!m) return undefined;
-  const query = m[1];
-  const slashCol = column - query.length - 1;
-  return { startColumn: slashCol, endColumn: column, query };
-}
-
-/**
- * Strict prefix matching against command `id`, `label` (or its whitespace-separated tokens),
- * and `keywords` (English keywords + pinyin / pinyin-initial prefixes). Never uses loose
- * subsequence matching so `/tu` only hits genuine prefix matches.
- */
-function matchesSlashCommand(cmd: SlashCommand, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  if (cmd.id.toLowerCase().startsWith(q)) return true;
-  const labelLower = cmd.label.toLowerCase();
-  if (labelLower.startsWith(q)) return true;
-  for (const part of labelLower.split(/\s+/)) {
-    if (part.startsWith(q)) return true;
-  }
-  for (const kw of cmd.keywords) {
-    if (kw.toLowerCase().startsWith(q)) return true;
-  }
-  return false;
-}
+import {
+  matchSlashTrigger,
+  matchesSlashCommand,
+  SLASH_BASIC_COUNT,
+  SLASH_COMMANDS,
+  SlashPopover,
+  type SlashCommand,
+} from "./SlashPopover";
 
 /** Returns true when `pos` falls inside an inline/display math or inline/fenced code span. */
 function isInMathOrCodeContext(spans: readonly MarkdownSpanJs[], pos: EditorPosition): boolean {
@@ -265,15 +139,115 @@ export function MarkdownEditor(props: {
   let lastWheelAt = 0;
   let typewriterRaf: number | undefined;
   let typewriterAnimRaf: number | undefined;
+  let slashAnchorSeq = 0;
+  let slashLastGridCol = 0;
+  let slashPointerInteractAt = 0;
+  let slashBlurTimer: number | undefined;
+  let dismissedSlash: { line: number; startColumn: number } | undefined;
+  let emptyHintTimer: number | undefined;
+  let emptyHintRaf: number | undefined;
   const focused = signal(false);
   const caret = signal<EditorPosition | undefined>({ line: 0, column: 0 });
   const mdSpans = signal<MarkdownSpanJs[]>(Preview.markdownSpans(text));
   const hover = signal<{ diagnostics: EditorDiagnostic[]; bounds: Bounds } | undefined>(undefined);
+  const slashState = signal<
+    | {
+        line: number;
+        startColumn: number;
+        endColumn: number;
+        query: string;
+        items: readonly SlashCommand[];
+      }
+    | undefined
+  >(undefined);
+  const slashAnchor = signal<Bounds | undefined>(undefined);
+  const slashActiveIndex = signal(0);
+  const emptyLineHint = signal<{ top: number; left: number; height: number } | undefined>(undefined);
+  const emptyLineHintVisible = signal(false);
 
   function setSlashActive(next: boolean) {
     if (slashActive === next) return;
     slashActive = next;
     props.onSlashActiveChange?.(next);
+  }
+
+  function closeSlash(dismissCurrent = false) {
+    if (dismissCurrent) {
+      const cur = untracked(slashState);
+      if (cur) dismissedSlash = { line: cur.line, startColumn: cur.startColumn };
+    }
+    slashAnchorSeq++;
+    if (untracked(slashState)) slashState.set(undefined);
+    if (untracked(slashAnchor)) slashAnchor.set(undefined);
+    slashActiveIndex.set(0);
+    setSlashActive(false);
+  }
+
+  function clearEmptyLineHint() {
+    if (emptyHintTimer !== undefined) {
+      clearTimeout(emptyHintTimer);
+      emptyHintTimer = undefined;
+    }
+    if (emptyHintRaf !== undefined) {
+      cancelAnimationFrame(emptyHintRaf);
+      emptyHintRaf = undefined;
+    }
+    if (untracked(emptyLineHintVisible)) emptyLineHintVisible.set(false);
+    if (untracked(emptyLineHint)) emptyLineHint.set(undefined);
+  }
+
+  function scheduleEmptyLineHint(pos: EditorPosition | undefined) {
+    clearEmptyLineHint();
+    if (
+      props.readOnly ||
+      props.hidden ||
+      !untracked(focused) ||
+      untracked(slashState) ||
+      untracked(findOpen) ||
+      text.length === 0 ||
+      !pos ||
+      pos.column !== 0
+    ) {
+      return;
+    }
+    if ((lines()[pos.line] ?? "") !== "") return;
+    const expectedLine = pos.line;
+    emptyHintTimer = setTimeout(() => {
+      emptyHintTimer = undefined;
+      const ed = editor;
+      const cur = untracked(caret);
+      if (
+        !ed ||
+        props.readOnly ||
+        props.hidden ||
+        !untracked(focused) ||
+        untracked(slashState) ||
+        untracked(findOpen) ||
+        text.length === 0 ||
+        !cur ||
+        cur.line !== expectedLine ||
+        cur.column !== 0 ||
+        (lines()[expectedLine] ?? "") !== ""
+      ) {
+        return;
+      }
+      void ed.caretBounds().then((cb) => {
+        if (!cb || editor !== ed || untracked(slashState) || !untracked(focused)) return;
+        const latest = untracked(caret);
+        if (!latest || latest.line !== expectedLine || latest.column !== 0 || (lines()[expectedLine] ?? "") !== "") {
+          return;
+        }
+        emptyLineHint.set({
+          top: cb.bounds.origin.y,
+          left: cb.bounds.origin.x + 2,
+          height: cb.bounds.size.height,
+        });
+        emptyHintRaf = requestAnimationFrame(() => {
+          emptyHintRaf = undefined;
+          if (untracked(emptyLineHint)) emptyLineHintVisible.set(true);
+        });
+      });
+    }, 350) as unknown as number;
   }
 
   // Find & Replace bar state
@@ -325,12 +299,12 @@ export function MarkdownEditor(props: {
     return [...base, ...marks];
   });
 
-  // Clear hover tooltip and native completion menu when hidden or unfocused/read-only.
+  // Clear hover tooltip, slash popover, and empty-line hint when hidden, read-only, or unfocused.
   effect(() => {
     if (props.hidden || props.readOnly || !focused()) {
       hover.set(undefined);
-      setSlashActive(false);
-      editor?.hideCompletions();
+      clearEmptyLineHint();
+      if (props.hidden || props.readOnly) closeSlash();
     }
   });
 
@@ -354,120 +328,229 @@ export function MarkdownEditor(props: {
   }
   cleanup(() => {
     if (frame !== undefined) cancelAnimationFrame(frame);
+    if (slashBlurTimer !== undefined) clearTimeout(slashBlurTimer);
     cancelTypewriterAnim();
-    setSlashActive(false);
+    clearEmptyLineHint();
+    closeSlash();
   });
 
-  /** Serves native `Editor` completions only when `/` is at line start or after whitespace. */
-  function handleCompletionRequest(event: EditorCompletionRequest) {
+  /** Synchronously evaluates whether the caret is on a valid `/query` trigger and updates `slashState`. */
+  function syncSlashState(pos: EditorPosition | undefined) {
     const ed = editor;
-    if (!ed || props.readOnly || props.hidden) {
-      ed?.presentCompletions(event.id, []);
-      setSlashActive(false);
+    if (!ed || props.readOnly || props.hidden || !untracked(focused) || !pos) {
+      closeSlash();
       return;
     }
-    const lineIdx = event.position.line;
-    const lineStr = lines()[lineIdx] ?? "";
-    const matched = matchSlashTrigger(lineStr, event.position.column);
+    const lineStr = lines()[pos.line] ?? "";
+    const matched = matchSlashTrigger(lineStr, pos.column);
     if (!matched) {
-      ed.presentCompletions(event.id, []);
-      setSlashActive(false);
+      dismissedSlash = undefined;
+      closeSlash();
       return;
     }
+    if (dismissedSlash && dismissedSlash.line === pos.line && dismissedSlash.startColumn === matched.startColumn) {
+      return;
+    }
+    dismissedSlash = undefined;
 
-    // Suppress slash menu inside math formulas and inline/fenced code blocks.
+    // Suppress slash popover inside math formulas and inline/fenced code blocks.
     let spans = untracked(mdSpans);
     if (frame !== undefined) {
       spans = Preview.markdownSpans(text);
       mdSpans.set(spans);
     }
-    if (isInMathOrCodeContext(spans, { line: lineIdx, column: matched.startColumn })) {
-      ed.presentCompletions(event.id, []);
-      setSlashActive(false);
+    if (isInMathOrCodeContext(spans, { line: pos.line, column: matched.startColumn })) {
+      closeSlash();
       return;
     }
 
-    const matchedCommands = SLASH_COMMANDS.filter((cmd) => matchesSlashCommand(cmd, matched.query));
-    if (matchedCommands.length === 0) {
-      ed.presentCompletions(event.id, [], true);
-      setSlashActive(false);
+    const items = SLASH_COMMANDS.filter((cmd) => matchesSlashCommand(cmd, matched.query));
+    if (items.length === 0) {
+      closeSlash();
       return;
     }
 
-    const beforeSlash = lineStr.slice(0, matched.startColumn);
-    const afterSlash = lineStr.slice(matched.endColumn);
-    const onlyWhitespaceBefore = beforeSlash.trim() === "";
-    const onlyWhitespaceAfter = afterSlash.trim() === "";
-    const slashEditRange: EditorRange = {
-      start: { line: lineIdx, column: matched.startColumn },
-      end: { line: lineIdx, column: matched.endColumn },
-    };
-    const qLower = matched.query.trim().toLowerCase();
-
-    const items: EditorCompletionItem[] = matchedCommands.map((cmd, index) => {
-      // Pre-filtered via strict prefix rules; keep `label` as `filterText` when it directly
-      // starts with the query (for match highlight), else prefix with `matched.query` so
-      // native completion filtering retains keyword/pinyin matches.
-      const filterText = !qLower || cmd.label.toLowerCase().startsWith(qLower) ? cmd.label : `${matched.query} ${cmd.label}`;
-      const sortText = String(index).padStart(2, "0");
-      if (cmd.kind === "image") {
-        return {
-          label: cmd.label,
-          detail: cmd.description,
-          filterText,
-          sortText,
-          insertText: "",
-          range: slashEditRange,
-        };
-      }
-      const template = cmd.template ?? "";
-      const isMultiLine = template.includes("\n");
-      let range: EditorRange = slashEditRange;
-      let insertText = template;
-      if (isMultiLine && onlyWhitespaceBefore && onlyWhitespaceAfter) {
-        range = {
-          start: { line: lineIdx, column: 0 },
-          end: { line: lineIdx, column: lineStr.length },
-        };
-      } else if (isMultiLine && !onlyWhitespaceBefore) {
-        insertText = `\n\n${template}`;
-      }
-      return {
-        label: cmd.label,
-        detail: cmd.description,
-        filterText,
-        sortText,
-        insertText,
-        range,
-      };
+    clearEmptyLineHint();
+    const prev = untracked(slashState);
+    const queryChanged = !prev || prev.query !== matched.query || prev.line !== pos.line || prev.startColumn !== matched.startColumn;
+    slashState.set({
+      line: pos.line,
+      startColumn: matched.startColumn,
+      endColumn: matched.endColumn,
+      query: matched.query,
+      items,
     });
-
-    // `incomplete = true` ensures every subsequent keystroke/backspace re-requests with an up-to-date `range` covering `/query`.
-    ed.presentCompletions(event.id, items, true);
+    if (queryChanged) {
+      slashActiveIndex.set(0);
+      slashLastGridCol = 0;
+    } else if (untracked(slashActiveIndex) >= items.length) {
+      slashActiveIndex.set(Math.max(0, items.length - 1));
+    }
     setSlashActive(true);
+
+    const seq = ++slashAnchorSeq;
+    void ed.caretBounds().then((cb) => {
+      if (seq !== slashAnchorSeq || !cb || !untracked(slashState)) return;
+      slashAnchor.set(cb.pageBounds);
+    });
   }
 
-  /** Handles post-insertion actions after native completion accepts a slash command. */
-  function handleCompletionAccept(event: EditorCompletionAcceptEvent) {
-    setSlashActive(false);
+  /** Accepts a slash command, replacing `/query` and placing the caret inside the inserted template. */
+  function acceptSlashCommand(cmd: SlashCommand) {
+    const st = untracked(slashState);
     const ed = editor;
-    if (!ed || props.readOnly) return;
-    const cmd = SLASH_COMMANDS.find((c) => c.label === event.item.label);
-    if (!cmd) return;
+    closeSlash();
+    if (!st || !ed || props.readOnly) return;
+
+    const lineStr = lines()[st.line] ?? "";
+    const slashEditRange: EditorRange = {
+      start: { line: st.line, column: st.startColumn },
+      end: { line: st.line, column: st.endColumn },
+    };
+
     if (cmd.kind === "image") {
+      applyEdit(ed, [{ range: slashEditRange, text: "" }]);
+      const pos: EditorPosition = { line: st.line, column: st.startColumn };
+      ed.setSelections([{ anchor: pos, head: pos }]);
       void props.onInsertImage?.();
       return;
     }
-    if (cmd.caret && event.item.range) {
-      const inserted = event.item.insertText ?? "";
-      const startsWithBlankLines = inserted.startsWith("\n\n");
-      const baseLine = startsWithBlankLines ? event.item.range.start.line + 2 : event.item.range.start.line;
-      const baseCol = startsWithBlankLines ? 0 : event.item.range.start.column;
+
+    const template = cmd.template ?? "";
+    const isMultiLine = template.includes("\n");
+    const beforeSlash = lineStr.slice(0, st.startColumn);
+    const afterSlash = lineStr.slice(st.endColumn);
+    const onlyWhitespaceBefore = beforeSlash.trim() === "";
+    const onlyWhitespaceAfter = afterSlash.trim() === "";
+
+    let range: EditorRange = slashEditRange;
+    let insertText = template;
+    let baseLine = st.line;
+    let baseCol = st.startColumn;
+
+    if (isMultiLine && onlyWhitespaceBefore && onlyWhitespaceAfter) {
+      range = {
+        start: { line: st.line, column: 0 },
+        end: { line: st.line, column: lineStr.length },
+      };
+      baseLine = st.line;
+      baseCol = 0;
+    } else if (isMultiLine && !onlyWhitespaceBefore) {
+      insertText = `\n\n${template}`;
+      baseLine = st.line + 2;
+      baseCol = 0;
+    }
+
+    applyEdit(ed, [{ range, text: insertText }]);
+    if (cmd.caret) {
       const pos: EditorPosition = {
         line: baseLine + cmd.caret.line,
         column: cmd.caret.line === 0 ? baseCol + cmd.caret.column : cmd.caret.column,
       };
       ed.setSelections([{ anchor: pos, head: pos }]);
+    }
+    ed.focus();
+  }
+
+  function acceptSlashSelected() {
+    const st = untracked(slashState);
+    if (!st || st.items.length === 0) return;
+    const idx = Math.min(Math.max(0, untracked(slashActiveIndex)), st.items.length - 1);
+    acceptSlashCommand(st.items[idx]);
+  }
+
+  function cancelSlash() {
+    closeSlash(true);
+    editor?.focus();
+  }
+
+  function updateSlashQuery(nextQuery: string) {
+    const st = untracked(slashState);
+    if (!st) return;
+    const items = SLASH_COMMANDS.filter((cmd) => matchesSlashCommand(cmd, nextQuery));
+    slashState.set({ ...st, query: nextQuery, items });
+    slashActiveIndex.set(0);
+    slashLastGridCol = 0;
+  }
+
+  function handleSlashEmptyBackspace() {
+    const st = untracked(slashState);
+    const ed = editor;
+    closeSlash();
+    if (st && ed && !props.readOnly) {
+      applyEdit(ed, [
+        {
+          range: {
+            start: { line: st.line, column: st.startColumn },
+            end: { line: st.line, column: st.endColumn },
+          },
+          text: "",
+        },
+      ]);
+      const pos: EditorPosition = { line: st.line, column: st.startColumn };
+      ed.setSelections([{ anchor: pos, head: pos }]);
+    }
+    ed?.focus();
+  }
+
+  function handleSlashLeadingSpace() {
+    const st = untracked(slashState);
+    const ed = editor;
+    closeSlash(true);
+    if (st && ed && !props.readOnly) {
+      const at: EditorPosition = { line: st.line, column: st.endColumn };
+      applyEdit(ed, [{ range: { start: at, end: at }, text: " " }]);
+      const after: EditorPosition = { line: st.line, column: st.endColumn + 1 };
+      ed.setSelections([{ anchor: after, head: after }]);
+    }
+    ed?.focus();
+  }
+
+  function moveSlashSelection(dir: "up" | "down" | "left" | "right") {
+    const st = untracked(slashState);
+    if (!st || st.items.length === 0) return;
+    const total = st.items.length;
+    const idx = untracked(slashActiveIndex);
+    const filtering = st.query.trim().length > 0;
+
+    if (filtering) {
+      if (dir === "down") slashActiveIndex.set((idx + 1) % total);
+      else if (dir === "up") slashActiveIndex.set((idx - 1 + total) % total);
+      return;
+    }
+
+    if (dir === "left" && idx < SLASH_BASIC_COUNT) {
+      const next = (idx - 1 + SLASH_BASIC_COUNT) % SLASH_BASIC_COUNT;
+      slashLastGridCol = next;
+      slashActiveIndex.set(next);
+      return;
+    }
+    if (dir === "right" && idx < SLASH_BASIC_COUNT) {
+      const next = (idx + 1) % SLASH_BASIC_COUNT;
+      slashLastGridCol = next;
+      slashActiveIndex.set(next);
+      return;
+    }
+    if (dir === "down") {
+      if (idx < SLASH_BASIC_COUNT) {
+        slashLastGridCol = idx;
+        slashActiveIndex.set(total > SLASH_BASIC_COUNT ? SLASH_BASIC_COUNT : 0);
+      } else if (idx < total - 1) {
+        slashActiveIndex.set(idx + 1);
+      } else {
+        slashActiveIndex.set(slashLastGridCol);
+      }
+      return;
+    }
+    if (dir === "up") {
+      if (idx === SLASH_BASIC_COUNT) {
+        slashActiveIndex.set(slashLastGridCol);
+      } else if (idx > SLASH_BASIC_COUNT) {
+        slashActiveIndex.set(idx - 1);
+      } else {
+        slashLastGridCol = idx;
+        slashActiveIndex.set(total - 1);
+      }
     }
   }
 
@@ -730,8 +813,12 @@ export function MarkdownEditor(props: {
     ed.run("deleteBackward");
   }
 
-  /** Continues `- `, `* `, `+ `, and numbered `1. ` lists on Enter; clears empty list prefixes. */
+  /** Continues `- `, `* `, `+ `, and numbered `1. ` lists on Enter; accepts slash command when popover is open. */
   async function handleEnter() {
+    if (untracked(slashState)) {
+      acceptSlashSelected();
+      return;
+    }
     const ed = editor;
     if (!ed) return;
     const sels = await ed.selections();
@@ -777,8 +864,12 @@ export function MarkdownEditor(props: {
     ed.run("newline");
   }
 
-  /** Indents a list item cleanly at column 0 when pressing Tab at its prefix; delegates all else to native `indent`. */
+  /** Indents a list item cleanly at column 0 when pressing Tab at its prefix; accepts slash command when popover is open. */
   async function handleTab() {
+    if (untracked(slashState)) {
+      acceptSlashSelected();
+      return;
+    }
     const ed = editor;
     if (!ed) return;
     const sels = await ed.selections();
@@ -876,7 +967,6 @@ export function MarkdownEditor(props: {
 
   // Bind typing ergonomics and clipboard image paste after `Editor`'s own focus keymap flushes,
   // so these handlers cleanly take precedence while this editor is focused and editable.
-  // Native completion bindings activate on top of these when the completion list opens.
   effect(() => {
     if (!canFormat()) return;
     let cancelled = false;
@@ -901,6 +991,30 @@ export function MarkdownEditor(props: {
     });
   });
 
+  // Intercept arrow/Tab/Escape navigation whenever the slash popover is open.
+  // Focus moves to the popover's filter input while open, so Editor's native bindings
+  // are inactive and these keymap bindings take effect immediately without conflict.
+  effect(() => {
+    const st = slashState();
+    if (!st || !props.active() || props.hidden || props.readOnly) return;
+    const inBasicGrid = st.query.trim().length === 0 && slashActiveIndex() < SLASH_BASIC_COUNT;
+    const unbinds: (() => void)[] = [
+      keymap.bind("up", () => moveSlashSelection("up"), { when: "always", repeat: true }),
+      keymap.bind("down", () => moveSlashSelection("down"), { when: "always", repeat: true }),
+      keymap.bind("tab", () => acceptSlashSelected(), { when: "always" }),
+      keymap.bind("escape", () => cancelSlash(), { when: "always" }),
+    ];
+    if (inBasicGrid) {
+      unbinds.push(
+        keymap.bind("left", () => moveSlashSelection("left"), { when: "always", repeat: true }),
+        keymap.bind("right", () => moveSlashSelection("right"), { when: "always", repeat: true }),
+      );
+    }
+    cleanup(() => {
+      for (const fn of unbinds) fn();
+    });
+  });
+
   const matchLabel = () => {
     if (!findQuery()) return "";
     const r = searchResult();
@@ -917,6 +1031,14 @@ export function MarkdownEditor(props: {
       onWheel={() => {
         lastWheelAt = Date.now();
         cancelTypewriterAnim();
+        clearEmptyLineHint();
+        if (untracked(slashState) && editor) {
+          const seq = ++slashAnchorSeq;
+          void editor.caretBounds().then((cb) => {
+            if (seq !== slashAnchorSeq || !cb || !untracked(slashState)) return;
+            slashAnchor.set(cb.pageBounds);
+          });
+        }
       }}
     >
       <If when={findOpen()}>
@@ -1027,96 +1149,152 @@ export function MarkdownEditor(props: {
           </If>
         </View>
       </If>
-      <Editor
-        ref={(r) => {
-          editor = r;
-          props.onRef(r);
-        }}
-        style={{ flex: 1 }}
-        defaultValue={props.defaultValue}
-        placeholder={props.placeholder}
-        language="markdown"
-        highlighting={false}
-        folding={false}
-        autoClose
-        tabSize={2}
-        hardTabs={false}
-        softWrap
-        readOnly={props.readOnly}
-        fontFamily={editorLigatures() || editorMono() === "monospace" ? editorMono() : `'JetBrains Mono NL', ${editorMono()}`}
-        fontSize={editorFontSize()}
-        lineHeight={Math.round(editorFontSize() * editorLineHeight())}
-        activeLine
-        completion={!props.readOnly}
-        completionTriggerCharacters={["/"]}
-        search={searchObj()}
-        decorations={allDecorations()}
-        diagnostics={props.diagnostics}
-        class="bg-card"
-        classes={{
-          content: "pl-3 pr-5 pt-3",
-          gutter: "pl-2.5 pr-2",
-          activeLine: "bg-muted/45",
-          lineNumber: "text-muted-foreground/45",
-          activeLineNumber: "text-secondary-foreground",
-          completionMenu: "bg-popover border border-border rounded-[10px] p-1",
-          completionItem: "px-2 rounded-[6px] text-foreground",
-          selectedCompletionItem: "bg-accent text-foreground",
-          completionMatch: "font-semibold text-primary",
-          completionDetail: "text-muted-foreground",
-        }}
-        styles={{
-          lineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
-          activeLineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
-          completionMenu: { boxShadow: popoverShadow() },
-          completionItem: { fontSize: 12.5 },
-          completionDetail: { fontSize: 11.5 },
-        }}
-        scrollBeyondLastLine={120}
-        onFocus={() => focused.set(true)}
-        onBlur={() => {
-          focused.set(false);
-          setSlashActive(false);
-        }}
-        onCompletionRequest={handleCompletionRequest}
-        onCompletionAccept={handleCompletionAccept}
-        onSelectionChange={(e) => {
-          lastSelections = e.selections;
-          const s = e.selections.length === 1 ? e.selections[0] : undefined;
-          const pos = s && s.anchor.line === s.head.line && s.anchor.column === s.head.column ? s.head : undefined;
-          caret.set(pos);
-          if (slashActive) {
-            const lineStr = pos ? (lines()[pos.line] ?? "") : "";
-            if (!pos || !matchSlashTrigger(lineStr, pos.column)) {
-              setSlashActive(false);
+      <View style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        <Editor
+          ref={(r) => {
+            editor = r;
+            props.onRef(r);
+          }}
+          style={{ flex: 1 }}
+          defaultValue={props.defaultValue}
+          placeholder={props.placeholder}
+          language="markdown"
+          highlighting={false}
+          folding={false}
+          autoClose
+          tabSize={2}
+          hardTabs={false}
+          softWrap
+          readOnly={props.readOnly}
+          fontFamily={editorLigatures() || editorMono() === "monospace" ? editorMono() : `'JetBrains Mono NL', ${editorMono()}`}
+          fontSize={editorFontSize()}
+          lineHeight={Math.round(editorFontSize() * editorLineHeight())}
+          activeLine
+          search={searchObj()}
+          decorations={allDecorations()}
+          diagnostics={props.diagnostics}
+          class="bg-card"
+          classes={{
+            content: "pl-3 pr-5 pt-3",
+            gutter: "pl-2.5 pr-2",
+            activeLine: "bg-muted/45",
+            lineNumber: "text-muted-foreground/45",
+            activeLineNumber: "text-secondary-foreground",
+          }}
+          styles={{
+            lineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
+            activeLineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
+          }}
+          scrollBeyondLastLine={120}
+          onFocus={() => {
+            if (slashBlurTimer !== undefined) {
+              clearTimeout(slashBlurTimer);
+              slashBlurTimer = undefined;
             }
-          }
-          if (pos) scheduleTypewriterScroll();
-        }}
-        onSearchChange={(e) => searchResult.set(e.result)}
-        onFindWithSelection={(e) => {
-          if (e.query) findQuery.set(e.query);
-          openFind();
-        }}
-        onHover={(e) => {
-          hover.set(e.diagnostics.length > 0 ? { diagnostics: e.diagnostics, bounds: e.pageBounds } : undefined);
-        }}
-        onHoverEnd={() => hover.set(undefined)}
-        onChange={(e) => {
-          const prevText = text;
-          text = e.value;
-          if (suppressAutoClose) {
-            suppressAutoClose = false;
-          } else if (!props.readOnly && focused() && editor) {
-            maybeAutoClosePair(prevText, e.value);
-          }
-          if (!props.readOnly && focused() && editor) {
-            scheduleTypewriterScroll();
-          }
-          restyle();
-          props.onChange(e.value);
-        }}
-      />
+            focused.set(true);
+            scheduleEmptyLineHint(untracked(caret));
+          }}
+          onBlur={() => {
+            focused.set(false);
+            clearEmptyLineHint();
+          }}
+          onSelectionChange={(e) => {
+            lastSelections = e.selections;
+            const s = e.selections.length === 1 ? e.selections[0] : undefined;
+            const pos = s && s.anchor.line === s.head.line && s.anchor.column === s.head.column ? s.head : undefined;
+            caret.set(pos);
+            syncSlashState(pos);
+            if (!untracked(slashState)) {
+              scheduleEmptyLineHint(pos);
+            }
+            if (pos) scheduleTypewriterScroll();
+          }}
+          onSearchChange={(e) => searchResult.set(e.result)}
+          onFindWithSelection={(e) => {
+            if (e.query) findQuery.set(e.query);
+            openFind();
+          }}
+          onHover={(e) => {
+            hover.set(e.diagnostics.length > 0 ? { diagnostics: e.diagnostics, bounds: e.pageBounds } : undefined);
+          }}
+          onHoverEnd={() => hover.set(undefined)}
+          onChange={(e) => {
+            const prevText = text;
+            text = e.value;
+            clearEmptyLineHint();
+            if (suppressAutoClose) {
+              suppressAutoClose = false;
+            } else if (!props.readOnly && focused() && editor) {
+              maybeAutoClosePair(prevText, e.value);
+            }
+            if (!props.readOnly && focused() && editor) {
+              const inferred = inferCaretAfterEdit(prevText, e.value, untracked(caret));
+              syncSlashState(inferred);
+              if (!untracked(slashState)) {
+                scheduleEmptyLineHint(inferred);
+              }
+              scheduleTypewriterScroll();
+            }
+            restyle();
+            props.onChange(e.value);
+          }}
+        />
+        <If when={emptyLineHint()}>
+          {(hint) => (
+            <View
+              testID="empty-line-slash-hint"
+              style={{
+                position: "absolute",
+                top: hint().top,
+                left: hint().left,
+                height: hint().height,
+                justifyContent: "center",
+                pointerEvents: "none",
+                opacity: emptyLineHintVisible() ? 1 : 0,
+                transitionProperty: "opacity",
+                transitionDuration: reduceMotion() ? 0 : 160,
+                transitionTimingFunction: EASE_STANDARD,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: editorLigatures() || editorMono() === "monospace" ? editorMono() : `'JetBrains Mono NL', ${editorMono()}`,
+                  fontSize: editorFontSize(),
+                  lineHeight: Math.round(editorFontSize() * editorLineHeight()),
+                }}
+                class="text-muted-foreground/40"
+              >
+                输入 / 快速插入
+              </Text>
+            </View>
+          )}
+        </If>
+      </View>
+      <If when={Boolean(slashState() && slashAnchor())}>
+        <SlashPopover
+          anchor={slashAnchor()!}
+          query={slashState()?.query ?? ""}
+          items={slashState()?.items ?? SLASH_COMMANDS}
+          activeIndex={slashActiveIndex()}
+          onQueryChange={updateSlashQuery}
+          onActiveChange={(i) => {
+            slashActiveIndex.set(i);
+            const cur = untracked(slashState);
+            if (cur && !cur.query.trim() && i < SLASH_BASIC_COUNT) slashLastGridCol = i;
+          }}
+          onSelect={acceptSlashCommand}
+          onSubmit={acceptSlashSelected}
+          onCancel={cancelSlash}
+          onEmptyBackspace={handleSlashEmptyBackspace}
+          onLeadingSpace={handleSlashLeadingSpace}
+          onPointerInteract={() => {
+            slashPointerInteractAt = Date.now();
+          }}
+          onBlurOutside={() => {
+            if (untracked(slashState)) closeSlash(true);
+          }}
+        />
+      </If>
       <If when={hover()}>
         {(h) => (
           <Overlay anchor={h().bounds} placement="top" align="start" offset={6} margin={8}>
@@ -1254,6 +1432,26 @@ function positionToOffset(src: string, pos: EditorPosition): number {
   const maxCol = (lineEnd < 0 ? src.length : lineEnd) - offset;
   if (pos.column < 0 || pos.column > maxCol) return -1;
   return offset + pos.column;
+}
+
+function inferCaretAfterEdit(
+  prevText: string,
+  nextText: string,
+  fallback: EditorPosition | undefined,
+): EditorPosition | undefined {
+  if (prevText === nextText) return fallback;
+  const minLen = Math.min(prevText.length, nextText.length);
+  let prefix = 0;
+  while (prefix < minLen && prevText.charCodeAt(prefix) === nextText.charCodeAt(prefix)) prefix++;
+  let suffix = 0;
+  const maxSuffix = minLen - prefix;
+  while (
+    suffix < maxSuffix &&
+    prevText.charCodeAt(prevText.length - 1 - suffix) === nextText.charCodeAt(nextText.length - 1 - suffix)
+  ) {
+    suffix++;
+  }
+  return offsetToPosition(nextText, nextText.length - suffix);
 }
 
 function imageExtFrom(contentType: string, bytes: Uint8Array): string {

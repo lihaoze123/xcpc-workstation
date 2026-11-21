@@ -847,8 +847,8 @@ export function StudioView(props: { active: boolean }) {
   const readOnly = () => !!file()?.readOnly || frozen();
   const editorPlaceholder = () =>
     tab() === "editorial"
-      ? "在此编写题解（支持 Markdown 与 LaTeX 公式）…"
-      : "在此编写题面（使用 ## 标题划分章节）…";
+      ? "输入 / 快速插入内容，支持 Markdown 与 LaTeX 公式…"
+      : "输入 / 快速插入内容，使用 ## 划分章节…";
 
   return (
     <View style={{ flex: 1 }} class="bg-background">
