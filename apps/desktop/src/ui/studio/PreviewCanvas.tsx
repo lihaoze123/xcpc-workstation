@@ -1276,8 +1276,8 @@ export function PreviewCanvas(props: {
                     borderWidth: 1,
                     borderColor: dark() ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.06)",
                     boxShadow: dark()
-                      ? "0 4px 24px rgba(0,0,0,0.48), 0 1px 4px rgba(0,0,0,0.32)"
-                      : "0 1px 2px rgba(0,0,0,0.06), 0 6px 20px rgba(0,0,0,0.06)",
+                      ? "0 2px 10px rgba(0,0,0,0.38)"
+                      : "0 2px 8px rgba(0,0,0,0.08)",
                     overflow: "hidden",
                   }}
                 >

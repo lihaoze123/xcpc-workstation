@@ -11,7 +11,6 @@ import { Icon } from "./src/ui/Icon";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
-import { pageTransform, pageTransition } from "./src/ui/motion";
 import { NavRail } from "./src/ui/NavRail";
 import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
@@ -46,7 +45,9 @@ import {
 // keeps their state; only `display` changes. The root renders in the first frame, on
 // the canvas color, whatever is still loading.
 
-/** Keeps a space or studio mounted (`display: none/flex`) while revealing it with a restrained native spring. */
+/** Keeps a space or studio mounted (`display: none/flex`). Full-window studio switches use a
+ *  short pure-opacity fade; peer space switches (`题库 ⇄ 比赛 ⇄ 设置`) swap in 1 frame so
+ *  GTK4 never allocates a full-screen offscreen FBO (NavRail's spring pill provides the motion). */
 function SpaceStage(props: {
   visible: boolean;
   variant?: "space" | "studio";
@@ -54,7 +55,8 @@ function SpaceStage(props: {
   direction?: "row" | "column";
   children?: JSX.Element;
 }) {
-  const revealed = signal(props.visible && !props.animateOnMount);
+  const isStudioStage = props.variant === "studio";
+  const revealed = signal(props.visible && (!isStudioStage || !props.animateOnMount));
   let initialized = false;
   let raf: number | undefined;
 
@@ -65,6 +67,10 @@ function SpaceStage(props: {
     if (raf !== undefined) {
       cancelAnimationFrame(raf);
       raf = undefined;
+    }
+    if (!isStudioStage) {
+      revealed.set(isVisible);
+      return;
     }
     if (!isVisible) {
       revealed.set(false);
@@ -82,22 +88,20 @@ function SpaceStage(props: {
     if (raf !== undefined) cancelAnimationFrame(raf);
   });
 
-  const isStudioStage = props.variant === "studio";
   return (
     <View
       style={{
         flex: 1,
         flexDirection: props.direction,
         display: props.visible ? "flex" : "none",
-        opacity: revealed() ? 1 : 0,
-        transform: pageTransform(revealed(), props.variant ?? "space"),
         ...(isStudioStage
           ? {
+              opacity: revealed() ? 1 : 0,
               transitionProperty: "opacity",
-              transitionDuration: ms(140),
+              transitionDuration: ms(120),
               transitionTimingFunction: EASE_STANDARD,
             }
-          : pageTransition(220)),
+          : undefined),
       }}
     >
       {props.children}

@@ -90,11 +90,14 @@ export function LibraryView(props: { active: boolean }) {
   const platform = signal<string | undefined>(undefined);
   const sort = signal<DataTableSort | null>(null);
   const width = signal(0); // the table's
-  const detailSize = signal(380); // user-resizable inspector width, no initial total=0 jump
   let table: DataTableRef | undefined;
   let search: InputRef | undefined;
   let searchTimer: number | undefined;
-  cleanup(() => clearTimeout(searchTimer));
+  let widthTimer: number | undefined;
+  cleanup(() => {
+    clearTimeout(searchTimer);
+    clearTimeout(widthTimer);
+  });
 
   const setSearch = (val: string) => {
     inputText.set(val);
@@ -277,7 +280,25 @@ export function LibraryView(props: { active: boolean }) {
     <View style={{ flex: 1 }} class="bg-background">
       <ResizablePanelGroup handleClass="bg-border w-px group-hover:bg-primary/50 group-active:bg-primary transition-colors">
         <ResizablePanel minSize={320}>
-          <View style={{ flex: 1, minWidth: 0 }} onLayout={(e) => width.set(e.bounds.size.width)}>
+          <View
+            style={{ flex: 1, minWidth: 0 }}
+            onLayout={(e) => {
+              const nextW = Math.round(e.bounds.size.width);
+              if (nextW <= 0) return;
+              if (width() === 0) {
+                width.set(nextW);
+                return;
+              }
+              if (Math.abs(nextW - width()) < 2) return;
+              // Debounce column width recomputation during continuous splitter drag so
+              // DataTable doesn't rebuild column metadata on every mouse-move pixel.
+              clearTimeout(widthTimer);
+              widthTimer = setTimeout(() => {
+                widthTimer = undefined;
+                width.set(nextW);
+              }, 80);
+            }}
+          >
             <Toolbar>
               <View
                 style={{
@@ -497,12 +518,11 @@ export function LibraryView(props: { active: boolean }) {
           </View>
         </ResizablePanel>
         <ResizablePanel
-          size={detailSize()}
+          size={380}
           minSize={300}
           maxSize={560}
           fixed
           visible={visibleSelected() !== undefined}
-          onResize={(e) => detailSize.set(Math.round(e.size))}
         >
           <If when={visibleSelected()}>{(id) => <ProblemInspector id={id()} active={props.active} />}</If>
         </ResizablePanel>

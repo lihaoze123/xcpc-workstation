@@ -146,7 +146,6 @@ function PaletteBody() {
     }
     const hit = jumps().find((h) => `j:${h.visitKey}` === id);
     if (!hit) return;
-    preview.recordVisit(hit.visitKey);
     if (hit.kind === "problem") openStudio({ target: "problem", id: hit.id });
     else if (hit.kind === "contest") openStudio({ target: "contest", id: hit.id });
     else if (hit.contestId) openStudio({ target: "contest", id: hit.contestId, label: hit.label ?? undefined });

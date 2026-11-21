@@ -31,6 +31,9 @@ export function Inspector(props: {
   onFinding: (d: PreviewDiagnostic) => void;
   onClose: () => void;
 }) {
+  // Defer mounting the form fields until the drawer is opened at least once so opening
+  // Studio with the drawer closed skips mounting 10+ Input controls on frame 0.
+  const everOpened = computed<boolean>((prev) => Boolean(prev) || props.open);
   const error = signal<UiError | undefined>(undefined);
   const assetCount = signal(0);
   let assetCountSeq = 0;
@@ -90,44 +93,46 @@ export function Inspector(props: {
         <Text style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>属性</Text>
         <IconBtn icon="x" tooltip={tip("关闭", "mod+i")} onPress={props.onClose} />
       </View>
-      <Scroll style={{ flex: 1 }}>
-        <If when={props.target === "contest" && props.contest}>
-          <ContestFields contest={props.contest!} item={props.item} freeze={props.freeze} done={done} onFinding={props.onFinding} hasFollowingSection={showAssets()} />
-        </If>
-        <If when={props.target === "problem"}>
-          <ProblemFields id={props.id} done={done} hasFollowingSection={showAssets()} />
-        </If>
-        <If when={showAssets()}>
-          <View style={{ padding: 14 }}>
-            <View
-              testID="inspector-assets-btn"
-              onPress={() => props.onOpenAssets?.()}
-              class="border border-border bg-card hover:bg-muted active:bg-accent"
-              style={{
-                height: 34,
-                paddingLeft: 10,
-                paddingRight: 8,
-                borderRadius: 7,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 8,
-                ...colorTransition(140),
-              }}
-            >
-              <Icon name="image" size={15} tone="secondary-foreground" />
-              <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                {`素材 ${assetCount()} 个`}
-              </Text>
-              <Icon name="chevronRight" size={14} tone="muted-foreground" />
+      <If when={everOpened()}>
+        <Scroll style={{ flex: 1 }}>
+          <If when={props.target === "contest" && props.contest}>
+            <ContestFields contest={props.contest!} item={props.item} freeze={props.freeze} done={done} onFinding={props.onFinding} hasFollowingSection={showAssets()} />
+          </If>
+          <If when={props.target === "problem"}>
+            <ProblemFields id={props.id} done={done} hasFollowingSection={showAssets()} />
+          </If>
+          <If when={showAssets()}>
+            <View style={{ padding: 14 }}>
+              <View
+                testID="inspector-assets-btn"
+                onPress={() => props.onOpenAssets?.()}
+                class="border border-border bg-card hover:bg-muted active:bg-accent"
+                style={{
+                  height: 34,
+                  paddingLeft: 10,
+                  paddingRight: 8,
+                  borderRadius: 7,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  ...colorTransition(140),
+                }}
+              >
+                <Icon name="image" size={15} tone="secondary-foreground" />
+                <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                  {`素材 ${assetCount()} 个`}
+                </Text>
+                <Icon name="chevronRight" size={14} tone="muted-foreground" />
+              </View>
             </View>
-          </View>
-        </If>
-        <If when={error()}>
-          <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14 }}>
-            <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
-          </View>
-        </If>
-      </Scroll>
+          </If>
+          <If when={error()}>
+            <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14 }}>
+              <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
+            </View>
+          </If>
+        </Scroll>
+      </If>
     </View>
   );
 }

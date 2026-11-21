@@ -174,18 +174,19 @@ export function modalBackdrop(): string {
   return colorScheme() === "dark" ? "rgba(0,0,0,0.48)" : "rgba(9,9,11,0.12)";
 }
 
-/** Shadow + dark inner rim for modal dialogs and the command palette (§4). */
+/** Shadow + dark inner rim for modal dialogs and the command palette (§4).
+ *  Kept single-layer with a tight blur radius so GTK4 HiDPI paints stay within 120Hz budget. */
 export function modalShadow(): string {
   return colorScheme() === "dark"
-    ? `0 16px 40px rgba(0,0,0,0.52), 0 2px 8px rgba(0,0,0,0.28), inset 0 0 0 1px ${rim()}`
-    : "0 12px 32px rgba(0,0,0,0.16), 0 2px 6px rgba(0,0,0,0.08)";
+    ? `0 8px 18px rgba(0,0,0,0.44), inset 0 0 0 1px ${rim()}`
+    : "0 6px 14px rgba(0,0,0,0.14)";
 }
 
 /** Shadow + dark inner rim for menus, popovers, tooltips, and floating panels (§4). */
 export function popoverShadow(): string {
   return colorScheme() === "dark"
-    ? `0 10px 28px rgba(0,0,0,0.44), 0 2px 6px rgba(0,0,0,0.24), inset 0 0 0 1px ${rim()}`
-    : "0 8px 24px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.06)";
+    ? `0 6px 14px rgba(0,0,0,0.38), inset 0 0 0 1px ${rim()}`
+    : "0 4px 12px rgba(0,0,0,0.11)";
 }
 
 /** Subtle ambient shadow for ordinary cards (§4). */

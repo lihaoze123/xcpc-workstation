@@ -2,11 +2,11 @@
 // native spring `scale(0.94→1) + translateY(-6→0) + opacity` (§8). The backdrop's strip
 // under the title bar still drags the window; a press elsewhere on it or Escape closes.
 
-import { cleanup, effect, Overlay, signal, Text, View, type JSX } from "nsh";
+import { cleanup, effect, Overlay, reduceMotion, signal, Text, View, type JSX } from "nsh";
 import { Icon, type IconName, type IconTone } from "./Icon";
 import { TITLE_BAR } from "./TitleBar";
-import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
-import { modalBackdrop, modalShadow, ms } from "./theme";
+import { backdropTransition } from "./motion";
+import { EASE_STANDARD, modalBackdrop, modalShadow, ms } from "./theme";
 
 export function Modal(props: {
   open: boolean;
@@ -37,7 +37,7 @@ export function Modal(props: {
       });
     } else if (mounted()) {
       shown.set(false);
-      const dur = ms(220);
+      const dur = ms(140);
       if (dur === 0) mounted.set(false);
       else closeTimer = setTimeout(() => mounted.set(false), dur);
     }
@@ -101,8 +101,10 @@ export function Modal(props: {
               overflow: "hidden",
               boxShadow: modalShadow(),
               opacity: shown() ? 1 : 0,
-              transform: overlayTransform(shown()),
-              ...overlayTransition(),
+              transform: reduceMotion() ? undefined : shown() ? "translateY(0px)" : "translateY(-4px)",
+              transitionProperty: "opacity, transform",
+              transitionDuration: ms(140),
+              transitionTimingFunction: EASE_STANDARD,
             }}
             class="bg-card border-border"
           >

@@ -46,7 +46,7 @@ import {
   type StudioTarget,
   type UiError,
 } from "../store";
-import { pageTransition, panelTransition } from "../motion";
+import { panelTransition } from "../motion";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
@@ -112,11 +112,9 @@ export function StudioView(props: { active: boolean }) {
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).
   const outlineVisible = signal(true);
   const outlineShown = signal(true);
-  const columnSettled = signal(true);
   const previewShown = signal(true);
   let outlineRaf: number | undefined;
   let outlineTimer: number | undefined;
-  let columnRaf: number | undefined;
   let previewRaf: number | undefined;
   let layoutMotionInit = false;
 
@@ -147,27 +145,16 @@ export function StudioView(props: { active: boolean }) {
 
   effect(() => {
     const hidden = previewHidden();
-    void focusMode();
     const first = !layoutMotionInit;
     layoutMotionInit = true;
-    if (columnRaf !== undefined) {
-      cancelAnimationFrame(columnRaf);
-      columnRaf = undefined;
-    }
     if (previewRaf !== undefined) {
       cancelAnimationFrame(previewRaf);
       previewRaf = undefined;
     }
     if (first || reduceMotion()) {
-      columnSettled.set(true);
       previewShown.set(!hidden);
       return;
     }
-    columnSettled.set(false);
-    columnRaf = requestAnimationFrame(() => {
-      columnRaf = undefined;
-      columnSettled.set(true);
-    });
     if (hidden) {
       previewShown.set(false);
     } else {
@@ -182,7 +169,6 @@ export function StudioView(props: { active: boolean }) {
   cleanup(() => {
     if (outlineRaf !== undefined) cancelAnimationFrame(outlineRaf);
     clearTimeout(outlineTimer);
-    if (columnRaf !== undefined) cancelAnimationFrame(columnRaf);
     if (previewRaf !== undefined) cancelAnimationFrame(previewRaf);
   });
   const assetsRefreshSeq = signal(0);
@@ -1037,9 +1023,6 @@ export function StudioView(props: { active: boolean }) {
                       flex: 1,
                       minWidth: 0,
                       maxWidth: previewHidden() ? 760 : undefined,
-                      opacity: columnSettled() ? 1 : 0.92,
-                      transform: reduceMotion() ? undefined : columnSettled() ? "scale(1)" : "scale(0.992)",
-                      ...pageTransition(220),
                     }}
                   >
                     <Each of={file() ? [file()!] : []} key={(f) => f.path}>
@@ -1135,9 +1118,6 @@ export function StudioView(props: { active: boolean }) {
                           flex: 1,
                           minWidth: 0,
                           maxWidth: previewHidden() ? 760 : undefined,
-                          opacity: columnSettled() ? 1 : 0.92,
-                          transform: reduceMotion() ? undefined : columnSettled() ? "scale(1)" : "scale(0.992)",
-                          ...pageTransition(220),
                         }}
                       >
                         <Samples problemId={id()} readOnly={frozen() || info().readOnly} onSaved={compileNow} />
