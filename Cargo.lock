@@ -4900,6 +4900,7 @@ version = "0.1.0"
 dependencies = [
  "nsh-base",
  "nsh-core",
+ "png",
  "xcpc-convert",
  "xcpc-domain",
  "xcpc-engine",
@@ -4963,11 +4964,16 @@ dependencies = [
 name = "xcpc-storage"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "imagesize 0.15.0",
  "notify",
+ "png",
+ "resvg",
  "serde",
  "sha2",
  "tempfile",
  "thiserror",
+ "tiny-skia",
  "toml 1.2.1+spec-1.1.0",
  "toml_edit",
  "xcpc-domain",

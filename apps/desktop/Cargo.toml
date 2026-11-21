@@ -12,3 +12,4 @@ xcpc-engine.workspace = true
 xcpc-storage.workspace = true
 xcpc-convert.workspace = true
 xcpc-domain.workspace = true
+png.workspace = true

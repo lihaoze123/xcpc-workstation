@@ -1260,10 +1260,10 @@ fn export_status_tracks_freshness_unsaved_edits_and_restart_mtime() {
 
     // 1. Before any export, neither PDF exists nor is fresh.
     let s0 = preview.export_status(stmt_req.clone());
-    assert_eq!(s0.statements.rel_path, "build/p1.pdf");
+    assert_eq!(s0.statements.rel_path, "build/Fresh Demo.pdf");
     assert!(!s0.statements.exists);
     assert!(!s0.statements.fresh);
-    assert_eq!(s0.editorial.rel_path, "build/p1-editorial.pdf");
+    assert_eq!(s0.editorial.rel_path, "build/Fresh Demo-题解.pdf");
     assert!(!s0.editorial.exists);
     assert!(!s0.editorial.fresh);
 
@@ -1949,4 +1949,299 @@ fn image_import_enforces_security_boundaries_and_unique_names() {
             .is_err(),
         "read-only workspace must reject image import"
     );
+}
+
+#[test]
+fn asset_library_list_rename_delete_and_guards() {
+    let dir = TempDir::new("asset-lib");
+    let preview = Preview::new(None);
+    assert!(
+        preview
+            .init_workspace(dir.0.display().to_string())
+            .error
+            .is_none()
+    );
+    assert!(preview.create_problem("p1".into(), "资产测试".into()).ok);
+    assert!(
+        preview
+            .save(
+                "problems/p1/statement.md".into(),
+                "图：![](assets/fig1.png)\n\n## 输入格式\n\n无。\n\n## 输出格式\n\n无。\n".into(),
+                None,
+            )
+            .ok
+    );
+    assert!(
+        preview
+            .save(
+                "problems/p1/editorial.md".into(),
+                "详见 ![](assets/fig1.png)。\n".into(),
+                None,
+            )
+            .ok
+    );
+    let assets_dir = dir.0.join("problems/p1/assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(assets_dir.join("fig1.png"), b"PNG-ONE").unwrap();
+    std::fs::write(assets_dir.join("unused.svg"), b"<svg/>").unwrap();
+
+    // 1. list_problem_assets detects size, referenced flag, and exact reference locations.
+    let list = preview.state.list_problem_assets("problem", "p1", None);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].name, "fig1.png");
+    assert_eq!(list[0].rel_path, "assets/fig1.png");
+    assert_eq!(list[0].bytes, 7.0);
+    assert!(list[0].referenced);
+    assert_eq!(list[0].references.len(), 2);
+    assert_eq!(list[1].name, "unused.svg");
+    assert!(!list[1].referenced);
+    assert!(list[1].references.is_empty());
+
+    // 2. rename_problem_asset atomically renames and updates statement.md & editorial.md.
+    let ren = preview.rename_problem_asset(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "fig1.png".into(),
+        "diagram.png".into(),
+    );
+    assert!(ren.ok, "rename failed: {:?}", ren.error);
+    assert!(!assets_dir.join("fig1.png").exists());
+    assert!(assets_dir.join("diagram.png").is_file());
+    assert!(
+        preview
+            .read("problems/p1/statement.md".into())
+            .text
+            .contains("assets/diagram.png")
+    );
+    assert!(
+        preview
+            .read("problems/p1/editorial.md".into())
+            .text
+            .contains("assets/diagram.png")
+    );
+
+    // 2b. set_asset_width updates width attribute without duplicating it.
+    let w1 = preview.set_asset_width(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "diagram.png".into(),
+        Some(60.5),
+        Some("problems/p1/statement.md".into()),
+    );
+    assert!(w1.ok, "set_asset_width failed: {:?}", w1.error);
+    assert!(
+        preview
+            .read("problems/p1/statement.md".into())
+            .text
+            .contains("assets/diagram.png){width=60.5%}")
+    );
+    let w2 = preview.set_asset_width(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "diagram.png".into(),
+        Some(75.0),
+        Some("problems/p1/statement.md".into()),
+    );
+    assert!(w2.ok);
+    let st_after = preview.read("problems/p1/statement.md".into()).text;
+    assert!(st_after.contains("assets/diagram.png){width=75%}"));
+    assert!(!st_after.contains("60.5"));
+
+    // 3. Refuses overwrite, Windows illegal/reserved names, & path traversal.
+    let dup = preview.rename_problem_asset(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "diagram.png".into(),
+        "unused.svg".into(),
+    );
+    assert!(!dup.ok);
+    let win_reserved = preview.rename_problem_asset(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "diagram.png".into(),
+        "CON.png".into(),
+    );
+    assert!(!win_reserved.ok);
+    let win_illegal = preview.rename_problem_asset(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "diagram.png".into(),
+        "bad:name.png".into(),
+    );
+    assert!(!win_illegal.ok);
+    let escape = preview.delete_problem_asset(
+        "problem".into(),
+        "p1".into(),
+        None,
+        "../problem.toml".into(),
+    );
+    assert!(!escape.ok);
+
+    // 4. clean_unused_assets removes unreferenced assets and keeps referenced ones.
+    let cleaned = preview.clean_unused_assets("problem".into(), "p1".into(), None);
+    assert!(
+        cleaned.ok,
+        "clean_unused_assets failed: {:?}",
+        cleaned.error
+    );
+    assert_eq!(cleaned.removed, vec!["unused.svg"]);
+    assert!(!assets_dir.join("unused.svg").exists());
+    assert!(assets_dir.join("diagram.png").is_file());
+
+    // 5. Read-only workspace rejects rename/delete/clean, but still allows list.
+    let ro = Preview::new(None);
+    assert!(
+        ro.open_workspace(dir.0.display().to_string(), true)
+            .error
+            .is_none()
+    );
+    assert_eq!(ro.state.list_problem_assets("problem", "p1", None).len(), 1);
+    let ro_del = ro.delete_problem_asset("problem".into(), "p1".into(), None, "diagram.png".into());
+    assert!(!ro_del.ok);
+    assert_eq!(ro_del.code.as_deref(), Some("read_only"));
+}
+
+#[test]
+fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() {
+    let ws_dir = TempDir::new("snap-ws");
+    let data_dir = TempDir::new("snap-data");
+
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let info = preview.init_example_workspace(ws_dir.0.display().to_string());
+    assert!(
+        info.error.is_none(),
+        "init example failed: {:?}",
+        info.error
+    );
+    assert_eq!(info.problems.len(), 2);
+    assert_eq!(info.contests.len(), 1);
+
+    let req = PreviewRequest {
+        target: "problem".into(),
+        id: "lantern-walk".into(),
+        book: "statements".into(),
+        path: String::new(),
+        text: String::new(),
+    };
+    let latest = AtomicU64::new(1);
+    let res = preview.state.run(
+        &req,
+        1.0,
+        &[PreviewView::default()],
+        CancelToken {
+            generation: 1,
+            latest: &latest,
+        },
+    );
+    assert!(res.error.is_none(), "compile error: {:?}", res.error);
+
+    let meta_json = format!(
+        r#"{{"workspace":{:?},"target":"problem","id":"lantern-walk","book":"statements","zoom":1.25,"scrollY":42.5}}"#,
+        info.root
+    );
+    // When compiler lock is held, save_cold_start_snapshot skips immediately without blocking.
+    {
+        let _guard = preview.state.compiler.lock().unwrap();
+        assert!(
+            !preview
+                .state
+                .save_cold_start_snapshot(&meta_json, &[0, 1], 2.0)
+        );
+    }
+    assert!(
+        preview
+            .state
+            .save_cold_start_snapshot(&meta_json, &[0, 1], 3.0)
+    );
+
+    // Snapshot stores PNG-compressed pages (no `.rgba`) and clamps render_scale to 2.0.
+    let snap_dir = data_dir.0.join("snapshots");
+    let page0_png = snap_dir.join("page-0.png");
+    assert!(page0_png.is_file(), "expected page-0.png in snapshot dir");
+    assert!(!snap_dir.join("page-0.rgba").exists());
+    let (pw, _ph) = xcpc_storage::read_image_dimensions(&page0_png).unwrap();
+    // A4 width is ~595pt; at 2.0x it is ~1191px (well below 3.0x = ~1786px).
+    assert!(
+        pw <= 1250,
+        "expected render_scale clamped to 2.0, got width {pw}"
+    );
+
+    let loaded = preview
+        .load_cold_start_snapshot()
+        .expect("expected valid cold-start snapshot");
+    assert_eq!(loaded.target, "problem");
+    assert_eq!(loaded.id, "lantern-walk");
+    assert_eq!(loaded.book, "statements");
+    assert_eq!(loaded.zoom, 1.25);
+    assert_eq!(loaded.scroll_y, 42.5);
+    assert!(!loaded.pages.is_empty());
+    assert!(!loaded.pages[0].layers.is_empty());
+
+    // Mutate assets/ -> content hash changes -> snapshot is automatically ignored.
+    let assets_dir = ws_dir.0.join("problems/lantern-walk/assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(assets_dir.join("new.png"), b"img-bytes").unwrap();
+    assert!(
+        preview.load_cold_start_snapshot().is_none(),
+        "stale snapshot must be ignored after assets/ change"
+    );
+
+    // Re-save with the new asset, then mutate statement.md -> invalidated again.
+    assert!(
+        preview
+            .state
+            .save_cold_start_snapshot(&meta_json, &[0], 1.5)
+    );
+    assert!(preview.load_cold_start_snapshot().is_some());
+    assert!(
+        preview
+            .save(
+                "problems/lantern-walk/statement.md".into(),
+                "修改后的内容。\n\n## 输入格式\n\n无。\n\n## 输出格式\n\n无。\n".into(),
+                None,
+            )
+            .ok
+    );
+    assert!(
+        preview.load_cold_start_snapshot().is_none(),
+        "stale snapshot must be ignored after content change"
+    );
+}
+
+#[test]
+fn resolve_example_target_dir_uses_subdir_when_non_empty() {
+    let dir = TempDir::new("ex-pick");
+    assert_eq!(crate::resolve_example_target_dir(&dir.0), dir.0);
+
+    std::fs::write(dir.0.join("existing.txt"), b"hi").unwrap();
+    assert_eq!(
+        crate::resolve_example_target_dir(&dir.0),
+        dir.0.join("xcpc-example")
+    );
+
+    let sub = dir.0.join("xcpc-example");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("other.txt"), b"hi").unwrap();
+    assert_eq!(
+        crate::resolve_example_target_dir(&dir.0),
+        dir.0.join("xcpc-example-2")
+    );
+}
+
+#[test]
+fn about_info_exposes_build_and_runtime_diagnostics() {
+    let info = Preview::about_info();
+    assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+    assert!(!info.commit.is_empty());
+    assert!(!info.build_date.is_empty());
+    assert_eq!(info.is_dev, cfg!(debug_assertions));
+    assert_eq!(info.os, std::env::consts::OS);
+    assert_eq!(info.arch, std::env::consts::ARCH);
+    assert!(!info.font_source.is_empty());
 }

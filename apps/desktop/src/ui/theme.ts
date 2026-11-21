@@ -1,4 +1,4 @@
-import { colorScheme, computed, reduceMotion, setTheme, signal, token } from "nsh";
+import { batch, colorScheme, computed, reduceMotion, setColorScheme, setTheme, signal, token } from "nsh";
 export { token };
 
 // The design tokens of docs/design-system.md §3 on shadcn's names, which the classes
@@ -191,4 +191,69 @@ export function popoverShadow(): string {
 /** Subtle ambient shadow for ordinary cards (§4). */
 export function cardShadow(): string {
   return colorScheme() === "dark" ? "0 1px 2px rgba(0,0,0,0.24)" : "0 1px 2px rgba(0,0,0,0.035)";
+}
+
+// ── Appearance & editor typography preferences (Phase 2.5) ───────────────────
+
+export type AppearanceMode = "system" | "light" | "dark";
+
+export const DEFAULT_EDITOR_FONT_SIZE = 13.5;
+export const DEFAULT_EDITOR_LINE_HEIGHT = 1.55;
+export const DEFAULT_EDITOR_LIGATURES = true;
+
+/** User-selected appearance mode: `"system"`, `"light"`, or `"dark"`. */
+export const appearanceMode = signal<AppearanceMode>("system");
+
+/** Editor font size in points (clamped to 11..20). */
+export const editorFontSize = signal<number>(DEFAULT_EDITOR_FONT_SIZE);
+
+/** Editor line-height multiplier (clamped to 1.25..2.0). */
+export const editorLineHeight = signal<number>(DEFAULT_EDITOR_LINE_HEIGHT);
+
+/** Whether programming ligatures are enabled in the code/statement editor. */
+export const editorLigatures = signal<boolean>(DEFAULT_EDITOR_LIGATURES);
+
+/** Switches the app's appearance immediately via NSH's native `setColorScheme`. */
+export function setAppearanceMode(mode: AppearanceMode): void {
+  const next: AppearanceMode = mode === "light" || mode === "dark" ? mode : "system";
+  appearanceMode.set(next);
+  try {
+    setColorScheme(next);
+  } catch {
+    // Headless test environments may not expose a window appearance host.
+  }
+}
+
+/** Updates the editor font size (clamped to 11..20 pt). */
+export function setEditorFontSize(size: number): void {
+  if (!Number.isFinite(size)) return;
+  editorFontSize.set(Math.min(20, Math.max(11, Math.round(size * 2) / 2)));
+}
+
+/** Updates the editor line-height multiplier (clamped to 1.25..2.0). */
+export function setEditorLineHeight(lineHeight: number): void {
+  if (!Number.isFinite(lineHeight)) return;
+  editorLineHeight.set(Math.min(2.0, Math.max(1.25, Math.round(lineHeight * 20) / 20)));
+}
+
+/** Toggles ligatures in the editor. */
+export function setEditorLigatures(enabled: boolean): void {
+  editorLigatures.set(Boolean(enabled));
+}
+
+export interface AppearancePrefs {
+  appearance?: AppearanceMode;
+  editorFontSize?: number;
+  editorLineHeight?: number;
+  editorLigatures?: boolean;
+}
+
+/** Applies a batch of persisted appearance & editor typography preferences. */
+export function applyAppearancePrefs(prefs: AppearancePrefs): void {
+  batch(() => {
+    if (prefs.appearance !== undefined) setAppearanceMode(prefs.appearance);
+    if (prefs.editorFontSize !== undefined) setEditorFontSize(prefs.editorFontSize);
+    if (prefs.editorLineHeight !== undefined) setEditorLineHeight(prefs.editorLineHeight);
+    if (prefs.editorLigatures !== undefined) setEditorLigatures(prefs.editorLigatures);
+  });
 }

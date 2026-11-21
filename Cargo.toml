@@ -41,3 +41,7 @@ tempfile = "3"
 base64 = "0.22"
 pulldown-cmark = { version = "0.13", default-features = false }
 mitex = "0.2.4"
+imagesize = "0.15"
+png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+resvg = { version = "0.47", default-features = false }

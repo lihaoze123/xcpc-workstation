@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <filter id="shadow-pencil" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="9" result="blur"/>
+      <feOffset in="blur" dx="0" dy="11" result="offset"/>
+      <feFlood flood-color="#1E2430" flood-opacity="0.24" result="color"/>
+      <feComposite in="color" in2="offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g id="pencil" filter="url(#shadow-pencil)">
+    <g transform="translate(578, 635) rotate(30) scale(1.12)">
+      <polygon points="0,0 -19,-60 19,-60" fill="#F2E3CA"/>
+      <polygon points="0,0 5,-60 19,-60" fill="#E0C8A2"/>
+      <polygon points="0,0 -6.5,-20.5 6.5,-20.5" fill="#2B3038"/>
+      <path d="M -19,-58 Q -13,-64 -7,-58 L -7,-308 L -19,-308 Z" fill="#F5BC52"/>
+      <path d="M -7,-58 Q 0,-64 7,-58 L 7,-308 L -7,-308 Z" fill="#E59A2E"/>
+      <path d="M 7,-58 Q 13,-64 19,-58 L 19,-308 L 7,-308 Z" fill="#C57818"/>
+      <rect x="-19" y="-340" width="38" height="32" fill="#CDD3DC"/>
+      <rect x="7" y="-340" width="12" height="32" fill="#B1B9C5"/>
+      <rect x="-19" y="-331" width="38" height="4.5" fill="#969FAD"/>
+      <rect x="-19" y="-319" width="38" height="4.5" fill="#969FAD"/>
+      <path d="M -19,-340 L -19,-366 A 8,8 0 0 1 -11,-374 L 11,-374 A 8,8 0 0 1 19,-366 L 19,-340 Z" fill="#DC8D92"/>
+      <path d="M 7,-340 L 7,-374 L 11,-374 A 8,8 0 0 1 19,-366 L 19,-340 Z" fill="#C4757B"/>
+    </g>
+  </g>
+</svg>

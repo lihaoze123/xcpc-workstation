@@ -1035,3 +1035,247 @@ fn freeze_contest_succeeds_with_warnings_outputs_pdfs_excludes_package_files_and
     assert!(c2.join("snapshot/no-ed.pdf").is_file());
     assert!(!c2.join("snapshot/no-ed-editorial.pdf").exists());
 }
+
+#[test]
+fn pdf_metadata_sets_title_author_creator_and_preserves_producer() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("workspace.toml"), "").unwrap();
+
+    let p = dir.path().join("problems/alpha");
+    fs::create_dir_all(&p).unwrap();
+    fs::write(
+        p.join("problem.toml"),
+        "title = \"灯笼小径\"\nauthor = \"chumeng\"\n",
+    )
+    .unwrap();
+    fs::write(
+        p.join("statement.md"),
+        "正文。\n\n## 输入格式\n\n一个数。\n\n## 输出格式\n\n一个数。\n",
+    )
+    .unwrap();
+    fs::write(p.join("editorial.md"), "## 思路\n\n直接输出。\n").unwrap();
+
+    let c = dir.path().join("contests/spring");
+    fs::create_dir_all(&c).unwrap();
+    fs::write(
+        c.join("contest.toml"),
+        "name = \"春季训练赛\"\nauthor = \"命题组\"\nlanguage = \"chinese\"\n[[problem]]\nid = \"alpha\"\nlabel = \"A\"\n",
+    )
+    .unwrap();
+
+    let ws = Workspace::open(dir.path(), false).unwrap();
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+
+    // 1. Contest statements PDF
+    let doc = publish::document(
+        &ws,
+        &Target::Contest("spring".into()),
+        Kind::Statements,
+        None,
+    )
+    .unwrap();
+    let (compiled, report) = publish::compile(&mut engine, &doc);
+    assert!(report.ok, "{:#?}", report.diagnostics);
+    let pdf = compiled.unwrap().pdf().unwrap();
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("春季训练赛 试题册"),
+        "missing contest statements title in PDF"
+    );
+    assert!(text.contains("命题组"), "missing contest author in PDF");
+    assert!(
+        text.contains(&format!("XCPC Workstation {}", env!("CARGO_PKG_VERSION"))),
+        "missing Creator in PDF"
+    );
+    assert!(
+        text.contains("dc:title") && text.contains("dc:creator"),
+        "expected XMP title/author metadata in PDF"
+    );
+
+    // 2. Contest editorial PDF
+    let ed_doc = publish::document(
+        &ws,
+        &Target::Contest("spring".into()),
+        Kind::Editorial,
+        None,
+    )
+    .unwrap();
+    let (ed_compiled, ed_report) = publish::compile(&mut engine, &ed_doc);
+    assert!(ed_report.ok, "{:#?}", ed_report.diagnostics);
+    let ed_pdf = ed_compiled.unwrap().pdf().unwrap();
+    let ed_text = String::from_utf8_lossy(&ed_pdf);
+    assert!(
+        ed_text.contains("春季训练赛 题解"),
+        "missing contest editorial title in PDF"
+    );
+    assert!(
+        ed_text.contains("命题组"),
+        "missing contest author in editorial PDF"
+    );
+
+    // 3. Single problem statements PDF
+    let p_doc = publish::document(
+        &ws,
+        &Target::Problem("alpha".into()),
+        Kind::Statements,
+        None,
+    )
+    .unwrap();
+    let (p_compiled, p_report) = publish::compile(&mut engine, &p_doc);
+    assert!(p_report.ok, "{:#?}", p_report.diagnostics);
+    let p_pdf = p_compiled.unwrap().pdf().unwrap();
+    let p_text = String::from_utf8_lossy(&p_pdf);
+    assert!(
+        p_text.contains("A. 灯笼小径"),
+        "missing problem title in PDF"
+    );
+    assert!(p_text.contains("chumeng"), "missing problem author in PDF");
+}
+
+#[test]
+fn default_output_uses_sanitized_titles_with_id_fallback() {
+    assert_eq!(
+        publish::sanitize_filename("  A / B: *?\"<>|  "),
+        "A - B- ------"
+    );
+    assert_eq!(publish::sanitize_filename("   ...  "), "");
+    assert_eq!(publish::sanitize_filename("CON"), "");
+    assert_eq!(publish::sanitize_filename("nul.txt"), "");
+    assert_eq!(publish::sanitize_filename("LPT1"), "");
+    assert!(publish::sanitize_filename(&"a".repeat(300)).len() <= 160);
+    assert!(publish::sanitize_filename(&"测".repeat(200)).len() <= 160);
+
+    assert_eq!(
+        publish::default_output_for_title(
+            &Target::Contest("spring".into()),
+            Kind::Statements,
+            Some("春季训练赛"),
+        ),
+        "build/春季训练赛-试题册.pdf"
+    );
+    assert_eq!(
+        publish::default_output_for_title(
+            &Target::Contest("spring".into()),
+            Kind::Editorial,
+            Some("春季训练赛"),
+        ),
+        "build/春季训练赛-题解.pdf"
+    );
+    assert_eq!(
+        publish::default_output_for_title(
+            &Target::Problem("alpha".into()),
+            Kind::Statements,
+            Some("灯笼小径"),
+        ),
+        "build/灯笼小径.pdf"
+    );
+    assert_eq!(
+        publish::default_output_for_title(
+            &Target::Problem("alpha".into()),
+            Kind::Statements,
+            Some("   "),
+        ),
+        "build/alpha.pdf"
+    );
+    assert_eq!(
+        publish::default_output_for_title(
+            &Target::Contest("empty-name".into()),
+            Kind::Statements,
+            Some("///"),
+        ),
+        "build/empty-name-试题册.pdf"
+    );
+}
+
+#[test]
+fn raw_typst_block_passthrough_and_image_width_attribute() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("workspace.toml"), "").unwrap();
+
+    let p = dir.path().join("problems/diagram");
+    fs::create_dir_all(p.join("assets")).unwrap();
+    fs::write(p.join("problem.toml"), "title = \"图示测试\"\n").unwrap();
+    fs::write(
+        p.join("assets/box.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#ddd"/></svg>"##,
+    )
+    .unwrap();
+    let statement = concat!(
+        "请看下图：\n\n",
+        "![图示](assets/box.svg){width=60%}\n\n",
+        "```typst\n",
+        "#align(center, rect(width: 40%, stroke: 0.5pt)[Typst 直出块])\n",
+        "```\n\n",
+        "非法范围不吞掉：![原样](assets/box.svg){width=5%}\n\n",
+        "## 输入格式\n\n无。\n\n## 输出格式\n\n无。\n",
+    );
+    fs::write(p.join("statement.md"), statement).unwrap();
+
+    let ws = Workspace::open(dir.path(), false).unwrap();
+    let doc = publish::document(
+        &ws,
+        &Target::Problem("diagram".into()),
+        Kind::Statements,
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        doc.source.contains(
+            "#align(center, image(\"/problems/diagram/assets/box.svg\", alt: \"图示\", width: 60%))"
+        ),
+        "expected #align(center, image(..., width: 60%)) in:\n{}",
+        doc.source
+    );
+    assert!(
+        doc.source
+            .contains("#align(center, rect(width: 40%, stroke: 0.5pt)[Typst 直出块])"),
+        "expected raw typst block passthrough in:\n{}",
+        doc.source
+    );
+    assert!(!doc.source.contains("lang: \"typst\""));
+    // Out-of-range `{width=5%}` falls back to inline `#box(image(...));` + literal text.
+    assert!(
+        doc.source
+            .contains("#box(image(\"/problems/diagram/assets/box.svg\", alt: \"原样\"));")
+    );
+
+    // SourceMap points lines inside the `typst` block back to their exact line in `statement.md`.
+    let typst_offset = doc.source.find("#align(center, rect").unwrap();
+    let (file, line, _) = doc.map.locate(typst_offset).unwrap();
+    assert_eq!(file, "problems/diagram/statement.md");
+    assert_eq!(line, 6);
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    let (compiled, report) = publish::compile(&mut engine, &doc);
+    assert!(compiled.is_some());
+    assert!(report.ok, "{:#?}", report.diagnostics);
+}
+
+#[test]
+fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();
+    assert_eq!(
+        ws.list_problems().unwrap(),
+        vec!["lantern-walk", "star-grid"]
+    );
+    assert_eq!(ws.list_contests().unwrap(), vec!["welcome-round"]);
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    for (target, kind) in [
+        (Target::Contest("welcome-round".into()), Kind::Statements),
+        (Target::Contest("welcome-round".into()), Kind::Editorial),
+        (Target::Problem("lantern-walk".into()), Kind::Statements),
+        (Target::Problem("star-grid".into()), Kind::Statements),
+    ] {
+        let (compiled, _, report) =
+            publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
+        assert!(compiled.is_some());
+        assert!(
+            report.ok && report.diagnostics.is_empty(),
+            "example workspace check had diagnostics for {target:?} {kind:?}: {:#?}",
+            report.diagnostics
+        );
+    }
+}

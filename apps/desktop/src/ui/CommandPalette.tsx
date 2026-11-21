@@ -9,13 +9,16 @@ import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
 import { TITLE_BAR } from "./TitleBar";
 import { Modal } from "./Modal";
+import { shortcutsOpen } from "./ShortcutsModal";
 import { MONO } from "./theme";
 import {
   dialog,
+  goSettings,
   goSpace,
   hasWorkspace,
   info,
   newWorkspace,
+  openExampleWorkspace,
   openStudio,
   paletteOpen,
   pickWorkspace,
@@ -42,6 +45,7 @@ function actions(): Action[] {
     { id: "a:tab-samples", icon: "table", label: "切到样例", shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },
     { id: "a:tab-editorial", icon: "filePenLine", label: "切到题解", shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
     { id: "a:inspector", icon: "panelRight", label: "属性", shortcut: "mod+i", run: () => s!.toggleInspector(), when: () => inStudio },
+    { id: "a:assets", icon: "image", label: "素材库", keywords: ["assets", "image", "gallery", "pic", "素材", "图片"], run: () => s!.openAssets(), when: () => inStudio && s!.hasAssets() },
     { id: "a:freeze", icon: "stamp", label: "定稿比赛", keywords: ["freeze"], run: () => s!.freeze(), when: () => contest && !frozen },
     { id: "a:unfreeze", icon: "lockOpen", label: "重新编辑已定稿的比赛", keywords: ["unfreeze"], run: () => unfreezeFor.set(target!.id), when: () => contest && !!frozen },
     {
@@ -66,8 +70,12 @@ function actions(): Action[] {
     { id: "a:space-problems", icon: "libraryBig", label: "题库", shortcut: "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
     { id: "a:space-contests", icon: "trophy", label: "比赛", shortcut: "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
     { id: "a:space-settings", icon: "settings", label: "设置", shortcut: "mod+3", run: () => goSpace("settings"), when: hasWorkspace },
+    { id: "a:appearance", icon: "pencil", label: "外观设置", keywords: ["appearance", "theme", "dark", "light", "font", "外观", "主题", "字号"], run: () => goSettings("appearance"), when: hasWorkspace },
+    { id: "a:shortcuts", icon: "code", label: "快捷键速查", keywords: ["shortcut", "key", "help", "快捷键"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
+    { id: "a:about", icon: "fileText", label: "关于", keywords: ["about", "version", "update", "关于", "版本", "更新"], run: () => goSettings("about"), when: hasWorkspace },
     { id: "a:open-workspace", icon: "folderOpen", label: "切换工作区", shortcut: "mod+o", run: () => void pickWorkspace() },
     { id: "a:new-workspace", icon: "folderPlus", label: "新建工作区", run: () => void newWorkspace() },
+    { id: "a:open-example", icon: "folderPlus", label: "打开示例工作区", keywords: ["example", "demo", "sample", "示例"], run: () => void openExampleWorkspace() },
   ];
   return list.filter((a) => !a.when || a.when());
 }

@@ -55,6 +55,9 @@ struct Cli {
 enum Command {
     /// Initialize a new XCPC workspace (creates workspace.toml, problems/, contests/, .gitignore, AGENTS.md).
     Init {
+        /// Populate the workspace with the built-in example contest and problems.
+        #[arg(long)]
+        example: bool,
         /// Target directory (defaults to current directory `.`).
         dir: Option<PathBuf>,
     },
@@ -62,8 +65,8 @@ enum Command {
     Build {
         #[command(flatten)]
         what: What,
-        /// Write the PDF here (default: build/<id>.pdf in the workspace).
-        #[arg(long, short)]
+        /// Write the PDF here (default: build/<title>.pdf in the workspace).
+        #[arg(long = "output", alias = "out", short = 'o')]
         out: Option<PathBuf>,
         /// Also write the generated Typst source here.
         #[arg(long)]
@@ -268,11 +271,12 @@ impl What {
     }
 }
 
-/// An error with a machine-readable code.
+/// An error with a machine-readable code and optional Chinese human message.
 #[derive(Debug)]
 struct Fatal {
     code: &'static str,
     message: String,
+    human: Option<String>,
 }
 
 impl From<xcpc_storage::Error> for Fatal {
@@ -280,6 +284,7 @@ impl From<xcpc_storage::Error> for Fatal {
         Fatal {
             code: e.code(),
             message: e.to_string(),
+            human: Some(e.human_message()),
         }
     }
 }
@@ -291,6 +296,7 @@ impl From<anyhow::Error> for Fatal {
             Err(e) => Fatal {
                 code: "failed",
                 message: format!("{e:#}"),
+                human: None,
             },
         }
     }
@@ -323,7 +329,7 @@ fn main() -> ExitCode {
                     json!({ "ok": false, "error": { "code": e.code, "message": e.message } })
                 );
             } else {
-                eprintln!("error: {}", e.message);
+                eprintln!("error: {}", e.human.as_deref().unwrap_or(&e.message));
             }
             ExitCode::from(2)
         }
@@ -355,21 +361,54 @@ fn flag_patch<T>(set: Option<T>, clear: bool) -> Patch<T> {
     }
 }
 
+fn dir_has_entries(dir: &std::path::Path) -> Result<bool, Fatal> {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => Ok(entries.next().is_some()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(xcpc_storage::Error::Io {
+            path: dir.display().to_string(),
+            source: e,
+        }
+        .into()),
+    }
+}
+
 fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
     match &cli.command {
-        Command::Init { dir } => {
+        Command::Init { example, dir } => {
             if cli.read_only {
                 return Err(xcpc_storage::Error::ReadOnly.into());
             }
             let target_dir = dir.clone().unwrap_or_else(|| PathBuf::from("."));
-            let ws = xcpc_storage::init_workspace(&target_dir)?;
+            if *example && dir_has_entries(&target_dir)? {
+                return Err(Fatal {
+                    code: "dir_not_empty",
+                    message: format!(
+                        "target directory {} is not empty; specify an empty directory for --example",
+                        target_dir.display()
+                    ),
+                    human: Some(format!(
+                        "目标目录「{}」非空，请指定一个空目录来初始化示例工作区。",
+                        target_dir.display()
+                    )),
+                });
+            }
+            let ws = if *example {
+                xcpc_storage::init_example_workspace(&target_dir)?
+            } else {
+                xcpc_storage::init_workspace(&target_dir)?
+            };
             let root = ws.root().display().to_string();
             if cli.json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&json!({ "ok": true, "root": root }))
-                        .expect("serializable")
+                    serde_json::to_string_pretty(
+                        &json!({ "ok": true, "root": root, "example": example })
+                    )
+                    .expect("serializable")
                 );
+            } else if *example {
+                println!("initialized example workspace at {root}");
             } else {
                 println!("initialized workspace at {root}");
             }
@@ -446,7 +485,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                 outputs.push(write_output(
                     &ws,
                     out.as_ref(),
-                    &publish::default_output(&target, what.kind()),
+                    &publish::default_output(&ws, &target, what.kind()),
                     &pdf,
                 )?);
             }
@@ -780,6 +819,9 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                     return Err(Fatal {
                         code: "unconfirmed",
                         message: format!("unfreeze aborted: confirmation did not match {id:?}"),
+                        human: Some(format!(
+                            "重新编辑已取消：输入的确认标识与比赛「{id}」不一致。请重新执行并输入正确的比赛 ID。"
+                        )),
                     });
                 }
             }

@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
 
-use crate::markdown::options;
+use crate::markdown::{options, parse_image_width_attr};
 
 /// What a span of the source is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +144,16 @@ pub fn markdown_spans(text: &str) -> Vec<Span> {
                         if let Some(close) = close {
                             push(&mut spans, SpanKind::Markup, close..close + 1, 0);
                             push(&mut spans, SpanKind::Url, close + 1..whole.end, 0);
+                        }
+                        if matches!(open.tag, Tag::Image { .. })
+                            && let Some((_, consumed)) = parse_image_width_attr(&text[whole.end..])
+                        {
+                            push(
+                                &mut spans,
+                                SpanKind::Markup,
+                                whole.end..whole.end + consumed,
+                                0,
+                            );
                         }
                     }
                     (Tag::CodeBlock(kind), _) => {
@@ -305,6 +315,7 @@ enum CodeLang {
     Cpp,
     Python,
     Rust,
+    Typst,
     CLike,
 }
 
@@ -315,6 +326,7 @@ impl CodeLang {
             "c" | "h" | "cpp" | "c++" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some(Self::Cpp),
             "py" | "python" | "python3" | "py3" => Some(Self::Python),
             "rs" | "rust" => Some(Self::Rust),
+            "typst" | "typ" => Some(Self::Typst),
             "java" | "js" | "javascript" | "ts" | "typescript" | "go" | "golang" | "cs"
             | "csharp" | "c#" | "kt" | "kotlin" | "swift" | "php" | "d" | "zig" | "scala"
             | "dart" => Some(Self::CLike),
@@ -366,6 +378,22 @@ fn push_code_spans(spans: &mut Vec<Span>, text: &str, range: Range<usize>, lang:
             }
         }
 
+        // Typst `#ident` markup/code directives (e.g. `#let`, `#set`, `#rect`, `#align`).
+        if lang == CodeLang::Typst && b == b'#' {
+            let start = i;
+            let mut j = i + 1;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || matches!(bytes[j], b'_' | b'-'))
+            {
+                j += 1;
+            }
+            if j > start + 1 {
+                push(spans, SpanKind::CodeKeyword, base + start..base + j, 0);
+                i = j;
+                continue;
+            }
+        }
+
         // Line comments.
         if lang == CodeLang::Python && b == b'#' {
             let start = i;
@@ -391,7 +419,7 @@ fn push_code_spans(spans: &mut Vec<Span>, text: &str, range: Range<usize>, lang:
             i += 2;
             let mut depth = 1usize;
             while i < bytes.len() && depth > 0 {
-                if lang == CodeLang::Rust
+                if matches!(lang, CodeLang::Rust | CodeLang::Typst)
                     && bytes[i] == b'/'
                     && i + 1 < bytes.len()
                     && bytes[i + 1] == b'*'
@@ -525,6 +553,10 @@ fn scan_string(slice: &str, bytes: &[u8], start: usize, lang: CodeLang) -> Optio
             }
             None
         }
+        CodeLang::Typst => match b {
+            b'"' => Some(scan_quoted(slice, bytes, start + 1, b'"', true)),
+            _ => None,
+        },
         CodeLang::CLike => match b {
             b'"' | b'\'' => Some(scan_quoted(slice, bytes, start + 1, b, false)),
             b'`' => Some(scan_quoted(slice, bytes, start + 1, b'`', true)),
@@ -697,6 +729,9 @@ fn scan_number(bytes: &[u8], start: usize, lang: CodeLang) -> usize {
         }
     }
     while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    if lang == CodeLang::Typst && i < bytes.len() && bytes[i] == b'%' {
         i += 1;
     }
     i
@@ -887,6 +922,32 @@ fn is_keyword(lang: CodeLang, ident: &str) -> bool {
                 | "usize"
                 | "where"
                 | "while"
+        ),
+        CodeLang::Typst => matches!(
+            ident,
+            "and"
+                | "as"
+                | "auto"
+                | "break"
+                | "context"
+                | "continue"
+                | "else"
+                | "false"
+                | "for"
+                | "if"
+                | "import"
+                | "in"
+                | "include"
+                | "let"
+                | "none"
+                | "not"
+                | "or"
+                | "return"
+                | "set"
+                | "show"
+                | "true"
+                | "while"
+                | "with"
         ),
         CodeLang::CLike => matches!(
             ident,
@@ -1123,5 +1184,24 @@ mod tests {
             of(text, &spans, SpanKind::CodeKeyword),
             ["let", "let", "let"]
         );
+    }
+
+    #[test]
+    fn typst_fence_and_image_width_attr_spans() {
+        let text = concat!(
+            "![示例图](assets/fig.png){width=60%}\n\n",
+            "```typst\n",
+            "// 示意图\n",
+            "#align(center, rect(width: 60%, fill: rgb(\"#f0f0f0\"))[10pt])\n",
+            "```\n",
+        );
+        let spans = markdown_spans(text);
+        assert!(of(text, &spans, SpanKind::Markup).contains(&"{width=60%}"));
+        assert_eq!(of(text, &spans, SpanKind::CodeBlock).len(), 1);
+        assert_eq!(of(text, &spans, SpanKind::CodeComment), ["// 示意图"]);
+        assert_eq!(of(text, &spans, SpanKind::CodeString), ["\"#f0f0f0\""]);
+        assert!(of(text, &spans, SpanKind::CodeKeyword).contains(&"#align"));
+        assert!(of(text, &spans, SpanKind::CodeNumber).contains(&"60%"));
+        assert!(of(text, &spans, SpanKind::CodeNumber).contains(&"10pt"));
     }
 }

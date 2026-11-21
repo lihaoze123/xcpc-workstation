@@ -26,6 +26,7 @@ import folderPlus from "./icons/folder-plus.svg";
 import gripVertical from "./icons/grip-vertical.svg";
 import heading from "./icons/heading.svg";
 import image from "./icons/image.svg";
+import info from "./icons/info.svg";
 import italic from "./icons/italic.svg";
 import libraryBig from "./icons/library-big.svg";
 import link from "./icons/link.svg";
@@ -35,6 +36,7 @@ import listPlus from "./icons/list-plus.svg";
 import minus from "./icons/minus.svg";
 import lock from "./icons/lock.svg";
 import lockOpen from "./icons/lock-open.svg";
+import palette from "./icons/palette.svg";
 import panelRight from "./icons/panel-right.svg";
 import pencil from "./icons/pencil.svg";
 import plus from "./icons/plus.svg";
@@ -56,8 +58,8 @@ import zoomOut from "./icons/zoom-out.svg";
 const ICONS = {
   arrowLeft, arrowRight, bold, bot, check, chevronDown, chevronLeft, chevronRight, minus, chevronsUpDown, circleAlert, code, copy,
   cornerDownLeft, ellipsis, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
-  gripVertical, heading, image, italic, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
-  panelRight, pencil, plus, rotateCcw, search, searchX, settings, sigma, squareCode, stamp, table,
+  gripVertical, heading, image, info, italic, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
+  palette, panelRight, pencil, plus, rotateCcw, search, searchX, settings, sigma, squareCode, stamp, table,
   trash, triangleAlert, trophy, x, zoomIn, zoomOut,
 };
 

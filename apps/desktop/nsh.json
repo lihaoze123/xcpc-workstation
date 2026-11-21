@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "build": 1,
   "rust": ".",
+  "updater": {
+    "github": "lihaoze123/xcpc-workstation"
+  },
   "window": {
     "titleBar": {
       "style": "hidden",

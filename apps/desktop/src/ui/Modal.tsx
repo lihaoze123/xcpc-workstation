@@ -1,11 +1,12 @@
-// A modal layer for the command palette and the few dialogs (new problem, new contest,
-// unfreeze): centered, a 140 ms fade and nothing else (§8). The backdrop's strip
+// A modal layer for the command palette, shortcuts overlay, and dialogs: centered,
+// native spring `scale(0.94→1) + translateY(-6→0) + opacity` (§8). The backdrop's strip
 // under the title bar still drags the window; a press elsewhere on it or Escape closes.
 
-import { cleanup, effect, Overlay, signal, Text, View, type JSX, type ViewStyle } from "nsh";
+import { cleanup, effect, Overlay, signal, Text, View, type JSX } from "nsh";
 import { Icon, type IconName, type IconTone } from "./Icon";
 import { TITLE_BAR } from "./TitleBar";
-import { EASE_STANDARD, modalBackdrop, modalShadow, ms } from "./theme";
+import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
+import { modalBackdrop, modalShadow, ms } from "./theme";
 
 export function Modal(props: {
   open: boolean;
@@ -36,7 +37,7 @@ export function Modal(props: {
       });
     } else if (mounted()) {
       shown.set(false);
-      const dur = ms(140);
+      const dur = ms(220);
       if (dur === 0) mounted.set(false);
       else closeTimer = setTimeout(() => mounted.set(false), dur);
     }
@@ -47,7 +48,6 @@ export function Modal(props: {
   });
 
   const topPos = () => props.topOffset ?? props.top;
-  const fade = (): ViewStyle => ({ transitionProperty: "opacity", transitionDuration: ms(140), transitionTimingFunction: EASE_STANDARD });
 
   return (
     <If when={mounted()}>
@@ -68,7 +68,7 @@ export function Modal(props: {
             backgroundColor: modalBackdrop(),
             opacity: shown() ? 1 : 0,
             pointerEvents: props.open ? "auto" : "none",
-            ...fade(),
+            ...backdropTransition(),
           }}
           onPress={() => {
             if (props.open) props.onClose();
@@ -101,7 +101,8 @@ export function Modal(props: {
               overflow: "hidden",
               boxShadow: modalShadow(),
               opacity: shown() ? 1 : 0,
-              ...fade(),
+              transform: overlayTransform(shown()),
+              ...overlayTransition(),
             }}
             class="bg-card border-border"
           >

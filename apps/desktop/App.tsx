@@ -1,28 +1,33 @@
 import "./src/ui/theme";
-import { computed, keymap, mount, registerFont, Text, View } from "nsh";
+import { cleanup, computed, effect, keymap, mount, reduceMotion, registerFont, signal, Text, View, type JSX } from "nsh";
 import { Preview } from "xcpc-workstation/native";
 import { CommandPalette } from "./src/ui/CommandPalette";
 import { UnfreezeDialog } from "./src/ui/Contest";
 import { ContestsView } from "./src/ui/ContestsView";
 import { Dialogs } from "./src/ui/Dialogs";
 import { ErrorDisplay } from "./src/ui/ErrorDisplay";
-import { Chevron, Kbd, tip } from "./src/ui/kit";
+import { Btn, Chevron, Kbd, tip } from "./src/ui/kit";
 import { Icon } from "./src/ui/Icon";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
+import { pageTransform, pageTransition } from "./src/ui/motion";
 import { NavRail } from "./src/ui/NavRail";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
-import { SettingsView } from "./src/ui/SettingsView";
+import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/SettingsView";
+import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
 import { StudioView } from "./src/ui/studio/StudioView";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import {
+  brandReplayOpen,
   goSpace,
   hasWorkspace,
+  hydrateAppearancePrefs,
   info,
   newWorkspace,
   openError,
+  openExampleWorkspace,
   openRecent,
   paletteOpen,
   pickWorkspace,
@@ -39,7 +44,90 @@ import {
 // keeps their state; only `display` changes. The root renders in the first frame, on
 // the canvas color, whatever is still loading.
 
+/** Keeps a space or studio mounted (`display: none/flex`) while revealing it with a restrained native spring. */
+function SpaceStage(props: {
+  visible: boolean;
+  variant?: "space" | "studio";
+  animateOnMount?: boolean;
+  direction?: "row" | "column";
+  children?: JSX.Element;
+}) {
+  const revealed = signal(props.visible && !props.animateOnMount);
+  let initialized = false;
+  let raf: number | undefined;
+
+  effect(() => {
+    const isVisible = props.visible;
+    const first = !initialized;
+    initialized = true;
+    if (raf !== undefined) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    if (!isVisible) {
+      revealed.set(false);
+    } else if (reduceMotion() || (first && !props.animateOnMount)) {
+      revealed.set(true);
+    } else {
+      revealed.set(false);
+      raf = requestAnimationFrame(() => {
+        raf = undefined;
+        revealed.set(true);
+      });
+    }
+  });
+  cleanup(() => {
+    if (raf !== undefined) cancelAnimationFrame(raf);
+  });
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        flexDirection: props.direction,
+        display: props.visible ? "flex" : "none",
+        opacity: revealed() ? 1 : 0,
+        transform: pageTransform(revealed(), props.variant ?? "space"),
+        ...pageTransition(220),
+      }}
+    >
+      {props.children}
+    </View>
+  );
+}
+
+/** Full-screen overlay that replays the brand page from Settings -> About without disturbing the open workspace. */
+function BrandReplayOverlay(props: { version: string }) {
+  const close = () => brandReplayOpen.set(false);
+  keymap.bind({ escape: close }, { when: "always" });
+
+  return (
+    <View
+      testID="brand-replay-overlay"
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, flexDirection: "column" }}
+      class="bg-background"
+    >
+      <TitleBar
+        borderless
+        leading={
+          <Btn
+            testID="brand-replay-close"
+            label="返回"
+            icon="arrowLeft"
+            variant="ghost"
+            onPress={close}
+          />
+        }
+      />
+      <NoWorkspaceView version={props.version} replayOnly />
+    </View>
+  );
+}
+
 function App() {
+  const appVersion = formatAppVersion(readAboutInfo());
+  void hydrateAppearancePrefs();
+
   // Mounted synchronously on first use (no 1-frame blank flash), then kept mounted.
   const inStudio = computed(() => studio() !== undefined);
   const studioMounted = computed<boolean>((prev) => Boolean(prev) || inStudio());
@@ -63,6 +151,7 @@ function App() {
 
   keymap.bind({
     "mod+k": () => hasWorkspace() && paletteOpen.set(!paletteOpen()),
+    "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
     "mod+1": () => hasWorkspace() && goSpace("problems"),
     "mod+2": () => hasWorkspace() && goSpace("contests"),
     "mod+3": () => hasWorkspace() && goSpace("settings"),
@@ -92,7 +181,7 @@ function App() {
   };
 
   const shell = (
-    <View style={{ flex: 1, display: inStudio() ? "none" : "flex", flexDirection: "column" }}>
+    <SpaceStage visible={!inStudio()} variant="studio" direction="column">
       <TitleBar
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0, maxWidth: 224 }}>
@@ -184,17 +273,17 @@ function App() {
       />
       <View style={{ flex: 1, flexDirection: "row" }}>
         <NavRail space={space()} onChange={goSpace} />
-        <View style={{ flex: 1, display: space() === "problems" ? "flex" : "none" }}>
+        <SpaceStage visible={space() === "problems"} variant="space">
           <LibraryView active={!inStudio() && space() === "problems"} />
-        </View>
-        <View style={{ flex: 1, display: space() === "contests" ? "flex" : "none" }}>
+        </SpaceStage>
+        <SpaceStage visible={space() === "contests"} variant="space">
           <ContestsView active={!inStudio() && space() === "contests"} />
-        </View>
-        <View style={{ flex: 1, display: space() === "settings" ? "flex" : "none" }}>
+        </SpaceStage>
+        <SpaceStage visible={space() === "settings"} variant="space">
           <SettingsView />
-        </View>
+        </SpaceStage>
       </View>
-    </View>
+    </SpaceStage>
   );
 
   return (
@@ -204,16 +293,16 @@ function App() {
         else={
           <View style={{ flex: 1 }}>
             <TitleBar borderless />
-            <NoWorkspaceView />
+            <NoWorkspaceView version={appVersion} onOpenExample={() => void openExampleWorkspace()} />
           </View>
         }
       >
         <View style={{ flex: 1 }}>
           {shell}
           <If when={studioMounted()}>
-            <View style={{ flex: 1, display: inStudio() ? "flex" : "none" }}>
+            <SpaceStage visible={inStudio()} variant="studio" animateOnMount>
               <StudioView active={inStudio()} />
-            </View>
+            </SpaceStage>
           </If>
           <If when={openError() && (inStudio() || space() !== "settings")}>
             <View
@@ -244,6 +333,10 @@ function App() {
         <UnfreezeDialog />
         <CommandPalette />
       </If>
+      <If when={brandReplayOpen()}>
+        <BrandReplayOverlay version={appVersion} />
+      </If>
+      <ShortcutsModal />
     </View>
   );
 }

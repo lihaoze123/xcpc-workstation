@@ -274,13 +274,17 @@
   // "statements", or "editorial": a title page with the contents for the cover, and
   // the problem in hand on the right of the running head instead of the date.
   book: "statements",
+  pdf-title: none,
+  pdf-author: none,
   body,
 ) = {
   let editorial = book == "editorial"
   let chinese = language == "chinese"
   lang-state.update(language)
   blank-state.update(blank-pages)
-  set document(title: name)
+  let doc-title = if pdf-title != none and pdf-title != "" { pdf-title } else { name }
+  let doc-author = if pdf-author != none and pdf-author != "" { pdf-author } else if author != none and author != "" { author } else { () }
+  set document(title: doc-title, author: doc-author)
   set text(lang: if chinese { "zh" } else { "en" }, region: if chinese { "cn" } else { none })
 
   set text(..strut(sizes.normal))

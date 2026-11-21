@@ -1159,3 +1159,231 @@ fn watcher_ignores_internal_paths_and_filters_self_writes() {
         WatchEvent::Rescan => panic!("unexpected Rescan"),
     }
 }
+
+#[test]
+fn error_human_messages_are_actionable_chinese_while_codes_stay_stable() {
+    let cases = [
+        (Error::NotFound("problems/x".into()), "not_found"),
+        (Error::PathEscape("../etc/passwd".into()), "path_escape"),
+        (Error::Frozen("spring".into()), "contest_frozen"),
+        (Error::ReadOnly, "read_only"),
+        (
+            Error::Invalid {
+                path: "problem.toml".into(),
+                message: "bad".into(),
+            },
+            "invalid_file",
+        ),
+        (
+            Error::Conflict {
+                path: "statement.md".into(),
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            "conflict",
+        ),
+        (Error::TooManyProblems(27), "too_many_problems"),
+        (
+            Error::Referenced {
+                id: "p1".into(),
+                contests: vec!["c1".into()],
+            },
+            "problem_referenced",
+        ),
+        (Error::AlreadyFrozen("c1".into()), "already_frozen"),
+        (Error::NotFrozen("c1".into()), "not_frozen"),
+        (Error::DisallowedPath("foo".into()), "disallowed_path"),
+    ];
+    for (err, expected_code) in cases {
+        assert_eq!(err.code(), expected_code);
+        let msg = err.human_message();
+        assert!(msg.contains("请"), "missing next-step guidance in: {msg}");
+    }
+}
+
+#[test]
+fn init_example_workspace_seeds_files_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_example_workspace(dir.path()).unwrap();
+    assert_eq!(
+        ws.list_problems().unwrap(),
+        vec!["lantern-walk", "star-grid"]
+    );
+    assert_eq!(ws.list_contests().unwrap(), vec!["welcome-round"]);
+
+    // User edits must not be overwritten on a second init_example_workspace call.
+    let custom = "自定义题面\n";
+    ws.write("problems/lantern-walk/statement.md", custom.as_bytes())
+        .unwrap();
+    let ws2 = init_example_workspace(dir.path()).unwrap();
+    assert_eq!(
+        ws2.read_text("problems/lantern-walk/statement.md").unwrap(),
+        custom
+    );
+}
+
+#[test]
+fn asset_name_validation_rejects_windows_illegal_and_reserved_names() {
+    assert!(is_safe_asset_name("fig-1_ok.png"));
+    assert!(is_safe_asset_name("中文图.svg"));
+    assert!(!is_safe_asset_name(""));
+    assert!(!is_safe_asset_name(".hidden.png"));
+    assert!(!is_safe_asset_name("trailing."));
+    assert!(!is_safe_asset_name("trailing "));
+    assert!(!is_safe_asset_name("a/b.png"));
+    assert!(!is_safe_asset_name("a\\b.png"));
+    assert!(!is_safe_asset_name("a:b.png"));
+    assert!(!is_safe_asset_name("a*b.png"));
+    assert!(!is_safe_asset_name("a?b.png"));
+    assert!(!is_safe_asset_name("a\"b.png"));
+    assert!(!is_safe_asset_name("a<b.png"));
+    assert!(!is_safe_asset_name("a>b.png"));
+    assert!(!is_safe_asset_name("a|b.png"));
+    assert!(!is_safe_asset_name("CON"));
+    assert!(!is_safe_asset_name("con.png"));
+    assert!(!is_safe_asset_name("NUL.svg"));
+    assert!(!is_safe_asset_name("com1.jpg"));
+    assert!(!is_safe_asset_name("LPT9.webp"));
+    assert!(!is_safe_asset_name(&"a".repeat(201)));
+}
+
+#[test]
+fn read_image_dimensions_parses_png_svg_and_webp() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Minimal valid PNG header with 320x240 IHDR.
+    let mut png = Vec::new();
+    png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    png.extend_from_slice(&13u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&320u32.to_be_bytes());
+    png.extend_from_slice(&240u32.to_be_bytes());
+    let png_path = dir.path().join("a.png");
+    std::fs::write(&png_path, &png).unwrap();
+    assert_eq!(read_image_dimensions(&png_path), Some((320, 240)));
+
+    // SVG with viewBox.
+    let svg_path = dir.path().join("b.svg");
+    std::fs::write(
+        &svg_path,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480"></svg>"#,
+    )
+    .unwrap();
+    assert_eq!(read_image_dimensions(&svg_path), Some((640, 480)));
+
+    // Minimal VP8X WebP header with 800x600.
+    let mut webp = vec![0u8; 30];
+    webp[0..4].copy_from_slice(b"RIFF");
+    webp[8..12].copy_from_slice(b"WEBP");
+    webp[12..16].copy_from_slice(b"VP8X");
+    let w_minus_1 = 799u32.to_le_bytes();
+    let h_minus_1 = 599u32.to_le_bytes();
+    webp[24..27].copy_from_slice(&w_minus_1[0..3]);
+    webp[27..30].copy_from_slice(&h_minus_1[0..3]);
+    let webp_path = dir.path().join("c.webp");
+    std::fs::write(&webp_path, &webp).unwrap();
+    assert_eq!(read_image_dimensions(&webp_path), Some((800, 600)));
+}
+
+#[test]
+fn list_assets_generates_cached_thumbnails_for_png_and_svg_and_falls_back_safely() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.write("problems/p1/problem.toml", b"title = \"Thumbs\"\n")
+        .unwrap();
+    let assets_dir = dir.path().join("problems/p1/assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+
+    // Create a valid 600x400 PNG.
+    let mut png_bytes = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png_bytes, 600, 400);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        w.write_image_data(&vec![128u8; 600 * 400 * 4]).unwrap();
+    }
+    std::fs::write(assets_dir.join("big.png"), &png_bytes).unwrap();
+
+    // Create a valid SVG.
+    std::fs::write(
+        assets_dir.join("vec.svg"),
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="800" height="400" fill="red"/></svg>"#,
+    )
+    .unwrap();
+
+    // Create a corrupt PNG and an unsupported PDF.
+    std::fs::write(assets_dir.join("broken.png"), b"not a png").unwrap();
+    std::fs::write(assets_dir.join("doc.pdf"), b"%PDF-1.4").unwrap();
+
+    let entries = ws.list_assets_with("problems/p1", |_| Vec::new()).unwrap();
+    let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+
+    let big = by_name("big.png");
+    assert_eq!((big.width, big.height), (Some(600), Some(400)));
+    let big_thumb = big.thumb_path.as_ref().expect("expected PNG thumbnail");
+    assert!(big_thumb.is_file());
+    assert!(big_thumb.starts_with(dir.path().join(".xcpc/thumbs")));
+    let (tw, th) = read_image_dimensions(big_thumb).unwrap();
+    assert!(tw <= 336 && th <= 336, "thumb too big: {tw}x{th}");
+
+    let svg = by_name("vec.svg");
+    let svg_thumb = svg.thumb_path.as_ref().expect("expected SVG thumbnail");
+    assert!(svg_thumb.is_file());
+    let (stw, sth) = read_image_dimensions(svg_thumb).unwrap();
+    assert_eq!((stw, sth), (336, 168));
+
+    assert!(by_name("broken.png").thumb_path.is_none());
+    assert!(by_name("doc.pdf").thumb_path.is_none());
+
+    // Read-only workspace reuses existing cached thumbs and never writes new ones.
+    std::fs::write(assets_dir.join("fresh.png"), &png_bytes).unwrap();
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    let ro_entries = ro.list_assets_with("problems/p1", |_| Vec::new()).unwrap();
+    assert!(
+        ro_entries
+            .iter()
+            .find(|e| e.name == "big.png")
+            .unwrap()
+            .thumb_path
+            .is_some()
+    );
+    assert!(
+        ro_entries
+            .iter()
+            .find(|e| e.name == "fresh.png")
+            .unwrap()
+            .thumb_path
+            .is_none()
+    );
+}
+
+#[test]
+fn human_messages_use_reedit_terminology_and_typed_not_found() {
+    assert!(
+        Error::NotFound("problem \"nope\"".into())
+            .human_message()
+            .contains("找不到题目「nope」")
+    );
+    assert!(
+        Error::NotFound("contest \"spring\"".into())
+            .human_message()
+            .contains("找不到比赛「spring」")
+    );
+    assert!(
+        Error::NotFound("label \"A\" in contest \"spring\"".into())
+            .human_message()
+            .contains("比赛「spring」中找不到题号「A」")
+    );
+    for err in [
+        Error::Frozen("c1".into()),
+        Error::AlreadyFrozen("c1".into()),
+        Error::NotFrozen("c1".into()),
+    ] {
+        let msg = err.human_message();
+        assert!(!msg.contains("解稿"), "unexpected legacy term in: {msg}");
+        assert!(msg.contains("重新编辑"), "expected 重新编辑 in: {msg}");
+    }
+    let id_msg = Error::InvalidId(xcpc_domain::InvalidId("Bad".into())).human_message();
+    assert!(id_msg.contains("64"));
+}

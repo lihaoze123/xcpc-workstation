@@ -323,7 +323,7 @@ pub(crate) fn rasterize_cached(
     let mut queued = HashSet::new();
     {
         let mut pixels = PIXELS.lock().unwrap();
-        for i in 0..page_count {
+        for (i, fp) in fingerprints.iter().enumerate().take(page_count) {
             let (width, height) = compiled.page_size(i).unwrap_or_default();
             let mut layers = Vec::new();
             let mut add = |key: String, region: Option<[u32; 4]>, s: f32, layers: &mut Vec<_>| {
@@ -353,7 +353,7 @@ pub(crate) fn rasterize_cached(
                 });
             };
             if in_view.contains(&i) {
-                let fingerprint = fingerprints[i].expect("computed for in-view page");
+                let fingerprint = fp.expect("computed for in-view page");
                 add(
                     format!("{owner}:{fingerprint:032x}@{base}"),
                     None,
@@ -367,7 +367,7 @@ pub(crate) fn rasterize_cached(
                         add(key, Some(region), scale, &mut layers);
                     }
                 }
-            } else if let Some(fingerprint) = fingerprints[i] {
+            } else if let Some(fingerprint) = *fp {
                 let prefix = format!("{owner}:{fingerprint:032x}@");
                 if let Some(key) = pixels.nearest(&prefix, scale) {
                     layers.push(PreviewLayer {

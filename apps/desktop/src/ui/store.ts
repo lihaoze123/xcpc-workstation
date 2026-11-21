@@ -3,7 +3,7 @@
 // loop on external changes, and the studio's actions for the command palette.
 
 import process from "process";
-import { batch, signal } from "nsh";
+import { batch, signal, Storage } from "nsh";
 import {
   Preview,
   type ActionResult,
@@ -12,6 +12,22 @@ import {
 } from "xcpc-workstation/native";
 import type { Book, Space } from "./logic";
 import { clampRatio } from "./logic";
+import {
+  appearanceMode,
+  applyAppearancePrefs,
+  DEFAULT_EDITOR_FONT_SIZE,
+  DEFAULT_EDITOR_LIGATURES,
+  DEFAULT_EDITOR_LINE_HEIGHT,
+  editorFontSize,
+  editorLigatures,
+  editorLineHeight,
+  setAppearanceMode,
+  setEditorFontSize,
+  setEditorLigatures,
+  setEditorLineHeight,
+  type AppearanceMode,
+  type AppearancePrefs,
+} from "./theme";
 
 export const preview = new Preview(process.dataDir);
 
@@ -77,6 +93,9 @@ function initialSpace(): Space {
 }
 
 export const space = signal<Space>(initialSpace());
+export type SettingsSection = "workspace" | "appearance" | "shortcuts" | "about";
+export const settingsSection = signal<SettingsSection>("workspace");
+export const brandReplayOpen = signal(false);
 export const studio = signal<StudioTarget | undefined>(restoreStudio());
 export const book = signal<Book>(prefs.lastBook === "editorial" ? "editorial" : "statements");
 export const paletteOpen = signal(false);
@@ -100,6 +119,12 @@ export function goSpace(next: Space) {
     space.set(next);
   });
   savePrefs({ lastSpace: next, lastTarget: null, lastId: null, lastLabel: null });
+}
+
+/** Navigates directly to a specific settings section. */
+export function goSettings(section: SettingsSection) {
+  settingsSection.set(section);
+  goSpace("settings");
 }
 
 /** Opens `target` in the studio (the nav rail folds away). */
@@ -175,6 +200,89 @@ export function openRecent(path: string) {
   adopt(preview.openWorkspace(path, false), "打开工作区");
 }
 
+/** Picks a folder, initializes the built-in example workspace there, and opens its studio target. */
+export async function openExampleWorkspace() {
+  const before = info().root;
+  const next = await preview.pickAndInitExampleWorkspace();
+  if (next.root === before && !next.error) return;
+  if (next.root === "" && !next.error) return; // cancelled with none open
+  if (next.root === before && next.error) {
+    openError.set({ error: next.error, context: "打开示例工作区" });
+    return;
+  }
+  if (adopt(next, "打开示例工作区")) {
+    brandReplayOpen.set(false);
+    const welcome = next.contests.find((c) => c.id === "welcome-round") ?? next.contests[0];
+    if (welcome) {
+      openStudio({ target: "contest", id: welcome.id, label: welcome.items[0]?.label });
+    } else if (next.problems[0]) {
+      openStudio({ target: "problem", id: next.problems[0].id });
+    }
+  }
+}
+
+// ── Appearance & editor typography persistence ───────────────────────────────
+
+const APPEARANCE_STORAGE_KEY = "xcpc.appearance.v1";
+
+/** Restores persisted appearance mode and editor typography from NSH Storage. */
+export async function hydrateAppearancePrefs(): Promise<void> {
+  try {
+    const raw = await Storage.getItem(APPEARANCE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as AppearancePrefs;
+    if (parsed && typeof parsed === "object") {
+      applyAppearancePrefs(parsed);
+    }
+  } catch {
+    // Ignore corrupt payloads or headless environments without Storage.
+  }
+}
+
+/** Persists the current appearance mode and editor typography into NSH Storage. */
+export function persistAppearancePrefs(): void {
+  const payload: AppearancePrefs = {
+    appearance: appearanceMode(),
+    editorFontSize: editorFontSize(),
+    editorLineHeight: editorLineHeight(),
+    editorLigatures: editorLigatures(),
+  };
+  try {
+    void Storage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
+  } catch {
+    // Headless test environments may not expose Storage.
+  }
+}
+
+export function updateAppearanceMode(mode: AppearanceMode): void {
+  setAppearanceMode(mode);
+  persistAppearancePrefs();
+}
+
+export function updateEditorFontSize(size: number): void {
+  setEditorFontSize(size);
+  persistAppearancePrefs();
+}
+
+export function updateEditorLineHeight(lineHeight: number): void {
+  setEditorLineHeight(lineHeight);
+  persistAppearancePrefs();
+}
+
+export function updateEditorLigatures(enabled: boolean): void {
+  setEditorLigatures(enabled);
+  persistAppearancePrefs();
+}
+
+export function resetEditorTypography(): void {
+  batch(() => {
+    setEditorFontSize(DEFAULT_EDITOR_FONT_SIZE);
+    setEditorLineHeight(DEFAULT_EDITOR_LINE_HEIGHT);
+    setEditorLigatures(DEFAULT_EDITOR_LIGATURES);
+  });
+  persistAppearancePrefs();
+}
+
 // ── External changes ─────────────────────────────────────────────────────────
 
 type ChangeListener = (paths: readonly string[], rescan: boolean) => void;
@@ -212,6 +320,8 @@ export type StudioActions = {
   unfreeze(): void;
   setTab(tab: "statement" | "samples" | "editorial"): void;
   toggleInspector(): void;
+  openAssets(): void;
+  hasAssets(): boolean;
   frozen(): boolean;
   isContest(): boolean;
 };

@@ -4,6 +4,7 @@
 
 import { cleanup, effect, keymap, signal, Text, View, type JSX, type ViewStyle, type TextStyle, type StyleProp } from "nsh";
 import { Tooltip } from "nsh/base";
+import { colorTransition, indicatorTransition, pressActiveStyle, pressTransition } from "./motion";
 import { cardShadow, EASE_STANDARD, ms, popoverShadow, tierColor, tierSoft } from "./theme";
 import { ratingTier } from "./logic";
 import { Icon, type IconName, type IconTone } from "./Icon";
@@ -106,7 +107,9 @@ export function Btn(props: {
   textStyle?: StyleProp<TextStyle>;
   testID?: string;
 }) {
-  const v = VARIANT[props.variant ?? "outline"];
+  const variant = props.variant ?? "outline";
+  const v = VARIANT[variant];
+  const isPrimary = variant === "primary";
   const md = props.size === "md";
   return (
     <View
@@ -117,6 +120,7 @@ export function Btn(props: {
       }}
       tooltip={props.tooltip}
       class={props.disabled ? v.disabledBox : v.box}
+      activeStyle={isPrimary ? pressActiveStyle(props.disabled) : undefined}
       style={[
         {
           height: md ? 32 : 28,
@@ -130,9 +134,7 @@ export function Btn(props: {
           justifyContent: "center",
           gap: 6,
           opacity: props.disabled ? 0.5 : 1,
-          transitionProperty: "colors",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          ...(isPrimary ? { transform: "scale(1)", ...pressTransition(140) } : colorTransition(140)),
         },
         props.style,
       ]}
@@ -178,9 +180,7 @@ export function IconBtn(props: {
           alignItems: "center",
           justifyContent: "center",
           opacity: props.disabled ? 0.4 : 1,
-          transitionProperty: "colors",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          ...colorTransition(140),
         },
         props.style,
       ]}
@@ -233,9 +233,7 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
         paddingRight: 6,
         borderRadius: 5,
         justifyContent: "center",
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(140),
       }}
     >
       <Text style={{ fontSize: 11.5 }} class={props.active ? "text-foreground" : "text-secondary-foreground"}>
@@ -292,9 +290,7 @@ export function Segmented<T extends string>(props: {
             ? { left: 0, bottom: 0, height: 2, borderRadius: 1 }
             : { left: 2, top: 2, bottom: 2, borderRadius: 6, boxShadow: cardShadow() }),
           transform: `translateX(${index() * w}px)`,
-          transitionProperty: "transform",
-          transitionDuration: ms(150),
-          transitionTimingFunction: EASE_STANDARD,
+          ...indicatorTransition(),
         }}
         class={props.underline ? "bg-primary" : "bg-card"}
       />

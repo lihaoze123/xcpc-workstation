@@ -19,6 +19,10 @@ pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(80);
 /// How long a self-write hash stays eligible for suppressing duplicate OS events.
 const SELF_WRITE_TTL: Duration = Duration::from_secs(3);
 
+/// Sentinel hash passed to [`SelfWriteTracker::record`] when the application itself
+/// deletes or renames away a file, so the watcher suppresses the resulting NotFound event.
+pub(crate) const SELF_DELETE_SENTINEL: &str = "<deleted>";
+
 /// Debounced external filesystem event inside a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchEvent {
@@ -317,6 +321,9 @@ fn flush(
                 paths.push(rel);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if tracker.is_self_write(&rel, SELF_DELETE_SENTINEL) {
+                    continue;
+                }
                 // External deletion (file or directory removed).
                 paths.push(rel);
             }

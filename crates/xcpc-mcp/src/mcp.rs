@@ -216,7 +216,7 @@ impl Server {
         let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
         let output = match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
             Some(path) => path,
-            None => publish::default_output(&what.target, what.kind),
+            None => publish::default_output(&self.ws, &what.target, what.kind),
         };
         self.ws
             .check_writable(&output)
@@ -696,7 +696,7 @@ fn tools() -> Value {
             "description": "Typeset a problem (single statement), a contest (the whole book with its cover) or either's editorial \
                 book, and write the PDF into the workspace. Nothing is written when there are compile or lint errors.",
             "inputSchema": with(json!({
-                "output": { "type": "string", "description": "Where to write it, relative to the workspace (default build/<id>.pdf or build/<id>-editorial.pdf)." },
+                "output": { "type": "string", "description": "Where to write it, relative to the workspace (default build/<title>.pdf, build/<contest>-试题册.pdf, or build/<title>-题解.pdf)." },
             })),
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
         },
@@ -951,7 +951,7 @@ mod tests {
             }))
             .unwrap();
         assert_ne!(exported["result"]["isError"], true);
-        assert!(dir.path().join("build/a-plus-b.pdf").is_file());
+        assert!(dir.path().join("build/A + B.pdf").is_file());
 
         // Path traversal must be refused.
         let escape = server

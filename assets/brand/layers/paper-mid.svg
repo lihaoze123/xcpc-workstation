@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <filter id="shadow-paper" x="-18%" y="-18%" width="138%" height="138%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="11" result="blur"/>
+      <feOffset in="blur" dx="0" dy="10" result="offset"/>
+      <feFlood flood-color="#222936" flood-opacity="0.21" result="color"/>
+      <feComposite in="color" in2="offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g id="paper-mid" filter="url(#shadow-paper)">
+    <rect x="342" y="200" width="446" height="608" rx="6" fill="#E5EAF1" stroke="#B4BFCB" stroke-width="2" stroke-opacity="0.80"/>
+  </g>
+</svg>

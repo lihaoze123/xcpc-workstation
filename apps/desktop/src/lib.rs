@@ -15,6 +15,7 @@
 mod cache;
 mod page_image;
 mod prefs;
+mod snapshot;
 mod state;
 mod types;
 
@@ -33,12 +34,13 @@ use crate::state::State;
 
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::types::{
-    ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
-    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs,
-    OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
-    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
-    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
-    RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs,
+    AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
+    ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
+    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, OverridePatchJs,
+    PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage,
+    PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs,
+    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs,
+    SamplePairJs, SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs,
     UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
     WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
@@ -114,6 +116,34 @@ impl Preview {
         load_ui_fonts_from(&dirs)
     }
 
+    /// Returns build and runtime diagnostic info for the About view.
+    pub fn about_info() -> AboutInfoJs {
+        let font_source =
+            if let Some(env_dirs) = std::env::var_os("XCPC_FONT_DIRS").filter(|v| !v.is_empty()) {
+                let count = std::env::split_paths(&env_dirs).count();
+                format!("环境变量 XCPC_FONT_DIRS（{count} 个目录）")
+            } else if std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("fonts").is_dir()))
+                .unwrap_or(false)
+            {
+                "应用内置字体目录 + 系统字体".to_owned()
+            } else if xcpc_engine::HAS_BUNDLED_FONTS {
+                "内嵌字体 + 系统字体".to_owned()
+            } else {
+                "系统字体".to_owned()
+            };
+        AboutInfoJs {
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            commit: env!("XCPC_GIT_COMMIT").to_owned(),
+            build_date: env!("XCPC_BUILD_DATE").to_owned(),
+            is_dev: cfg!(debug_assertions),
+            os: std::env::consts::OS.to_owned(),
+            arch: std::env::consts::ARCH.to_owned(),
+            font_source,
+        }
+    }
+
     // ---- Workspace & settings ----------------------------------------------------------
 
     /// Opens the workspace at `path` instead.
@@ -121,7 +151,7 @@ impl Preview {
         match Workspace::open(&path, read_only) {
             Ok(ws) => self.switch(ws),
             Err(e) => WorkspaceInfo {
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -133,10 +163,65 @@ impl Preview {
         match xcpc_storage::init_workspace(&path) {
             Ok(ws) => self.switch(ws),
             Err(e) => WorkspaceInfo {
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..self.workspace()
             },
         }
+    }
+
+    /// Initializes the built-in example workspace at `dir` (2 curated problems + 1 contest)
+    /// and switches to it.
+    pub fn init_example_workspace(&self, dir: String) -> WorkspaceInfo {
+        match xcpc_storage::init_example_workspace(&dir) {
+            Ok(ws) => self.switch(ws),
+            Err(e) => WorkspaceInfo {
+                error: Some(e.human_message()),
+                ..self.workspace()
+            },
+        }
+    }
+
+    /// Opens the system folder picker, releases the built-in example workspace into the
+    /// chosen folder, switches to it, and returns the new workspace info (or leaves the
+    /// current workspace unchanged when cancelled).
+    pub async fn pick_and_init_example_workspace(this: Instance<Self>) -> WorkspaceInfo {
+        if this.is_disposed() {
+            return WorkspaceInfo::default();
+        }
+        let start = this.with(|p| p.state.workspace_root());
+        let mut dialog = OpenDialog::folders()
+            .title("选择示例工作区存放目录")
+            .button_label("创建示例");
+        if let Some(dir) = start.as_ref().and_then(|r| r.parent()) {
+            dialog = dialog.directory(dir);
+        }
+        let picked = pick_paths(dialog).await;
+        if this.is_disposed() {
+            return WorkspaceInfo::default();
+        }
+        this.with(|p| {
+            let dir = match picked {
+                Ok(Some(paths)) => paths.into_iter().next(),
+                Ok(None) => None,
+                Err(e) => {
+                    return WorkspaceInfo {
+                        error: Some(e),
+                        ..p.workspace()
+                    };
+                }
+            };
+            let Some(dir) = dir else {
+                return p.workspace();
+            };
+            let target_dir = resolve_example_target_dir(&dir);
+            match xcpc_storage::init_example_workspace(&target_dir) {
+                Ok(ws) => p.switch(ws),
+                Err(e) => WorkspaceInfo {
+                    error: Some(e.human_message()),
+                    ..p.workspace()
+                },
+            }
+        })
     }
 
     /// Opens the system folder picker and reports whether the selected directory belongs to
@@ -582,6 +667,82 @@ impl Preview {
             .map_err(JsError::Error)
     }
 
+    /// Lists all files inside the target problem's `assets/` directory off the UI thread,
+    /// returning file size, image dimensions (when readable), and exact Markdown references.
+    pub async fn list_problem_assets(
+        this: Instance<Self>,
+        target: String,
+        id: String,
+        label: Option<String>,
+    ) -> Vec<ProblemAssetJs> {
+        if this.is_disposed() {
+            return Vec::new();
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.list_problem_assets(&target, &id, label.as_deref()))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Atomically renames `assets/<oldName>` to `assets/<newName>` and updates matching
+    /// `assets/<oldName>` references in `statement*.md` and `editorial.md` (rolling back on error).
+    pub fn rename_problem_asset(
+        &self,
+        target: String,
+        id: String,
+        label: Option<String>,
+        old_name: String,
+        new_name: String,
+    ) -> ActionResult {
+        self.state
+            .rename_problem_asset(&target, &id, label.as_deref(), &old_name, &new_name)
+    }
+
+    /// Deletes `assets/<name>` inside the target problem while enforcing workspace sandbox,
+    /// read-only mode, and frozen-contest guards.
+    pub fn delete_problem_asset(
+        &self,
+        target: String,
+        id: String,
+        label: Option<String>,
+        name: String,
+    ) -> ActionResult {
+        self.state
+            .delete_problem_asset(&target, &id, label.as_deref(), &name)
+    }
+
+    /// Batch-deletes all unreferenced assets inside the target problem's `assets/` directory.
+    pub fn clean_unused_assets(
+        &self,
+        target: String,
+        id: String,
+        label: Option<String>,
+    ) -> CleanUnusedAssetsResultJs {
+        self.state
+            .clean_unused_assets(&target, &id, label.as_deref())
+    }
+
+    /// Sets or clears `{width=NN%}` on Markdown references to `assetName` in `docPath`
+    /// (or across all `statement*.md` and `editorial.md` files when `docPath` is omitted).
+    pub fn set_asset_width(
+        &self,
+        target: String,
+        id: String,
+        label: Option<String>,
+        asset_name: String,
+        width_pct: Option<f64>,
+        doc_path: Option<String>,
+    ) -> ActionResult {
+        self.state.set_asset_width(
+            &target,
+            &id,
+            label.as_deref(),
+            &asset_name,
+            width_pct,
+            doc_path.as_deref(),
+        )
+    }
+
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
     /// Loads full contest metadata and per-item effective/original values with override flags.
@@ -680,6 +841,58 @@ impl Preview {
     pub fn save_prefs(&self, prefs: AppPrefsJs) {
         self.state.save_prefs(prefs);
     }
+
+    /// Saves a cold-start preview snapshot (metadata JSON + 1–2 visible pages' pixels)
+    /// into `<dataDir>/snapshots/` off the UI thread. Uses `try_lock()` on the compiler
+    /// so it skips cleanly if a compilation is in flight. `renderScale` (`scale * dpr`,
+    /// clamped to `1.0..=2.0`) controls HiDPI snapshot sharpness.
+    pub async fn save_cold_start_snapshot(
+        this: Instance<Self>,
+        meta_json: String,
+        pages: Vec<u32>,
+        render_scale: Option<f64>,
+    ) -> bool {
+        if this.is_disposed() {
+            return false;
+        }
+        let state = this.with(|p| p.state.clone());
+        let scale = render_scale.unwrap_or(1.0) as f32;
+        blocking(move || state.save_cold_start_snapshot(&meta_json, &pages, scale))
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Restores the cold-start preview snapshot from `<dataDir>/snapshots/` if it matches
+    /// the active workspace and current on-disk content hash; returns `null` otherwise.
+    pub fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
+        self.state.load_cold_start_snapshot()
+    }
+}
+
+/// If `dir` is non-empty, returns a fresh `xcpc-example` subdirectory inside it
+/// (`xcpc-example`, `xcpc-example-2`, ...) so existing files are never mixed with
+/// example content.
+pub(crate) fn resolve_example_target_dir(dir: &Path) -> PathBuf {
+    let is_non_empty = |p: &Path| {
+        std::fs::read_dir(p)
+            .ok()
+            .and_then(|mut it| it.next())
+            .is_some()
+    };
+    if !is_non_empty(dir) {
+        return dir.to_path_buf();
+    }
+    let first = dir.join("xcpc-example");
+    if !first.exists() || !is_non_empty(&first) {
+        return first;
+    }
+    for n in 2u32..=1000 {
+        let candidate = dir.join(format!("xcpc-example-{n}"));
+        if !candidate.exists() || !is_non_empty(&candidate) {
+            return candidate;
+        }
+    }
+    first
 }
 
 impl Preview {
@@ -711,8 +924,8 @@ pub(crate) fn load_ui_fonts_from(dirs: &[PathBuf]) -> Vec<Vec<u8>> {
     }
 
     let mut chosen: Vec<PathBuf> = Vec::new();
-    for i in 0..UI_FONT_STEMS.len() {
-        if let Some(p) = found_ttf[i].take().or_else(|| found_otf[i].take()) {
+    for (ttf, otf) in found_ttf.iter_mut().zip(&mut found_otf) {
+        if let Some(p) = ttf.take().or_else(|| otf.take()) {
             chosen.push(p);
         }
     }

@@ -35,6 +35,9 @@ enum Open {
         kind: Capture,
         start: usize,
     },
+    /// A fenced `typst` block passed directly into the `olymp-classic` scope with
+    /// line-by-line source mapping.
+    RawTypst,
     Close(&'static str),
     Item,
 }
@@ -75,7 +78,10 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
         diagnostics.push(Diagnostic::at(body.path, body.text, at, false, message));
     };
 
-    for (event, range) in Parser::new_ext(body.text, options).into_offset_iter() {
+    let mut iter = Parser::new_ext(body.text, options)
+        .into_offset_iter()
+        .peekable();
+    while let Some((event, range)) = iter.next() {
         out.mark(body.file, range.start);
         match event {
             Event::Start(tag) => match tag {
@@ -100,11 +106,19 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                             .map(str::to_owned),
                         CodeBlockKind::Indented => None,
                     };
-                    out.capture();
-                    stack.push(Open::Capture {
-                        kind: Capture::Code(lang),
-                        start: range.start,
-                    });
+                    if lang
+                        .as_deref()
+                        .is_some_and(|l| l.eq_ignore_ascii_case("typst"))
+                    {
+                        out.block_start("");
+                        stack.push(Open::RawTypst);
+                    } else {
+                        out.capture();
+                        stack.push(Open::Capture {
+                            kind: Capture::Code(lang),
+                            start: range.start,
+                        });
+                    }
                 }
                 Tag::List(start) => {
                     match start {
@@ -178,6 +192,13 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                 TagEnd::Paragraph => out.par_end(),
                 TagEnd::HtmlBlock => {}
                 TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::Image => {
+                    if matches!(tag, TagEnd::CodeBlock)
+                        && matches!(stack.last(), Some(Open::RawTypst))
+                    {
+                        stack.pop();
+                        out.par_end();
+                        continue;
+                    }
                     let Some(Open::Capture { kind, start }) = stack.pop() else {
                         continue;
                     };
@@ -235,14 +256,47 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                             let code = plain.strip_suffix('\n').unwrap_or(&plain);
                             out.block(&format!("#raw(block: true, {lang}{})", string(code)));
                         }
-                        Capture::Image(path) if path.is_empty() => {}
                         Capture::Image(path) => {
-                            let alt = if plain.is_empty() {
-                                String::new()
+                            let width_attr = iter.peek().and_then(|(next_ev, next_range)| {
+                                if next_range.start != range.end {
+                                    return None;
+                                }
+                                match next_ev {
+                                    Event::Text(next_text) => parse_image_width_attr(next_text),
+                                    _ => None,
+                                }
+                            });
+                            let trailing = if let Some((_, consumed)) = &width_attr {
+                                let consumed = *consumed;
+                                if let Some((Event::Text(next_text), next_range)) = iter.next() {
+                                    let rest = next_text[consumed..].to_owned();
+                                    (!rest.is_empty())
+                                        .then_some((rest, next_range.start + consumed))
+                                } else {
+                                    None
+                                }
                             } else {
-                                format!(", alt: {}", string(&plain))
+                                None
                             };
-                            out.inline(&format!("#box(image({}{alt}));", string(&path)));
+                            if !path.is_empty() {
+                                let alt = if plain.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(", alt: {}", string(&plain))
+                                };
+                                if let Some((width_pct, _)) = width_attr {
+                                    out.block(&format!(
+                                        "#align(center, image({}{alt}, width: {width_pct}%))",
+                                        string(&path)
+                                    ));
+                                } else {
+                                    out.inline(&format!("#box(image({}{alt}));", string(&path)));
+                                }
+                            }
+                            if let Some((rest, rest_offset)) = trailing {
+                                out.mark(body.file, rest_offset);
+                                out.text(&rest);
+                            }
                         }
                     }
                 }
@@ -265,7 +319,18 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                     }
                 }
             },
-            Event::Text(text) => out.text(&text),
+            Event::Text(text) => {
+                if matches!(stack.last(), Some(Open::RawTypst)) {
+                    let mut offset = 0usize;
+                    for chunk in text.split_inclusive('\n') {
+                        out.mark(body.file, range.start + offset);
+                        out.raw(chunk);
+                        offset += chunk.len();
+                    }
+                } else {
+                    out.text(&text);
+                }
+            }
             Event::Code(code) => out.inline(&format!("#raw({});", string(&code))),
             Event::InlineMath(ref tex) | Event::DisplayMath(ref tex) => {
                 let display = matches!(event, Event::DisplayMath(_));
@@ -385,6 +450,33 @@ pub(crate) fn modernize(code: &str) -> String {
         }
     }
     out
+}
+
+/// Parses a trailing `{width=60%}` attribute immediately after an image, accepting
+/// percentages in `10%–100%`. Returns `(percent_number_str, consumed_byte_len)`.
+pub(crate) fn parse_image_width_attr(text: &str) -> Option<(String, usize)> {
+    if !text.starts_with('{') {
+        return None;
+    }
+    let close = text.find('}')?;
+    let inside = &text[1..close];
+    if inside.contains('\n') || inside.contains('\r') {
+        return None;
+    }
+    let trimmed = inside.trim();
+    let (key, val) = trimmed.split_once('=')?;
+    if !key.trim().eq_ignore_ascii_case("width") {
+        return None;
+    }
+    let num_str = val.trim().strip_suffix('%')?.trim();
+    if num_str.is_empty() {
+        return None;
+    }
+    let num: f64 = num_str.parse().ok()?;
+    if !num.is_finite() || !(10.0..=100.0).contains(&num) {
+        return None;
+    }
+    Some((num_str.to_owned(), close + 1))
 }
 
 /// A picture's path for Typst: relative to the problem's directory, and in it.

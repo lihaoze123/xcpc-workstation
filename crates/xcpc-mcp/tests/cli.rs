@@ -192,7 +192,7 @@ fn check_build_render_integrate_lint_errors_and_warnings() {
         None,
     );
     assert_eq!(bld.status.code(), Some(0));
-    assert!(dir.path().join("build/warn-only.pdf").is_file());
+    assert!(dir.path().join("build/Warn Only.pdf").is_file());
 
     let rnd = run_xcpc(
         Some(dir.path()),
@@ -637,4 +637,87 @@ fn contest_freeze_and_unfreeze_confirmation_and_diffs() {
     assert_eq!(diffs[0]["label"], "B");
     assert_eq!(diffs[0]["problem_id"], "p2");
     assert_eq!(diffs[0]["kinds"], serde_json::json!(["problem_deleted"]));
+}
+
+#[test]
+fn init_example_and_output_override_and_human_error_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("demo-ws");
+
+    // 1. `xcpc init --example <dir>`
+    let out = run_xcpc(
+        None,
+        &["--json", "init", "--example", target.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let j = parse_json_stdout(&out);
+    assert_eq!(j["ok"], true);
+    assert_eq!(j["example"], true);
+    assert!(target.join("problems/lantern-walk/statement.md").is_file());
+    assert!(target.join("contests/welcome-round/contest.toml").is_file());
+
+    // 1b. `xcpc init --example <non-empty-dir>` refuses to mix files into an existing directory.
+    let non_empty = dir.path().join("has-files");
+    std::fs::create_dir_all(&non_empty).unwrap();
+    std::fs::write(non_empty.join("notes.txt"), b"existing").unwrap();
+    let refused = run_xcpc(
+        None,
+        &["--json", "init", "--example", non_empty.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(refused.status.code(), Some(2));
+    let rj = parse_json_stdout(&refused);
+    assert_eq!(rj["ok"], false);
+    assert_eq!(rj["error"]["code"], "dir_not_empty");
+    assert!(!non_empty.join("workspace.toml").exists());
+
+    // 2. Default contest build outputs `<比赛名>-试题册.pdf`, and `--output` overrides it.
+    let bld = run_xcpc(
+        Some(&target),
+        &["--json", "build", "contest", "welcome-round"],
+        None,
+    );
+    assert_eq!(bld.status.code(), Some(0));
+    assert!(target.join("build/新生热身赛-试题册.pdf").is_file());
+
+    let custom_out = target.join("build/custom-name.pdf");
+    let bld2 = run_xcpc(
+        Some(&target),
+        &[
+            "--json",
+            "build",
+            "contest",
+            "welcome-round",
+            "--output",
+            custom_out.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(bld2.status.code(), Some(0));
+    assert!(custom_out.is_file());
+
+    // 3. Human stderr prints centralized Chinese error message; `--json` keeps structured code.
+    let err_plain = run_xcpc(Some(&target), &["show", "problem", "no-such-prob"], None);
+    assert_eq!(err_plain.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&err_plain.stderr);
+    assert!(
+        stderr.contains("找不到题目「no-such-prob」"),
+        "expected typed Chinese error, got: {stderr}"
+    );
+
+    let err_json = run_xcpc(
+        Some(&target),
+        &["--json", "show", "problem", "no-such-prob"],
+        None,
+    );
+    assert_eq!(err_json.status.code(), Some(2));
+    let ej = parse_json_stdout(&err_json);
+    assert_eq!(ej["ok"], false);
+    assert_eq!(ej["error"]["code"], "not_found");
 }

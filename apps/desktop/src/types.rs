@@ -318,7 +318,7 @@ impl ActionResult {
 
     pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
         let code = err.code().to_owned();
-        let message = err.to_string();
+        let message = err.human_message();
         let referencing_contests = match err {
             xcpc_storage::Error::Referenced { contests, .. } => contests,
             _ => Vec::new(),
@@ -1047,4 +1047,84 @@ pub struct MarkdownSpanJs {
     pub start_column: u32,
     pub end_line: u32,
     pub end_column: u32,
+}
+
+// ---- Asset library, cold-start snapshot & diagnostics -------------------------------
+
+/// One exact Markdown reference to a problem asset.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct AssetReferenceJs {
+    /// Workspace-relative file path (e.g. `"problems/a/statement.md"`).
+    pub file: String,
+    /// 1-based line number.
+    pub line: u32,
+    /// Optional `{width=NN%}` percentage.
+    #[prop(skip_none)]
+    pub width_pct: Option<f64>,
+}
+
+/// One image/asset file inside a problem's `assets/` directory.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct ProblemAssetJs {
+    pub name: String,
+    /// Path relative to the problem directory, e.g. `"assets/fig.png"`.
+    pub rel_path: String,
+    /// Absolute path on disk.
+    pub abs_path: String,
+    /// Absolute path to a cached 336px PNG thumbnail under `.xcpc/thumbs/`, if available.
+    #[prop(skip_none)]
+    pub thumb_path: Option<String>,
+    /// File size in bytes.
+    pub bytes: f64,
+    /// Image pixel width when readable (PNG/JPEG/WEBP/SVG).
+    #[prop(skip_none)]
+    pub width: Option<u32>,
+    /// Image pixel height when readable (PNG/JPEG/WEBP/SVG).
+    #[prop(skip_none)]
+    pub height: Option<u32>,
+    /// Whether `statement*.md` or `editorial.md` currently references this asset.
+    pub referenced: bool,
+    /// Exact Markdown reference locations for this asset.
+    pub references: Vec<AssetReferenceJs>,
+}
+
+/// Result of batch-cleaning unreferenced assets in a problem.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct CleanUnusedAssetsResultJs {
+    pub ok: bool,
+    /// Filenames removed.
+    pub removed: Vec<String>,
+    /// Total bytes freed.
+    pub freed_bytes: f64,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Restored cold-start preview snapshot from `<dataDir>/snapshots/`.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct ColdStartSnapshotJs {
+    /// Raw JSON metadata string recorded at save time.
+    pub meta_json: String,
+    pub workspace: String,
+    pub target: String,
+    pub id: String,
+    pub book: String,
+    pub zoom: f64,
+    pub scroll_y: f64,
+    /// Pre-registered `PreviewPage[]` ready for `<PageImage layers={...} />`.
+    pub pages: Vec<PreviewPage>,
+}
+
+/// Build and environment diagnostics for the About view (`Preview.aboutInfo()`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct AboutInfoJs {
+    pub version: String,
+    pub commit: String,
+    pub build_date: String,
+    pub is_dev: bool,
+    pub os: String,
+    pub arch: String,
+    pub font_source: String,
 }

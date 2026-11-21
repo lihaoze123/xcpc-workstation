@@ -158,8 +158,7 @@ fn prefs_file(data_dir: &Path) -> PathBuf {
     data_dir.join("prefs.json")
 }
 
-/// Reserved Phase 2.5 cold-start preview snapshot directory (`<dataDir>/snapshots`).
-#[allow(dead_code)] // Phase 2.5 cold-start snapshot seam
+/// Cold-start preview snapshot directory (`<dataDir>/snapshots`).
 pub(crate) fn snapshots_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("snapshots")
 }

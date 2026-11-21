@@ -641,11 +641,113 @@ pub fn engine(ws: &Workspace, fonts: &xcpc_engine::FontOptions) -> Engine {
     Engine::new(fonts, Some(ws.root().to_path_buf()))
 }
 
-/// The default name of an exported PDF, relative to the workspace:
-/// `build/<id>.pdf`, `build/<id>-editorial.pdf`.
-pub fn default_output(target: &Target, kind: Kind) -> String {
-    match kind {
-        Kind::Statements => format!("build/{}.pdf", target.id()),
-        Kind::Editorial => format!("build/{}-editorial.pdf", target.id()),
+/// Maximum UTF-8 byte length for a sanitized PDF filename stem (leaving ample room for
+/// suffixes like `-试题册.pdf` within the 255-byte filesystem limit).
+const MAX_FILENAME_STEM_BYTES: usize = 160;
+/// Maximum character count for a sanitized PDF filename stem.
+const MAX_FILENAME_STEM_CHARS: usize = 100;
+
+/// Returns `true` if `name` (ignoring any extension after the first `.`) is a Windows
+/// reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`).
+fn is_windows_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim();
+    if stem.is_empty() {
+        return false;
     }
+    let upper = stem.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+/// Sanitizes a human title for use as a cross-platform PDF file stem: replaces path
+/// separators, Windows-forbidden characters, and control characters with `-`, collapses
+/// repeated whitespace, trims leading/trailing dots and whitespace, rejects Windows
+/// reserved device names, and enforces a safe cross-platform length limit.
+pub fn sanitize_filename(name: &str) -> String {
+    let mut out = String::with_capacity(name.len().min(MAX_FILENAME_STEM_BYTES));
+    let mut last_was_space = false;
+    let mut char_count = 0usize;
+    for c in name.trim().chars() {
+        let illegal = matches!(
+            c,
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'
+        ) || c.is_control();
+        let next_ch = if illegal {
+            last_was_space = false;
+            '-'
+        } else if c.is_whitespace() {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+            ' '
+        } else {
+            last_was_space = false;
+            c
+        };
+        if char_count >= MAX_FILENAME_STEM_CHARS
+            || out.len() + next_ch.len_utf8() > MAX_FILENAME_STEM_BYTES
+        {
+            break;
+        }
+        out.push(next_ch);
+        char_count += 1;
+    }
+    let trimmed = out.trim().trim_matches('.').trim();
+    if trimmed.is_empty() || trimmed.chars().all(|c| c == '-') || is_windows_reserved_name(trimmed)
+    {
+        String::new()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// The default relative PDF path for `target` and `kind` given an optional human title
+/// (`<比赛名>-试题册.pdf`, `<比赛名>-题解.pdf`, `<题名>.pdf`, `<题名>-题解.pdf`), falling
+/// back to `target.id()` when the sanitized title is empty.
+pub fn default_output_for_title(target: &Target, kind: Kind, title: Option<&str>) -> String {
+    let base = title
+        .map(sanitize_filename)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| target.id().to_owned());
+    match (target, kind) {
+        (Target::Contest(_), Kind::Statements) => format!("build/{base}-试题册.pdf"),
+        (Target::Contest(_), Kind::Editorial) => format!("build/{base}-题解.pdf"),
+        (Target::Problem(_), Kind::Statements) => format!("build/{base}.pdf"),
+        (Target::Problem(_), Kind::Editorial) => format!("build/{base}-题解.pdf"),
+    }
+}
+
+/// The default name of an exported PDF, relative to the workspace:
+/// `build/<比赛名>-试题册.pdf`, `build/<比赛名>-题解.pdf`, `build/<题名>.pdf`, or
+/// `build/<题名>-题解.pdf` (falling back to `<id>` when the title is empty or unavailable).
+pub fn default_output(ws: &Workspace, target: &Target, kind: Kind) -> String {
+    let title = match target {
+        Target::Contest(id) => ws.load_contest(id).ok().map(|c| c.meta.name),
+        Target::Problem(id) => ws.load_problem(id).ok().map(|p| p.meta.title),
+    };
+    default_output_for_title(target, kind, title.as_deref())
 }

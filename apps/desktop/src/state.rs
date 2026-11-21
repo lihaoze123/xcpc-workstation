@@ -24,13 +24,15 @@ use crate::cache::{
     rasterize_cached,
 };
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
+use crate::snapshot;
 use crate::types::{
-    ActionResult, AppPrefsJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs,
-    ContestStatsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, OverridePatchJs,
-    PdfFreshnessJs, PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemDetailJs,
-    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
+    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
+    FreezeResultJs, FuzzyHitJs, OverridePatchJs, PdfFreshnessJs, PreviewLocationJs, PreviewRequest,
+    PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
+    ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult,
+    SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs,
+    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
     WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js, rating_tier_str,
     source_to_js,
 };
@@ -736,16 +738,19 @@ impl State {
     pub(crate) fn export(&self, request: &PreviewRequest) -> WorkspaceFile {
         let target = request.target();
         let kind = request.kind();
-        let path = publish::default_output(&target, kind);
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let path = match ws.as_ref() {
+            Some(ws) => publish::default_output(ws, &target, kind),
+            None => publish::default_output_for_title(&target, kind, None),
+        };
         let fail = |error: String| WorkspaceFile {
             path: path.clone(),
             error: Some(error),
             ..Default::default()
         };
 
-        let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
-            return fail("no workspace".into());
+            return fail("当前未打开工作区，无法导出 PDF。请先打开或新建工作区。".into());
         };
 
         // Compile / generate PDF under `compiler` lock (UI thread `core` stays free).
@@ -1749,7 +1754,303 @@ impl State {
                 return Ok(format!("assets/{filename}"));
             }
         }
-        Err("too many colliding asset filenames".to_owned())
+        Err("同名素材文件过多，无法自动分配新文件名。请先清理或重命名已有素材。".to_owned())
+    }
+
+    // ---- Problem asset library (list / rename / delete) --------------------------------
+
+    /// Lists all files inside the target problem's `assets/` directory, sorted by filename,
+    /// with byte size, image dimensions (when readable), and exact Markdown references.
+    pub(crate) fn list_problem_assets(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+    ) -> Vec<ProblemAssetJs> {
+        let Ok((ws, problem_dir)) = self.resolve_problem_dir_for_assets(target, id, label, false)
+        else {
+            return Vec::new();
+        };
+        let Ok(entries) = xcpc_convert::list_problem_assets(&ws, &problem_dir) else {
+            return Vec::new();
+        };
+        entries
+            .into_iter()
+            .map(|entry| {
+                let referenced = !entry.references.is_empty();
+                let references = entry
+                    .references
+                    .into_iter()
+                    .map(|r| AssetReferenceJs {
+                        file: r.file,
+                        line: r.line,
+                        width_pct: r.width_pct,
+                    })
+                    .collect();
+                ProblemAssetJs {
+                    name: entry.name,
+                    rel_path: entry.rel_path,
+                    abs_path: entry.abs_path.display().to_string(),
+                    thumb_path: entry.thumb_path.map(|p| p.display().to_string()),
+                    bytes: entry.bytes as f64,
+                    width: entry.width,
+                    height: entry.height,
+                    referenced,
+                    references,
+                }
+            })
+            .collect()
+    }
+
+    /// Atomically renames `assets/<old_name>` to `assets/<new_name>` inside the target
+    /// problem and updates matching references in `statement*.md` / `editorial.md` via Core.
+    pub(crate) fn rename_problem_asset(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> ActionResult {
+        let (ws, problem_dir) = match self.resolve_problem_dir_for_assets(target, id, label, true) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match xcpc_convert::rename_problem_asset(&ws, &problem_dir, old_name, new_name) {
+            Ok(_) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    /// Deletes `assets/<name>` inside the target problem while enforcing workspace sandbox,
+    /// read-only mode, and frozen-contest guards via Core.
+    pub(crate) fn delete_problem_asset(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        name: &str,
+    ) -> ActionResult {
+        let (ws, problem_dir) = match self.resolve_problem_dir_for_assets(target, id, label, true) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match xcpc_convert::delete_problem_asset(&ws, &problem_dir, name) {
+            Ok(_) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    /// Batch-removes all unreferenced assets inside the target problem's `assets/` directory.
+    pub(crate) fn clean_unused_assets(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+    ) -> CleanUnusedAssetsResultJs {
+        let (ws, problem_dir) = match self.resolve_problem_dir_for_assets(target, id, label, true) {
+            Ok(v) => v,
+            Err(err) => {
+                return CleanUnusedAssetsResultJs {
+                    ok: false,
+                    removed: Vec::new(),
+                    freed_bytes: 0.0,
+                    error: err.error,
+                    code: err.code,
+                };
+            }
+        };
+        match xcpc_convert::clean_unused_problem_assets(&ws, &problem_dir) {
+            Ok(res) => {
+                if !res.removed.is_empty() {
+                    self.invalidate_cache();
+                }
+                if res.failed.is_empty() {
+                    CleanUnusedAssetsResultJs {
+                        ok: true,
+                        removed: res.removed,
+                        freed_bytes: res.freed_bytes as f64,
+                        error: None,
+                        code: None,
+                    }
+                } else {
+                    let details = res
+                        .failed
+                        .iter()
+                        .map(|f| format!("{}（{}）", f.name, f.message))
+                        .collect::<Vec<_>>()
+                        .join("；");
+                    CleanUnusedAssetsResultJs {
+                        ok: false,
+                        removed: res.removed,
+                        freed_bytes: res.freed_bytes as f64,
+                        error: Some(format!("部分素材未能删除：{details}")),
+                        code: Some("partial_failure".to_owned()),
+                    }
+                }
+            }
+            Err(e) => {
+                let err = ActionResult::from_storage_err(e);
+                CleanUnusedAssetsResultJs {
+                    ok: false,
+                    removed: Vec::new(),
+                    freed_bytes: 0.0,
+                    error: err.error,
+                    code: err.code,
+                }
+            }
+        }
+    }
+
+    /// Sets or clears `{width=NN%}` on Markdown image references to `asset_name` inside the
+    /// target problem (either in `doc_path` or across all `statement*.md` and `editorial.md`).
+    pub(crate) fn set_asset_width(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        asset_name: &str,
+        width_pct: Option<f64>,
+        doc_path: Option<&str>,
+    ) -> ActionResult {
+        let (ws, problem_dir) = match self.resolve_problem_dir_for_assets(target, id, label, true) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        if let Some(pct) = width_pct
+            && (!pct.is_finite() || !(10.0..=100.0).contains(&pct))
+        {
+            return ActionResult::err(
+                "invalid_arguments",
+                "图片宽度百分比必须在 10% 到 100% 之间。",
+            );
+        }
+        match xcpc_convert::set_problem_asset_width(
+            &ws,
+            &problem_dir,
+            asset_name,
+            width_pct,
+            doc_path,
+        ) {
+            Ok(updated) => {
+                if !updated.is_empty() {
+                    self.invalidate_cache();
+                }
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    fn resolve_problem_dir_for_assets(
+        &self,
+        target: &str,
+        id: &str,
+        label: Option<&str>,
+        writable: bool,
+    ) -> Result<(Workspace, String), ActionResult> {
+        let ws = self.core.lock().unwrap().workspace.clone().ok_or_else(|| {
+            ActionResult::err(
+                "no_workspace",
+                "当前未打开工作区。请先打开或新建工作区后再操作。",
+            )
+        })?;
+        if writable && ws.is_read_only() {
+            return Err(ActionResult::from_storage_err(
+                xcpc_storage::Error::ReadOnly,
+            ));
+        }
+        match target {
+            "problem" => {
+                check_id(id).map_err(|e| ActionResult::from_storage_err(e.into()))?;
+                ws.load_problem(id)
+                    .map_err(ActionResult::from_storage_err)?;
+                Ok((ws, format!("problems/{id}")))
+            }
+            "contest" => {
+                check_id(id).map_err(|e| ActionResult::from_storage_err(e.into()))?;
+                let contest = ws
+                    .load_contest(id)
+                    .map_err(ActionResult::from_storage_err)?;
+                if writable && contest.meta.frozen {
+                    return Err(ActionResult::from_storage_err(xcpc_storage::Error::Frozen(
+                        id.to_owned(),
+                    )));
+                }
+                let label = label
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        ActionResult::err(
+                            "invalid_arguments",
+                            "缺少比赛题目编号（label）。请先选中具体题目后再管理素材。",
+                        )
+                    })?;
+                let item = contest
+                    .meta
+                    .problems
+                    .iter()
+                    .find(|item| item.label.eq_ignore_ascii_case(label))
+                    .ok_or_else(|| {
+                        ActionResult::err(
+                            "not_found",
+                            format!("比赛「{id}」中不存在题号「{label}」。请确认题号后重试。"),
+                        )
+                    })?;
+                if contest.meta.frozen {
+                    Ok((ws, format!("contests/{id}/snapshot/{}", item.label)))
+                } else {
+                    check_id(&item.id).map_err(|e| ActionResult::from_storage_err(e.into()))?;
+                    ws.load_problem(&item.id)
+                        .map_err(ActionResult::from_storage_err)?;
+                    Ok((ws, format!("problems/{}", item.id)))
+                }
+            }
+            other => Err(ActionResult::err(
+                "invalid_arguments",
+                format!("无效的目标类型「{other}」。应为 \"problem\" 或 \"contest\"。"),
+            )),
+        }
+    }
+
+    // ---- Cold-start preview snapshot ---------------------------------------------------
+
+    /// Persists lightweight cold-start snapshot metadata and 1–2 visible pages from the
+    /// currently cached compiled preview into `<dataDir>/snapshots/`.
+    ///
+    /// Uses `try_lock()` on `compiler` so it never blocks when a compilation is in flight.
+    pub(crate) fn save_cold_start_snapshot(
+        &self,
+        meta_json: &str,
+        pages: &[u32],
+        render_scale: f32,
+    ) -> bool {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Ok(compiler) = self.compiler.try_lock() else {
+            return false;
+        };
+        let compiled = compiler.cached.as_ref().map(|c| &c.compiled);
+        snapshot::save_cold_start_snapshot(
+            self.data_dir.as_deref(),
+            ws.as_ref(),
+            compiled,
+            meta_json,
+            pages,
+            render_scale,
+        )
+    }
+
+    /// Restores the cold-start preview snapshot from `<dataDir>/snapshots/` when it matches
+    /// the open workspace and the target's current on-disk content hash.
+    pub(crate) fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        snapshot::load_cold_start_snapshot(self.data_dir.as_deref(), ws.as_ref(), self.id)
     }
 }
 
@@ -1761,15 +2062,15 @@ fn book_freshness(
     kind: Kind,
     request: &PreviewRequest,
 ) -> PdfFreshnessJs {
-    let rel_path = publish::default_output(target, kind);
     let Some(ws) = ws else {
         return PdfFreshnessJs {
-            rel_path,
+            rel_path: publish::default_output_for_title(target, kind, None),
             abs_path: String::new(),
             exists: false,
             fresh: false,
         };
     };
+    let rel_path = publish::default_output(ws, target, kind);
     let abs_buf = ws.root().join(&rel_path);
     let abs_path = abs_buf.display().to_string();
     let Ok(pdf_meta) = std::fs::metadata(&abs_buf) else {
@@ -2333,11 +2634,9 @@ fn sanitize_asset_stem(raw: &str) -> String {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             out.push(ch);
             prev_dash = false;
-        } else if ch == '-' || ch.is_whitespace() || ch == '.' {
-            if !out.is_empty() && !prev_dash {
-                out.push('-');
-                prev_dash = true;
-            }
+        } else if (ch == '-' || ch.is_whitespace() || ch == '.') && !out.is_empty() && !prev_dash {
+            out.push('-');
+            prev_dash = true;
         }
         if out.len() >= 80 {
             break;

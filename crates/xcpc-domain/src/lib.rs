@@ -267,6 +267,17 @@ pub fn check_id(id: &str) -> Result<(), InvalidId> {
 /// Maximum number of problems in a single contest (`A` through `Z`).
 pub const MAX_CONTEST_PROBLEMS: usize = 26;
 
+/// Markdown files inside a problem directory that may reference `assets/` or affect
+/// problem rendering and snapshots.
+pub const ASSET_MARKDOWN_DOCS: &[&str] = &[
+    "statement.md",
+    "statement.zh.md",
+    "statement.en.md",
+    "editorial.md",
+    "editorial.zh.md",
+    "editorial.en.md",
+];
+
 /// Returns the contest label (`"A"`..=`"Z"`) for a 0-based index, or `None` if `idx >= 26`.
 pub fn label_for_index(idx: usize) -> Option<String> {
     if idx < MAX_CONTEST_PROBLEMS {

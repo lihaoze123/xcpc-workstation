@@ -13,8 +13,8 @@ import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { colorTransition, panelTransition } from "../motion";
 import { errorOf, info, preview, refresh, revision, unfreezeFor, type UiError } from "../store";
-import { EASE_DRAWER, ms } from "../theme";
 
 export const INSPECTOR_WIDTH = 300;
 
@@ -25,16 +25,45 @@ export function Inspector(props: {
   contest?: ContestDetailJs;
   item?: ContestItemDetailJs;
   freeze: Freeze;
+  assetsRefreshSeq?: number;
+  onOpenAssets?: () => void;
   onChanged: () => void;
   onFinding: (d: PreviewDiagnostic) => void;
   onClose: () => void;
 }) {
   const error = signal<UiError | undefined>(undefined);
+  const assetCount = signal(0);
+  let assetCountSeq = 0;
+
   effect(() => {
     void props.target;
     void props.id;
     untracked(() => error.set(undefined));
   });
+
+  const showAssets = () => props.target === "problem" || (props.target === "contest" && !!props.item);
+
+  effect(() => {
+    if (!showAssets()) {
+      assetCount.set(0);
+      return;
+    }
+    void revision();
+    void props.assetsRefreshSeq;
+    const target = props.target;
+    const id = props.id;
+    const label = target === "contest" ? (props.item?.label ?? null) : null;
+    const seq = ++assetCountSeq;
+    void preview
+      .listProblemAssets(target, id, label)
+      .then((list) => {
+        if (seq === assetCountSeq) assetCount.set(list.length);
+      })
+      .catch(() => {
+        if (seq === assetCountSeq) assetCount.set(0);
+      });
+  });
+
   const done = (res: { ok: boolean; code?: string | null; error?: string | null }) => {
     error.set(errorOf(res));
     refresh();
@@ -50,10 +79,9 @@ export function Inspector(props: {
         bottom: 0,
         width: INSPECTOR_WIDTH,
         borderLeftWidth: 1,
+        opacity: props.open ? 1 : 0,
         transform: props.open ? "translateX(0px)" : `translateX(${INSPECTOR_WIDTH + 1}px)`,
-        transitionProperty: "transform",
-        transitionDuration: ms(170),
-        transitionTimingFunction: EASE_DRAWER,
+        ...panelTransition(),
         pointerEvents: props.open ? "auto" : "none",
       }}
       class="border-border bg-background"
@@ -64,10 +92,35 @@ export function Inspector(props: {
       </View>
       <Scroll style={{ flex: 1 }}>
         <If when={props.target === "contest" && props.contest}>
-          <ContestFields contest={props.contest!} item={props.item} freeze={props.freeze} done={done} onFinding={props.onFinding} />
+          <ContestFields contest={props.contest!} item={props.item} freeze={props.freeze} done={done} onFinding={props.onFinding} hasFollowingSection={showAssets()} />
         </If>
         <If when={props.target === "problem"}>
-          <ProblemFields id={props.id} done={done} />
+          <ProblemFields id={props.id} done={done} hasFollowingSection={showAssets()} />
+        </If>
+        <If when={showAssets()}>
+          <View style={{ padding: 14 }}>
+            <View
+              testID="inspector-assets-btn"
+              onPress={() => props.onOpenAssets?.()}
+              class="border border-border bg-card hover:bg-muted active:bg-accent"
+              style={{
+                height: 34,
+                paddingLeft: 10,
+                paddingRight: 8,
+                borderRadius: 7,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                ...colorTransition(140),
+              }}
+            >
+              <Icon name="image" size={15} tone="secondary-foreground" />
+              <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                {`素材 ${assetCount()} 个`}
+              </Text>
+              <Icon name="chevronRight" size={14} tone="muted-foreground" />
+            </View>
+          </View>
         </If>
         <If when={error()}>
           <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14 }}>
@@ -231,7 +284,11 @@ function Toggle(props: { label: string; checked: boolean; readOnly?: boolean; ov
 
 const nul = (v: string) => (v === "" ? null : v);
 
-function ProblemFields(props: { id: string; done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void }) {
+function ProblemFields(props: {
+  id: string;
+  done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
+  hasFollowingSection?: boolean;
+}) {
   const d = computed(() => {
     void revision();
     return preview.problemDetail(props.id);
@@ -240,7 +297,7 @@ function ProblemFields(props: { id: string; done: (res: { ok: boolean; code?: st
   const write = (patch: Parameters<typeof preview.updateProblemMeta>[1]) => !wsReadOnly() && props.done(preview.updateProblemMeta(props.id, patch));
   const owner = () => `problem:${props.id}`;
   return (
-    <Section title="题目信息" last>
+    <Section title="题目信息" last={!props.hasFollowingSection}>
       <Field
         ownerKey={owner()}
         label="标题"
@@ -304,6 +361,7 @@ function ContestFields(props: {
   freeze: Freeze;
   done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
   onFinding: (d: PreviewDiagnostic) => void;
+  hasFollowingSection?: boolean;
 }) {
   const c = () => props.contest;
   const frozen = () => c().frozen;
@@ -431,7 +489,7 @@ function ContestFields(props: {
         {(item) => {
           const itemOwner = () => `contest:${c().id}:item:${item().label}:${item().id}`;
           return (
-            <Section title={`${item().label} 题在这场比赛中的设置`} last>
+            <Section title={`${item().label} 题在这场比赛中的设置`} last={!props.hasFollowingSection}>
               <Field
                 ownerKey={itemOwner()}
                 label="标题"

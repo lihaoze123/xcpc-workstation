@@ -113,6 +113,9 @@ const CJK_ROLES: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Whether Latin Modern and JetBrains Mono fonts are embedded directly in this binary.
+pub const HAS_BUNDLED_FONTS: bool = cfg!(any(not(debug_assertions), feature = "bundled-fonts"));
+
 #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
 const BUNDLED_FONT_BYTES: &[&[u8]] = &[
     include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmroman10-regular.otf")),
@@ -319,7 +322,14 @@ impl Compiled {
 
     /// Exports the whole document as PDF.
     pub fn pdf(&self) -> Result<Vec<u8>, Vec<Diagnostic>> {
-        typst_pdf::pdf(&self.document, &typst_pdf::PdfOptions::default())
+        let options = typst_pdf::PdfOptions {
+            creator: typst::foundations::Smart::Custom(Some(format!(
+                "XCPC Workstation {}",
+                env!("CARGO_PKG_VERSION")
+            ))),
+            ..Default::default()
+        };
+        typst_pdf::pdf(&self.document, &options)
             .map_err(|errors| errors.iter().map(plain_diagnostic).collect())
     }
 }

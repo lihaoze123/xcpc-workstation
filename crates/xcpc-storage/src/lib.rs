@@ -25,10 +25,18 @@ use xcpc_domain::{
     SampleInventory, Statement, TextFile, check_id,
 };
 
+pub mod assets;
 pub mod edit;
+pub mod example;
 pub mod index;
 pub mod watcher;
 
+pub use assets::{
+    ASSET_MARKDOWN_DOCS, AssetEntry, AssetRef, CleanUnusedFailure, CleanUnusedResult,
+    RenameAssetResult, ScannedAssetRef, is_existing_asset_name, is_safe_asset_name,
+    is_windows_reserved_name, read_image_dimensions,
+};
+pub use example::init_example_workspace;
 pub use index::WorkspaceIndex;
 pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
@@ -131,6 +139,83 @@ impl Error {
             Error::DisallowedPath(_) => "disallowed_path",
         }
     }
+
+    /// A centralized concise Chinese message for humans (phenomenon + next step),
+    /// shared by the CLI and the desktop bridge.
+    pub fn human_message(&self) -> String {
+        match self {
+            Error::NotFound(what) => format_not_found_message(what),
+            Error::InvalidId(err) => format!(
+                "标识「{}」格式无效。请以小写英文字母或数字开头，仅使用小写字母、数字、连字符（-）或下划线（_），长度不超过 64 个字符。",
+                err.0
+            ),
+            Error::PathEscape(path) => {
+                format!("路径「{path}」越出了工作区范围。请改用工作区内的相对路径。")
+            }
+            Error::Frozen(id) => {
+                format!("比赛「{id}」已定稿，当前只读。如需修改，请先「重新编辑」并确认。")
+            }
+            Error::ReadOnly => "工作区以只读模式打开，无法写入。请关闭只读模式后重试。".to_owned(),
+            Error::Invalid { path, message } => {
+                format!("文件「{path}」格式有误：{message}。请修正后重试。")
+            }
+            Error::Io { path, source } => {
+                format!("读写「{path}」失败：{source}。请检查权限或文件占用状态后重试。")
+            }
+            Error::Conflict { path, .. } => {
+                format!("文件「{path}」已被外部修改，保存已取消。请先重新加载再保存。")
+            }
+            Error::TooManyProblems(n) => format!(
+                "比赛题目数超出上限（当前 {n} 题，最多 {MAX_CONTEST_PROBLEMS} 题）。请移除多余题目后重试。"
+            ),
+            Error::Referenced { id, contests } => format!(
+                "题目「{id}」仍被未定稿比赛引用（{}），无法删除。请先从对应比赛中移除该题。",
+                contests.join("、")
+            ),
+            Error::AlreadyFrozen(id) => {
+                format!("比赛「{id}」已定稿。如需重新生成快照，请先「重新编辑」。")
+            }
+            Error::NotFrozen(id) => {
+                format!("比赛「{id}」尚未定稿，无法重新编辑。请确认比赛状态后重试。")
+            }
+            Error::DisallowedPath(path) => {
+                format!("路径「{path}」不允许写入。请仅修改题目或比赛目录下的受管文件。")
+            }
+        }
+    }
+}
+
+fn format_not_found_message(what: &str) -> String {
+    if let Some(id) = parse_quoted_after(what, "problem ") {
+        return format!("找不到题目「{id}」。请检查题目 ID 是否存在。");
+    }
+    if let Some(id) = parse_quoted_after(what, "contest ") {
+        return format!("找不到比赛「{id}」。请检查比赛 ID 是否存在。");
+    }
+    if let Some(rest) = what.strip_prefix("label ")
+        && let Some((label_part, contest_part)) = rest.split_once(" in contest ")
+        && let (Some(label), Some(contest_id)) = (
+            strip_debug_quotes(label_part),
+            strip_debug_quotes(contest_part),
+        )
+    {
+        return format!("比赛「{contest_id}」中找不到题号「{label}」。请检查题号是否正确。");
+    }
+    if let Some(dir) = what.strip_prefix("workspace.toml at or above ") {
+        return format!(
+            "未找到工作区（{dir} 及其上级目录缺少 workspace.toml）。请重新选择工作区目录。"
+        );
+    }
+    format!("找不到目标路径「{what}」。请确认文件是否存在于当前工作区。")
+}
+
+fn parse_quoted_after<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    strip_debug_quotes(text.strip_prefix(prefix)?)
+}
+
+fn strip_debug_quotes(s: &str) -> Option<&str> {
+    let inner = s.strip_prefix('"')?.strip_suffix('"')?;
+    (!inner.is_empty()).then_some(inner)
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

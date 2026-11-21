@@ -6,7 +6,8 @@ import { Text, View, type JSX, type ViewStyle, type StyleProp } from "nsh";
 import { Menu, MenuItem, MenuSeparator } from "nsh/base";
 import { Icon, type IconName } from "./Icon";
 import { Kbd } from "./kit";
-import { EASE_STANDARD, ms, popoverShadow } from "./theme";
+import { colorTransition, overlayTransform, overlayTransition } from "./motion";
+import { popoverShadow } from "./theme";
 
 export type MenuEntry =
   | {
@@ -45,6 +46,17 @@ export function AppMenu(props: {
         padding: 4,
         borderRadius: 10,
         boxShadow: popoverShadow(),
+        opacity: 1,
+        transform: overlayTransform(true),
+        ...overlayTransition(),
+      }}
+      popupStartingStyle={{
+        opacity: 0,
+        transform: overlayTransform(false),
+      }}
+      popupEndingStyle={{
+        opacity: 0,
+        transform: overlayTransform(false),
       }}
     >
       <Each of={props.entries} key={(e) => e.id}>
@@ -67,9 +79,7 @@ export function AppMenu(props: {
                   alignItems: "center",
                   gap: 8,
                   opacity: entry.disabled ? 0.5 : 1,
-                  transitionProperty: "colors",
-                  transitionDuration: ms(120),
-                  transitionTimingFunction: EASE_STANDARD,
+                  ...colorTransition(140),
                 } as StyleProp<ViewStyle>
               }
               indicator={<View />}
@@ -119,9 +129,7 @@ export function MoreTrigger(props: { testID?: string }) {
         borderRadius: 6,
         alignItems: "center",
         justifyContent: "center",
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(140),
       }}
     >
       <Icon name="ellipsis" size={16} tone="foreground" />

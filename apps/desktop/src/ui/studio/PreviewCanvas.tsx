@@ -45,8 +45,9 @@ import {
   TILE,
   type PageSize,
 } from "../logic";
-import { preview } from "../store";
-import { EASE_DRAWER, EASE_STANDARD, ms, popoverShadow } from "../theme";
+import { info, preview } from "../store";
+import { panelTransition } from "../motion";
+import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 
 type ViewportMemory = { zoom: number; scrollY: number; panX: number; autoFit: boolean; pageSizes: PageSize[] };
 
@@ -251,6 +252,9 @@ export function PreviewCanvas(props: {
   let autoFit = true;
   let pendingJumpPage: number | undefined;
   let lastStarts: PreviewStart[] = [];
+  let coldStartTried = false;
+  let showingSnapshot = false;
+  let snapshotTimer: number | undefined;
 
   // The content's laid-out height, so a scroll target beyond the previous maximum
   // settles once layout grows, and stays interruptible by the user.
@@ -335,11 +339,18 @@ export function PreviewCanvas(props: {
     return l.k === 1 && tx === 0 && ty === 0 ? "none" : `translate(${tx}px, ${ty}px) scale(${l.k})`;
   });
 
+  const inset = () => props.inset ?? 0;
+  const availableWidth = computed(() => pane().width - inset());
+  /** Unobscured horizontal width available to the paper column when the Inspector drawer is open. */
+  const effectiveWidth = computed(() => (pane().width > 0 ? Math.max(120, pane().width - inset()) : 0));
+
   const scale = computed(() => scaleFor(zoom(), pixelRatio()));
-  const left = computed(() => leftFor(pages()[0]?.width ?? 0, zoom(), pane().width, panX()));
+  const left = computed(() => leftFor(pages()[0]?.width ?? 0, zoom(), effectiveWidth(), panX()));
   const topPad = computed(() => topPadFor(pages(), zoom(), pane().height, hasHud()));
   const bottomPad = computed(() => bottomPadFor(hasHud()));
-  const view = computed<PreviewView[]>(() => viewFor(pages(), zoom(), scrollY(), panX(), pane(), topPad()));
+  const view = computed<PreviewView[]>(() =>
+    viewFor(pages(), zoom(), scrollY(), panX(), { width: effectiveWidth(), height: pane().height }, topPad()),
+  );
   const currentPage = computed(() => pageIndexAt(pages(), zoom(), scrollY(), pane().height, topPad()));
 
   function tiles(v: PreviewView, s: number, margin: number) {
@@ -371,6 +382,89 @@ export function PreviewCanvas(props: {
   let inFlight = 0;
   let again = false;
 
+  function tryHydrateColdStart(req: PreviewRequest, reqKey: string): boolean {
+    if (!hasHud() || coldStartTried || untracked(pages).length > 0 || shownKey) return false;
+    coldStartTried = true;
+    try {
+      const snap = preview.loadColdStartSnapshot();
+      const wsRoot = untracked(info).root;
+      if (
+        !snap ||
+        snap.pages.length === 0 ||
+        !wsRoot ||
+        snap.workspace !== wsRoot ||
+        snap.target !== req.target ||
+        snap.id !== req.id ||
+        snap.book !== req.book
+      ) {
+        return false;
+      }
+      const curPane = untracked(pane);
+      const effW = untracked(effectiveWidth);
+      // Always re-fit against the current effective pane width so window-size changes never jump on frame 1.
+      const restoredZoom = effW > 0 ? fitZoom(snap.pages, effW) : 0;
+      const rawScrollY = snap.scrollY >= 0 ? snap.scrollY : 0;
+      const restoredScrollY =
+        restoredZoom > 0 && curPane.height > 0 ? clampScroll(snap.pages, restoredZoom, rawScrollY, curPane.height) : rawScrollY;
+      const nextNeedsFit = restoredZoom === 0;
+      batch(() => {
+        shownKey = reqKey;
+        showingSnapshot = true;
+        needsFit = nextNeedsFit;
+        autoFit = true;
+        pages.set(snap.pages);
+        zoom.set(restoredZoom);
+        panX.set(0);
+        scrollY.set(restoredScrollY);
+      });
+      if (restoredZoom > 0 && curPane.height > 0) {
+        const newMaxScroll = Math.max(0, heightFor(snap.pages, restoredZoom, curPane.height, hasHud()) - curPane.height);
+        commitScroll(restoredScrollY, 0, newMaxScroll);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function saveColdStartSnapshotNow() {
+    if (!hasHud() || showingSnapshot || inFlight > 0) return;
+    if (untracked(live).k !== 1 || untracked(dragging) || untracked(resizing)) return;
+    const req = untracked(props.request);
+    if (!req || requestKey(req) !== shownKey) return;
+    const list = untracked(pages);
+    const z = untracked(zoom);
+    const wsRoot = untracked(info).root;
+    if (!wsRoot || list.length === 0 || z <= 0) return;
+
+    const curView = untracked(view);
+    const visible = curView.filter((v) => v.width > 0 && v.height > 0).map((v) => v.page);
+    const chosen = visible.length > 0 ? visible.slice(0, 2) : [untracked(currentPage)];
+    const metaJson = JSON.stringify({
+      workspace: wsRoot,
+      target: req.target,
+      id: req.id,
+      book: req.book,
+      zoom: z,
+      scrollY: untracked(scrollY),
+    });
+    try {
+      const renderScale = Math.max(1, z * pixelRatio());
+      void preview.saveColdStartSnapshot(metaJson, chosen, renderScale);
+    } catch {
+      // Snapshot persistence is best-effort and never blocks preview.
+    }
+  }
+
+  function scheduleColdStartSnapshot() {
+    if (!hasHud() || showingSnapshot) return;
+    clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => {
+      snapshotTimer = undefined;
+      saveColdStartSnapshotNow();
+    }, 800);
+  }
+
   function applyResult(reqKey: string, result: PreviewResult) {
     const isSwitch = reqKey !== shownKey;
     props.onResult?.(result);
@@ -384,6 +478,7 @@ export function PreviewCanvas(props: {
         diagnostics.set(result.diagnostics);
         if (isSwitch) {
           shownKey = reqKey;
+          showingSnapshot = false;
           pages.set([]);
         }
         if (pages().length === 0) failure.set(result.diagnostics.find((d) => d.severity === "error") ?? { severity: "error", message: result.error ?? "" });
@@ -391,6 +486,7 @@ export function PreviewCanvas(props: {
       return;
     }
     retries = 0;
+    showingSnapshot = false;
     failure.set(undefined);
     lastStarts = result.starts;
     const start = jumpTo === undefined ? undefined : result.starts.find((x) => x.label === jumpTo);
@@ -419,6 +515,7 @@ export function PreviewCanvas(props: {
         scrollY.set(newMaxScroll);
         commitScroll(newMaxScroll, oldMaxScroll, newMaxScroll);
       }
+      scheduleColdStartSnapshot();
       return;
     }
 
@@ -440,7 +537,7 @@ export function PreviewCanvas(props: {
       const rawY = start ? topFor(result.pages, nextZoom, start.page, tp) : saved.scrollY;
       nextScrollY = clampScroll(result.pages, nextZoom, rawY, curPane.height);
     } else {
-      nextZoom = fitZoom(result.pages, curPane.width);
+      nextZoom = fitZoom(result.pages, untracked(effectiveWidth));
       nextNeedsFit = nextZoom === 0;
       nextAutoFit = true;
       nextPanX = 0;
@@ -468,6 +565,7 @@ export function PreviewCanvas(props: {
       scrollY.set(nextScrollY);
     });
     commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+    scheduleColdStartSnapshot();
   }
 
   function compile() {
@@ -483,6 +581,7 @@ export function PreviewCanvas(props: {
     inFlight += 1;
 
     const curPane = pane();
+    const effPane = { width: untracked(effectiveWidth), height: curPane.height };
     const dpr = pixelRatio();
     let s: number;
     let list: PreviewView[];
@@ -490,16 +589,16 @@ export function PreviewCanvas(props: {
       const saved = hasHud() ? viewports.get(reqKey) : undefined;
       if (saved && !saved.autoFit) {
         s = scaleFor(saved.zoom, dpr);
-        const tp = topPadFor(saved.pageSizes, saved.zoom, curPane.height, hasHud());
-        list = viewFor(saved.pageSizes, saved.zoom, saved.scrollY, saved.panX, curPane, tp);
+        const tp = topPadFor(saved.pageSizes, saved.zoom, effPane.height, hasHud());
+        list = viewFor(saved.pageSizes, saved.zoom, saved.scrollY, saved.panX, effPane, tp);
       } else {
-        const estZoom = fitZoom([DEFAULT_PAGE], curPane.width);
+        const estZoom = fitZoom([DEFAULT_PAGE], effPane.width);
         s = scaleFor(estZoom, dpr);
         const estPages = [DEFAULT_PAGE, DEFAULT_PAGE];
-        const tp = topPadFor(estPages, estZoom, curPane.height, hasHud());
+        const tp = topPadFor(estPages, estZoom, effPane.height, hasHud());
         list =
-          estZoom > 0 && curPane.height > 0
-            ? viewFor(estPages, estZoom, 0, 0, curPane, tp)
+          estZoom > 0 && effPane.height > 0
+            ? viewFor(estPages, estZoom, 0, 0, effPane, tp)
             : [
                 { page: 0, x: 0, y: 0, width: 0, height: 0 },
                 { page: 1, x: 0, y: 0, width: 0, height: 0 },
@@ -532,6 +631,17 @@ export function PreviewCanvas(props: {
     if (due()) untracked(compile);
   });
 
+  // Throttle cold-start snapshot persistence when viewport settles after scroll/zoom.
+  effect(() => {
+    const pLen = pages().length;
+    const z = zoom();
+    void scrollY();
+    const settled = live().k === 1 && !dragging() && !resizing();
+    if (hasHud() && pLen > 0 && z > 0 && settled && !showingSnapshot) {
+      untracked(scheduleColdStartSnapshot);
+    }
+  });
+
   let lastKey: string | undefined;
   effect(() => {
     const next = key();
@@ -542,11 +652,14 @@ export function PreviewCanvas(props: {
       cancelPan();
       cancelPendingScroll();
       saveViewport();
+      clearTimeout(snapshotTimer);
+      snapshotTimer = undefined;
       compileSeq += 1;
       again = false;
       pendingJumpPage = undefined;
       if (!next) {
         shownKey = undefined;
+        showingSnapshot = false;
         needsFit = false;
         autoFit = true;
         lastStarts = [];
@@ -563,6 +676,8 @@ export function PreviewCanvas(props: {
         scrollTo(0);
         return;
       }
+      const req = untracked(props.request);
+      if (req) tryHydrateColdStart(req, next);
       compile();
     });
   });
@@ -570,6 +685,7 @@ export function PreviewCanvas(props: {
   cleanup(() => {
     clearTimeout(resizeTimer);
     clearTimeout(pinchCommitTimer);
+    clearTimeout(snapshotTimer);
     if (zoomRaf !== undefined) cancelAnimationFrame(zoomRaf);
     cancelPendingScroll();
   });
@@ -606,6 +722,7 @@ export function PreviewCanvas(props: {
       scrollY.set(nextScrollY);
     });
     commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+    scheduleColdStartSnapshot();
   }
 
   function cancelLiveZoom() {
@@ -668,6 +785,7 @@ export function PreviewCanvas(props: {
       scrollY.set(nextScrollY);
     });
     commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+    scheduleColdStartSnapshot();
   }
 
   function stepWheelZoom(now: number) {
@@ -728,8 +846,9 @@ export function PreviewCanvas(props: {
   function fit() {
     const list = pages();
     const curPane = pane();
-    if (!needsFit || list.length === 0 || curPane.width === 0) return;
-    const nextZoom = fitZoom(list, curPane.width);
+    const effW = effectiveWidth();
+    if (!needsFit || list.length === 0 || effW === 0) return;
+    const nextZoom = fitZoom(list, effW);
     if (nextZoom === 0) return;
     needsFit = false;
     autoFit = true;
@@ -760,7 +879,7 @@ export function PreviewCanvas(props: {
     cancelPendingScroll();
     const curPane = pane();
     const page = currentPage();
-    const nextZoom = fitZoom(list, curPane.width);
+    const nextZoom = fitZoom(list, effectiveWidth());
     if (nextZoom === 0) return;
     autoFit = true;
     const oldMaxScroll = currentMaxScroll();
@@ -773,6 +892,34 @@ export function PreviewCanvas(props: {
     });
     commitScroll(nextScrollY, oldMaxScroll, Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height));
   }
+
+  // Re-fit atomically in a single batch when the Inspector drawer opens or closes.
+  let lastInset = untracked(inset);
+  effect(() => {
+    const nextInset = inset();
+    if (nextInset === lastInset) return;
+    lastInset = nextInset;
+    untracked(() => {
+      const list = pages();
+      const curPane = pane();
+      const effW = effectiveWidth();
+      if (list.length === 0 || curPane.width <= 0 || effW <= 0) return;
+      if (autoFit && !dragging() && live().k === 1) {
+        const nextZoom = fitZoom(list, effW);
+        if (nextZoom > 0 && Math.abs(nextZoom - zoom()) > 0.001) {
+          const oldMaxScroll = currentMaxScroll();
+          const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height);
+          const nextScrollY = Math.min(newMaxScroll, Math.max(0, scrollY()));
+          batch(() => {
+            zoom.set(nextZoom);
+            panX.set(0);
+            scrollY.set(nextScrollY);
+          });
+          commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+        }
+      }
+    });
+  });
 
   function goPage(index: number, animated = true) {
     const list = pages();
@@ -822,7 +969,7 @@ export function PreviewCanvas(props: {
     },
     goPage,
     scrollToLocation,
-    zoomBy: (factor: number) => zoomWheel(factor, { x: pane().width / 2, y: pane().height / 2 }),
+    zoomBy: (factor: number) => zoomWheel(factor, { x: effectiveWidth() / 2, y: pane().height / 2 }),
     fitWidth,
     closeHud() {
       if (!hudOpen()) return false;
@@ -839,8 +986,6 @@ export function PreviewCanvas(props: {
     if (loc) props.onLocate?.(loc);
   }
 
-  const inset = () => props.inset ?? 0;
-  const availableWidth = computed(() => pane().width - inset());
   // Hide HUD smoothly on narrow panes when the Inspector drawer is open so it is never clipped.
   const hudHidden = computed(() => inset() > 0 && pane().width > 0 && availableWidth() < 320);
   const hudCompact = computed(() => pane().width > 0 && availableWidth() < 380);
@@ -880,7 +1025,8 @@ export function PreviewCanvas(props: {
         if (list.length === 0 || w <= 0) return;
         // Re-fit smoothly while the user hasn't manually zoomed (handles transient initial layout widths & split drags).
         if (autoFit && !untracked(dragging) && untracked(live).k === 1) {
-          const nextZoom = fitZoom(list, w);
+          const effW = Math.max(120, w - untracked(inset));
+          const nextZoom = fitZoom(list, effW);
           if (nextZoom > 0 && Math.abs(nextZoom - curZoom) > 0.001) {
             const oldMaxScroll = currentMaxScroll();
             const newMaxScroll = Math.max(0, heightFor(list, nextZoom, h, hasHud()) - h);
@@ -1056,9 +1202,7 @@ export function PreviewCanvas(props: {
             pointerEvents: hudHidden() ? "none" : "box-none",
             opacity: hudHidden() ? 0 : 1,
             transform: `translateX(${-inset() / 2}px)`,
-            transitionProperty: "transform, opacity",
-            transitionDuration: ms(170),
-            transitionTimingFunction: EASE_DRAWER,
+            ...panelTransition(),
           }}
         >
           <View
@@ -1080,7 +1224,7 @@ export function PreviewCanvas(props: {
               <HudButton
                 icon="minus"
                 disabled={zoom() === 0 || zoom() <= MIN_ZOOM + 0.001}
-                onPress={() => zoomWheel(1 / 1.25, { x: pane().width / 2, y: pane().height / 2 })}
+                onPress={() => zoomWheel(1 / 1.25, { x: effectiveWidth() / 2, y: pane().height / 2 })}
                 tooltip={tip("缩小", "mod+minus")}
               />
             </If>
@@ -1109,7 +1253,7 @@ export function PreviewCanvas(props: {
               <HudButton
                 icon="plus"
                 disabled={zoom() === 0 || zoom() >= MAX_ZOOM - 0.001}
-                onPress={() => zoomWheel(1.25, { x: pane().width / 2, y: pane().height / 2 })}
+                onPress={() => zoomWheel(1.25, { x: effectiveWidth() / 2, y: pane().height / 2 })}
                 tooltip={tip("放大", "mod+plus")}
               />
             </If>

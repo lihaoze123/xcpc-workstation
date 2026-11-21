@@ -7,9 +7,11 @@
 // 200 ms contest) and auto-saves after 500 ms with SHA-256 conflict detection. Ctrl+click
 // on the preview locates Markdown source; Mod+Shift+L locates the preview from the caret.
 
-import { batch, cleanup, computed, effect, keymap, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, computed, effect, keymap, reduceMotion, signal, Text, untracked, View, windowSize } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type EditorDiagnostic, type EditorRef } from "nsh/base";
 import type {
+  ActionResult,
+  CleanUnusedAssetsResultJs,
   ExportBookStatusJs,
   PreviewDiagnostic,
   PreviewRequest,
@@ -44,8 +46,10 @@ import {
   type StudioTarget,
   type UiError,
 } from "../store";
-import { popoverShadow, token } from "../theme";
+import { pageTransition, panelTransition } from "../motion";
+import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
+import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
@@ -84,7 +88,104 @@ export function StudioView(props: { active: boolean }) {
   const target = computed<StudioTarget | undefined>((prev) => studio() ?? prev);
   const tab = signal<Tab>(storeBook() === "editorial" ? "editorial" : "statement");
   const book = computed<Book>(() => (tab() === "editorial" ? "editorial" : "statements"));
-  const inspectorOpen = signal(loadPrefs().propsOpen ?? false);
+  const initialWinWidth = untracked(windowSize).width;
+  const inspectorOpen = signal(
+    initialWinWidth > 0 && initialWinWidth < 1200 ? false : (loadPrefs().propsOpen ?? false),
+  );
+  let userToggledInspector = false;
+  let checkedNarrowDefault = initialWinWidth > 0;
+  effect(() => {
+    const w = windowSize().width;
+    if (w <= 0 || checkedNarrowDefault) return;
+    checkedNarrowDefault = true;
+    if (!userToggledInspector && w < 1200 && untracked(inspectorOpen)) {
+      inspectorOpen.set(false);
+    }
+  });
+  const assetsOpen = signal(false);
+  const assetsHasTypstBlock = signal(false);
+  const previewCollapsed = signal(false);
+  const focusMode = signal(false);
+  const previewHidden = computed(() => focusMode() || previewCollapsed());
+
+  // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
+  // never triggered by typing or scrolling, and never remounts MarkdownEditor).
+  const outlineVisible = signal(true);
+  const outlineShown = signal(true);
+  const columnSettled = signal(true);
+  const previewShown = signal(true);
+  let outlineRaf: number | undefined;
+  let outlineTimer: number | undefined;
+  let columnRaf: number | undefined;
+  let previewRaf: number | undefined;
+  let layoutMotionInit = false;
+
+  effect(() => {
+    const showOutline = !focusMode();
+    if (outlineRaf !== undefined) {
+      cancelAnimationFrame(outlineRaf);
+      outlineRaf = undefined;
+    }
+    clearTimeout(outlineTimer);
+    if (showOutline) {
+      outlineVisible.set(true);
+      if (reduceMotion()) {
+        outlineShown.set(true);
+      } else {
+        outlineRaf = requestAnimationFrame(() => {
+          outlineRaf = undefined;
+          outlineShown.set(true);
+        });
+      }
+    } else {
+      outlineShown.set(false);
+      const dur = ms(180);
+      if (dur === 0) outlineVisible.set(false);
+      else outlineTimer = setTimeout(() => outlineVisible.set(false), dur);
+    }
+  });
+
+  effect(() => {
+    const hidden = previewHidden();
+    void focusMode();
+    const first = !layoutMotionInit;
+    layoutMotionInit = true;
+    if (columnRaf !== undefined) {
+      cancelAnimationFrame(columnRaf);
+      columnRaf = undefined;
+    }
+    if (previewRaf !== undefined) {
+      cancelAnimationFrame(previewRaf);
+      previewRaf = undefined;
+    }
+    if (first || reduceMotion()) {
+      columnSettled.set(true);
+      previewShown.set(!hidden);
+      return;
+    }
+    columnSettled.set(false);
+    columnRaf = requestAnimationFrame(() => {
+      columnRaf = undefined;
+      columnSettled.set(true);
+    });
+    if (hidden) {
+      previewShown.set(false);
+    } else {
+      previewShown.set(false);
+      previewRaf = requestAnimationFrame(() => {
+        previewRaf = undefined;
+        previewShown.set(true);
+      });
+    }
+  });
+
+  cleanup(() => {
+    if (outlineRaf !== undefined) cancelAnimationFrame(outlineRaf);
+    clearTimeout(outlineTimer);
+    if (columnRaf !== undefined) cancelAnimationFrame(columnRaf);
+    if (previewRaf !== undefined) cancelAnimationFrame(previewRaf);
+  });
+  const assetsRefreshSeq = signal(0);
   const coverActive = signal(false);
   const starts = signal<PreviewStart[]>([]);
   const diagnostics = signal<PreviewDiagnostic[]>([]);
@@ -133,6 +234,7 @@ export function StudioView(props: { active: boolean }) {
     const owner = `${wv}:${t?.target ?? ""}:${t?.id ?? ""}`;
     untracked(() => {
       notice.set(undefined);
+      assetsOpen.set(false);
       if (owner !== lastFreezeOwner) {
         lastFreezeOwner = owner;
         freeze.reset();
@@ -147,6 +249,7 @@ export function StudioView(props: { active: boolean }) {
   const conflict = signal<{ text: string; hash: string } | undefined>(undefined);
   let text = "";
   let dirty = false;
+  let slashActive = false;
   let saveTimer: number | undefined;
   let compileTimer: number | undefined;
   let editor: EditorRef | undefined;
@@ -169,22 +272,27 @@ export function StudioView(props: { active: boolean }) {
     canvas?.compile();
   }
 
-  function save() {
+  function save(): boolean {
     clearTimeout(saveTimer);
     saveTimer = undefined;
     const f = untracked(file);
-    if (!dirty || !f || f.readOnly || untracked(conflict)) return;
+    if (untracked(conflict)) return false;
+    if (!dirty || !f || f.readOnly) return true;
     const res = preview.save(f.path, text, f.hash);
     if (res.ok) {
       dirty = false;
       file.set({ ...f, hash: res.hash });
       notice.set(undefined);
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
       scheduleStatus();
+      return true;
     } else if (res.conflict) {
       const disk = preview.read(f.path);
       conflict.set({ text: disk.text, hash: disk.hash });
+      return false;
     } else {
       notice.set(errorOf(res, "保存"));
+      return false;
     }
   }
 
@@ -251,6 +359,7 @@ export function StudioView(props: { active: boolean }) {
       }
     }
     compileNow();
+    assetsRefreshSeq.set(assetsRefreshSeq() + 1);
     scheduleStatus();
   });
   cleanup(unwatch);
@@ -423,26 +532,6 @@ export function StudioView(props: { active: boolean }) {
     else if (d.page != null) canvas?.goPage(d.page);
   }
 
-  /** Opens the system image picker, copies the chosen image into `assets/`, inserts Markdown, and compiles immediately. */
-  async function pickAndInsertImage() {
-    const t = untracked(target);
-    if (!t || untracked(readOnly) || untracked(tab) === "samples") return;
-    try {
-      const rel = await preview.pickAndImportImage(
-        t.target,
-        t.id,
-        t.target === "contest" ? (untracked(label) ?? null) : null,
-      );
-      if (!rel) return;
-      notice.set(undefined);
-      compileImmediate = true;
-      await editorActions?.insertImage(rel);
-    } catch (err) {
-      compileImmediate = false;
-      notice.set({ error: err instanceof Error ? err.message : String(err), context: "导入图片" });
-    }
-  }
-
   /** Persists clipboard image bytes into `assets/` and returns the relative path for editor insertion. */
   function pasteImageBytes(ext: string, bytes: Uint8Array): string | null {
     const t = untracked(target);
@@ -456,6 +545,7 @@ export function StudioView(props: { active: boolean }) {
         bytes,
       );
       notice.set(undefined);
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
       compileImmediate = true;
       return rel;
     } catch (err) {
@@ -463,6 +553,156 @@ export function StudioView(props: { active: boolean }) {
       notice.set({ error: err instanceof Error ? err.message : String(err), context: "粘贴图片" });
       return null;
     }
+  }
+
+  const hasAssets = () => {
+    const t = target();
+    return !!t && (t.target === "problem" || (t.target === "contest" && !!item()));
+  };
+
+  function detectTypstBlock(): boolean {
+    const re = /(?:^|\n)[ \t]*```typst\b/i;
+    if (re.test(text)) return true;
+    const p = untracked(paths);
+    const activePath = untracked(file)?.path;
+    for (const candidate of [p?.statement, p?.editorial]) {
+      if (!candidate || candidate === activePath) continue;
+      try {
+        if (re.test(preview.read(candidate).text)) return true;
+      } catch {
+        // Ignore missing/unreadable sibling doc.
+      }
+    }
+    return false;
+  }
+
+  function openAssets() {
+    if (!untracked(hasAssets)) return;
+    assetsHasTypstBlock.set(detectTypstBlock());
+    assetsOpen.set(true);
+  }
+
+  /** Imports an image via the system picker into `assets/` without closing the gallery. */
+  async function importImageToGallery(): Promise<string | null> {
+    const t = untracked(target);
+    if (!t || untracked(readOnly)) return null;
+    try {
+      const rel = await preview.pickAndImportImage(
+        t.target,
+        t.id,
+        t.target === "contest" ? (untracked(label) ?? null) : null,
+      );
+      if (!rel) return null;
+      notice.set(undefined);
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+      return rel;
+    } catch (err) {
+      notice.set({ error: err instanceof Error ? err.message : String(err), context: "导入图片" });
+      return null;
+    }
+  }
+
+  function reloadActiveFileFromDisk() {
+    const f = untracked(file);
+    if (!f) return;
+    const disk = preview.read(f.path);
+    if (disk.hash !== f.hash) {
+      dirty = false;
+      replaceText(disk.text, true);
+      file.set({ ...f, hash: disk.hash, readOnly: disk.readOnly });
+    }
+  }
+
+  function insertAssetFromGallery(relPath: string) {
+    if (untracked(readOnly)) return;
+    if (untracked(tab) === "samples") setTab("statement");
+    compileImmediate = true;
+    void editorActions?.insertImage(relPath);
+  }
+
+  function setAssetWidthFromGallery(assetName: string, widthPct: number, docPath?: string | null): ActionResult {
+    const t = untracked(target);
+    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    if (!save()) {
+      return { ok: false, error: "当前文档尚未保存，已中止调整宽度", code: "conflict" };
+    }
+    const res = preview.setAssetWidth(
+      t.target,
+      t.id,
+      t.target === "contest" ? (untracked(label) ?? null) : null,
+      assetName,
+      widthPct,
+      docPath ?? null,
+    );
+    if (res.ok) {
+      reloadActiveFileFromDisk();
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+      refresh();
+      compileNow();
+      scheduleStatus();
+    }
+    return res;
+  }
+
+  function renameAssetFromGallery(oldName: string, newName: string): ActionResult {
+    const t = untracked(target);
+    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    // Persist unsaved edits first and abort if saving fails (e.g. external conflict).
+    if (!save()) {
+      return { ok: false, error: "当前文档尚未保存，已中止重命名", code: "conflict" };
+    }
+    const res = preview.renameProblemAsset(
+      t.target,
+      t.id,
+      t.target === "contest" ? (untracked(label) ?? null) : null,
+      oldName,
+      newName,
+    );
+    if (res.ok) {
+      reloadActiveFileFromDisk();
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+      refresh();
+      compileNow();
+      scheduleStatus();
+    }
+    return res;
+  }
+
+  function deleteAssetFromGallery(name: string): ActionResult {
+    const t = untracked(target);
+    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    const res = preview.deleteProblemAsset(
+      t.target,
+      t.id,
+      t.target === "contest" ? (untracked(label) ?? null) : null,
+      name,
+    );
+    if (res.ok) {
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+      refresh();
+      compileNow();
+      scheduleStatus();
+    }
+    return res;
+  }
+
+  function cleanUnusedAssetsFromGallery(): CleanUnusedAssetsResultJs {
+    const t = untracked(target);
+    if (!t || untracked(readOnly)) {
+      return { ok: false, removed: [], freedBytes: 0, error: "当前不可编辑", code: "read_only" };
+    }
+    const res = preview.cleanUnusedAssets(
+      t.target,
+      t.id,
+      t.target === "contest" ? (untracked(label) ?? null) : null,
+    );
+    if (res.ok || res.removed.length > 0) {
+      assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+      refresh();
+      compileNow();
+      scheduleStatus();
+    }
+    return res;
   }
 
   function compose(ids: string[]): boolean {
@@ -482,9 +722,25 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function toggleInspector() {
+    userToggledInspector = true;
     const next = !inspectorOpen();
     inspectorOpen.set(next);
     savePrefs({ propsOpen: next });
+  }
+
+  function togglePreview() {
+    if (focusMode()) {
+      batch(() => {
+        focusMode.set(false);
+        previewCollapsed.set(false);
+      });
+      return;
+    }
+    previewCollapsed.set(!previewCollapsed());
+  }
+
+  function toggleFocusMode() {
+    focusMode.set(!focusMode());
   }
 
   // Another contest (or the one restored at launch): its problem's first page.
@@ -516,14 +772,19 @@ export function StudioView(props: { active: boolean }) {
       "mod+minus": on(() => canvas?.zoomBy(1 / 1.25)),
       "mod+0": on(() => canvas?.fitWidth()),
       "mod+shift+l": on(() => void locatePreview()),
+      "mod+shift+f": on(toggleFocusMode),
     },
     { when: "always" },
   );
 
-  // Layered Escape: close find bar / HUD popover / notice / Inspector before leaving Studio.
+  // Layered Escape: close assets gallery / find bar / HUD popover / notice / Inspector / Focus Mode before leaving Studio.
   keymap.bind(
     "escape",
     on(() => {
+      if (assetsOpen()) {
+        assetsOpen.set(false);
+        return;
+      }
       if (editorActions?.closeFind()) return;
       if (canvas?.closeHud()) return;
       if (notice()) {
@@ -534,6 +795,10 @@ export function StudioView(props: { active: boolean }) {
         toggleInspector();
         return;
       }
+      if (focusMode()) {
+        focusMode.set(false);
+        return;
+      }
       closeStudio();
     }),
     { when: "notEditing" },
@@ -541,9 +806,9 @@ export function StudioView(props: { active: boolean }) {
 
   effect(() => {
     if (!props.active) return;
-    untracked(() =>
-      studioActions.set({
-        exportBook: (b) => void exportBook(b),
+    untracked(() => {
+      const nextActions = {
+        exportBook: (b: Book) => void exportBook(b),
         reveal: () => void reveal(book()),
         freeze: () => {
           const t = target();
@@ -552,10 +817,16 @@ export function StudioView(props: { active: boolean }) {
         unfreeze: () => target() && unfreezeFor.set(target()!.id),
         setTab,
         toggleInspector,
+        openAssets,
+        hasAssets: () => hasAssets(),
+        togglePreview,
+        toggleFocusMode,
+        focusMode: () => focusMode(),
         frozen: () => frozen(),
         isContest: () => target()?.target === "contest",
-      }),
-    );
+      };
+      studioActions.set(nextActions);
+    });
   });
   cleanup(() => studioActions.set(undefined));
 
@@ -600,6 +871,24 @@ export function StudioView(props: { active: boolean }) {
         }
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Btn
+              label="预览"
+              icon="fileText"
+              variant="ghost"
+              testID="toggle-preview"
+              tooltip={tip(previewHidden() ? "展开预览" : "收起预览")}
+              onPress={togglePreview}
+              style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
+            />
+            <Btn
+              label="专注"
+              icon="filePenLine"
+              variant="ghost"
+              testID="toggle-focus"
+              tooltip={tip(focusMode() ? "退出专注模式" : "专注模式", "mod+shift+f")}
+              onPress={toggleFocusMode}
+              style={focusMode() ? { backgroundColor: token("accent") } : undefined}
+            />
             <ExportButton
               status={status()}
               book={book()}
@@ -620,22 +909,34 @@ export function StudioView(props: { active: boolean }) {
       />
       <View style={{ flex: 1, flexDirection: "row" }}>
         <If when={target()?.target === "contest" && contest()}>
-          <Outline
-            detail={contest()!}
-            starts={starts()}
-            current={label()}
-            coverActive={coverActive()}
-            onSelect={(l) => selectLabel(l)}
-            onCover={() => {
-              coverActive.set(true);
-              canvas?.goPage(0);
+          <View
+            style={{
+              flexDirection: "row",
+              flexShrink: 0,
+              display: outlineVisible() ? "flex" : "none",
+              opacity: outlineShown() ? 1 : 0,
+              transform: reduceMotion() ? undefined : outlineShown() ? "translateX(0px)" : "translateX(-10px)",
+              ...panelTransition(),
             }}
-            onReorder={compose}
-          />
+          >
+            <Outline
+              detail={contest()!}
+              starts={starts()}
+              current={label()}
+              coverActive={coverActive()}
+              onSelect={(l) => selectLabel(l)}
+              onCover={() => {
+                coverActive.set(true);
+                canvas?.goPage(0);
+              }}
+              onReorder={compose}
+            />
+          </View>
         </If>
         <View style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
           <ResizablePanelGroup
             onResize={(e) => {
+              if (previewHidden() || e.sizes.length !== 2) return;
               const r = ratioOf(e.sizes);
               if (r !== undefined) savePrefs({ splitRatio: r });
             }}
@@ -698,8 +999,8 @@ export function StudioView(props: { active: boolean }) {
                           icon="image"
                           size={26}
                           iconSize={14.5}
-                          tooltip={tip("导入图片")}
-                          onPress={() => void pickAndInsertImage()}
+                          tooltip={tip("插入图片")}
+                          onPress={openAssets}
                         />
                       </View>
                     </If>
@@ -730,65 +1031,119 @@ export function StudioView(props: { active: boolean }) {
                 </If>
 
                 {/* Keep MarkdownEditor alive across 样例 tab switches to preserve undo stack, caret, and scroll */}
-                <View style={{ flex: 1, display: tab() === "samples" ? "none" : "flex" }}>
-                  <Each of={file() ? [file()!] : []} key={(f) => f.path}>
-                    {(f) => (
-                      <MarkdownEditor
-                        active={() => props.active}
-                        hidden={tab() === "samples"}
-                        onRef={(r) => {
-                          editor = r;
-                          editorPath = f().path;
-                          queueMicrotask(applyPending);
-                        }}
-                        onActions={(a) => {
-                          editorActions = a;
-                        }}
-                        defaultValue={f().text}
-                        placeholder={editorPlaceholder()}
-                        readOnly={readOnly()}
-                        diagnostics={editorDiagnostics()}
-                        onPasteImage={pasteImageBytes}
-                        onChange={(value) => {
-                          if (value === text) return;
-                          text = value;
-                          dirty = true;
-                          clearTimeout(saveTimer);
-                          saveTimer = setTimeout(save, SAVE_AFTER);
-                          if (compileImmediate) {
-                            compileImmediate = false;
-                            compileNow();
-                          } else {
-                            scheduleCompile();
-                          }
-                          scheduleStatus();
-                        }}
+                <View style={{ flex: 1, flexDirection: "row", justifyContent: "center", display: tab() === "samples" ? "none" : "flex" }}>
+                  <View
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      maxWidth: previewHidden() ? 760 : undefined,
+                      opacity: columnSettled() ? 1 : 0.92,
+                      transform: reduceMotion() ? undefined : columnSettled() ? "scale(1)" : "scale(0.992)",
+                      ...pageTransition(220),
+                    }}
+                  >
+                    <Each of={file() ? [file()!] : []} key={(f) => f.path}>
+                      {(f) => (
+                        <MarkdownEditor
+                          active={() => props.active}
+                          hidden={tab() === "samples"}
+                          typewriter={focusMode()}
+                          onRef={(r) => {
+                            editor = r;
+                            editorPath = f().path;
+                            queueMicrotask(applyPending);
+                          }}
+                          onActions={(a) => {
+                            editorActions = a;
+                          }}
+                          defaultValue={f().text}
+                          placeholder={editorPlaceholder()}
+                          readOnly={readOnly()}
+                          diagnostics={editorDiagnostics()}
+                          onInsertImage={openAssets}
+                          onPasteImage={pasteImageBytes}
+                          onSlashActiveChange={(active) => {
+                            slashActive = active;
+                            if (active) {
+                              clearTimeout(saveTimer);
+                              saveTimer = undefined;
+                              clearTimeout(compileTimer);
+                              compileTimer = undefined;
+                            } else if (dirty) {
+                              clearTimeout(saveTimer);
+                              saveTimer = setTimeout(save, SAVE_AFTER);
+                              if (compileImmediate) {
+                                compileImmediate = false;
+                                compileNow();
+                              } else {
+                                scheduleCompile();
+                              }
+                              scheduleStatus();
+                            }
+                          }}
+                          onChange={(value) => {
+                            if (value === text) return;
+                            text = value;
+                            dirty = true;
+                            if (slashActive) {
+                              clearTimeout(saveTimer);
+                              saveTimer = undefined;
+                              clearTimeout(compileTimer);
+                              compileTimer = undefined;
+                              return;
+                            }
+                            clearTimeout(saveTimer);
+                            saveTimer = setTimeout(save, SAVE_AFTER);
+                            if (compileImmediate) {
+                              compileImmediate = false;
+                              compileNow();
+                            } else {
+                              scheduleCompile();
+                            }
+                            scheduleStatus();
+                          }}
+                        />
+                      )}
+                    </Each>
+                    <If when={!file() && target()?.target === "contest"}>
+                      <EmptyState
+                        icon="listPlus"
+                        title="这场比赛还没有题目"
+                        hint="从题库挑题加进来，或者直接新建一道"
+                        action={
+                          <View style={{ flexDirection: "row", gap: 8 }}>
+                            <Btn label="去题库" icon="libraryBig" onPress={() => goSpace("problems")} />
+                            <Btn
+                              label="新建题目"
+                              icon="plus"
+                              variant="primary"
+                              onPress={() => dialog.set({ kind: "newProblem", addTo: target()!.id })}
+                              tooltip={tip("新建题目", "mod+n")}
+                            />
+                          </View>
+                        }
                       />
-                    )}
-                  </Each>
-                  <If when={!file() && target()?.target === "contest"}>
-                    <EmptyState
-                      icon="listPlus"
-                      title="这场比赛还没有题目"
-                      hint="从题库挑题加进来，或者直接新建一道"
-                      action={
-                        <View style={{ flexDirection: "row", gap: 8 }}>
-                          <Btn label="去题库" icon="libraryBig" onPress={() => goSpace("problems")} />
-                          <Btn
-                            label="新建题目"
-                            icon="plus"
-                            variant="primary"
-                            onPress={() => dialog.set({ kind: "newProblem", addTo: target()!.id })}
-                            tooltip={tip("新建题目", "mod+n")}
-                          />
-                        </View>
-                      }
-                    />
-                  </If>
+                    </If>
+                  </View>
                 </View>
 
                 <If when={tab() === "samples" ? problemId() : undefined}>
-                  {(id) => <Samples problemId={id()} readOnly={frozen() || info().readOnly} onSaved={compileNow} />}
+                  {(id) => (
+                    <View style={{ flex: 1, flexDirection: "row", justifyContent: "center" }}>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          maxWidth: previewHidden() ? 760 : undefined,
+                          opacity: columnSettled() ? 1 : 0.92,
+                          transform: reduceMotion() ? undefined : columnSettled() ? "scale(1)" : "scale(0.992)",
+                          ...pageTransition(220),
+                        }}
+                      >
+                        <Samples problemId={id()} readOnly={frozen() || info().readOnly} onSaved={compileNow} />
+                      </View>
+                    </View>
+                  )}
                 </If>
 
                 <If when={notice()}>
@@ -810,21 +1165,30 @@ export function StudioView(props: { active: boolean }) {
                 </If>
               </View>
             </ResizablePanel>
-            <ResizablePanel size={(1 - initialRatio) * 1000} minSize={320}>
-              <PreviewCanvas
-                request={request}
-                controller={(c) => (canvas = c)}
-                onResult={(r) => {
-                  batch(() => {
-                    diagnostics.set(r.diagnostics);
-                    if (r.pages.length > 0) starts.set(r.starts);
-                  });
-                  scheduleStatus();
+            <ResizablePanel size={(1 - initialRatio) * 1000} minSize={320} visible={!previewHidden()}>
+              <View
+                style={{
+                  flex: 1,
+                  opacity: previewShown() ? 1 : 0,
+                  transform: reduceMotion() ? undefined : previewShown() ? "translateX(0px)" : "translateX(8px)",
+                  ...panelTransition(),
                 }}
-                onLocate={locate}
-                onDiagnostic={finding}
-                inset={inspectorOpen() ? INSPECTOR_WIDTH : 0}
-              />
+              >
+                <PreviewCanvas
+                  request={request}
+                  controller={(c) => (canvas = c)}
+                  onResult={(r) => {
+                    batch(() => {
+                      diagnostics.set(r.diagnostics);
+                      if (r.pages.length > 0) starts.set(r.starts);
+                    });
+                    scheduleStatus();
+                  }}
+                  onLocate={locate}
+                  onDiagnostic={finding}
+                  inset={inspectorOpen() ? INSPECTOR_WIDTH : 0}
+                />
+              </View>
             </ResizablePanel>
           </ResizablePanelGroup>
           <If when={target()}>
@@ -836,6 +1200,8 @@ export function StudioView(props: { active: boolean }) {
                 contest={contest()}
                 item={item()}
                 freeze={freeze}
+                assetsRefreshSeq={assetsRefreshSeq()}
+                onOpenAssets={openAssets}
                 onChanged={() => {
                   compileNow();
                   scheduleStatus();
@@ -844,6 +1210,25 @@ export function StudioView(props: { active: boolean }) {
                 onClose={toggleInspector}
               />
             )}
+          </If>
+          <If when={target() && hasAssets()}>
+            <AssetsGalleryModal
+              open={assetsOpen()}
+              target={target()!.target}
+              id={target()!.id}
+              label={item()?.label}
+              readOnly={info().readOnly || frozen()}
+              hasTypstBlock={assetsHasTypstBlock()}
+              refreshSeq={assetsRefreshSeq()}
+              onClose={() => assetsOpen.set(false)}
+              onImportImage={importImageToGallery}
+              onInsertAsset={insertAssetFromGallery}
+              onSetAssetWidth={setAssetWidthFromGallery}
+              onRenameAsset={renameAssetFromGallery}
+              onDeleteAsset={deleteAssetFromGallery}
+              onCleanUnused={cleanUnusedAssetsFromGallery}
+              onLocateReference={(refFile, refLine) => locate({ file: refFile, line: refLine, column: 1 })}
+            />
           </If>
         </View>
       </View>

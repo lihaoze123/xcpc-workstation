@@ -13,6 +13,11 @@ sha2.workspace = true
 notify.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+imagesize.workspace = true
+image.workspace = true
+png.workspace = true
+resvg.workspace = true
+tiny-skia.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

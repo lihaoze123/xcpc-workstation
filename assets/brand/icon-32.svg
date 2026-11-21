@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="plate-bg-32" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F9F9F6"/>
+      <stop offset="40%" stop-color="#E8EAEE"/>
+      <stop offset="100%" stop-color="#B5BCC6"/>
+    </linearGradient>
+    <filter id="shadow-32" x="-15%" y="-15%" width="130%" height="135%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur"/>
+      <feOffset in="blur" dx="0" dy="0.6" result="offset"/>
+      <feFlood flood-color="#000000" flood-opacity="0.28" result="color"/>
+      <feComposite in="color" in2="offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#shadow-32)">
+    <rect x="2.5" y="2.5" width="27" height="27" rx="7" fill="url(#plate-bg-32)" stroke="#A7B0BC" stroke-width="0.6"/>
+  </g>
+  <rect x="10.5" y="6" width="14.5" height="19.5" rx="1" fill="#D5DCE6" stroke="#9AA6B6" stroke-width="0.7" transform="rotate(-15 17.5 21.5)"/>
+  <rect x="10.5" y="6" width="14.5" height="19.5" rx="1" fill="#FFFFFF" stroke="#B8C2CF" stroke-width="0.7"/>
+  <g transform="translate(18.2, 20.2) rotate(30)">
+    <polygon points="0,0 -1.6,-3.8 1.6,-3.8" fill="#F0DFC2"/>
+    <polygon points="0,0 -0.6,-1.4 0.6,-1.4" fill="#2B3038"/>
+    <rect x="-1.6" y="-13.6" width="1.6" height="9.9" fill="#F4B94F"/>
+    <rect x="0" y="-13.6" width="1.6" height="9.9" fill="#D48420"/>
+    <rect x="-1.6" y="-15.2" width="3.2" height="1.6" fill="#C4CBD4"/>
+    <path d="M -1.6,-15.2 L -1.6,-16.7 A 0.8,0.8 0 0 1 -0.8,-17.5 L 0.8,-17.5 A 0.8,0.8 0 0 1 1.6,-16.7 L 1.6,-15.2 Z" fill="#D6868B"/>
+  </g>
+</svg>

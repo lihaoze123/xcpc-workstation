@@ -24,6 +24,21 @@ import {
   validId,
   windowTitle,
 } from "./src/ui/logic";
+import {
+  indicatorTransition,
+  overlayTransition,
+  pageTransition,
+  panelTransition,
+  pressTransition,
+  SPRING_GENTLE,
+  SPRING_INDICATOR,
+  SPRING_OVERLAY,
+  SPRING_PAGE,
+  SPRING_PANEL,
+  SPRING_PRESS,
+} from "./src/ui/motion";
+import { formatAppVersion } from "./src/ui/SettingsView";
+import { filterShortcutGroups } from "./src/ui/ShortcutsModal";
 
 // The pixels are shared by every Preview, so each test uses scales of its own. Every
 // test opens the contest-zh fixture read-only.
@@ -245,8 +260,11 @@ test("exposes Phase 2 search, detail, stats, fuzzy jump, locateClick and MCP sni
   // Export status, lastWorkspaceMissing, and revealInFolder sandbox checks.
   expect(preview.workspace().lastWorkspaceMissing).toBe(false);
   const status = preview.exportStatus(contest());
-  expect(status.statements.relPath).toBe("build/contest-zh.pdf");
-  expect(status.editorial.relPath).toBe("build/contest-zh-editorial.pdf");
+  expect(status.statements.relPath).toBe("build/第一届 XCPC 工作站测试赛-试题册.pdf");
+  expect(status.editorial.relPath).toBe("build/第一届 XCPC 工作站测试赛-题解.pdf");
+  const about = Preview.aboutInfo();
+  expect(about.version.length > 0).toBe(true);
+  expect(about.os.length > 0 && about.arch.length > 0).toBe(true);
   const escapeRes = await preview.revealInFolder("../outside.txt");
   expect(escapeRes.ok).toBe(false);
   expect(escapeRes.code).toBe("path_escape");
@@ -376,4 +394,35 @@ test("the split ratio is kept within its range", () => {
   expect(clampRatio(0.95)).toBe(0.9);
   expect(ratioOf([300, 700])).toBe(0.3);
   expect(ratioOf([500])).toBe(undefined);
+});
+
+test("motion springs converge to ζ ∈ [0.86, 0.90] without hardcoded transitionDuration", () => {
+  const presets = [SPRING_OVERLAY, SPRING_INDICATOR, SPRING_PANEL, SPRING_PAGE, SPRING_PRESS, SPRING_GENTLE];
+  for (const p of presets) {
+    const k = p.stiffness ?? 0;
+    const c = p.damping ?? 0;
+    const m = p.mass ?? 1;
+    const zeta = c / (2 * Math.sqrt(k * m));
+    expect(zeta >= 0.86 && zeta <= 0.90).toBe(true);
+  }
+  const transitions = [overlayTransition(), indicatorTransition(), panelTransition(), pageTransition(), pressTransition()];
+  for (const t of transitions) {
+    if (String(t.transitionTimingFunction ?? "").startsWith("spring(")) {
+      expect(t.transitionDuration).toBe(undefined);
+    }
+  }
+});
+
+test("formatAppVersion formats dev and release builds consistently", () => {
+  expect(formatAppVersion({ version: "0.1.0", commit: "abcdef1234", isDev: true })).toBe("v0.1.0-dev (abcdef1)");
+  expect(formatAppVersion({ version: "v0.1.0", commit: "unknown", isDev: true })).toBe("v0.1.0-dev");
+  expect(formatAppVersion({ version: "0.1.0", commit: "abcdef1234", isDev: false })).toBe("v0.1.0");
+});
+
+test("shortcuts disambiguate the two Ctrl+F entries by context", () => {
+  const groups = filterShortcutGroups("mod+f");
+  const items = groups.flatMap((g) => g.items).filter((it) => it.keys === "mod+f");
+  expect(items.length).toBe(2);
+  expect(Boolean(items[0].context && items[1].context)).toBe(true);
+  expect(items[0].context !== items[1].context).toBe(true);
 });
