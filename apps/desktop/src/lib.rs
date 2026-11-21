@@ -19,6 +19,7 @@ mod snapshot;
 mod state;
 mod theme_config;
 mod types;
+mod vim_bridge;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -46,12 +47,14 @@ pub use crate::types::{
     UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
     WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
+pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
 /// The crate's UI set (`nsh.json` `"rust"`).
 #[native_module("xcpc-workstation/native")]
 fn native(registry: &mut Registry) {
     registry.class::<Preview>();
     registry.register::<PageImage>();
+    registry.register::<VimKeyBridge>();
 }
 
 /// The workspace bridge and preview engine: reads and saves files with SHA-256 conflict

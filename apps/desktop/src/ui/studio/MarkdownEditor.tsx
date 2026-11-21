@@ -18,7 +18,7 @@ import {
   type EditorSearchResult,
   type EditorSelection,
 } from "nsh/base";
-import { PageImage, Preview, type MarkdownSpanJs } from "xcpc-workstation/native";
+import { PageImage, Preview, VimKeyBridge, type MarkdownSpanJs } from "xcpc-workstation/native";
 import { preview } from "../store";
 import { Btn, IconBtn, tip } from "../kit";
 import {
@@ -1285,6 +1285,10 @@ export function MarkdownEditor(props: {
         }
       }}
     >
+      <VimKeyBridge
+        active={props.active() && vimActive() && focused()}
+        onEscape={() => dispatchVimKey("Escape", false)}
+      />
       <If when={findOpen()}>
         <View
           testID="find-bar"
