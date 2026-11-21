@@ -232,6 +232,8 @@ export function PreviewCanvas(props: {
   inset?: number;
   /** The floating HUD (the studio's); a glance elsewhere goes without. */
   hud?: boolean;
+  /** False while hidden (`display: none`): keeps rendered pages warm without compiling or rasterizing. */
+  active?: boolean;
 }) {
   const pages = signal<PreviewPage[]>([]);
   const diagnostics = signal<PreviewDiagnostic[]>([]);
@@ -262,6 +264,10 @@ export function PreviewCanvas(props: {
   let pendingScroll: { y: number; minContentHeight: number; raf?: number } | undefined;
 
   const hasHud = () => props.hud !== false;
+  const isActive = () => props.active !== false;
+  let deferredCompile = false;
+  let pendingPane: { width: number; height: number } | undefined;
+  let lastCommittedInset = untracked(() => props.inset ?? 0);
 
   const key = computed(() => {
     const r = props.request();
@@ -318,8 +324,9 @@ export function PreviewCanvas(props: {
     });
   }
 
-  // The live compositor transform of a pinch/Ctrl+wheel zoom or left-drag pan.
+  // The live compositor transform of a pinch/Ctrl+wheel zoom, splitter/drawer resize, or left-drag pan.
   const live = signal({ k: 1, tx: 0, ty: 0 });
+  const resizeTransform = signal({ k: 1, tx: 0, ty: 0 });
   const panOffset = signal({ dx: 0, dy: 0 });
   const dragging = signal(false);
   let dragStart: { x: number; y: number } | undefined;
@@ -333,10 +340,12 @@ export function PreviewCanvas(props: {
 
   const liveTransform = computed(() => {
     const l = live();
+    const r = resizeTransform();
     const p = panOffset();
-    const tx = l.tx + p.dx;
-    const ty = l.ty + p.dy;
-    return l.k === 1 && tx === 0 && ty === 0 ? "none" : `translate(${tx}px, ${ty}px) scale(${l.k})`;
+    const k = l.k * r.k;
+    const tx = l.tx + r.tx + p.dx;
+    const ty = l.ty + r.ty + p.dy;
+    return k === 1 && tx === 0 && ty === 0 ? "none" : `translate(${tx}px, ${ty}px) scale(${k})`;
   });
 
   const inset = () => props.inset ?? 0;
@@ -361,11 +370,14 @@ export function PreviewCanvas(props: {
   let asked = { key: "", scale: 0, pages: "", tiles: new Map<number, number[]>() };
   function due() {
     // Read every dependency before deciding, so the effect tracks them all.
+    const active = isActive();
     const curKey = key();
     const s = scale();
     const list = view();
     const isResizing = resizing();
-    if (!curKey || curKey !== shownKey || isResizing) return false;
+    const isDragging = dragging();
+    const liveK = live().k;
+    if (!active || !curKey || curKey !== shownKey || isResizing || isDragging || liveK !== 1) return false;
     if (curKey !== asked.key || s !== asked.scale || list.map((v) => v.page).join() !== asked.pages) return true;
     if (s <= BASE_SCALE) return false;
     return list.some((v) => {
@@ -571,6 +583,11 @@ export function PreviewCanvas(props: {
   function compile() {
     const req = untracked(props.request);
     if (!req) return;
+    if (!untracked(isActive)) {
+      deferredCompile = true;
+      return;
+    }
+    deferredCompile = false;
     if (inFlight >= 2) {
       again = true;
       return;
@@ -651,6 +668,11 @@ export function PreviewCanvas(props: {
       cancelLiveZoom();
       cancelPan();
       cancelPendingScroll();
+      clearTimeout(resizeTimer);
+      resizeTimer = undefined;
+      pendingPane = undefined;
+      resizeTransform.set({ k: 1, tx: 0, ty: 0 });
+      if (untracked(resizing)) resizing.set(false);
       saveViewport();
       clearTimeout(snapshotTimer);
       snapshotTimer = undefined;
@@ -658,6 +680,7 @@ export function PreviewCanvas(props: {
       again = false;
       pendingJumpPage = undefined;
       if (!next) {
+        deferredCompile = false;
         shownKey = undefined;
         showingSnapshot = false;
         needsFit = false;
@@ -676,9 +699,28 @@ export function PreviewCanvas(props: {
         scrollTo(0);
         return;
       }
+      if (!untracked(isActive)) {
+        deferredCompile = true;
+        return;
+      }
       const req = untracked(props.request);
       if (req) tryHydrateColdStart(req, next);
       compile();
+    });
+  });
+
+  // When a hidden warm canvas becomes active again, only compile if its request changed
+  // or was invalidated while hidden; otherwise its already-rendered pages show on frame 0.
+  effect(() => {
+    if (!isActive()) return;
+    untracked(() => {
+      const curKey = key();
+      if (!curKey) return;
+      if (deferredCompile || curKey !== shownKey) {
+        const req = untracked(props.request);
+        if (req) tryHydrateColdStart(req, curKey);
+        compile();
+      }
     });
   });
 
@@ -804,7 +846,82 @@ export function PreviewCanvas(props: {
     zoomRaf = requestAnimationFrame(stepWheelZoom);
   }
 
+  function applyResizePreview(w: number, h: number, nextInset: number) {
+    const curPane = untracked(pane);
+    const list = untracked(pages);
+    const curZoom = untracked(zoom);
+    if (list.length === 0 || curZoom <= 0 || w <= 0 || curPane.width <= 0) return;
+    const oldEffW = Math.max(120, curPane.width - lastCommittedInset);
+    const newEffW = Math.max(120, w - nextInset);
+    const oldLeft = leftFor(list[0].width, curZoom, oldEffW, untracked(panX));
+    if (autoFit) {
+      const nextZoom = fitZoom(list, newEffW);
+      if (nextZoom <= 0) return;
+      const k = nextZoom / curZoom;
+      const newLeft = leftFor(list[0].width, nextZoom, newEffW, 0);
+      const tx = newLeft - k * oldLeft;
+      const oldTop = topPadFor(list, curZoom, curPane.height, hasHud());
+      const newTop = topPadFor(list, nextZoom, h, hasHud());
+      const curScroll = untracked(scrollY);
+      const ty = newTop - k * oldTop + (1 - k) * curScroll;
+      resizeTransform.set({ k, tx, ty });
+    } else {
+      const newLeft = leftFor(list[0].width, curZoom, newEffW, untracked(panX));
+      resizeTransform.set({ k: 1, tx: newLeft - oldLeft, ty: 0 });
+    }
+  }
+
+  function commitResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = undefined;
+    const targetPane = pendingPane ?? untracked(pane);
+    pendingPane = undefined;
+    const curInset = untracked(inset);
+    lastCommittedInset = curInset;
+    paneView?.measure().then((m) => {
+      if (m) paneOrigin = m.pagePosition;
+    });
+    const list = untracked(pages);
+    const curZoom = untracked(zoom);
+    if (targetPane.width <= 0 || list.length === 0 || curZoom <= 0) {
+      batch(() => {
+        resizeTransform.set({ k: 1, tx: 0, ty: 0 });
+        if (targetPane.width > 0) pane.set(targetPane);
+        resizing.set(false);
+      });
+      if (needsFit) fit();
+      return;
+    }
+    const oldMaxScroll = currentMaxScroll();
+    const effW = Math.max(120, targetPane.width - curInset);
+    const shouldRefit = autoFit && !untracked(dragging) && untracked(live).k === 1;
+    const nextZoom = shouldRefit ? fitZoom(list, effW) : curZoom;
+    const zoomChanged = shouldRefit && nextZoom > 0 && Math.abs(nextZoom - curZoom) > 0.001;
+    const finalZoom = zoomChanged ? nextZoom : curZoom;
+    const newMaxScroll = Math.max(0, heightFor(list, finalZoom, targetPane.height, hasHud()) - targetPane.height);
+    const curScroll = untracked(scrollY);
+    const nextScrollY = Math.min(newMaxScroll, Math.max(0, curScroll));
+    batch(() => {
+      resizeTransform.set({ k: 1, tx: 0, ty: 0 });
+      pane.set(targetPane);
+      resizing.set(false);
+      if (zoomChanged) {
+        zoom.set(finalZoom);
+        panX.set(0);
+        scrollY.set(nextScrollY);
+      } else if (curScroll > newMaxScroll + 0.5) {
+        scrollY.set(newMaxScroll);
+      }
+    });
+    if (zoomChanged || curScroll > newMaxScroll + 0.5) {
+      commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
+    }
+  }
+
   function zoomWheel(factor: number, at: { x: number; y: number }) {
+    if (pendingPane || untracked(resizeTransform).k !== 1 || untracked(resizeTransform).tx !== 0) {
+      commitResize();
+    }
     const z = zoom();
     if (z === 0) return;
     autoFit = false;
@@ -827,6 +944,21 @@ export function PreviewCanvas(props: {
 
   function zoomPinch(delta: number, phase: "start" | "move" | "end", at: { x: number; y: number }) {
     if (zoom() === 0) return;
+    // On Linux GTK4, Ctrl+wheel is delivered via `onPinch` as discrete steps (|delta| >= 0.04)
+    // followed by a delayed `phase === "end"`. Route discrete steps through exponential damping
+    // so wheel zooming glides smoothly instead of jumping notch-by-notch or committing mid-gesture.
+    if (phase === "end") {
+      if (zoomRaf !== undefined) return; // let the active wheel damping tail settle and commit cleanly
+      commitZoom();
+      return;
+    }
+    if (Math.abs(delta) >= 0.04) {
+      zoomWheel(1 + delta, at);
+      return;
+    }
+    if (pendingPane || untracked(resizeTransform).k !== 1 || untracked(resizeTransform).tx !== 0) {
+      commitResize();
+    }
     autoFit = false;
     commitPan();
     cancelPendingScroll();
@@ -839,8 +971,7 @@ export function PreviewCanvas(props: {
     const cur = live();
     if (phase === "start" && cur.k === 1 && cur.tx === 0 && cur.ty === 0) baseScrollY = scrollY();
     if (delta !== 0) applyLiveScale(cur.k * (1 + delta), at);
-    if (phase === "end") commitZoom();
-    else pinchCommitTimer = setTimeout(commitZoom, 140);
+    pinchCommitTimer = setTimeout(commitZoom, 240);
   }
 
   function fit() {
@@ -874,6 +1005,15 @@ export function PreviewCanvas(props: {
   function fitWidth() {
     const list = pages();
     if (list.length === 0) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = undefined;
+    if (pendingPane) {
+      pane.set(pendingPane);
+      pendingPane = undefined;
+    }
+    lastCommittedInset = untracked(inset);
+    resizeTransform.set({ k: 1, tx: 0, ty: 0 });
+    if (untracked(resizing)) resizing.set(false);
     cancelLiveZoom();
     cancelPan();
     cancelPendingScroll();
@@ -893,7 +1033,8 @@ export function PreviewCanvas(props: {
     commitScroll(nextScrollY, oldMaxScroll, Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height));
   }
 
-  // Re-fit atomically in a single batch when the Inspector drawer opens or closes.
+  // Preview the Inspector drawer inset via GPU compositor transform during the drawer slide,
+  // then commit layout + rasterization once after the slide settles (zero mid-slide reflow).
   let lastInset = untracked(inset);
   effect(() => {
     const nextInset = inset();
@@ -901,22 +1042,20 @@ export function PreviewCanvas(props: {
     lastInset = nextInset;
     untracked(() => {
       const list = pages();
-      const curPane = pane();
-      const effW = effectiveWidth();
-      if (list.length === 0 || curPane.width <= 0 || effW <= 0) return;
-      if (autoFit && !dragging() && live().k === 1) {
-        const nextZoom = fitZoom(list, effW);
-        if (nextZoom > 0 && Math.abs(nextZoom - zoom()) > 0.001) {
-          const oldMaxScroll = currentMaxScroll();
-          const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height);
-          const nextScrollY = Math.min(newMaxScroll, Math.max(0, scrollY()));
-          batch(() => {
-            zoom.set(nextZoom);
-            panX.set(0);
-            scrollY.set(nextScrollY);
-          });
-          commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
-        }
+      const curPane = pendingPane ?? pane();
+      const curZoom = zoom();
+      if (list.length === 0 || curPane.width <= 0 || curZoom <= 0) {
+        lastCommittedInset = nextInset;
+        return;
+      }
+      if (!dragging() && live().k === 1) {
+        pendingPane = curPane;
+        if (!resizing()) resizing.set(true);
+        applyResizePreview(curPane.width, curPane.height, nextInset);
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(commitResize, 220);
+      } else {
+        lastCommittedInset = nextInset;
       }
     });
   });
@@ -1007,39 +1146,34 @@ export function PreviewCanvas(props: {
         const w = e.bounds.size.width;
         const h = e.bounds.size.height;
         const moved = prev.width > 0 && (Math.abs(prev.width - w) > 0.5 || Math.abs(prev.height - h) > 0.5);
+        const list = untracked(pages);
+        const curZoom = untracked(zoom);
+        // Continuous split/window resize: drive the page stack purely via GPU compositor
+        // `resizeTransform` with zero per-frame layout reflow, `scrollTo`, `measure`, or
+        // rasterization, then commit layout + crisp tiles once 120ms after release.
+        if (moved && !needsFit && list.length > 0 && curZoom > 0 && !untracked(dragging) && untracked(live).k === 1) {
+          pendingPane = { width: w, height: h };
+          if (!untracked(resizing)) resizing.set(true);
+          applyResizePreview(w, h, untracked(inset));
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(commitResize, 120);
+          return;
+        }
         pane.set({ width: w, height: h });
-        paneView?.measure().then((m) => {
-          if (m) paneOrigin = m.pagePosition;
-        });
-        if (moved) {
+        if (!moved) {
+          paneView?.measure().then((m) => {
+            if (m) paneOrigin = m.pagePosition;
+          });
+        } else {
           resizing.set(true);
           clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(() => resizing.set(false), 120);
+          resizeTimer = setTimeout(commitResize, 120);
         }
         if (needsFit) {
           fit();
           return;
         }
-        const list = untracked(pages);
-        const curZoom = untracked(zoom);
         if (list.length === 0 || w <= 0) return;
-        // Re-fit smoothly while the user hasn't manually zoomed (handles transient initial layout widths & split drags).
-        if (autoFit && !untracked(dragging) && untracked(live).k === 1) {
-          const effW = Math.max(120, w - untracked(inset));
-          const nextZoom = fitZoom(list, effW);
-          if (nextZoom > 0 && Math.abs(nextZoom - curZoom) > 0.001) {
-            const oldMaxScroll = currentMaxScroll();
-            const newMaxScroll = Math.max(0, heightFor(list, nextZoom, h, hasHud()) - h);
-            const nextScrollY = Math.min(newMaxScroll, Math.max(0, untracked(scrollY)));
-            batch(() => {
-              zoom.set(nextZoom);
-              panX.set(0);
-              scrollY.set(nextScrollY);
-            });
-            commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
-            return;
-          }
-        }
         if (curZoom > 0) {
           const newMaxScroll = Math.max(0, heightFor(list, curZoom, h, hasHud()) - h);
           if (untracked(scrollY) > newMaxScroll + 0.5) {
@@ -1246,7 +1380,7 @@ export function PreviewCanvas(props: {
               }}
             >
               <Text style={{ textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                {zoom() > 0 ? `${Math.round(zoom() * 100)}%` : "–"}
+                {zoom() > 0 ? `${Math.round(zoom() * live().k * resizeTransform().k * 100)}%` : "–"}
               </Text>
             </View>
             <If when={!hudCompact()}>

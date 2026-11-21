@@ -22,6 +22,7 @@ import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import {
   brandReplayOpen,
+  flushPrefs,
   goSpace,
   hasWorkspace,
   hydrateAppearancePrefs,
@@ -81,6 +82,7 @@ function SpaceStage(props: {
     if (raf !== undefined) cancelAnimationFrame(raf);
   });
 
+  const isStudioStage = props.variant === "studio";
   return (
     <View
       style={{
@@ -89,7 +91,13 @@ function SpaceStage(props: {
         display: props.visible ? "flex" : "none",
         opacity: revealed() ? 1 : 0,
         transform: pageTransform(revealed(), props.variant ?? "space"),
-        ...pageTransition(220),
+        ...(isStudioStage
+          ? {
+              transitionProperty: "opacity",
+              transitionDuration: ms(140),
+              transitionTimingFunction: EASE_STANDARD,
+            }
+          : pageTransition(220)),
       }}
     >
       {props.children}
@@ -126,6 +134,7 @@ function BrandReplayOverlay(props: { version: string }) {
 }
 
 function App() {
+  cleanup(flushPrefs);
   const appVersion = formatAppVersion(readAboutInfo());
   void hydrateAppearancePrefs();
 

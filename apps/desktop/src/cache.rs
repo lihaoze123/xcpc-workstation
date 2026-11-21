@@ -504,8 +504,10 @@ fn render(compiled: &Compiled, jobs: &[Job], cancel: CancelToken<'_>) -> Vec<Ren
     if jobs.is_empty() || cancel.is_cancelled() {
         return Vec::new();
     }
+    // Leave headroom for the UI/compositor thread so background tile rasterization
+    // never starves GTK4 frame presentation during zoom/scroll.
     let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
+        .map_or(2, |n| n.get().saturating_sub(1).clamp(1, 4))
         .min(jobs.len());
     std::thread::scope(|s| {
         let tasks: Vec<_> = jobs

@@ -556,7 +556,6 @@ function ProblemInspector(props: { id: string; active: boolean }) {
   ]);
 
   const request = (): PreviewRequest | undefined => {
-    if (!props.active) return undefined;
     const t = tab();
     if (t === "code") return undefined;
     return { target: "problem", id: props.id, book: t, path: "", text: "" };
@@ -693,7 +692,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
       </If>
       <If
         when={tab() === "code"}
-        else={<PreviewCanvas request={request} controller={(c) => (canvas = c)} hud={false} />}
+        else={<PreviewCanvas request={request} controller={(c) => (canvas = c)} hud={false} active={props.active} />}
       >
         <Editor
           style={{ flex: 1 }}

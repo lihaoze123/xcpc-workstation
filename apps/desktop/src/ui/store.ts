@@ -67,6 +67,9 @@ export function refresh() {
 // ── Preferences ──────────────────────────────────────────────────────────────
 
 let prefs: AppPrefsJs = preview.loadPrefs();
+let prefsDirty = false;
+let prefsTimer: number | undefined;
+let visitTimer: number | undefined;
 
 export function loadPrefs(): AppPrefsJs {
   return prefs;
@@ -75,14 +78,36 @@ export function loadPrefs(): AppPrefsJs {
 export let splitRatio = clampRatio(prefs.splitRatio);
 export const splitRatioSignal = signal(splitRatio);
 
-/** Merges `patch` into the preferences and saves them (the bridge keeps the fields it reserves). */
-export function savePrefs(patch: Partial<AppPrefsJs>) {
-  prefs = { ...preview.loadPrefs(), ...patch };
-  if (patch.splitRatio !== undefined) {
-    splitRatio = clampRatio(patch.splitRatio);
-    splitRatioSignal.set(splitRatio);
+/** Flushes any pending debounced preferences write to disk immediately. */
+export function flushPrefs() {
+  if (prefsTimer !== undefined) {
+    clearTimeout(prefsTimer);
+    prefsTimer = undefined;
   }
+  if (!prefsDirty) return;
+  prefsDirty = false;
   preview.savePrefs(prefs);
+}
+
+/** Merges `patch` into the in-memory preferences immediately and debounces disk persistence
+ *  so high-frequency gestures (splitter drags, view switches, drawer toggles) never block the UI thread. */
+export function savePrefs(patch: Partial<AppPrefsJs>) {
+  prefs = { ...prefs, ...patch };
+  if (patch.splitRatio !== undefined) {
+    const next = clampRatio(patch.splitRatio);
+    if (Math.abs(next - splitRatio) > 0.002) {
+      splitRatio = next;
+      splitRatioSignal.set(splitRatio);
+    }
+  }
+  prefsDirty = true;
+  if (prefsTimer !== undefined) clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    prefsTimer = undefined;
+    if (!prefsDirty) return;
+    prefsDirty = false;
+    preview.savePrefs(prefs);
+  }, 250);
 }
 
 // ── Where the user is ────────────────────────────────────────────────────────
@@ -137,7 +162,12 @@ export function goSettings(section: SettingsSection) {
 export function openStudio(target: StudioTarget) {
   studio.set(target);
   savePrefs({ lastTarget: target.target, lastId: target.id, lastLabel: target.label ?? null });
-  preview.recordVisit(target.target === "contest" && target.label ? `contest_item:${target.id}:${target.label}` : `${target.target}:${target.id}`);
+  const key = target.target === "contest" && target.label ? `contest_item:${target.id}:${target.label}` : `${target.target}:${target.id}`;
+  if (visitTimer !== undefined) clearTimeout(visitTimer);
+  visitTimer = setTimeout(() => {
+    visitTimer = undefined;
+    preview.recordVisit(key);
+  }, 250);
 }
 
 export function closeStudio() {
@@ -154,6 +184,9 @@ function adopt(next: WorkspaceInfo, failContext: string) {
     return false;
   }
   const switched = next.root !== info().root;
+  if (switched) {
+    prefs = { ...prefs, recentWorkspaces: preview.recentWorkspaces() };
+  }
   batch(() => {
     openError.set(next.error ? { error: next.error, context: failContext } : undefined);
     if (switched) {

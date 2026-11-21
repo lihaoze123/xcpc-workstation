@@ -85,11 +85,12 @@ export function pageTransition(_duration?: number): ViewStyle {
   };
 }
 
-/** Page / studio container transform states, disabled under `prefers-reduced-motion`. */
+/** Page / studio container transform states, disabled under `prefers-reduced-motion`.
+ *  Full-window studio switches skip `scale(...)` to avoid full-screen FBO resampling on GTK4. */
 export function pageTransform(visible: boolean, variant: "space" | "studio" = "space"): string | undefined {
   if (reduceMotion()) return undefined;
   if (variant === "studio") {
-    return visible ? "scale(1)" : "scale(0.99)";
+    return undefined;
   }
   return visible ? "translateY(0px)" : "translateY(6px)";
 }

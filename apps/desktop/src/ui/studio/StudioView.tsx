@@ -1187,6 +1187,7 @@ export function StudioView(props: { active: boolean }) {
                   onLocate={locate}
                   onDiagnostic={finding}
                   inset={inspectorOpen() ? INSPECTOR_WIDTH : 0}
+                  active={props.active && !previewHidden()}
                 />
               </View>
             </ResizablePanel>
