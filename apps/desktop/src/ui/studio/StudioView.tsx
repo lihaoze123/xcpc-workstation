@@ -766,31 +766,28 @@ export function StudioView(props: { active: boolean }) {
   );
 
   // Layered Escape: close assets gallery / find bar / HUD popover / notice / Inspector / Focus Mode before leaving Studio.
-  keymap.bind(
-    "escape",
-    on(() => {
-      if (assetsOpen()) {
-        assetsOpen.set(false);
-        return;
-      }
-      if (editorActions?.closeFind()) return;
-      if (canvas?.closeHud()) return;
-      if (notice()) {
-        notice.set(undefined);
-        return;
-      }
-      if (inspectorOpen()) {
-        toggleInspector();
-        return;
-      }
-      if (focusMode()) {
-        focusMode.set(false);
-        return;
-      }
-      closeStudio();
-    }),
-    { when: "notEditing" },
-  );
+  function handleEscape() {
+    if (assetsOpen()) {
+      assetsOpen.set(false);
+      return;
+    }
+    if (editorActions?.closeFind()) return;
+    if (canvas?.closeHud()) return;
+    if (notice()) {
+      notice.set(undefined);
+      return;
+    }
+    if (inspectorOpen()) {
+      toggleInspector();
+      return;
+    }
+    if (focusMode()) {
+      focusMode.set(false);
+      return;
+    }
+    closeStudio();
+  }
+  keymap.bind("escape", on(handleEscape), { when: "notEditing" });
 
   effect(() => {
     if (!props.active) return;
@@ -1083,6 +1080,7 @@ export function StudioView(props: { active: boolean }) {
                           onInsertImage={openAssets}
                           onPasteImage={pasteImageBytes}
                           onVimModeChange={(m) => vimMode.set(m)}
+                          onVimEscape={handleEscape}
                           onSlashActiveChange={(active) => {
                             slashActive = active;
                             if (active) {

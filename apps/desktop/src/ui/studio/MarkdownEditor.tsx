@@ -37,8 +37,7 @@ import {
 import {
   INITIAL_VIM_STATE,
   stepVim,
-  VIM_INSERT_CAPTURE_KEYS,
-  VIM_NORMAL_CAPTURE_KEYS,
+  VIM_NORMAL_KEYMAP,
   type VimMode,
   type VimState,
 } from "./vim";
@@ -139,6 +138,7 @@ export function MarkdownEditor(props: {
   onPasteImage?: (ext: string, bytes: Uint8Array) => string | null | Promise<string | null>;
   onSlashActiveChange?: (active: boolean) => void;
   onVimModeChange?: (mode: VimMode | undefined) => void;
+  onVimEscape?: () => void;
   onChange: (value: string) => void;
 }) {
   let editor: EditorRef | undefined;
@@ -183,6 +183,14 @@ export function MarkdownEditor(props: {
   >(undefined);
   let mathPreviewTimer: number | undefined;
   let mathPreviewSeq = 0;
+  // Find & Replace bar state (declared before Vim/math effects so computed signals never hit TDZ).
+  const findOpen = signal(false);
+  const replaceOpen = signal(false);
+  const findQuery = signal("");
+  const replaceQuery = signal("");
+  const caseSensitive = signal(false);
+  const searchResult = signal<EditorSearchResult>({ count: 0, current: null });
+
   const vimState = signal<VimState>(INITIAL_VIM_STATE);
   const vimActive = computed(
     () => editorVimMode() && !props.readOnly && !props.hidden && !slashState() && !findOpen(),
@@ -200,26 +208,21 @@ export function MarkdownEditor(props: {
   });
   cleanup(() => props.onVimModeChange?.(undefined));
 
-  const vimCaptureKeys = computed<string[] | undefined>(() => {
-    if (!vimActive()) return undefined;
-    return vimState().mode === "insert" ? VIM_INSERT_CAPTURE_KEYS : VIM_NORMAL_CAPTURE_KEYS;
-  });
-
-  function handleVimKeyDown(e: {
-    key: string;
-    modifiers: { control: boolean; alt: boolean; platform: boolean };
-  }) {
+  function dispatchVimKey(key: string, ctrl = false) {
     if (!untracked(vimActive) || !editor || !untracked(focused)) return;
     const curSel = lastSelections[lastSelections.length - 1];
     const head = curSel?.head ?? untracked(caret) ?? { line: 0, column: 0 };
     const res = stepVim(
       untracked(vimState),
-      e.key,
-      { ctrl: e.modifiers.control, alt: e.modifiers.alt, meta: e.modifiers.platform && !e.modifiers.control },
+      key,
+      { ctrl, alt: false, meta: false },
       lines(),
       head,
     );
-    if (!res.handled) return;
+    if (!res.handled) {
+      if (key === "Escape") props.onVimEscape?.();
+      return;
+    }
     vimState.set(res.state);
     if (res.command === "undo") {
       editor.run("undo");
@@ -386,14 +389,6 @@ export function MarkdownEditor(props: {
       });
     }, 350) as unknown as number;
   }
-
-  // Find & Replace bar state
-  const findOpen = signal(false);
-  const replaceOpen = signal(false);
-  const findQuery = signal("");
-  const replaceQuery = signal("");
-  const caseSensitive = signal(false);
-  const searchResult = signal<EditorSearchResult>({ count: 0, current: null });
 
   const searchObj = computed<EditorSearch | null>(() => {
     if (!findOpen()) return null;
@@ -1206,6 +1201,37 @@ export function MarkdownEditor(props: {
     });
   });
 
+  // Vim keymap bindings: intercept keys BEFORE `<Editor>`'s hidden text input sink
+  // via `when: "always", forFocus: true`. In Insert mode only `escape` is bound so typing
+  // flows natively (including IME); in Normal/Visual modes all printable/editing keys are
+  // consumed by `stepVim` while `mod+*` and `alt+*` app shortcuts remain untouched.
+  effect(() => {
+    if (!props.active() || !vimActive() || !focused()) return;
+    const mode = vimState().mode;
+    let cancelled = false;
+    const unbinds: (() => void)[] = [];
+    queueMicrotask(() => {
+      if (cancelled) return;
+      unbinds.push(
+        keymap.bind("escape", () => dispatchVimKey("Escape", false), {
+          when: "always",
+          forFocus: true,
+        }),
+      );
+      if (mode !== "insert") {
+        const table: Record<string, () => void> = {};
+        for (const entry of VIM_NORMAL_KEYMAP) {
+          table[entry.stroke] = () => dispatchVimKey(entry.key, !!entry.ctrl);
+        }
+        unbinds.push(keymap.bind(table, { when: "always", forFocus: true, repeat: true }));
+      }
+    });
+    cleanup(() => {
+      cancelled = true;
+      for (const fn of unbinds) fn();
+    });
+  });
+
   // Intercept arrow/Tab/Escape navigation whenever the slash popover is open.
   // Focus moves to the popover's filter input while open, so Editor's native bindings
   // are inactive and these keymap bindings take effect immediately without conflict.
@@ -1240,8 +1266,6 @@ export function MarkdownEditor(props: {
   return (
     <View
       style={{ flex: 1 }}
-      captureKeys={vimCaptureKeys()}
-      onKeyDown={handleVimKeyDown}
       onLayout={(e) => {
         editorHeight = e.bounds.size.height;
       }}
