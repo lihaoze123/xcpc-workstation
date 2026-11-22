@@ -2,6 +2,37 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0-beta.2] - 2026-11-22
+
+### 新增
+
+- **Typst 外部库生态支持（`@preview` / `@local`）**：
+  - 集成 `typst-kit` 标准包解析与自动下载能力，复用系统 Typst 缓存目录，支持 `TYPST_PACKAGE_PATH`、`TYPST_PACKAGE_CACHE_PATH` 与 `XCPC_OFFLINE=1` 离线开关，并进程级缓存不可变 `@preview` 源码保持毫秒级预览。
+  - 内嵌 `@preview/cetz:0.5.3`、`@preview/oxifmt:1.0.0`、`@preview/pinit:0.2.2`、`@preview/mannot:0.4.0` 与 `@preview/tiptoe:0.4.0` 离线回退包，开箱离线零延迟编译。
+  - 外部包编译诊断自动补全 `@{namespace}/{name}:{version}` 路径并优先沿调用栈回溯至用户源码位置。
+- **新建工作区多模板选择**：
+  - 桌面端「新建工作区」弹窗支持选择默认模板（`XCPC 经典 olymp-classic` / `OI 风格 cnoi-classic`），并说明支持按比赛切换或自定义 `templates/*.typ`。
+- **全新 3 题精品示例工作区**：
+  - `crc-check`（循环冗余校验）：模块化 `figures.typ` 编译期执行模 2 除法动态生成传输对比图、异或竖式与彩色长除法竖式，配合 `mannot` 公式下划线注解与 `pinit` 字段标注。
+  - `tree-beacon`（树上信标）：CeTZ 有根树矢量图（重链高亮、子树区域与点权标注）+ 题解 Pinit 树形 DP 转移拆解。
+  - `typst-showcase`（Typst 排版与绘图能力展示）：一屏呈现 CeTZ 最短路图/凸包坐标系、Pinit 斜率优化公式标注、Typst 脚本编程（杨辉三角与复杂度表）及 `.xcpc/preamble.typ` 自定义宏。
+  - 附 `welcome-round`（`olymp-classic`）与 `oi-mock`（`cnoi-classic`）两场比赛，直观演示活引用多模板出版。
+
+### 改进
+
+- **CCF CSP/NOI 风格 `cnoi-classic` 模板大幅升级**：
+  - 对齐 CSP-S 2024 官方试题版式，新增纵向转置题目汇总表、提交源程序文件名与编译选项表、注意事项、每页页眉与蓝色总页数页脚、汉字着重号（限定仅试题正文）、`#0000ff` 蓝框带行号样例盒，以及专属「参考题解」封面与目录表。
+- **正文表格与代码块排版**：
+  - `olymp-classic` 正文 Markdown 表格升级为居中纯正学术三线表；两套模板代码块默认关闭 JetBrains Mono 编程连字以避免与数学符号混淆。
+- **Linux 顶栏与文档**：
+  - 移除 Linux 打包时的 `--icon` 参数，消除 NSH 隐藏标题栏左上角未对齐小图标（应用图标仍由 `.desktop` 与全套 hicolor 图标提供）。
+  - 更新 `README.md` 展示截图（XCPC `olymp-classic` 工作室与 3 题题库中心）并修正快速开始 CLI 示例。
+
+### 修复
+
+- 修复 Arch Linux `.pkg.tar.zst` 包因 CI artifact 丢失可执行权限导致启动报错 `/opt/xcpc-workstation/: 是一个目录` 的问题。
+- 修复无方正字体环境下 CI 字体回退测试失败问题。
+
 ## [0.2.0-beta.1] - 2026-11-22
 
 首次公开发布（Public Beta），涵盖完整 Phase 2（组卷、出版工作室、题库中心、校验与 MCP 工具集）与 Phase 2.5（产品化打磨、开放定制、实用子集 Vim 与高频写作工具）。
