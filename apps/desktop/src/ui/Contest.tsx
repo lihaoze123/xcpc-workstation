@@ -29,7 +29,7 @@ export function ContestStats(props: { id: string; compact?: boolean }) {
     </Text>
   );
   const bar = (
-    <View style={{ gap: 8, flex: 1 }}>
+    <View style={props.compact ? { gap: 8, minWidth: 0 } : { gap: 8, flex: 1, minWidth: 0 }}>
       <View style={{ height: 8, flexDirection: "row", borderRadius: 4, overflow: "hidden", gap: 2 }} class="bg-muted">
         <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
           {(b) => <View style={{ flexGrow: b().count / total(), flexBasis: 0, backgroundColor: tierColor(b().tier as Tier) }} />}
@@ -56,7 +56,13 @@ export function ContestStats(props: { id: string; compact?: boolean }) {
     </View>
   );
   const tags = (
-    <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+    <View
+      style={
+        props.compact
+          ? { flexDirection: "row", flexWrap: "wrap", gap: 4, minWidth: 0 }
+          : { flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", gap: 4 }
+      }
+    >
       <Each of={stats().tagCounts.slice(0, props.compact ? 8 : 24)} key={(t) => t.tag}>
         {(t) => <Chip label={`${t().tag} ${t().count}`} />}
       </Each>

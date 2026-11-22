@@ -214,7 +214,7 @@ export function RatingBadge(props: { rating: number | null | undefined }) {
 }
 
 /** A tag chip. */
-export function Chip(props: { label: string; active?: boolean; onPress?: () => void }) {
+export function Chip(props: { label: string; active?: boolean; onPress?: () => void; maxWidth?: ViewStyle["maxWidth"] }) {
   const interactive = !!props.onPress;
   const cls = props.active
     ? interactive
@@ -229,14 +229,21 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
       class={cls}
       style={{
         height: 20,
+        maxWidth: props.maxWidth ?? "100%",
+        minWidth: 0,
+        overflow: "hidden",
         paddingLeft: 6,
         paddingRight: 6,
         borderRadius: 5,
-        justifyContent: "center",
+        flexDirection: "row",
+        alignItems: "center",
         ...colorTransition(140),
       }}
     >
-      <Text style={{ fontSize: 11.5 }} class={props.active ? "text-foreground" : "text-secondary-foreground"}>
+      <Text
+        style={{ fontSize: 11.5, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+        class={props.active ? "text-foreground" : "text-secondary-foreground"}
+      >
         {props.label}
       </Text>
     </View>

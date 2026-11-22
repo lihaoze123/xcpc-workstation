@@ -618,9 +618,34 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                 </Each>
                 <Each of={detail().sources} key={(s) => `${s.platform}:${s.id}`}>
                   {(s) => (
-                    <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 5, flexDirection: "row", alignItems: "center", gap: 4 }} class="bg-muted">
+                    <View
+                      tooltip={tip(`${s().platform} ${s().id}`)}
+                      style={{
+                        height: 20,
+                        maxWidth: 180,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        paddingLeft: 6,
+                        paddingRight: 6,
+                        borderRadius: 5,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                      class="bg-muted"
+                    >
                       <Icon name="link" size={11} tone="muted-foreground" />
-                      <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-secondary-foreground">
+                      <Text
+                        style={{
+                          fontSize: 11.5,
+                          fontFamily: MONO,
+                          flexShrink: 1,
+                          minWidth: 0,
+                          numberOfLines: 1,
+                          textOverflow: "ellipsis",
+                        }}
+                        class="text-secondary-foreground"
+                      >
                         {`${s().platform} ${s().id}`}
                       </Text>
                     </View>
@@ -634,6 +659,9 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                       class="bg-muted hover:bg-accent active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                       style={{
                         height: 20,
+                        maxWidth: 168,
+                        minWidth: 0,
+                        overflow: "hidden",
                         paddingLeft: 6,
                         paddingRight: 6,
                         borderRadius: 5,
@@ -646,7 +674,16 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                       }}
                     >
                       <Icon name="trophy" size={11} tone="muted-foreground" />
-                      <Text style={{ fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis", maxWidth: 140 }} class="text-secondary-foreground">
+                      <Text
+                        style={{
+                          fontSize: 11.5,
+                          flexShrink: 1,
+                          minWidth: 0,
+                          numberOfLines: 1,
+                          textOverflow: "ellipsis",
+                        }}
+                        class="text-secondary-foreground"
+                      >
                         {c().name}
                       </Text>
                     </View>

@@ -59,7 +59,7 @@ export function Outline(props: {
 
   return (
     <View
-      style={{ width: OUTLINE_WIDTH, borderRightWidth: 1 }}
+      style={{ width: OUTLINE_WIDTH, borderRightWidth: 1, overflow: "hidden" }}
       class="border-border bg-background"
       onMouseMove={(e) => r.move(e)}
       onMouseUp={(e) => r.end(e)}
@@ -113,7 +113,7 @@ export function Outline(props: {
         </View>
       </Scroll>
       <If when={props.detail.items.length > 0}>
-        <View style={{ padding: 12, borderTopWidth: 1 }} class="border-border">
+        <View style={{ padding: 12, borderTopWidth: 1, overflow: "hidden" }} class="border-border">
           <ContestStats id={props.detail.id} compact />
         </View>
       </If>
