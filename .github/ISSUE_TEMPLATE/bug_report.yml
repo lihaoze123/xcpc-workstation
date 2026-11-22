@@ -1,0 +1,34 @@
+name: Bug Report
+description: 报告程序崩溃、排版偏差或交互异常
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简述你遇到的问题以及预期行为。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开工作区 / 题目 ...
+        2. 执行操作 ...
+        3. 观察到异常 ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 运行环境（可在「设置 → 关于 → 复制诊断信息」一键获取）
+      description: 粘贴诊断信息，或注明操作系统、安装方式（.deb / .pkg.tar.zst / AppImage / Windows 安装器 / CLI）与版本号。
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 截图 / 最小复现题面（可选）
+      description: 如有排版问题，附上截图或最小复现 Markdown 片段会极大加快排查。

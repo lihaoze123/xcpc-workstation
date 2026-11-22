@@ -3,4 +3,5 @@ result
 result-*
 target/
 .nsh/
+__pycache__/
 tests/fixtures/**/workspace/build/

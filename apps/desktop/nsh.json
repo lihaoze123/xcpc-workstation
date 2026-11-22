@@ -1,8 +1,8 @@
 {
   "name": "XCPC Workstation",
   "id": "dev.xcpc.workstation",
-  "version": "0.1.0",
-  "build": 1,
+  "version": "0.2.0-beta.1",
+  "build": 2,
   "rust": ".",
   "updater": {
     "github": "lihaoze123/xcpc-workstation"

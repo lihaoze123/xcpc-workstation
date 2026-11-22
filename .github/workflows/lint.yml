@@ -23,9 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check bash syntax
-        run: bash -n scripts/*.sh
+        run: bash -n scripts/*.sh packaging/linux/*.sh
       - name: Run shellcheck
-        run: shellcheck -e SC2086 scripts/*.sh
+        run: shellcheck -e SC2086 scripts/*.sh packaging/linux/*.sh
       - name: Check Python syntax
         run: python3 -m py_compile scripts/*.py
 

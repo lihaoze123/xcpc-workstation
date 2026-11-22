@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Package release binaries (desktop app via NSH + `xcpc` CLI) as separate archives,
-# optionally compressing executables with UPX. Run inside `nix develop`.
+# Package release binaries (desktop app via NSH + `xcpc` CLI) as archives.
+# UPX compression is disabled by default for public releases (pass --upx to opt in).
+# Run inside `nix develop` (or in CI with XCPC_FONT_DIRS set).
 #
-#   scripts/package.sh [--target <linux|windows|all>] [--out <DIR>] [--no-upx]
+#   scripts/package.sh [--target <linux|windows|all>] [--out <DIR>] [--upx|--no-upx]
 set -euo pipefail
 
 usage() {
@@ -12,14 +13,15 @@ Usage: scripts/package.sh [OPTIONS]
 Options:
   --target <linux|windows|all>  Target platform(s) to package [default: linux]
   --out <DIR>                   Output directory for archives [default: target/dist]
-  --no-upx                      Skip UPX executable compression
+  --upx                         Enable UPX executable compression (off by default)
+  --no-upx                      Disable UPX executable compression (default)
   -h, --help                    Show this help message
 EOF
 }
 
 target="linux"
 out_arg=""
-use_upx=1
+use_upx=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "error: --out requires a value" >&2; exit 2; }
       out_arg="$2"
       shift 2
+      ;;
+    --upx)
+      use_upx=1
+      shift
       ;;
     --no-upx)
       use_upx=0
@@ -64,7 +70,7 @@ else
   out_dir=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$out_arg")
 fi
 
-: "${XCPC_FONT_DIRS:?run inside nix develop (XCPC_FONT_DIRS must be set for bundled fonts)}"
+: "${XCPC_FONT_DIRS:?run inside nix develop or set XCPC_FONT_DIRS for bundled fonts}"
 
 for cmd in nsh cargo python3 tar; do
   command -v "$cmd" >/dev/null || {
@@ -75,7 +81,7 @@ done
 
 if [[ $use_upx -eq 1 ]]; then
   command -v upx >/dev/null || {
-    echo "error: upx not found in PATH (pass --no-upx or run inside nix develop)" >&2
+    echo "error: upx not found in PATH (omit --upx or run inside nix develop)" >&2
     exit 1
   }
 fi
@@ -93,6 +99,10 @@ if [[ "$target" == "windows" || "$target" == "all" ]]; then
     exit 1
   fi
 fi
+
+app_version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$repo_root/apps/desktop/nsh.json")
+app_icon="$repo_root/assets/brand/icon-512.png"
+[[ -f "$app_icon" ]] || { echo "error: brand icon not found: $app_icon" >&2; exit 1; }
 
 mkdir -p "$out_dir"
 stage=$(mktemp -d)
@@ -154,10 +164,22 @@ record_summary() {
 }
 
 package_linux() {
+  echo "==> Packaging Linux CLI (xcpc)..."
+  cargo build --release -p xcpc-mcp
+  local cli_stage="$stage/linux-cli"
+  mkdir -p "$cli_stage"
+  cp "$repo_root/target/release/xcpc" "$cli_stage/xcpc"
+  chmod +x "$cli_stage/xcpc"
+  read -r cli_raw cli_upx < <(compress_bin "$cli_stage/xcpc" linux)
+
+  local cli_archive="$out_dir/xcpc-cli-${app_version}-linux-x86_64.tar.gz"
+  GZIP=-9 tar -C "$cli_stage" -czf "$cli_archive" xcpc
+  record_summary "cli (linux)" "$cli_raw" "$cli_upx" "$(stat -c %s "$cli_archive")" "$cli_archive"
+
   echo "==> Packaging Linux desktop..."
   local desk_stage="$stage/linux-desktop"
   mkdir -p "$desk_stage"
-  (cd "$repo_root/apps/desktop" && nsh package --target linux -o "$desk_stage")
+  (cd "$repo_root/apps/desktop" && nsh package --target linux --icon "$app_icon" -o "$desk_stage")
 
   local app_dir
   app_dir=$(find "$desk_stage" -mindepth 1 -maxdepth 1 -type d | head -n 1)
@@ -176,28 +198,31 @@ package_linux() {
   done < <(find "$app_dir" -maxdepth 1 -type f -executable -print0)
   [[ $found_bin -eq 1 ]] || { echo "error: no ELF executable found in $app_dir" >&2; exit 1; }
 
-  local desk_archive="$out_dir/xcpc-workstation-linux-x86_64.tar.gz"
+  # Include xcpc CLI beside the desktop runner in the portable archive.
+  cp "$cli_stage/xcpc" "$app_dir/xcpc"
+  chmod +x "$app_dir/xcpc"
+
+  local desk_archive="$out_dir/xcpc-workstation-${app_version}-linux-x86_64.tar.gz"
   GZIP=-9 tar -C "$desk_stage" -czf "$desk_archive" "$app_name"
   record_summary "desktop (linux)" "$desk_raw" "$desk_upx" "$(stat -c %s "$desk_archive")" "$desk_archive"
-
-  echo "==> Packaging Linux CLI (xcpc)..."
-  cargo build --release -p xcpc-mcp
-  local cli_stage="$stage/linux-cli"
-  mkdir -p "$cli_stage"
-  cp "$repo_root/target/release/xcpc" "$cli_stage/xcpc"
-  chmod +x "$cli_stage/xcpc"
-  read -r cli_raw cli_upx < <(compress_bin "$cli_stage/xcpc" linux)
-
-  local cli_archive="$out_dir/xcpc-cli-linux-x86_64.tar.gz"
-  GZIP=-9 tar -C "$cli_stage" -czf "$cli_archive" xcpc
-  record_summary "cli (linux)" "$cli_raw" "$cli_upx" "$(stat -c %s "$cli_archive")" "$cli_archive"
 }
 
 package_windows() {
+  echo "==> Packaging Windows CLI (xcpc.exe)..."
+  cargo xwin build --release -p xcpc-mcp --target x86_64-pc-windows-msvc
+  local cli_stage="$stage/windows-cli"
+  mkdir -p "$cli_stage"
+  cp "$repo_root/target/x86_64-pc-windows-msvc/release/xcpc.exe" "$cli_stage/xcpc.exe"
+  read -r cli_raw cli_upx < <(compress_bin "$cli_stage/xcpc.exe" windows)
+
+  local cli_archive="$out_dir/xcpc-cli-${app_version}-windows-x86_64.zip"
+  zip_dir "$cli_stage" "xcpc.exe" "$cli_archive"
+  record_summary "cli (windows)" "$cli_raw" "$cli_upx" "$(stat -c %s "$cli_archive")" "$cli_archive"
+
   echo "==> Packaging Windows desktop..."
   local desk_stage="$stage/windows-desktop"
   mkdir -p "$desk_stage"
-  (cd "$repo_root/apps/desktop" && nsh package --target windows -o "$desk_stage")
+  (cd "$repo_root/apps/desktop" && nsh package --target windows --icon "$app_icon" -o "$desk_stage")
 
   local app_dir
   app_dir=$(find "$desk_stage" -mindepth 1 -maxdepth 1 -type d | head -n 1)
@@ -214,20 +239,12 @@ package_windows() {
   done < <(find "$app_dir" -maxdepth 1 -type f -iname '*.exe' -print0)
   [[ $found_bin -eq 1 ]] || { echo "error: no .exe executable found in $app_dir" >&2; exit 1; }
 
-  local desk_archive="$out_dir/xcpc-workstation-windows-x86_64.zip"
+  # Include xcpc.exe beside the desktop runner in the portable archive.
+  cp "$cli_stage/xcpc.exe" "$app_dir/xcpc.exe"
+
+  local desk_archive="$out_dir/xcpc-workstation-${app_version}-windows-x86_64.zip"
   zip_dir "$desk_stage" "$app_name" "$desk_archive"
   record_summary "desktop (windows)" "$desk_raw" "$desk_upx" "$(stat -c %s "$desk_archive")" "$desk_archive"
-
-  echo "==> Packaging Windows CLI (xcpc.exe)..."
-  cargo xwin build --release -p xcpc-mcp --target x86_64-pc-windows-msvc
-  local cli_stage="$stage/windows-cli"
-  mkdir -p "$cli_stage"
-  cp "$repo_root/target/x86_64-pc-windows-msvc/release/xcpc.exe" "$cli_stage/xcpc.exe"
-  read -r cli_raw cli_upx < <(compress_bin "$cli_stage/xcpc.exe" windows)
-
-  local cli_archive="$out_dir/xcpc-cli-windows-x86_64.zip"
-  zip_dir "$cli_stage" "xcpc.exe" "$cli_archive"
-  record_summary "cli (windows)" "$cli_raw" "$cli_upx" "$(stat -c %s "$cli_archive")" "$cli_archive"
 }
 
 if [[ "$target" == "linux" || "$target" == "all" ]]; then

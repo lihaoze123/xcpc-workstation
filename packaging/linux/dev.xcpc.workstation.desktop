@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=XCPC Workstation
+GenericName=Personal XCPC Workstation
+GenericName[zh_CN]=个人 XCPC 工作站
+Comment=Local-first personal XCPC workstation for problem setting, contest publishing, and training
+Comment[zh_CN]=本地优先的个人 XCPC 出题、组卷与出版工作站
+Exec=xcpc-workstation %F
+Icon=dev.xcpc.workstation
+Terminal=false
+Categories=Development;Education;Office;
+Keywords=XCPC;ICPC;CCPC;OI;Typst;Polygon;Markdown;
+StartupNotify=true
+StartupWMClass=dev.xcpc.workstation

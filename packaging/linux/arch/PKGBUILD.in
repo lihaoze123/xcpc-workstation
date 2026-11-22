@@ -1,0 +1,56 @@
+# Maintainer: lihaoze123 <https://github.com/lihaoze123/xcpc-workstation>
+pkgname=xcpc-workstation
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Local-first personal XCPC workstation for problem setting, contest publishing, and training"
+arch=('x86_64')
+url="https://github.com/lihaoze123/xcpc-workstation"
+license=('Apache-2.0')
+depends=('gtk4' 'webkitgtk-6.0' 'gstreamer' 'gst-plugins-base' 'glibc')
+options=('!strip' '!debug')
+source=()
+sha256sums=()
+
+package() {
+  local payload="${XCPC_PAYLOAD_DIR:?XCPC_PAYLOAD_DIR must point to staged desktop app directory}"
+  local cli_bin="${XCPC_CLI_BIN:?XCPC_CLI_BIN must point to xcpc CLI binary}"
+  local repo="${XCPC_REPO_ROOT:?XCPC_REPO_ROOT must point to repository root}"
+  local runner
+  runner=$(find "$payload" -maxdepth 1 -type f -executable -print | head -n 1)
+  local runner_name
+  runner_name=$(basename "$runner")
+
+  install -dm755 "$pkgdir/opt/xcpc-workstation" "$pkgdir/usr/bin"
+  cp -a "$payload/." "$pkgdir/opt/xcpc-workstation/"
+  install -Dm755 "$cli_bin" "$pkgdir/opt/xcpc-workstation/xcpc"
+
+  cat > "$pkgdir/usr/bin/xcpc-workstation" <<EOF
+#!/usr/bin/env sh
+exec "/opt/xcpc-workstation/$runner_name" "\$@"
+EOF
+  chmod 755 "$pkgdir/usr/bin/xcpc-workstation"
+  ln -s /opt/xcpc-workstation/xcpc "$pkgdir/usr/bin/xcpc"
+
+  install -Dm644 \
+    "$repo/packaging/linux/dev.xcpc.workstation.desktop" \
+    "$pkgdir/usr/share/applications/dev.xcpc.workstation.desktop"
+
+  local size
+  for size in 16 24 32 48 64 128 256 512; do
+    if [[ -f "$repo/assets/brand/icon-${size}.png" ]]; then
+      install -Dm644 \
+        "$repo/assets/brand/icon-${size}.png" \
+        "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/dev.xcpc.workstation.png"
+    fi
+  done
+
+  install -Dm644 \
+    "$repo/assets/brand/icon.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.xcpc.workstation.svg"
+  install -Dm644 \
+    "$repo/assets/brand/xcpc-workstation-symbolic.svg" \
+    "$pkgdir/usr/share/icons/hicolor/symbolic/apps/dev.xcpc.workstation-symbolic.svg"
+  install -Dm644 \
+    "$repo/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

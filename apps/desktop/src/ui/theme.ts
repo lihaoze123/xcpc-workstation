@@ -144,8 +144,8 @@ export const UI_SANS = "'Inter', 'Source Han Sans SC', 'Noto Sans CJK SC', syste
 /** The monospaced family of code and samples (§5). */
 export const MONO = "'JetBrains Mono', 'Maple Mono', monospace";
 
-/** The monospaced family for the Markdown/code editor with CJK fallback (§5). */
-export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', monospace";
+/** The monospaced family for the Markdown/code editor with cross-platform monospaced CJK fallback (§5). */
+export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', 'Sarasa Mono SC', 'NSimSun', monospace";
 
 /** Flipped to `true` after `registerFont` finishes loading bundled JetBrains Mono faces. */
 export const fontsReady = signal(false);
@@ -153,7 +153,7 @@ export const fontsReady = signal(false);
 /** Reactive editor font family: switches to `EDITOR_MONO` (or `theme.toml` override) after `registerFont` completes. */
 export const editorMono = computed(() => {
   const custom = customEditorFontFamily();
-  if (custom) return `'${custom}', 'Noto Sans CJK SC', 'Source Han Sans SC', monospace`;
+  if (custom) return `'${custom}', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', 'Sarasa Mono SC', 'NSimSun', monospace`;
   return fontsReady() ? EDITOR_MONO : "monospace";
 });
 

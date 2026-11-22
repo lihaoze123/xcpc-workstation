@@ -1,76 +1,154 @@
-# XCPC Workstation
+<p align="center">
+  <img src="./assets/brand/icon-128.png" width="96" height="96" alt="XCPC Workstation" />
+</p>
 
-本地优先的**个人 XCPC 工作站**（以 Linux 桌面端为主）：以开放目录题库为单一事实源，提供活引用组卷、与 [`lihaoze123/polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)（`olymp.sty` 中文版 @ `10f9959`）版式一致的 PDF 出版，并以 **CLI + stdio MCP** 作为一等接口；桌面 GUI、CLI 与 MCP 共用同一套 Rust Core。
+<h1 align="center">XCPC Workstation</h1>
 
-## 当前里程碑：`v0.1.0`（Phase 0–1 出版链路）
+<p align="center">
+  本地优先的个人 XCPC 工作站 —— 以开放目录题库为底座，覆盖出题排版、活引用组卷与 PDF 出版，并持续演进至本地 Polygon 与训练复盘。
+</p>
 
-- **开放目录工作区与领域模型**（`xcpc-domain` / `xcpc-storage`）：支持 `workspace.toml`、`problems/<id>/`（`problem.toml`、`statement.md`、`samples/`、`editorial.md`、`assets/`）与 `contests/<id>/contest.toml`（活引用与元数据覆写），Core 层强制执行原子写入、路径沙箱（含符号链接防御）与冻结只读守卫。
-- **出版管线与原生 Typst 引擎**（`xcpc-convert` / `xcpc-engine`）：基于 `pulldown-cmark` + 内嵌 `mitex` 将 Markdown 与数学公式转换为 Typst（不手写解析器），识别标准章节与 `samples/` 样例表，将源码/版心溢出诊断映射回 Markdown 行列；内嵌 `olymp-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表，以及 A4 题解册（扉页、目录链接与书签、单色高亮代码块）。
-- **确定性字体**：开发环境通过 `XCPC_FONT_DIRS` 锁定 Latin Modern、JetBrains Mono 与方正（`foundertype-ctex-fonts`）；release 构建直接内嵌 Latin Modern 与 JetBrains Mono（3.09 MiB，24 个 OTF 文件）作为兜底。未设置 `XCPC_FONT_DIRS`（独立分发或 Windows）时，引擎自动扫描可执行文件同级的 `fonts/` 目录并回退到系统字体（含中文字体回退链）。
-- **CLI 与 MCP 服务**（`xcpc`）：提供 `build` / `check` / `render` / `list` / `fonts` 子命令（支持 `--json`、确定性退出码与 `--read-only`）及 `xcpc mcp`（`compile_and_diagnose`、`render_page_png`、`export_pdf`）。
-- **Linux 桌面工作室**（`apps/desktop`，NSH 0.6）：打开工作区（并记忆上次工作区）、切换题目/比赛与题面/题解、按题号跳页、500ms 原子保存、编辑器诊断标记、导出 PDF 到 `build/`，以及基于像素缓冲与两阶段合成器缩放的实时预览。
+<p align="center">
+  <a href="https://github.com/lihaoze123/xcpc-workstation/releases"><img src="https://img.shields.io/github/v/release/lihaoze123/xcpc-workstation?include_prereleases&label=Release&color=0B6989" alt="Release" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-52525B" alt="License" /></a>
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-52525B" alt="Platform" />
+  <img src="https://img.shields.io/badge/QQ%E7%BE%A4-1134941278-0B6989" alt="QQ 群 1134941278" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/studio.png" width="100%" alt="XCPC Workstation 出版工作室：左侧大纲与难度分布、中间 Markdown/LaTeX 编辑器、右侧毫秒级 olymp-classic 实时预览" />
+</p>
+
+---
+
+## 核心特性
+
+- **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内嵌严格对齐 [`polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)（`olymp.sty` 中文版）的 `olymp-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册，另附 CNOI/OI 风格预置模板 `cnoi-classic`。
+- **开放目录 + 活引用组卷与冻结**：全部数据以纯文本 Markdown + TOML 存储在本地目录中，天然适配 Git；比赛以活引用组织题目并仅覆写元数据，冻结后将源文件与两本 PDF 写入 `snapshot/` 永久只读复现。
+- **AI Agent / MCP 一等公民**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core。提供搜索、读写题面、组卷、编译诊断、页面渲染与导出 PDF 等完整 MCP 工具，支持 `--read-only` 只读守卫与外部修改无闪白实时同步。
+- **为出题人打磨的写作体验**：`/` 斜杠命令菜单（公式、矩阵、分段函数、子任务表、原始 Typst 块等）、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式，以及一键复制「带样例的完整 Markdown」。
+- **文件驱动的开放定制**：通过 `.xcpc/preamble.typ` 注入自定义 Typst 宏、在 `templates/*.typ` 扩展模板、用 `theme.toml`（全局 / 工作区两级）自定义配色与编辑器字体。
+
+<p align="center">
+  <img src="./docs/images/library.png" width="100%" alt="XCPC Workstation 题库中心：多维筛选、难度着色、比赛引用与即时题面预览" />
+</p>
+
+---
+
+## 下载与安装
+
+前往 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载最新 `v0.2.0-beta.1` 安装包（所有桌面包均附带 `xcpc` 命令行工具）：
+
+| 平台 | 推荐安装包 | 说明 |
+|---|---|---|
+| **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64-setup.exe` | Inno Setup 每用户安装器（免管理员权限，可选将 `xcpc` 加入 PATH，支持应用内自动更新） |
+| **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64.zip` | 绿色便携包（含桌面端与 `xcpc.exe`） |
+| **Debian / Ubuntu** | `xcpc-workstation_*_amd64.deb` | `sudo apt install ./xcpc-workstation_*_amd64.deb` |
+| **Arch Linux** | `xcpc-workstation-*-x86_64.pkg.tar.zst` | `sudo pacman -U xcpc-workstation-*-x86_64.pkg.tar.zst` |
+| **Linux 通用** | `xcpc-workstation-*-linux-x86_64.AppImage` / `.tar.gz` | AppImage 赋权即可运行；`.tar.gz` 支持应用内自动更新 |
+| **纯 CLI / MCP** | `xcpc-cli-*-{linux,windows}-x86_64.{tar.gz,zip}` | 仅包含无头 `xcpc` 二进制，适合服务器与 Agent 环境 |
+
+> **Linux 运行依赖**：桌面端基于原生 GTK4 + WebKitGTK 6.0，`.deb` 与 `.pkg.tar.zst` 会自动声明依赖；使用 AppImage 或 `.tar.gz` 时请确保系统已安装 `gtk4` 与 `webkitgtk-6.0`。
+
+---
 
 ## 快速开始
 
-仓库使用 Nix Flake 管理工具链与锁定字体（`.envrc` 支持 `direnv` 自动加载；也可直接用 `nix develop -c <cmd>`）：
+### 桌面端
+
+1. 启动 **XCPC Workstation**。
+2. 首次打开可直接点击 **「打开示例」**，一键释放内置示例工作区并进入出版工作室体验；或点击 **「新建工作区」** 创建自己的题库。
+3. 使用 `Ctrl+K` 快速跳转题目/比赛与执行动作，使用 `Ctrl+/` 查看全部快捷键。
+
+### 命令行（CLI）
+
+```bash
+# 初始化一个带内置示例的工作区
+xcpc init --example ./my-xcpc
+
+# 构建整本试题册与题解册 PDF（输出至 my-xcpc/build/）
+xcpc -w ./my-xcpc build contest spring-training
+xcpc -w ./my-xcpc build contest spring-training --editorial
+
+# 编译与规范检查（适合 CI 或脚本集成）
+xcpc -w ./my-xcpc check contest spring-training --json
+```
+
+---
+
+## AI Agent / MCP 接入
+
+将以下配置添加到 Claude Desktop、Cursor、Codex 或其他支持 stdio MCP 的客户端（或在桌面端 **「设置 → 工作区」** 一键复制当前工作区的配置）：
+
+```json
+{
+  "mcpServers": {
+    "xcpc-workstation": {
+      "command": "xcpc",
+      "args": ["-w", "/path/to/your/workspace", "mcp"]
+    }
+  }
+}
+```
+
+如需限制 Agent 仅作审题与诊断而不修改工作区，可在 `args` 中追加 `"--read-only"`。
+
+---
+
+## 中文字体说明
+
+发行版二进制已内置 **Latin Modern**（正文、数学、等宽）与 **JetBrains Mono**（代码块），安装后即可开箱生成完整 PDF；中文字符默认自动回退到系统字体（如 Windows 宋体/黑体/楷体或 Linux 的 Noto CJK）。
+
+如需获得与 `olymp.sty`（`ctex` `fontset=founder`）基准 **100% 一致** 的中文版式，可将方正书宋 / 黑体 / 楷体 / 仿宋字体文件放入可执行文件同级的 `fonts/` 目录，或通过环境变量 `XCPC_FONT_DIRS` 指定字体目录。
+
+---
+
+## 路线图与当前状态
+
+当前处于 **`v0.2.0-beta.1`（Public Beta）**：
+
+- **Phase 1–2.5（已完成）**：开放目录题库、活引用组卷与冻结、`olymp-classic` / `cnoi-classic` 排版引擎、出版工作室、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制三件套、CLI 与 MCP 服务。
+- **Phase 3（规划中）**：本地 Polygon —— 基于 Wasmtime + fuel 计量的跨平台可复现题目包构建、数据生成与对拍、Polygon 导入。
+- **Phase 4（规划中）**：Codeforces / AtCoder / QOJ 训练同步、训练看板与待补队列。
+
+完整设计规格与阶段细节见 [`docs/`](./docs/README.md)（[产品规格](./docs/product.md)、[系统架构](./docs/architecture.md)、[题面版式](./docs/statement-style.md)、[设计系统](./docs/design-system.md)、[路线图](./docs/roadmap.md)）。
+
+---
+
+<details>
+<summary><strong>从源码构建与开发测试（Nix Flake）</strong></summary>
+
+仓库使用 Nix Flake 锁定 Rust 工具链、NSH 0.6.0 与基准字体：
 
 ```bash
 # 进入开发环境
 nix develop
 
-# 用内置示例工作区构建整本试题册与题解册 PDF（默认输出到 examples/workspace/build/）
-cargo run -p xcpc-mcp -- -w examples/workspace build contest spring-training
-cargo run -p xcpc-mcp -- -w examples/workspace build contest spring-training --editorial
-
-# 启动桌面端预览与编辑示例工作区
+# 启动桌面端（加载示例工作区）
 cd apps/desktop && XCPC_WORKSPACE=../../examples/workspace nsh dev
 
-# 启动 stdio MCP 服务（只读模式加 --read-only）
-cargo run -p xcpc-mcp -- -w examples/workspace mcp
+# 运行全量检查与回归测试
+cargo fmt --all -- --check
+cargo clippy --workspace --exclude xcpc-desktop --all-targets -- -D warnings
+cargo test --workspace --exclude xcpc-desktop
+scripts/olymp-regress.sh
+cd apps/desktop && nsh check && nsh test
 
-# 打包发布产物（桌面端 + xcpc CLI，经 UPX 压缩后输出到 target/dist/）
-scripts/package.sh --target linux   # 或 windows / all
+# 本地打包（默认关闭 UPX，如需开启可传 --upx）
+scripts/package.sh --target linux
 ```
 
-## 项目结构
+</details>
 
-```text
-crates/
-  xcpc-domain       # Problem / Contest / TrainingLog 领域模型与规则
-  xcpc-storage      # 工作区目录发现、原子写入、路径沙箱、冻结只读守卫
-  xcpc-convert      # Markdown + Math → Typst、publish 管线与源码诊断映射
-  xcpc-engine       # Typst World、olymp-classic 模板、MiTeX 作用域、release 字体内嵌
-  xcpc-mcp          # `xcpc` CLI 与 stdio MCP Server
-apps/
-  desktop           # NSH 0.6 桌面端（Rust native module + TSX UI）
-examples/workspace  # 示例工作区
-tests/fixtures/
-  olymp-ref         # `polygon-chinese-template` 基准 PDF 与工作区回归用例
-scripts/            # 基准 PDF 生成与视觉回归脚本
-docs/               # 产品、架构、题面版式、设计系统与路线图规格
-```
+---
 
-## 规格文档
+## 社区与反馈
 
-详细设计与后续规划见 [`docs/`](./docs/README.md)：
+- **QQ 用户交流群**：`1134941278`（欢迎反馈排版细节、模板定制与使用建议）
+- **问题与建议**：欢迎提交 [GitHub Issue](https://github.com/lihaoze123/xcpc-workstation/issues)，反馈 Bug 时可在桌面端 **「设置 → 关于 → 复制诊断信息」** 一键附带环境信息。
 
-- [产品规格](./docs/product.md)：定位、核心概念、`problem.toml` 与题面结构
-- [系统架构](./docs/architecture.md)：技术栈、crate 划分、领域模型、双层存储与安全边界
-- [题面样式与出版](./docs/statement-style.md)：`olymp-classic` 基准参数、字体、题解册与后续规划
-- [界面设计系统](./docs/design-system.md)：信息架构、Token、文案克制与流畅感工程铁律
-- [路线图](./docs/roadmap.md)：Phase 0–3 范围与技术验证记录
+## 致谢与许可证
 
-## 测试与回归验证
-
-```bash
-nix develop -c cargo fmt --all -- --check
-nix develop -c cargo clippy --workspace --exclude xcpc-desktop --all-targets -- -D warnings
-nix develop -c cargo test --workspace
-nix develop -c cargo test --release -p xcpc-engine
-nix develop -c scripts/olymp-regress.sh
-cd apps/desktop && nix develop -c nsh test
-```
-
-## 许可证
-
-本项目采用 [Apache License 2.0](./LICENSE) 许可。
+- 题面默认版式致谢 [`olymp.sty`](https://github.com/GassaFM/olymp.sty/)，预置 CNOI 模板灵感致谢 [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement)。
+- 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)。
+- 本项目采用 [Apache License 2.0](./LICENSE) 开源许可。

@@ -1,0 +1,19 @@
+name: Feature Request
+description: 提出新功能建议或体验改进
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与痛点
+      description: 你在出题、组卷或训练中遇到了什么具体场景？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的行为或方案
+      description: 你希望 XCPC Workstation 如何支持这个场景？
+    validations:
+      required: true

@@ -1,0 +1,336 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0-beta.1); defaults to v<nsh.json version>"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  NSH_VERSION: "0.6.0"
+
+jobs:
+  prepare:
+    name: Resolve version & tag
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            VER=$(python3 -c 'import json; print(json.load(open("apps/desktop/nsh.json"))["version"])')
+            TAG="v${VER}"
+          fi
+          VERSION="${TAG#v}"
+          PRERELEASE="false"
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE="true"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    name: Build Linux x86_64 (.tar.gz, .deb, .AppImage)
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system build & packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            pkg-config \
+            dpkg-dev \
+            libfuse2
+
+      - name: Cache NSH CLI
+        id: cache-nsh
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/nsh
+          key: nsh-linux-x86_64-${{ env.NSH_VERSION }}
+
+      - name: Install NSH CLI
+        if: steps.cache-nsh.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/nsh
+          curl -fsSL "https://github.com/longbridge/nsh/releases/download/v${NSH_VERSION}/nsh-linux-x86_64.tar.gz" \
+            | tar -xz -C ~/.local/nsh
+
+      - name: Add NSH to PATH
+        run: echo "$HOME/.local/nsh/bin" >> "$GITHUB_PATH"
+
+      - name: Cache bundled fonts
+        id: cache-fonts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/xcpc-bundled-fonts
+          key: xcpc-bundled-fonts-v1
+
+      - name: Fetch bundled OTF fonts
+        run: |
+          python3 scripts/fetch-bundled-fonts.py "$HOME/.cache/xcpc-bundled-fonts"
+          echo "XCPC_FONT_DIRS=$HOME/.cache/xcpc-bundled-fonts" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/desktop/.nsh/rust -> apps/desktop/.nsh/rust/target
+
+      - name: Build xcpc CLI (release)
+        run: cargo build --release -p xcpc-mcp
+
+      - name: Package Linux desktop & CLI archives
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          mkdir -p dist stage/linux-desktop stage/linux-cli
+          cp target/release/xcpc stage/linux-cli/xcpc
+          chmod +x stage/linux-cli/xcpc
+          GZIP=-9 tar -C stage/linux-cli -czf "dist/xcpc-cli-${VERSION}-linux-x86_64.tar.gz" xcpc
+
+          (cd apps/desktop && nsh package --target linux --app-version "$VERSION" --icon ../../assets/brand/icon-512.png -o ../../stage/linux-desktop)
+          APP_DIR=$(find stage/linux-desktop -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          APP_NAME=$(basename "$APP_DIR")
+          cp stage/linux-cli/xcpc "$APP_DIR/xcpc"
+          chmod +x "$APP_DIR/xcpc"
+          GZIP=-9 tar -C stage/linux-desktop -czf "dist/xcpc-workstation-${VERSION}-linux-x86_64.tar.gz" "$APP_NAME"
+
+          # Keep clean app_dir (without duplicating xcpc) for .deb / AppImage / Arch packaging
+          rm -f "$APP_DIR/xcpc"
+          mv "$APP_DIR" stage/linux-app-dir
+
+      - name: Build .deb package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          packaging/linux/build-deb.sh stage/linux-app-dir stage/linux-cli/xcpc "$VERSION" dist
+
+      - name: Build AppImage
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          curl -fsSL -o /tmp/appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool
+          APPIMAGETOOL=/tmp/appimagetool packaging/linux/build-appimage.sh \
+            stage/linux-app-dir stage/linux-cli/xcpc "$VERSION" dist
+
+      - name: Upload Linux release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Upload staged payload for Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-payload
+          path: |
+            stage/linux-app-dir
+            stage/linux-cli/xcpc
+          if-no-files-found: error
+
+  package-arch:
+    name: Package Arch Linux (.pkg.tar.zst)
+    needs: [prepare, build-linux]
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux payload
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-payload
+          path: stage
+
+      - name: Build .pkg.tar.zst via makepkg
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          useradd -m builder
+          mkdir -p /tmp/arch-build dist
+          PKGVER="${VERSION//-/}"
+          sed "s/@PKGVER@/${PKGVER}/g" packaging/linux/arch/PKGBUILD.in > /tmp/arch-build/PKGBUILD
+          chmod -R a+rX stage
+          chmod +x stage/linux-cli/xcpc
+          chown -R builder:builder /tmp/arch-build
+          su - builder -c "cd /tmp/arch-build && \
+            XCPC_PAYLOAD_DIR='$PWD/stage/linux-app-dir' \
+            XCPC_CLI_BIN='$PWD/stage/linux-cli/xcpc' \
+            XCPC_REPO_ROOT='$PWD' \
+            makepkg -f --nodeps --noconfirm"
+          cp /tmp/arch-build/*.pkg.tar.zst dist/
+
+      - name: Upload Arch release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-arch
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x86_64 (Inno Setup .exe, .zip)
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache NSH CLI
+        id: cache-nsh
+        uses: actions/cache@v4
+        with:
+          path: C:\nsh
+          key: nsh-windows-x86_64-${{ env.NSH_VERSION }}
+
+      - name: Install NSH CLI
+        if: steps.cache-nsh.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\nsh | Out-Null
+          $zip = "$env:TEMP\nsh-windows-x86_64.zip"
+          Invoke-WebRequest -Uri "https://github.com/longbridge/nsh/releases/download/v$($env:NSH_VERSION)/nsh-windows-x86_64.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath C:\nsh -Force
+          Remove-Item $zip -Force
+
+      - name: Add NSH to PATH
+        shell: pwsh
+        run: |
+          $nshBin = (Get-ChildItem -Path C:\nsh -Recurse -Filter nsh.exe | Select-Object -First 1).DirectoryName
+          Add-Content -Path $env:GITHUB_PATH -Value $nshBin
+
+      - name: Cache bundled fonts
+        id: cache-fonts
+        uses: actions/cache@v4
+        with:
+          path: C:\xcpc-bundled-fonts
+          key: xcpc-bundled-fonts-v1
+
+      - name: Fetch bundled OTF fonts
+        shell: pwsh
+        run: |
+          python scripts/fetch-bundled-fonts.py C:\xcpc-bundled-fonts
+          Add-Content -Path $env:GITHUB_ENV -Value "XCPC_FONT_DIRS=C:\xcpc-bundled-fonts"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/desktop/.nsh/rust -> apps/desktop/.nsh/rust/target
+
+      - name: Build xcpc.exe (release)
+        shell: pwsh
+        run: cargo build --release -p xcpc-mcp
+
+      - name: Package Windows desktop, portable .zip & Inno Setup installer
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist, stage\windows-desktop, stage\windows-cli | Out-Null
+          Copy-Item target\release\xcpc.exe stage\windows-cli\xcpc.exe
+          Compress-Archive -Path stage\windows-cli\xcpc.exe -DestinationPath "dist\xcpc-cli-$($env:VERSION)-windows-x86_64.zip" -CompressionLevel Optimal -Force
+
+          Push-Location apps\desktop
+          nsh package --target windows --app-version $env:VERSION --icon ..\..\assets\brand\icon-512.png -o ..\..\stage\windows-desktop
+          Pop-Location
+
+          $appDir = (Get-ChildItem -Path stage\windows-desktop -Directory | Select-Object -First 1).FullName
+          Copy-Item stage\windows-cli\xcpc.exe (Join-Path $appDir "xcpc.exe")
+
+          Compress-Archive -Path $appDir -DestinationPath "dist\xcpc-workstation-$($env:VERSION)-windows-x86_64.zip" -CompressionLevel Optimal -Force
+
+          iscc "/DMyAppVersion=$($env:VERSION)" "/DSourceDir=$appDir" "/DOutDir=$PWD\dist" packaging\windows\installer.iss
+
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish Draft GitHub Release
+    needs: [prepare, build-linux, package-arch, build-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate signed latest.json for nsh/updater
+        env:
+          NSH_UPDATER_SECRET_KEY: ${{ secrets.NSH_UPDATER_SECRET_KEY }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if [[ -z "${NSH_UPDATER_SECRET_KEY}" ]]; then
+            echo "::notice::NSH_UPDATER_SECRET_KEY is not set; skipping latest.json generation."
+            exit 0
+          fi
+          mkdir -p ~/.local/nsh
+          curl -fsSL "https://github.com/longbridge/nsh/releases/download/v${NSH_VERSION}/nsh-linux-x86_64.tar.gz" \
+            | tar -xz -C ~/.local/nsh
+          export PATH="$HOME/.local/nsh/bin:$PATH"
+          KEY_FILE=$(mktemp)
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s\n' "$NSH_UPDATER_SECRET_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          nsh update-manifest \
+            --entry apps/desktop \
+            --key "$KEY_FILE" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
+            -o dist \
+            dist/xcpc-workstation-*-linux-x86_64.tar.gz \
+            dist/xcpc-workstation-*-windows-x86_64.zip
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: "XCPC Workstation ${{ needs.prepare.outputs.tag }}"
+          draft: true
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          generate_release_notes: true
+          files: dist/*

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  CARGO_TERM_COLOR: always
+  NSH_VERSION: "0.6.0"
+
+jobs:
+  rust-core:
+    name: Rust Core (clippy & test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude xcpc-desktop --all-targets -- -D warnings
+
+      - name: Unit & integration tests
+        run: cargo test --workspace --exclude xcpc-desktop
+
+  desktop:
+    name: Desktop (nsh check & test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install GTK4 / WebKitGTK 6.0 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            pkg-config
+
+      - name: Cache NSH CLI
+        id: cache-nsh
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/nsh
+          key: nsh-linux-x86_64-${{ env.NSH_VERSION }}
+
+      - name: Install NSH CLI
+        if: steps.cache-nsh.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/nsh
+          curl -fsSL "https://github.com/longbridge/nsh/releases/download/v${NSH_VERSION}/nsh-linux-x86_64.tar.gz" \
+            | tar -xz -C ~/.local/nsh
+
+      - name: Add NSH to PATH
+        run: echo "$HOME/.local/nsh/bin" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/desktop/.nsh/rust -> apps/desktop/.nsh/rust/target
+
+      - name: Type check & headless tests
+        working-directory: apps/desktop
+        run: |
+          nsh check
+          nsh test

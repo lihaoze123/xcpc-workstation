@@ -128,6 +128,8 @@
 
 ### Phase 2.5B（开放定制、Vim 模式、悬浮公式预览与导出复制）
 
+**进度**（2026-11-22）：Phase 2.5A 与 2.5B 已全部完成并验收，进入 `v0.2.0-beta.1` 公开发布。
+
 1. **开放定制三件套（文件驱动 + 极简入口）**：
    - **`.xcpc/preamble.typ`**：工作区级自定义 Typst 宏与样式微调，编译时自动注入模板作用域；
    - **自定义模板 `templates/*.typ`**：在 `workspace.toml` / `contest.toml` 指定 `template`，预置 `olymp-classic`，并参考 `Wallbreaker5th/fuzzy-cnoi-statement` 提供一个 CNOI/OI 风格示例模板与清晰接口；

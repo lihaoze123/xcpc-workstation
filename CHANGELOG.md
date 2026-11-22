@@ -2,6 +2,38 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0-beta.1] - 2026-11-22
+
+首次公开发布（Public Beta），涵盖完整 Phase 2（组卷、出版工作室、题库中心、校验与 MCP 工具集）与 Phase 2.5（产品化打磨、开放定制、实用子集 Vim 与高频写作工具）。
+
+### 新增
+
+- **组卷与冻结（Core / CLI / MCP）**：
+  - 基于 `toml_edit` 实现保留注释与未知字段的语义级组卷操作（增删题、排序自动重排 `A–Z`、元数据覆写与还原、`xcpc contest compose|override|freeze|unfreeze`）。
+  - 比赛冻结时将源题面与试题册/题解册 PDF 原子写入 `snapshot/` 并转为只读；解冻仅向 GUI/CLI 开放（不向 MCP 开放）并展示题库差异。
+  - 新增 `xcpc-lint`（缺失题目/配图/编译错误阻止冻结；版心溢出、样例异常、缺章节/缺题解给出警告）与 `xcpc init [--example]`。
+  - 完整 9 个 stdio MCP 工具（搜索、读写题面、组卷、覆写、冻结、编译诊断、页面渲染与 PDF 导出），支持 `--read-only`。
+- **题库中心与出版工作室（Desktop）**：
+  - 内存索引 + `notify` 文件监听实时联动，支持多维筛选、题解与代码预览、外部编辑无闪白原地刷新与未保存冲突二选一提示。
+  - 出版工作室支持自绘顶栏、大纲页码跳转、可调分栏、**题面 / 样例 / 题解**三栏编辑、上下文右侧属性面板、预览 HUD 与 `Ctrl+点击` 预览定位源码。
+  - `Cmd+K` 命令面板（Frecency 排序跳转 + 上下文动作）、按 PDF 新鲜度切换的分体导出按钮、冷启动预览快照即时恢复与 120Hz HiDPI 零闪白分块渲染。
+- **产品化打磨与写作增强（Phase 2.5A）**：
+  - 全新极简品牌 Icon（全尺寸 hicolor PNG/SVG、symbolic SVG、Windows `.ico`）与首启品牌引导页、内置示例工作区（「打开示例」/ `xcpc init --example`）。
+  - 温润物理弹簧动效（`Animated.spring`）、分组式设置页（工作区 / 外观 / 快捷键 / 关于）、全局 `Ctrl+/` 快捷键速查与原生 `nsh/updater` 应用内更新。
+  - `/` 斜杠命令菜单（公式、表格、图片、代码块及 XCPC 高频块）、居中轻量素材库 Gallery、```` ```typst ```` 原始块透传与专注写作模式。
+  - PDF 写入完整元数据、默认导出文件名改为中文/标题名，并集中维护三段式中文错误文案。
+- **开放定制、Vim 模式与高频工具（Phase 2.5B）**：
+  - 开放定制三件套：`.xcpc/preamble.typ` 自定义 Typst 宏、`templates/*.typ` 自定义模板（附预置 `cnoi-classic` CNOI/OI 风格模板）、全局/工作区 `theme.toml` 外观与字体覆写。
+  - 实用子集 Vim 模式（默认关闭，设置页一键开启；支持 `NORMAL / INSERT / VISUAL / V-LINE` 徽标、全角/半角自适应块状光标、`Esc` 与 `Ctrl+[`、常用移动/编辑与 `vi/ci/di/yi` 文本对象）。
+  - 编辑器内悬浮迷你公式预览（复用 `xcpc-engine` 渲染，零打扰智能触发）与一键复制「带样例的完整 Markdown」。
+- **多平台分发与 CI/CD**：
+  - 新增 `packaging/` 打包工程与 GitHub Actions 发布流水线：支持 Windows x86_64（Inno Setup 每用户安装器 + 便携 `.zip`）与 Linux x86_64（`.deb`、Arch `.pkg.tar.zst`、`AppImage`、`.tar.gz`），桌面包均附带 `xcpc` CLI，并自动生成签名 `latest.json` 与 `SHA256SUMS.txt`。
+
+### 变更
+
+- 公开发布产物默认关闭 UPX 压缩，改由各封装格式自身压缩以消除 Windows 杀软误报并降低冷启动开销。
+- 编辑器等宽字体栈补全跨平台等宽中文字体回退链（`Noto Sans Mono CJK SC` / `Source Han Sans HW SC` / `Sarasa Mono SC` / `NSimSun`）。
+
 ## [0.1.0] - 2026-11-20
 
 ### 新增
