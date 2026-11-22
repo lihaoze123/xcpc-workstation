@@ -23,6 +23,22 @@ jobs:
         with:
           components: clippy
 
+      - name: Install CJK fallback fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
+      - name: Cache bundled fonts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/xcpc-bundled-fonts
+          key: xcpc-bundled-fonts-v2
+
+      - name: Fetch bundled fonts
+        run: |
+          python3 scripts/fetch-bundled-fonts.py "$HOME/.cache/xcpc-bundled-fonts"
+          echo "XCPC_FONT_DIRS=$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
@@ -44,7 +60,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install GTK4 / WebKitGTK 6.0 dependencies
+      - name: Install GTK4 / WebKitGTK 6.0 & font dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -52,7 +68,19 @@ jobs:
             libwebkitgtk-6.0-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
-            pkg-config
+            pkg-config \
+            fonts-noto-cjk
+
+      - name: Cache bundled fonts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/xcpc-bundled-fonts
+          key: xcpc-bundled-fonts-v2
+
+      - name: Fetch bundled fonts
+        run: |
+          python3 scripts/fetch-bundled-fonts.py "$HOME/.cache/xcpc-bundled-fonts"
+          echo "XCPC_FONT_DIRS=$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
 
       - name: Cache NSH CLI
         id: cache-nsh
