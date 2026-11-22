@@ -34,11 +34,11 @@ const BUNDLED_FONTS: &[&str] = &[
     "lmmono12-regular.otf",
     // Latin Modern Math
     "latinmodern-math.otf",
-    // JetBrains Mono (OTF)
-    "JetBrainsMono-Regular.otf",
-    "JetBrainsMono-Italic.otf",
-    "JetBrainsMono-Bold.otf",
-    "JetBrainsMono-BoldItalic.otf",
+    // JetBrains Mono (TTF)
+    "JetBrainsMono-Regular.ttf",
+    "JetBrainsMono-Italic.ttf",
+    "JetBrainsMono-Bold.ttf",
+    "JetBrainsMono-BoldItalic.ttf",
 ];
 
 fn main() {

@@ -34,17 +34,39 @@ REQUIRED_FONTS = {
     "lmmono10-italic.otf",
     "lmmono12-regular.otf",
     "latinmodern-math.otf",
-    "JetBrainsMono-Regular.otf",
-    "JetBrainsMono-Italic.otf",
-    "JetBrainsMono-Bold.otf",
-    "JetBrainsMono-BoldItalic.otf",
+    "JetBrainsMono-Regular.ttf",
+    "JetBrainsMono-Italic.ttf",
+    "JetBrainsMono-Bold.ttf",
+    "JetBrainsMono-BoldItalic.ttf",
 }
 
 ARCHIVES = [
-    "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.005otf.zip",
-    "https://www.gust.org.pl/projects/e-foundry/lm-math/download/latinmodern-math-1959.zip",
-    "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
+    (
+        "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.006otf.zip",
+        "https://mirrors.ctan.org/fonts/lm.zip",
+    ),
+    (
+        "https://mirrors.ctan.org/fonts/lm-math.zip",
+        "https://www.gust.org.pl/projects/e-foundry/lm-math/download/latinmodern-math-1959.zip",
+    ),
+    (
+        "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
+    ),
 ]
+
+
+def download_first(urls: tuple[str, ...]) -> bytes:
+    last_err: Exception | None = None
+    for url in urls:
+        print(f"Downloading {url} ...")
+        req = urllib.request.Request(url, headers={"User-Agent": "xcpc-workstation-ci/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return resp.read()
+        except Exception as exc:
+            print(f"warning: failed to download {url}: {exc}", file=sys.stderr)
+            last_err = exc
+    raise RuntimeError(f"all mirrors failed for {urls}: {last_err}")
 
 
 def missing_fonts(out_dir: str) -> set[str]:
@@ -66,13 +88,10 @@ def main() -> int:
         print(f"All {len(REQUIRED_FONTS)} bundled fonts already present in {out_dir}")
         return 0
 
-    for url in ARCHIVES:
+    for urls in ARCHIVES:
         if not missing:
             break
-        print(f"Downloading {url} ...")
-        req = urllib.request.Request(url, headers={"User-Agent": "xcpc-workstation-ci/1.0"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = resp.read()
+        data = download_first(urls)
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for member in zf.infolist():
                 if member.is_dir():

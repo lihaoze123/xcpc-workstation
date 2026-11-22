@@ -142,12 +142,12 @@ const BUNDLED_FONT_BYTES: &[&[u8]] = &[
     include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmmono10-italic.otf")),
     include_bytes!(concat!(env!("OUT_DIR"), "/fonts/lmmono12-regular.otf")),
     include_bytes!(concat!(env!("OUT_DIR"), "/fonts/latinmodern-math.otf")),
-    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Regular.otf")),
-    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Italic.otf")),
-    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Bold.otf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Regular.ttf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Italic.ttf")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/fonts/JetBrainsMono-Bold.ttf")),
     include_bytes!(concat!(
         env!("OUT_DIR"),
-        "/fonts/JetBrainsMono-BoldItalic.otf"
+        "/fonts/JetBrainsMono-BoldItalic.ttf"
     )),
 ];
 
