@@ -4880,7 +4880,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-convert"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "mitex",
  "pulldown-cmark",
@@ -4896,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-desktop"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "nsh-base",
  "nsh-core",
@@ -4910,7 +4910,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-domain"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "serde",
  "thiserror",
@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-engine"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "comemo",
  "siphasher",
@@ -4936,7 +4936,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-lint"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -4947,7 +4947,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-mcp"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4963,7 +4963,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-storage"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "image",
  "imagesize 0.15.0",

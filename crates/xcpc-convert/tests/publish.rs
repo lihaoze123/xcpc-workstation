@@ -1264,12 +1264,17 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         ws.list_problems().unwrap(),
         vec!["lantern-walk", "star-grid"]
     );
-    assert_eq!(ws.list_contests().unwrap(), vec!["welcome-round"]);
+    assert_eq!(
+        ws.list_contests().unwrap(),
+        vec!["oi-mock", "welcome-round"]
+    );
 
     let mut engine = publish::engine(&ws, &FontOptions::from_env());
     for (target, kind) in [
         (Target::Contest("welcome-round".into()), Kind::Statements),
         (Target::Contest("welcome-round".into()), Kind::Editorial),
+        (Target::Contest("oi-mock".into()), Kind::Statements),
+        (Target::Contest("oi-mock".into()), Kind::Editorial),
         (Target::Problem("lantern-walk".into()), Kind::Statements),
         (Target::Problem("star-grid".into()), Kind::Statements),
     ] {

@@ -179,7 +179,10 @@ package_linux() {
   echo "==> Packaging Linux desktop..."
   local desk_stage="$stage/linux-desktop"
   mkdir -p "$desk_stage"
-  (cd "$repo_root/apps/desktop" && nsh package --target linux --icon "$app_icon" -o "$desk_stage")
+  # Do not pass --icon on Linux: NSH's hidden GTK titlebar draws a misaligned 16px
+  # icon in the top-left corner when bundled; Linux launcher/taskbar icons come from
+  # .desktop + hicolor icon sets installed by .deb / .pkg.tar.zst / AppImage.
+  (cd "$repo_root/apps/desktop" && nsh package --target linux -o "$desk_stage")
 
   local app_dir
   app_dir=$(find "$desk_stage" -mindepth 1 -maxdepth 1 -type d | head -n 1)

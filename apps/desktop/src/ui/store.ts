@@ -235,7 +235,7 @@ export async function pickWorkspace() {
 }
 
 /** A folder to make a workspace in: opens it when it already is one. */
-export async function newWorkspace() {
+export async function newWorkspace(template?: string) {
   const picked = await preview.pickFolder();
   if (picked.cancelled) return;
   if (picked.error) {
@@ -246,7 +246,7 @@ export async function newWorkspace() {
     adopt(preview.openWorkspace(picked.workspaceRoot, false), "打开工作区");
     return;
   }
-  adopt(preview.initWorkspace(picked.path), "新建工作区");
+  adopt(preview.initWorkspace(picked.path, template ?? null), "新建工作区");
 }
 
 /** Opens a workspace from the recent list. */
@@ -256,9 +256,9 @@ export function openRecent(path: string) {
 }
 
 /** Picks a folder, initializes the built-in example workspace there, and opens its studio target. */
-export async function openExampleWorkspace() {
+export async function openExampleWorkspace(template?: string) {
   const before = info().root;
-  const next = await preview.pickAndInitExampleWorkspace();
+  const next = await preview.pickAndInitExampleWorkspace(template ?? null);
   if (next.root === before && !next.error) return;
   if (next.root === "" && !next.error) return; // cancelled with none open
   if (next.root === before && next.error) {
@@ -267,7 +267,8 @@ export async function openExampleWorkspace() {
   }
   if (adopt(next, "打开示例工作区")) {
     brandReplayOpen.set(false);
-    const welcome = next.contests.find((c) => c.id === "welcome-round") ?? next.contests[0];
+    const preferredId = template === "cnoi-classic" ? "oi-mock" : "welcome-round";
+    const welcome = next.contests.find((c) => c.id === preferredId) ?? next.contests[0];
     if (welcome) {
       openStudio({ target: "contest", id: welcome.id, label: welcome.items[0]?.label });
     } else if (next.problems[0]) {

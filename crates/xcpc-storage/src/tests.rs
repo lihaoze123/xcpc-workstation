@@ -1209,7 +1209,10 @@ fn init_example_workspace_seeds_files_and_is_idempotent() {
         ws.list_problems().unwrap(),
         vec!["lantern-walk", "star-grid"]
     );
-    assert_eq!(ws.list_contests().unwrap(), vec!["welcome-round"]);
+    assert_eq!(
+        ws.list_contests().unwrap(),
+        vec!["oi-mock", "welcome-round"]
+    );
 
     // User edits must not be overwritten on a second init_example_workspace call.
     let custom = "自定义题面\n";

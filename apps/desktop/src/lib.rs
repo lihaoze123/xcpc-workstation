@@ -164,8 +164,8 @@ impl Preview {
 
     /// Initializes a new XCPC workspace at `path` (creating `workspace.toml`, `problems/`,
     /// `contests/`, `.gitignore`, and a static `AGENTS.md` if absent) and switches to it.
-    pub fn init_workspace(&self, path: String) -> WorkspaceInfo {
-        match xcpc_storage::init_workspace(&path) {
+    pub fn init_workspace(&self, path: String, template: Option<String>) -> WorkspaceInfo {
+        match xcpc_storage::init_workspace_with_template(&path, template.as_deref()) {
             Ok(ws) => self.switch(ws),
             Err(e) => WorkspaceInfo {
                 error: Some(e.human_message()),
@@ -174,10 +174,10 @@ impl Preview {
         }
     }
 
-    /// Initializes the built-in example workspace at `dir` (2 curated problems + 1 contest)
+    /// Initializes the built-in example workspace at `dir` (2 curated problems + 2 contests)
     /// and switches to it.
-    pub fn init_example_workspace(&self, dir: String) -> WorkspaceInfo {
-        match xcpc_storage::init_example_workspace(&dir) {
+    pub fn init_example_workspace(&self, dir: String, template: Option<String>) -> WorkspaceInfo {
+        match xcpc_storage::init_example_workspace_with_template(&dir, template.as_deref()) {
             Ok(ws) => self.switch(ws),
             Err(e) => WorkspaceInfo {
                 error: Some(e.human_message()),
@@ -189,7 +189,10 @@ impl Preview {
     /// Opens the system folder picker, releases the built-in example workspace into the
     /// chosen folder, switches to it, and returns the new workspace info (or leaves the
     /// current workspace unchanged when cancelled).
-    pub async fn pick_and_init_example_workspace(this: Instance<Self>) -> WorkspaceInfo {
+    pub async fn pick_and_init_example_workspace(
+        this: Instance<Self>,
+        template: Option<String>,
+    ) -> WorkspaceInfo {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
@@ -219,7 +222,10 @@ impl Preview {
                 return p.workspace();
             };
             let target_dir = resolve_example_target_dir(&dir);
-            match xcpc_storage::init_example_workspace(&target_dir) {
+            match xcpc_storage::init_example_workspace_with_template(
+                &target_dir,
+                template.as_deref(),
+            ) {
                 Ok(ws) => p.switch(ws),
                 Err(e) => WorkspaceInfo {
                     error: Some(e.human_message()),

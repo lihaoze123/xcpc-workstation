@@ -119,7 +119,9 @@ jobs:
           chmod +x stage/linux-cli/xcpc
           GZIP=-9 tar -C stage/linux-cli -czf "dist/xcpc-cli-${VERSION}-linux-x86_64.tar.gz" xcpc
 
-          (cd apps/desktop && nsh package --target linux --app-version "$VERSION" --icon ../../assets/brand/icon-512.png -o ../../stage/linux-desktop)
+          # Omit --icon on Linux so NSH's hidden GTK titlebar stays clean; Linux
+          # launcher/taskbar icons come from .desktop + hicolor in .deb/.pkg.tar.zst/AppImage.
+          (cd apps/desktop && nsh package --target linux --app-version "$VERSION" -o ../../stage/linux-desktop)
           APP_DIR=$(find stage/linux-desktop -mindepth 1 -maxdepth 1 -type d | head -n 1)
           APP_NAME=$(basename "$APP_DIR")
           cp stage/linux-cli/xcpc "$APP_DIR/xcpc"

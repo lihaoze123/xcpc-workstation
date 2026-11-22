@@ -1,13 +1,26 @@
-// Modal for creating a new workspace: lets the user choose between initializing from
-// the built-in example template (2 curated problems + 1 contest) or creating an empty
-// workspace before opening the folder picker.
+// Modal for creating a new workspace: lets the user choose a default publishing
+// template (XCPC `olymp-classic` or OI `cnoi-classic`) and then either initialize from
+// the built-in example workspace or create an empty workspace.
 
-import { colorScheme, Text, View } from "nsh";
+import { colorScheme, signal, Text, View } from "nsh";
 import { Icon, type IconName } from "./Icon";
 import { IconBtn, tip } from "./kit";
 import { Modal } from "./Modal";
 import { colorTransition } from "./motion";
 import { newWorkspace, openExampleWorkspace } from "./store";
+
+type DefaultTemplate = "olymp-classic" | "cnoi-classic";
+
+interface TemplateChoice {
+  readonly id: DefaultTemplate;
+  readonly label: string;
+  readonly sub: string;
+}
+
+const TEMPLATES: readonly TemplateChoice[] = [
+  { id: "olymp-classic", label: "XCPC 经典", sub: "olymp-classic" },
+  { id: "cnoi-classic", label: "OI 风格", sub: "cnoi-classic" },
+];
 
 interface ChoiceOption {
   readonly id: "template" | "empty";
@@ -20,17 +33,19 @@ interface ChoiceOption {
 
 export function NewWorkspaceModal(props: { open: boolean; onClose: () => void }) {
   const dark = () => colorScheme() === "dark";
+  const selectedTemplate = signal<DefaultTemplate>("olymp-classic");
 
   const options: readonly ChoiceOption[] = [
     {
       id: "template",
       testID: "new-workspace-template",
       icon: "fileText",
-      title: "从示例模板创建",
-      description: "内置 2 道示例题与 1 场示例比赛，开箱体验排版",
+      title: "从示例创建",
+      description: "内置 2 道示例题、XCPC 与 OI 双模板比赛及 Typst 宏示范",
       run: () => {
+        const tpl = selectedTemplate();
         props.onClose();
-        void openExampleWorkspace();
+        void openExampleWorkspace(tpl);
       },
     },
     {
@@ -38,10 +53,11 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
       testID: "new-workspace-empty",
       icon: "folderPlus",
       title: "创建空工作区",
-      description: "干净的空白目录，适合直接开始自己的题库与比赛",
+      description: "干净的空白目录，按上方默认模板直接开始自己的题库与比赛",
       run: () => {
+        const tpl = selectedTemplate();
         props.onClose();
-        void newWorkspace();
+        void newWorkspace(tpl);
       },
     },
   ];
@@ -54,6 +70,56 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
             新建工作区
           </Text>
           <IconBtn icon="x" size={26} iconSize={14} tooltip={tip("关闭", "escape")} onPress={props.onClose} />
+        </View>
+
+        <View style={{ gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+              默认模板
+            </Text>
+            <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+              支持按比赛切换或自定义 templates/*.typ
+            </Text>
+          </View>
+          <View
+            style={{ flexDirection: "row", gap: 6, padding: 3, borderRadius: 9 }}
+            class="bg-muted border border-border"
+          >
+            <Each of={TEMPLATES} key={(t) => t.id}>
+              {(tpl) => {
+                const active = () => selectedTemplate() === tpl().id;
+                return (
+                  <View
+                    testID={`new-workspace-tpl-${tpl().id}`}
+                    onPress={() => selectedTemplate.set(tpl().id)}
+                    class={active() ? "bg-card border border-border" : "hover:bg-background/50"}
+                    style={{
+                      flex: 1,
+                      borderRadius: 6,
+                      paddingTop: 7,
+                      paddingBottom: 7,
+                      paddingLeft: 10,
+                      paddingRight: 10,
+                      alignItems: "center",
+                      gap: 1,
+                      borderWidth: active() ? 1 : 0,
+                      ...colorTransition(120),
+                    }}
+                  >
+                    <Text
+                      style={{ fontSize: 12.5, fontWeight: active() ? 600 : 500, lineHeight: 17 }}
+                      class={active() ? "text-foreground" : "text-secondary-foreground"}
+                    >
+                      {tpl().label}
+                    </Text>
+                    <Text style={{ fontSize: 11, lineHeight: 14 }} class="text-muted-foreground">
+                      {tpl().sub}
+                    </Text>
+                  </View>
+                );
+              }}
+            </Each>
+          </View>
         </View>
 
         <View style={{ gap: 8 }}>

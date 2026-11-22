@@ -36,7 +36,7 @@ pub use assets::{
     RenameAssetResult, ScannedAssetRef, is_existing_asset_name, is_safe_asset_name,
     is_windows_reserved_name, read_image_dimensions,
 };
-pub use example::init_example_workspace;
+pub use example::{init_example_workspace, init_example_workspace_with_template};
 pub use index::WorkspaceIndex;
 pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
@@ -236,6 +236,13 @@ pub fn content_hash(bytes: &[u8]) -> String {
 /// (ensuring `build/` and `.xcpc/` are present), and an embedded static `AGENTS.md`
 /// (**never** overwriting an existing `AGENTS.md`).
 pub fn init_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {
+    init_workspace_with_template(dir, None)
+}
+
+pub fn init_workspace_with_template(
+    dir: impl AsRef<Path>,
+    template: Option<&str>,
+) -> Result<Workspace> {
     let dir = dir.as_ref();
     fs::create_dir_all(dir).map_err(|e| io(dir.display(), e))?;
     for sub in ["problems", "contests"] {
@@ -245,7 +252,11 @@ pub fn init_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {
 
     let ws_file = dir.join(WORKSPACE_FILE);
     if fs::symlink_metadata(&ws_file).is_err() {
-        write_atomic(&ws_file, b"").map_err(|e| io(ws_file.display(), e))?;
+        let content = match template.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => format!("template = \"{name}\"\n"),
+            None => String::new(),
+        };
+        write_atomic(&ws_file, content.as_bytes()).map_err(|e| io(ws_file.display(), e))?;
     }
 
     let gitignore = dir.join(".gitignore");

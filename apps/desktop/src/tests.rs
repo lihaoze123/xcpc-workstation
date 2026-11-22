@@ -68,7 +68,7 @@ impl Drop for TempDir {
 fn init_temp_preview(label: &str) -> (TempDir, Preview) {
     let dir = TempDir::new(label);
     let preview = Preview::new(None);
-    let info = preview.init_workspace(dir.0.display().to_string());
+    let info = preview.init_workspace(dir.0.display().to_string(), None);
     assert!(info.error.is_none(), "init error: {:?}", info.error);
     (dir, preview)
 }
@@ -655,7 +655,7 @@ fn workspace_init_recent_workspaces_and_mcp_snippet() {
     let ws2 = TempDir::new("ws-init-2");
 
     let preview = Preview::new(Some(data.0.display().to_string()));
-    let info1 = preview.init_workspace(ws1.0.display().to_string());
+    let info1 = preview.init_workspace(ws1.0.display().to_string(), None);
     assert!(info1.error.is_none());
     assert!(ws1.0.join("workspace.toml").is_file());
     assert!(ws1.0.join("AGENTS.md").is_file());
@@ -663,7 +663,7 @@ fn workspace_init_recent_workspaces_and_mcp_snippet() {
 
     // Re-initializing never overwrites an existing user AGENTS.md.
     std::fs::write(ws1.0.join("AGENTS.md"), "# Custom Guide\n").unwrap();
-    let info1_again = preview.init_workspace(ws1.0.display().to_string());
+    let info1_again = preview.init_workspace(ws1.0.display().to_string(), None);
     assert!(info1_again.error.is_none());
     assert_eq!(
         std::fs::read_to_string(ws1.0.join("AGENTS.md")).unwrap(),
@@ -671,7 +671,7 @@ fn workspace_init_recent_workspaces_and_mcp_snippet() {
     );
 
     // Opening a second workspace moves it to the front of recent_workspaces.
-    let info2 = preview.init_workspace(ws2.0.display().to_string());
+    let info2 = preview.init_workspace(ws2.0.display().to_string(), None);
     assert!(info2.error.is_none());
     let recent = preview.recent_workspaces();
     assert_eq!(recent.len(), 2);
@@ -1093,7 +1093,7 @@ fn fuzzy_jump_frecency_and_prefs_persistence() {
     let preview = Preview::new(Some(data.0.display().to_string()));
     assert!(
         preview
-            .init_workspace(ws.0.display().to_string())
+            .init_workspace(ws.0.display().to_string(), None)
             .error
             .is_none()
     );
@@ -1957,7 +1957,7 @@ fn asset_library_list_rename_delete_and_guards() {
     let preview = Preview::new(None);
     assert!(
         preview
-            .init_workspace(dir.0.display().to_string())
+            .init_workspace(dir.0.display().to_string(), None)
             .error
             .is_none()
     );
@@ -2113,14 +2113,14 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
     let data_dir = TempDir::new("snap-data");
 
     let preview = Preview::new(Some(data_dir.0.display().to_string()));
-    let info = preview.init_example_workspace(ws_dir.0.display().to_string());
+    let info = preview.init_example_workspace(ws_dir.0.display().to_string(), None);
     assert!(
         info.error.is_none(),
         "init example failed: {:?}",
         info.error
     );
     assert_eq!(info.problems.len(), 2);
-    assert_eq!(info.contests.len(), 1);
+    assert_eq!(info.contests.len(), 2);
 
     let req = PreviewRequest {
         target: "problem".into(),
