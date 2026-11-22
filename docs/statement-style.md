@@ -78,61 +78,82 @@
 
 ## 2. 模板与声明式定制
 
-系统支持多套 Typst 模板与三层开放定制：内置模板（`olymp-classic`、`cnoi-classic`）、工作区自定义模板（`templates/<name>.typ`）以及工作区级样式注入（`.xcpc/preamble.typ`）。
+**所有生效模板都是工作区或比赛目录中平等的、可直接编辑的 `.typ` 文件。** 引擎不把任何内置模板当作不可修改的特权一等公民；内置的 `olymp-classic`、`cnoi-classic` 与 `minimal` 仅作为**预设种子**，在新建工作区或「从预设添加模板」时落盘到 `templates/<name>.typ`。
 
-### 2.1 通用出版契约
+### 2.1 模板解析优先级
 
-所有模板共享同一套顶层函数签名（`contest`、`problem`、`section`、`samples`、`tutorial`、`subsection`、`runin`），以及以下跨模板通用开关（由 `contest.toml` 声明，无需在各模板 schema 中重复定义）：
+1. **比赛专属模板**：`contests/<id>/template.typ`（若存在，直接优先于 `contest.toml` 中的 `template` 字段；用于给单场比赛加校徽、改封面或深度定制，不污染工作区模板目录）；
+2. **工作区模板**：`templates/<name>.typ`（由 `contest.toml` 的 `template` 或 `workspace.toml` 的 `template` 指定）；
+3. **无内置回退**：若引用的模板文件不存在，编译直接报 `missing_template` 错误，并在界面提供「从预设安装」一键入口。
 
-| 键 | 含义 |
-| :--- | :--- |
-| `template` | 模板名（默认沿用 `workspace.toml`，缺省为 `olymp-classic`） |
-| `language` | `chinese` / `english`，决定题面关键词 |
-| `show-metadata` | 是否显示限制表（可按题覆写） |
-| `cover` | 是否生成封面和试题列表 |
-| `blank-pages` | 是否为奇偶页插入「此页故意留白」 |
-| `name` / `location` / `date` / `author` | 页眉和封面上显示的信息 |
+### 2.2 单入口数据驱动契约（`#let render(doc)`）
 
-`contest(..., options: (:))` 与 `problem(..., options: (:))` 额外接收一个可选的 `options` 字典参数，用来传入该模板对应的结构化定制项；旧模板或未声明 `options` 的自定义模板可省略该参数（Core 仅在模板声明了对应作用域的 schema 时传入 `options`，保证向后兼容）。
+所有模板共享极简的数据驱动单入口 **`#let render(doc)`**（以及可选的 `#let schema = (...)`）：
 
-### 2.2 模板声明式 Schema（`#let schema`）
+```typst
+#let render(doc) = {
+  // doc 携带完整比赛/单题数据与合并后的 options：
+  // - doc.name / doc.location / doc.date / doc.author / doc.language
+  // - doc.book ("statements" | "editorial") / doc.single (bool)
+  // - doc.pdf-title / doc.pdf-author
+  // - doc.options (工作区 + 比赛合并后的 book 级模板参数字典)
+  // - doc.problems: array of (
+  //     id, label, title, author, rating, tags, sources,
+  //     input, output, time-limit, memory-limit,
+  //     samples: ((in, out), ...),
+  //     options: (单题级合并后的模板参数字典),
+  //     meta: (题解副标题元信息数组),
+  //     body: content,  // 已转换的 Markdown 正文，完整保留 SourceMap 双向定位
+  //   )
+  ...
+}
+```
 
-每个模板可在自身的 `.typ` 文件内原生导出一个 `#let schema = (...)` 字典，单文件自包含、默认值直接复用模板常量不漂移。Core 通过内置 Typst 引擎轻量求值读取该字典，驱动 GUI 属性面板动态渲染控件，并同步开放给 CLI / MCP 校验与查询；未导出 `schema` 的自定义模板优雅降级为空扩展参数。
+- 模板完全掌控封面、题表、是否每题换页、多栏布局等任意排版，不再受固定函数签名束缚。
+- 正文转换中用到的 `section(key, title: none)`、`samples(..pairs)`、`subsection(title)`、`runin(title)` 为**可选覆写钩子**：模板导出它们即可定制章节标题与样例表；未导出时自动回退到 `/xcpc/defaults.typ` 中的默认实现。
+- Core 仅保留纯业务元数据（赛名、日期、地点、署名、语言、题目与限值）；**`cover`、`blank-pages`、`show-metadata` 等版式开关不再由 Core 或 UI 硬编码**，全部改由各模板在自己的 `#let schema` 中自行声明，预设种子与用户模板完全平权。
+
+### 2.3 模板声明式 Schema（`#let schema`）
+
+每个模板可在自身的 `.typ` 文件内原生导出 `#let schema = (...)` 字典，单文件自包含、默认值直接复用模板常量不漂移。Core 通过内置 Typst 引擎轻量求值读取该字典，驱动 GUI 属性面板动态渲染控件，并同步开放给 CLI / MCP 校验与查询；未导出 `schema` 的自定义模板优雅降级为空扩展参数。
 
 ```typst
 #let schema = (
   name: "OI 风格",                     // 显示名称（缺省用文件名）
-  description: "CCF CSP-J/S 与 NOI 风格题面与题解",
+  description: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
   groups: (
-    (id: "cover", label: "封面与说明"),
-    (id: "samples", label: "样例样式"),
+    (id: "cover", label: "封面与考试说明"),
+    (id: "samples", label: "样例与正文样式"),
     (id: "problem", label: "单题设置"),
   ),
   fields: (
     (
-      key: "compile-opts",             // 对应 TOML 键名（kebab-case）
-      label: "编译选项",
-      type: "string",                  // bool | enum | string | lines | number | length | color | font
+      key: "cover",
+      label: "封面",
+      type: "enum",                    // bool | enum | string | lines | number | length | color | font | image
       scope: "book",                   // book（整册）| problem（单题）
       group: "cover",                  // 可选，对应 groups[].id
-      default: "-O2 -std=c++14 -static",
-      when: (cover: true),             // 可选，简单等值条件显隐（可引用通用开关或同作用域字段）
+      default: "auto",
+      choices: ((value: "auto", label: "自动"), (value: "on", label: "开"), (value: "off", label: "关")),
     ),
-    // enum: 额外声明 choices: ((value: "...", label: "..."), ...)
-    // number: 可选 min / max / step
-    // length: 默认带单位字符串（如 "12pt"、"2.4cm"），可选 presets
-    // lines: 字符串数组（多行编辑）
-    // color: 十六进制色值字符串（如 "#0000ff"）
-    // font: 字体族名字符串（GUI 从引擎已加载字体中提供候选）
+    (
+      key: "logo",
+      label: "封面徽标",
+      type: "image",                   // 工作区相对路径（如 "contests/<id>/assets/logo.png"），GUI 支持直接选图导入
+      scope: "book",
+      group: "cover",
+      default: "",
+      when: (cover: "on"),             // 可选，简单等值条件显隐
+    ),
   ),
 )
 ```
 
-支持的实用排版参数类型共 8 种：`bool`、`enum`、`string`、`lines`（多行/列表）、`number`、`length`（带单位）、`color`、`font`，配合 `group` 分组与简单等值 `when` 条件显隐。
+支持的实用排版参数类型共 9 种：`bool`、`enum`、`string`、`lines`（多行/列表）、`number`、`length`（带单位）、`color`、`font`、`image`（图片选择并自动导入至 `assets/`），配合 `group` 分组与简单等值 `when` 条件显隐。
 
-### 2.3 三级作用域与命名空间隔离
+### 2.4 三级作用域与命名空间隔离
 
-模板参数按**模板名分命名空间**持久化，切换模板时不丢失原模板配置、不同模板同名键互不冲突，切回即恢复：
+模板参数按**模板名分命名空间**持久化（比赛专属 `contests/<id>/template.typ` 使用独立命名空间 `local`），切换模板时不丢失原模板配置、不同模板同名键互不冲突，切回即恢复：
 
 1. **工作区默认**（`workspace.toml` 的 `[template-options.<template>]`）：作为整套工作区的默认值，单题预览与未覆写的比赛均继承于此；
 2. **比赛级覆写**（`contest.toml` 的 `[template-options.<template>]`）：覆写该场比赛的 `scope: "book"` 参数；
@@ -140,11 +161,12 @@
 
 未显式设置的字段不写入 TOML；将覆写改回上级值或点击还原时自动删除对应键。所有写回统一走 `toml_edit` 保留注释与未知字段。
 
-### 2.4 内置模板的参数开放策略
+### 2.5 预设种子说明
 
-- **`olymp-classic`**：所有默认值严格锁死参考基准（`lihaoze123/polygon-chinese-template@10f9959`），保证默认输出与视觉回归逐页一致；仅开放少量实用且可一键还原的可选覆写（如 `sample-layout` 双栏/宽版 `examplewide`、正文/标题字体、字号与页边距覆写）。
-- **`cnoi-classic`**：全面参数化现有硬编码项，包括封面编译选项（`compile-opts`）、注意事项列表（`notices`）、样例框描边色（`sample-border-color`）与行号开关（`sample-line-numbers`）、中文加粗着重号开关（`dotted-emphasis`）、字号与页边距，以及单题级的题目类型（`prob-type`：传统型/交互型/提交答案）与可执行文件名覆盖。
-- **代码级逃生舱（`.xcpc/preamble.typ` 与 `templates/*.typ`）**：结构化参数在模板内部生效，`.xcpc/preamble.typ` 仍在其后注入，用于自定义宏、包导入与深度 Typst 规则。
+- **`olymp-classic`**：默认输出严格对齐 `lihaoze123/polygon-chinese-template@10f9959`（视觉回归逐页一致），并在自身 `schema` 中声明 `cover`、`show-metadata`、`blank-pages`、封面徽标、字号/页边距、字体与单题 `show-metadata` / `sample-layout`（双栏 / 宽版）。
+- **`cnoi-classic`**：CCF CSP-J/S 与 NOI 风格，在自身 `schema` 中声明 `cover`、`show-metadata`、`blank-pages`、封面徽标、编译选项、提交/编译表开关、注意事项、样例框描边色与行号、中文着重号、字号/页边距、字体以及单题 `prob-type` / `source-file`。
+- **`minimal`**：约 40 行的极简空白起点模板，方便用户从零快速编写自定义比赛模板。
+- **工作区级样式注入（`.xcpc/preamble.typ`）**：仍在模板渲染前注入作用域，用于跨模板共享自定义数学宏或 Typst 包导入。
 
 ## 3. 题解册
 

@@ -164,7 +164,8 @@ xcpc-workspace/
 ├── xcpc.lock                 # 工具链锁定（Phase 3，进 Git）
 ├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典、OJ 账号
 ├── AGENTS.md                 # 工作区级 Agent 指南（`xcpc init` 时写入的静态文本，之后归用户）
-├── templates/                # 自定义 Typst 模板（`<name>.typ`，可原生导出 `#let schema = (...)`）
+├── templates/                # 工作区 Typst 模板（`<name>.typ`，初始化时按所选预设落盘，全部可自由编辑）
+├── assets/                   # 工作区级共享静态资源（如通用校徽/Logo）
 ├── .xcpc/
 │   ├── preamble.typ          # 工作区级 Typst 宏与样式注入（可选，可纳入 Git 或按需忽略）
 │   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存（不进 Git）
@@ -181,9 +182,10 @@ xcpc-workspace/
 │       └── tests/            # 手写测试；生成的数据在 build/problems/<slug>/
 ├── contests/
 │   └── icpc-2026-regional/
-│       ├── contest.toml      # 元信息、题目引用、元数据/单题版式覆写、出版开关、`template` 与 `[template-options.<template>]`
-│       ├── assets/
-│       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 生效自定义模板/preamble/合并参数 + 当时的两本 PDF（进 Git）
+│       ├── contest.toml      # 元信息、题目引用、元数据/单题版式覆写、`template` 与 `[template-options.<template>]`
+│       ├── template.typ      # 可选：单场比赛专属模板（存在即优先于 `contest.toml` 的 `template`）
+│       ├── assets/           # 比赛专属配图/封面徽标
+│       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 生效 `template.typ`/preamble/合并参数 + 当时的两本 PDF（进 Git）
 ├── sheets/                   # 题单（后续阶段）
 └── training/
     └── logs.jsonl            # 追加写入的训练事件
@@ -212,7 +214,7 @@ flowchart LR
 ```
 
 - 胶水层负责三件事：按二级标题识别章节（规则见 [product.md](./product.md#21-题面结构)）、从 `samples/` 生成样例表、把图片路径映射到题目的 `assets/`。处理 Polygon LaTeX 时，还要转换 `\epigraph`、`\illustration` 等宏。
-- **模板 Schema 与参数注入**：`xcpc-engine` 对内置模板与 `templates/*.typ` 轻量求值导出 `#let schema`（规范见 [statement-style.md §2.2](./statement-style.md#22-模板声明式-schemalet-schema)），返回结构化的字段定义、分组与默认值。转换管线按「模板默认 → `workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`」合并参数，并在模板声明了对应作用域的 schema 时作为 `options: (...)` 注入 `contest(...)` 与 `problem(...)`；未声明 schema 的旧/自定义模板不注入多余参数。
+- **模板 Schema 与单入口渲染**：所有生效模板均为磁盘上的 `.typ` 文件（`contests/<id>/template.typ` 优先于 `templates/<name>.typ`；预设 `olymp-classic` / `cnoi-classic` / `minimal` 仅作初始化与添加模板的种子，不做内置回退）。`xcpc-engine` 对模板轻量求值导出 `#let schema`（规范见 [statement-style.md §2.3](./statement-style.md#23-模板声明式-schemalet-schema)）。转换管线按「模板默认 → `workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`」合并参数，生成单入口 `#render(doc)` 调用，并为模板未导出的 `section` / `samples` / `subsection` / `runin` 自动回退到 `/xcpc/defaults.typ`。
 - 数学定界符：LaTeX 里的普通括号（`(`、`[`、`\lceil` 等）不会缩放，转换成 Typst 时要写成转义或符号形式（`\(`、`\[`、`#sym.ceil.l`），避免 Typst 自动配对放大；只有 `\left…\right` 才转换成 `lr()`。
 - 导出到 Hydro / QOJ 等 OJ 时，用 `typlite` / `tylax` 把 Typst 转回 Markdown（后续阶段）。
 - **PDF 元数据与书签（Phase 2.5）**：导出 PDF 时由 Core 统一写入文档元数据，并复用 `olymp-classic.typ` 中已有的书签（`bookmarked: true`）：
@@ -248,11 +250,11 @@ Phase 2 的工具：
 - `write_problem`：`id`、`files: {相对路径: 内容}`、可选的 `expected_hash`。题目不存在就创建，存在就逐个原子写入；路径只能是题目目录内的 `problem.toml`、`statement*.md`、`editorial.md`、`samples/*`、`solutions/*`、`generators/*`、`tests/*`、`checker.cpp`、`validator.cpp`、`interactor.cpp`。`problem.toml` 给的是全文，Core 只校验能否解析。
 - `compose_contest`：`id`、有序的题目 ID 列表、可选的比赛元数据。比赛不存在就创建；保留下来的题保留覆写，移除的题连同覆写删除，题号由 Core 重排。
 - `set_override`：`contest`、`label`、`fields`（`title` / `limits` / `show-metadata` / `options`，`null` 表示删除该覆写）。
-- `list_templates`：列出工作区可用的全部模板（内置 + `templates/*.typ`），返回各模板解析后的 `schema`（名称、说明、分组、字段类型与默认值）。
+- `list_templates`：列出工作区 `templates/*.typ` 的全部模板及其解析后的 `schema`，以及可供安装的预设种子列表（`olymp-classic`、`cnoi-classic`、`minimal`）。
 - `set_template_options`：按 `scope`（`workspace` / `contest` / `problem`）切换 `template` 或更新指定模板命名空间下的参数键值（`null` 表示删除覆写、恢复继承；遵循冻结与只读守卫）。
 - `freeze_contest`：冻结规则见 [product.md](./product.md#3-比赛contest)。
 
-对应的 CLI：`xcpc search`、`xcpc show`、`xcpc template list|schema|fork`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`（Phase 2.5 起支持 `--example` 释放内置示例工作区）；lint 并入 `xcpc check`，不单设命令。
+对应的 CLI：`xcpc search`、`xcpc show`、`xcpc template list|schema|add|fork`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`（Phase 2.5 起支持 `--example` 释放内置示例工作区）；lint 并入 `xcpc check`，不单设命令。
 
 Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径，未指定时走 Core 默认路径，Phase 2.5 起按标题命名，见 §5）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
 
