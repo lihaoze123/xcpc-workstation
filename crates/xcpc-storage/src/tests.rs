@@ -1207,7 +1207,7 @@ fn init_example_workspace_seeds_files_and_is_idempotent() {
     let ws = init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["lantern-walk", "star-grid"]
+        vec!["lantern-walk", "typst-showcase"]
     );
     assert_eq!(
         ws.list_contests().unwrap(),

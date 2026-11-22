@@ -684,7 +684,11 @@ fn init_example_and_output_override_and_human_error_messages() {
         None,
     );
     assert_eq!(bld.status.code(), Some(0));
-    assert!(target.join("build/新生热身赛-试题册.pdf").is_file());
+    assert!(
+        target
+            .join("build/XCPC Workstation 示例赛-试题册.pdf")
+            .is_file()
+    );
 
     let custom_out = target.join("build/custom-name.pdf");
     let bld2 = run_xcpc(

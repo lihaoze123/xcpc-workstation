@@ -23,7 +23,9 @@ typst-layout = "0.15.1"
 typst-render = "0.15.1"
 tiny-skia = "0.12"
 typst-pdf = "0.15.1"
-typst-kit = { version = "0.15.1", default-features = false, features = ["scan-fonts"] }
+typst-kit = { version = "0.15.1", default-features = false, features = ["scan-fonts", "system-packages", "system-downloader"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+tar = "0.4"
 comemo = "0.5.1"
 siphasher = "1"
 ttf-parser = "0.25"

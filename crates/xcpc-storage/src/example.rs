@@ -1,11 +1,11 @@
 //! Built-in example workspace embedded in the binary for `xcpc init --example` and
 //! `Preview.initExampleWorkspace` / `Preview.pickAndInitExampleWorkspace`.
 //!
-//! Contains two curated problems (`lantern-walk`, `star-grid`), a workspace-level
-//! `.xcpc/preamble.typ` macro file, and two contests (`welcome-round` in `olymp-classic`
-//! and `oi-mock` in `cnoi-classic`) live-referencing the same problem bank so new users
-//! immediately see live preview, pure-Typst vector diagrams, preamble macros, and
-//! multi-template publishing.
+//! Contains a dedicated Typst capability showcase (`typst-showcase` featuring CeTZ
+//! vector graphics, Pinit formula annotations, programmatic Typst scripting, and
+//! `.xcpc/preamble.typ` macros), a polished real contest problem (`lantern-walk`),
+//! and two contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`)
+//! demonstrating live-reference multi-template publishing.
 
 use std::fs;
 use std::path::Path;
@@ -28,6 +28,7 @@ const EXAMPLE_FILES: &[(&str, &str)] = &[
     fill: rgb("#F4F8FA"),
     radius: (right: 3pt),
     {
+      set par(first-line-indent: 0pt)
       text(weight: "bold", fill: rgb("#0B6989"), size: 9.5pt, title)
       v(3pt, weak: true)
       body
@@ -40,17 +41,326 @@ const EXAMPLE_FILES: &[(&str, &str)] = &[
   stroke: 0.5pt + rgb("#D4D4D8"),
   radius: 3pt,
   fill: rgb("#FAFAFA"),
-  text(size: 9.5pt)[
-    *复杂度总结*：时间复杂度 #time，空间复杂度 #space。
-  ],
+  {
+    set par(first-line-indent: 0pt)
+    text(size: 9.5pt)[
+      *复杂度总结*：时间复杂度 #time，空间复杂度 #space。
+    ]
+  },
 )
+"##,
+    ),
+    (
+        "problems/typst-showcase/problem.toml",
+        r#"title = "Typst 排版与绘图能力展示"
+rating = 2400
+tags = ["typst", "cetz", "pinit", "showcase"]
+
+[limits]
+time = "1s"
+memory = "512MB"
+"#,
+    ),
+    (
+        "problems/typst-showcase/statement.md",
+        r##"本篇用于集中展示 **XCPC Workstation** 内置 Typst 引擎的排版、外部库与编程能力：在同一份 Markdown 题面中自由混排 LaTeX 公式（MiTeX）、`@preview/cetz` 矢量绘图、`@preview/pinit` 公式标注、Typst 脚本自动生成以及工作区级自定义宏（`.xcpc/preamble.typ`）。
+
+### 1. CeTZ 矢量图论与几何绘图
+
+借助 `@preview/cetz:0.5.3`，无需外部绘图软件或位图导出，直接在题面源码中用坐标与语义声明绘制高清矢量图（左：最短路高亮有向图；右：二维平面凸包与坐标系）：
+
+```typst
+#import "@preview/cetz:0.5.3"
+
+#align(center, block(inset: (y: 4pt), grid(
+  columns: (auto, auto),
+  column-gutter: 18pt,
+  align: center + horizon,
+  // 左图：带权有向图与最短路高亮
+  cetz.canvas(length: 0.92cm, {
+    import cetz.draw: *
+    set-style(
+      stroke: (thickness: 0.75pt, paint: rgb("#71717A")),
+      mark: (fill: rgb("#71717A"), scale: 0.55),
+    )
+
+    let nodes = (
+      S: (0, 1.3),
+      A: (1.8, 2.4),
+      B: (1.8, 0.2),
+      C: (3.8, 2.2),
+      D: (3.8, 0.4),
+      T: (5.6, 1.3),
+    )
+
+    // 普通边
+    let edges = (
+      ("S", "B", "5", (0, -0.25)),
+      ("A", "B", "1", (-0.28, 0)),
+      ("B", "C", "6", (-0.15, 0.25)),
+      ("B", "D", "2", (0, -0.25)),
+      ("C", "D", "3", (0.28, 0)),
+      ("D", "T", "4", (0.12, -0.24)),
+    )
+    for (u, v, w, off) in edges {
+      let p1 = nodes.at(u)
+      let p2 = nodes.at(v)
+      line(p1, p2, mark: (end: ">"), name: "e")
+      content(
+        ((p1.at(0) + p2.at(0)) / 2 + off.at(0), (p1.at(1) + p2.at(1)) / 2 + off.at(1)),
+        text(size: 8pt, fill: rgb("#71717A"), w),
+      )
+    }
+
+    // 最短路高亮边 S -> A -> C -> T
+    let sp = (
+      ("S", "A", "2", (-0.12, 0.26)),
+      ("A", "C", "2", (0, 0.26)),
+      ("C", "T", "1", (0.14, 0.26)),
+    )
+    for (u, v, w, off) in sp {
+      let p1 = nodes.at(u)
+      let p2 = nodes.at(v)
+      line(p1, p2,
+        stroke: (thickness: 1.5pt, paint: rgb("#0B6989")),
+        mark: (end: ">", fill: rgb("#0B6989"), stroke: rgb("#0B6989"), scale: 0.65),
+      )
+      content(
+        ((p1.at(0) + p2.at(0)) / 2 + off.at(0), (p1.at(1) + p2.at(1)) / 2 + off.at(1)),
+        text(size: 8.5pt, weight: "bold", fill: rgb("#0B6989"), w),
+      )
+    }
+
+    // 节点圆圈（盖在边端点上方）
+    for (name, pos) in nodes {
+      let on-sp = name in ("S", "A", "C", "T")
+      circle(
+        pos,
+        radius: 0.34,
+        fill: if on-sp { rgb("#EBF5F8") } else { white },
+        stroke: if on-sp { 1.3pt + rgb("#0B6989") } else { 0.8pt + rgb("#71717A") },
+      )
+      content(
+        pos,
+        text(size: 9pt, weight: if on-sp { "bold" } else { "regular" },
+          fill: if on-sp { rgb("#09546D") } else { rgb("#27272A") }, name),
+      )
+    }
+    content((2.8, -0.55), text(size: 8.5pt, fill: rgb("#52525B"))[带权有向图最短路 $S -> A -> C -> T$（总权 $5$）])
+  }),
+  // 右图：二维平面凸包与坐标系
+  cetz.canvas(length: 0.78cm, {
+    import cetz.draw: *
+    // 淡灰网格
+    grid((0, 0), (4.5, 3.2), step: 1, stroke: 0.35pt + rgb("#E4E4E7"))
+    // 坐标轴
+    line((-0.3, 0), (4.8, 0), stroke: 0.8pt + rgb("#52525B"), mark: (end: ">", fill: rgb("#52525B"), scale: 0.5))
+    line((0, -0.3), (0, 3.5), stroke: 0.8pt + rgb("#52525B"), mark: (end: ">", fill: rgb("#52525B"), scale: 0.5))
+    content((4.9, -0.25), text(size: 8pt, fill: rgb("#52525B"))[$x$])
+    content((-0.28, 3.55), text(size: 8pt, fill: rgb("#52525B"))[$y$])
+
+    // 凸包填充多边形
+    let hull = ((0.6, 0.8), (2.4, 0.4), (4.1, 1.5), (3.4, 2.9), (1.3, 2.7))
+    line(..hull, close: true, fill: rgb("#0B6989").transparentize(86%), stroke: 1.2pt + rgb("#0B6989"))
+
+    // 内部散点
+    for pt in ((1.8, 1.6), (2.7, 1.4), (2.2, 2.1)) {
+      circle(pt, radius: 0.08, fill: rgb("#A1A1AA"), stroke: none)
+    }
+    // 凸包极点
+    let labels = ($P_1$, $P_2$, $P_3$, $P_4$, $P_5$)
+    let offsets = ((-0.32, -0.22), (0.05, -0.32), (0.35, -0.05), (0.28, 0.24), (-0.28, 0.24))
+    for (idx, pt) in hull.enumerate() {
+      circle(pt, radius: 0.1, fill: rgb("#0B6989"), stroke: white + 0.7pt)
+      let off = offsets.at(idx)
+      content((pt.at(0) + off.at(0), pt.at(1) + off.at(1)),
+        text(size: 8pt, fill: rgb("#09546D"), labels.at(idx)))
+    }
+    content((2.3, -0.7), text(size: 8.5pt, fill: rgb("#52525B"))[平面点集凸包（Andrew 算法）])
+  }),
+)))
+```
+
+### 2. Pinit 公式精准高亮与箭头标注
+
+借助 `@preview/pinit:0.2.2`，可以在任意复杂数学公式中放置锚点，用柔和高亮块与指向箭头拆解递推项、斜率优化结构或复杂度贡献（尤为适合题解与讲评）：
+
+```typst
+#import "@preview/pinit:0.2.2": *
+
+#block(width: 100%, inset: (top: 24pt, bottom: 32pt), {
+  set par(first-line-indent: 0pt)
+  align(center, text(size: 11.5pt)[
+    $ "dp"_i = min_(0 <= j < i) ( #pin(1) "dp"_j + S_j^2 #pin(2) - #pin(3) 2 S_i #pin(4) dot #pin(5) S_j #pin(6) ) + S_i^2 + C $
+  ])
+  pinit-highlight(1, 2, fill: rgb("#0B6989").transparentize(85%), radius: 3pt)
+  pinit-highlight(3, 4, fill: rgb("#D97706").transparentize(84%), radius: 3pt)
+  pinit-highlight(5, 6, fill: rgb("#059669").transparentize(84%), radius: 3pt)
+
+  pinit-point-from((1, 2), pin-dy: -11pt, offset-dx: -18pt, offset-dy: -24pt,
+    body-dx: -48pt, body-dy: -14pt, fill: rgb("#0B6989"))[
+    #text(size: 8.5pt, fill: rgb("#0B6989"), weight: "bold")[纵截距 $y(j)$（仅与决策 $j$ 有关）]
+  ]
+  pinit-point-from((3, 4), pin-dy: 9pt, offset-dx: -20pt, offset-dy: 20pt,
+    body-dx: -68pt, body-dy: 3pt, fill: rgb("#B45309"))[
+    #text(size: 8.5pt, fill: rgb("#B45309"), weight: "bold")[查询斜率 $k(i)$（单调递增）]
+  ]
+  pinit-point-from((5, 6), pin-dy: 9pt, offset-dx: 28pt, offset-dy: 20pt,
+    body-dx: 4pt, body-dy: 3pt, fill: rgb("#047857"))[
+    #text(size: 8.5pt, fill: rgb("#047857"), weight: "bold")[横坐标 $x(j)$]
+  ]
+})
+```
+
+### 3. Typst 编程语言能力（排版即编程）
+
+Typst 内置图灵完备的脚本语言：用几行 `for` 循环与递归/函数即可在编译期动态计算并生成图形与表格，彻底告别手抄重复数据。例如下方同时用脚本生成 **6 层帕斯卡三角（奇数着青蓝呈谢尔宾斯基分形）** 与 **自动编号的渐近复杂度速查表**：
+
+```typst
+#align(center, block(breakable: false, inset: (y: 2pt), grid(
+  columns: (auto, auto),
+  column-gutter: 22pt,
+  align: center + horizon,
+    // 6 层帕斯卡三角（奇数着青蓝呈谢尔宾斯基分形）
+  {
+    let n = 6
+    let rows = ((1,),)
+    for r in range(1, n) {
+      let prev = rows.last()
+      let cur = (1,)
+      for j in range(1, r) {
+        cur.push(prev.at(j - 1) + prev.at(j))
+      }
+      cur.push(1)
+      rows.push(cur)
+    }
+    stack(
+      dir: ttb,
+      spacing: 2.5pt,
+      ..rows.map(row => align(center, stack(
+        dir: ltr,
+        spacing: 2.5pt,
+        ..row.map(v => {
+          let odd = calc.rem(v, 2) == 1
+          box(
+            width: 17pt, height: 15pt, radius: 2.5pt,
+            fill: if odd { rgb("#EBF5F8") } else { rgb("#F4F4F5") },
+            stroke: 0.5pt + if odd { rgb("#0B6989") } else { rgb("#D4D4D8") },
+            align(center + horizon, text(
+              size: 7.5pt,
+              weight: if odd { "bold" } else { "regular" },
+              fill: if odd { rgb("#09546D") } else { rgb("#71717A") },
+              str(v),
+            )),
+          )
+        }),
+      ))),
+      v(4pt),
+      text(size: 8.5pt, fill: rgb("#52525B"))[脚本生成 $binom(n, k)$（奇数高亮）],
+    )
+  },
+  // 右侧：数据驱动生成复杂度参考表
+  {
+    let specs = (
+      ("1", $n <= 20$, $cal(O)(2^n)$, "状态压缩 DP"),
+      ("2", $n <= 500$, $cal(O)(n^3)$, "区间 DP / Floyd"),
+      ("3", $n <= 5000$, $cal(O)(n^2)$, "二维递推 / 暴力"),
+      ("4", $n <= 2 times 10^5$, $cal(O)(n log n)$, "数据结构 / 斜率优化"),
+      ("5", $n <= 10^7$, $cal(O)(n)$, "线性贪心 / 单调队列"),
+    )
+    set text(size: 8.5pt)
+    table(
+      columns: (auto, auto, auto, auto),
+      inset: (x: 6pt, y: 3pt),
+      stroke: 0.45pt + rgb("#D4D4D8"),
+      fill: (_, y) => if y == 0 { rgb("#F4F8FA") } else { none },
+      align: (center, center, center, left),
+      [*档位*], [*数据规模*], [*目标复杂度*], [*常见算法*],
+      ..specs.flatten(),
+    )
+  },
+)))
+```
+
+```typst
+#insight(title: "自定义工作区宏（.xcpc/preamble.typ）")[
+  本提示框由 `.xcpc/preamble.typ` 中的 `#insight` 宏生成，全工作区所有题面与题解均可直接调用；
+  同时支持任意 `@preview/...` 官方生态包按需自动拉取缓存，以及 `@local/...` 本地自定义包。
+]
+```
+
+## 输入格式
+
+输入一行两个整数 $a, b$（$0 \le a, b \le 10^9$），用于验证样例排版与字段标注效果：
+
+```typst
+#import "@preview/pinit:0.2.2": absolute-place, pin, pinit
+
+#let accent = rgb("#0B6989")
+#let fields(id, prefix, ..parts) = {
+  let names = parts.pos().enumerate().map(((i, _)) => id + "-" + str(i))
+  let text-line = parts.pos().enumerate().map(((i, part)) => [
+    #pin(names.at(i) + "-a")#raw(part.at(0))#pin(names.at(i) + "-b")
+  ]).join(h(1.2em))
+  let marks = parts.pos().enumerate().map(((i, part)) => pinit(
+    names.at(i) + "-a", names.at(i) + "-b",
+    callback: (a, b) => {
+      absolute-place(dx: a.x, dy: a.y + 3.5pt, line(length: b.x - a.x, stroke: 1pt + accent))
+      absolute-place(
+        dx: (a.x + b.x) / 2 - 2cm, dy: a.y + 5.5pt,
+        box(width: 4cm, align(center, text(size: 8.5pt, fill: accent, part.at(1)))),
+      )
+    },
+  )).join()
+  block(width: 100%, inset: (top: 4pt, bottom: 16pt), {
+    set par(first-line-indent: 0pt)
+    align(center)[#text(size: 9pt, fill: rgb("#71717A"))[#prefix]#h(1em)#text-line]
+    marks
+  })
+}
+
+#fields("in", "样例输入：", ("2026", [第一个整数 $a$]), ("1122", [第二个整数 $b$]))
+```
+
+## 输出格式
+
+输出一行一个整数，表示 $a + b$ 的值。
+"##,
+    ),
+    ("problems/typst-showcase/samples/01.in", "2026 1122\n"),
+    ("problems/typst-showcase/samples/01.ans", "3148\n"),
+    (
+        "problems/typst-showcase/editorial.md",
+        r##"本篇演示题解册的典型排版结构：正文与公式沿用工作区统一字号，代码块使用内嵌的 JetBrains Mono 字体，并通过 `.xcpc/preamble.typ` 提供的自定义宏统一呈现关键观察与复杂度结论。
+
+```typst
+#insight(title: "题解写作建议")[
+  在题解中同样可以直接 `#import "@preview/cetz:0.5.3"` 绘制状态转移图或用 `#import "@preview/pinit:0.2.2": *` 对关键递推式做逐步批注。
+]
+```
+
+```cpp
+#include <iostream>
+
+int main() {
+    long long a, b;
+    if (std::cin >> a >> b) {
+        std::cout << a + b << '\n';
+    }
+    return 0;
+}
+```
+
+```typst
+#complexity($cal(O)(1)$, $cal(O)(1)$)
+```
 "##,
     ),
     (
         "problems/lantern-walk/problem.toml",
         r#"title = "灯笼小径"
 rating = 1500
-tags = ["greedy", "prefix-sum", "constructive"]
+tags = ["greedy", "dp", "prefix-sum"]
 
 [limits]
 time = "1s"
@@ -64,46 +374,46 @@ memory = "256MB"
 你可以进行**至多一次**操作：选择一个连续区间 $[l, r]$（$1 \le l \le r \le n$），将该区间内所有灯笼的亮度同时加上 $k$。
 
 ```typst
-// 纯内置 Typst 矢量绘制：展示操作区间 [l, r] = [2, 4] 与亮度增量 +k
-#align(center, block(inset: (y: 4pt), {
-  let step = 46pt
-  let r = 13pt
+#import "@preview/cetz:0.5.3"
+
+#align(center, block(inset: (y: 4pt), cetz.canvas(length: 1.05cm, {
+  import cetz.draw: *
   let vals = ("-5", "-1", "4", "-2", "-5")
   let after = ("-5", "+2", "+7", "+1", "-5")
-  box(width: step * 4 + r * 2 + 24pt, height: 76pt, {
-    // 顶部操作区间标注括号 [2, 4] + k
-    let x1 = 12pt + r + step * 1
-    let x2 = 12pt + r + step * 3
-    place(top + left, dx: x1, dy: 14pt, line(length: x2 - x1, stroke: 0.9pt + rgb("#0B6989")))
-    place(top + left, dx: x1, dy: 14pt, line(angle: 90deg, length: 5pt, stroke: 0.9pt + rgb("#0B6989")))
-    place(top + left, dx: x2, dy: 14pt, line(angle: 90deg, length: 5pt, stroke: 0.9pt + rgb("#0B6989")))
-    place(top + left, dx: (x1 + x2) / 2 - 34pt, dy: 0pt,
-      box(width: 68pt, align(center, text(size: 8.5pt, fill: rgb("#0B6989"), weight: "bold")[操作区间 $+3$]))
+
+  // 顶部操作区间括号 [2, 4] + 3
+  line((1.5, 0.85), (4.5, 0.85), stroke: 1pt + rgb("#0B6989"))
+  line((1.5, 0.85), (1.5, 0.65), stroke: 1pt + rgb("#0B6989"))
+  line((4.5, 0.85), (4.5, 0.65), stroke: 1pt + rgb("#0B6989"))
+  content((3.0, 1.12), text(size: 8.5pt, weight: "bold", fill: rgb("#0B6989"))[选择区间 $[2, 4]$，亮度 $+3$])
+
+  // 相邻连线
+  for i in range(4) {
+    line((i * 1.5 + 0.42, 0), ((i + 1) * 1.5 - 0.42, 0), stroke: 0.7pt + rgb("#A1A1AA"))
+  }
+
+  // 灯笼节点
+  for i in range(5) {
+    let x = i * 1.5
+    let lit = i >= 1 and i <= 3
+    circle(
+      (x, 0),
+      radius: 0.42,
+      fill: if lit { rgb("#EBF5F8") } else { white },
+      stroke: if lit { 1.3pt + rgb("#0B6989") } else { 0.8pt + rgb("#A1A1AA") },
     )
-    // 连线
-    for i in range(4) {
-      let cx = 12pt + r + step * i
-      place(top + left, dx: cx + r, dy: 24pt + r,
-        line(length: step - r * 2, stroke: 0.6pt + rgb("#A1A1AA")))
-    }
-    // 灯笼节点与编号
-    for i in range(5) {
-      let lit = i >= 1 and i <= 3
-      let cx = 12pt + step * i
-      place(top + left, dx: cx, dy: 24pt, box(
-        width: r * 2, height: r * 2, radius: r,
-        stroke: if lit { 1.2pt + rgb("#0B6989") } else { 0.7pt + rgb("#A1A1AA") },
-        fill: if lit { rgb("#EBF5F8") } else { white },
-        align(center + horizon, text(size: 9.5pt, weight: if lit { "bold" } else { "regular" },
-          fill: if lit { rgb("#09546D") } else { rgb("#27272A") }, vals.at(i))),
-      ))
-      place(top + left, dx: cx - 4pt, dy: 24pt + r * 2 + 4pt,
-        box(width: r * 2 + 8pt, align(center, text(size: 8pt,
-          fill: if lit { rgb("#0B6989") } else { rgb("#71717A") },
-          if lit { after.at(i) } else { str(i + 1) }))))
-    }
-  })
-}))
+    content(
+      (x, 0),
+      text(size: 9pt, weight: if lit { "bold" } else { "regular" },
+        fill: if lit { rgb("#09546D") } else { rgb("#27272A") }, vals.at(i)),
+    )
+    content(
+      (x, -0.72),
+      text(size: 8pt, fill: if lit { rgb("#0B6989") } else { rgb("#71717A") },
+        if lit { after.at(i) } else { "#" + str(i + 1) }),
+    )
+  }
+})))
 ```
 
 请你求出操作之后，整条小径上**最大连续子段和**的最大可能值。允许选取空子段，空子段的和视为 $0$。
@@ -118,11 +428,21 @@ memory = "256MB"
 
 输出一行一个整数，表示至多一次操作后能获得的最大连续子段和。
 
-## 提示
+## 样例解释
 
-在第一个样例中，选择区间 $[2, 4]$ 并将亮度同时加上 $k = 3$，亮度序列变为 $[-5, 2, 7, 1, -5]$，最大连续子段和为 $2 + 7 + 1 = 10$。
+样例 1 中，选择区间 $[2, 4]$ 并加上 $k = 3$ 后，亮度序列变为 $[-5, 2, 7, 1, -5]$，区间 $[2, 4]$ 的和为 $2 + 7 + 1 = 10$，可以证明这是最大可能值。
 
-<!-- 提示：直接修改此处任意内容即可实时预览；在预览纸面上按住 Ctrl 点击文字或公式可跳回源码；上方示意图由纯 Typst 矢量原语绘制。 -->
+样例 2 中，最优策略是选择空子段，和为 $0$。
+
+## 数据范围
+
+对于所有测试数据，保证 $1 \le n \le 2 \times 10^5$，$-10^9 \le k, a_i \le 10^9$。
+
+| 测试点 | $n \le$ | 特殊性质 |
+| :---: | :---: | :---: |
+| $1 \sim 3$ | $200$ | 无 |
+| $4 \sim 6$ | $5\,000$ | $k > 0$ |
+| $7 \sim 10$ | $2 \times 10^5$ | 无 |
 "##,
     ),
     (
@@ -134,21 +454,45 @@ memory = "256MB"
     ("problems/lantern-walk/samples/02.ans", "0\n"),
     (
         "problems/lantern-walk/editorial.md",
-        r#"## 思路分析
-
-不妨先思考什么时候操作一定不会让答案变差。
-
-- 若 $k \le 0$，给任意区间加上一个非正数都不会使最大连续子段和增大，因此最优策略是不做操作，直接求原数组的最大连续子段和（与 $0$ 取最大值）。
-- 若 $k > 0$，最优方案一定可以把操作区间 $[l, r]$ 设为最终选出的最大子段本身：因为操作区间若超出所选子段，超出部分对答案没有贡献；若真包含于所选子段，把操作区间扩大到整个所选子段只会让和继续增加。
+        r##"注意到若最优子段为 $[L, R]$，操作区间 $[l, r]$ 只需取为 $[L, R]$ 的一个子区间即可：如果 $k \ge 0$，将整个 $[L, R]$ 都加上 $k$ 一定不劣；如果 $k < 0$，最优策略等价于不操作（或者选择空操作区间）。
 
 ```typst
-// 调用 .xcpc/preamble.typ 中定义的工作区自定义宏
 #insight(title: "等价转化")[
-  令 $b_i = a_i + max(0, k)$，原问题直接等价于求序列 $b$ 的最大连续子段和（允许空子段）。
+  令每个位置在进入最优子段时可以处于三种阶段：尚未开启加 $k$（状态 $0$）、正在加 $k$（状态 $1$）、已结束加 $k$（状态 $2$）。
+  因此只需维护以位置 $i$ 结尾的三态线性 DP 即可在单遍扫描中求出答案。
 ]
 ```
 
-## 参考实现
+### 状态转移方程
+
+```typst
+#import "@preview/pinit:0.2.2": *
+
+#block(width: 100%, inset: (top: 24pt, bottom: 24pt), {
+  set par(first-line-indent: 0pt)
+  align(center, text(size: 11pt)[
+    $ f_1(i) = max( #pin(1) f_0(i - 1) #pin(2), #pin(3) f_1(i - 1) #pin(4) ) + #pin(5) a_i + k #pin(6) $
+  ])
+  pinit-highlight(1, 2, fill: rgb("#0B6989").transparentize(85%), radius: 3pt)
+  pinit-highlight(3, 4, fill: rgb("#D97706").transparentize(84%), radius: 3pt)
+  pinit-highlight(5, 6, fill: rgb("#059669").transparentize(84%), radius: 3pt)
+
+  pinit-point-from((1, 2), pin-dy: -11pt, offset-dx: -16pt, offset-dy: -22pt,
+    body-dx: -42pt, body-dy: -14pt, fill: rgb("#0B6989"))[
+    #text(size: 8.5pt, fill: rgb("#0B6989"), weight: "bold")[从位置 $i$ 开启区间加 $k$]
+  ]
+  pinit-point-from((3, 4), pin-dy: 9pt, offset-dx: -12pt, offset-dy: 18pt,
+    body-dx: -42pt, body-dy: 3pt, fill: rgb("#B45309"))[
+    #text(size: 8.5pt, fill: rgb("#B45309"), weight: "bold")[延续当前加 $k$ 区间]
+  ]
+  pinit-point-from((5, 6), pin-dy: 9pt, offset-dx: 18pt, offset-dy: 18pt,
+    body-dx: -2pt, body-dy: 3pt, fill: rgb("#047857"))[
+    #text(size: 8.5pt, fill: rgb("#047857"), weight: "bold")[本位贡献]
+  ]
+})
+```
+
+### 参考代码
 
 ```cpp
 #include <algorithm>
@@ -161,13 +505,18 @@ int main() {
     int n;
     long long k;
     std::cin >> n >> k;
-    long long add = std::max(0LL, k);
-    long long cur = 0, ans = 0;
+
+    long long dp0 = 0, dp1 = 0, dp2 = 0, ans = 0;
     for (int i = 0; i < n; ++i) {
         long long a;
         std::cin >> a;
-        cur = std::max(0LL, cur + a + add);
-        ans = std::max(ans, cur);
+        long long n0 = std::max(0LL, dp0 + a);
+        long long n1 = std::max(dp0, dp1) + a + k;
+        long long n2 = std::max(dp1, dp2) + a;
+        dp0 = n0;
+        dp1 = std::max(0LL, n1);
+        dp2 = std::max(0LL, n2);
+        ans = std::max({ans, dp0, dp1, dp2});
     }
     std::cout << ans << '\n';
     return 0;
@@ -177,178 +526,58 @@ int main() {
 ```typst
 #complexity($cal(O)(n)$, $cal(O)(1)$)
 ```
-"#,
-    ),
-    (
-        "problems/star-grid/problem.toml",
-        r#"title = "星图折叠"
-rating = 1900
-tags = ["math", "dp", "grid"]
-
-[limits]
-time = "2s"
-memory = "512MB"
-"#,
-    ),
-    (
-        "problems/star-grid/statement.md",
-        r##"天文学家绘制了一张 $n \times m$ 的星图，第 $i$ 行第 $j$ 列的格点亮度为 $w_{i, j}$。
-
-现在你需要从左上角 $(1, 1)$ 出发，每一步只能向右移动到 $(i, j+1)$ 或向下移动到 $(i+1, j)$，最终到达右下角 $(n, m)$。一条路径的权值定义为路径上经过的所有格点亮度之和：
-
-$$S(P) = \sum_{(i, j) \in P} w_{i, j}$$
-
-```typst
-// 纯内置 Typst 绘制网格 + 最优路径高亮与方向指示
-#align(center, block(inset: (y: 4pt), {
-  let cw = 36pt
-  let ch = 28pt
-  let grid_vals = ((3, 1, 2), (4, 5, 1))
-  let on_path = ((0, 0), (0, 1), (1, 1), (2, 1))
-  box(width: cw * 3 + 22pt, height: ch * 2 + 18pt, {
-    for c in range(3) {
-      place(top + left, dx: 18pt + c * cw, dy: 0pt,
-        box(width: cw, align(center, text(size: 8pt, fill: rgb("#71717A"), str(c + 1)))))
-    }
-    for r in range(2) {
-      place(top + left, dx: 0pt, dy: 14pt + r * ch,
-        box(width: 14pt, height: ch, align(right + horizon, text(size: 8pt, fill: rgb("#71717A"), str(r + 1)))))
-      for c in range(3) {
-        let hit = on_path.contains((c, r))
-        place(top + left, dx: 18pt + c * cw, dy: 14pt + r * ch, box(
-          width: cw, height: ch,
-          stroke: if hit { 1pt + rgb("#0B6989") } else { 0.5pt + rgb("#A1A1AA") },
-          fill: if hit { rgb("#EBF5F8") } else { white },
-          align(center + horizon, text(size: 10pt, weight: if hit { "bold" } else { "regular" },
-            fill: if hit { rgb("#09546D") } else { rgb("#27272A") }, str(grid_vals.at(r).at(c)))),
-        ))
-      }
-    }
-    // 路径方向指示箭头
-    place(top + left, dx: 18pt + cw / 2 - 4pt, dy: 14pt + ch - 6pt,
-      text(size: 9pt, fill: rgb("#0B6989"), weight: "bold")[↓])
-    place(top + left, dx: 18pt + cw - 5pt, dy: 14pt + ch + ch / 2 - 5pt,
-      text(size: 9pt, fill: rgb("#0B6989"), weight: "bold")[→])
-    place(top + left, dx: 18pt + cw * 2 - 5pt, dy: 14pt + ch + ch / 2 - 5pt,
-      text(size: 9pt, fill: rgb("#0B6989"), weight: "bold")[→])
-  })
-}))
-```
-
-请你计算从 $(1, 1)$ 到 $(n, m)$ 的所有合法路径中，路径权值的最大值。
-
-## 输入格式
-
-第一行包含两个正整数 $n, m$（$1 \le n, m \le 1000$）。
-
-接下来 $n$ 行，每行包含 $m$ 个整数 $w_{i, 1}, w_{i, 2}, \ldots, w_{i, m}$（$-10^6 \le w_{i, j} \le 10^6$）。
-
-## 输出格式
-
-输出一行一个整数，表示最大路径权值。
-
-## 提示
-
-样例中的最优路径为 $(1, 1) \to (2, 1) \to (2, 2) \to (2, 3)$，路径权值为 $3 + 4 + 5 + 1 = 13$。
-
-| 子任务 | 分值 | 约束 |
-| :---: | :---: | :--- |
-| 1 | 30 | $n, m \le 10$ |
-| 2 | 30 | $w_{i, j} \ge 0$ |
-| 3 | 40 | 无特殊约束 |
 "##,
-    ),
-    ("problems/star-grid/samples/01.in", "2 3\n3 1 2\n4 5 1\n"),
-    ("problems/star-grid/samples/01.ans", "13\n"),
-    (
-        "problems/star-grid/editorial.md",
-        r#"## 思路分析
-
-由于每一步只能向右或向下走，状态转移天然构成有向无环图。设 $f[i][j]$ 表示到达 $(i, j)$ 的最大路径权值，则有：
-
-$$f[i][j] = w_{i, j} + \max(f[i - 1][j], f[i][j - 1])$$
-
-边界处仅从合法前驱转移即可，使用一维滚动数组即可将空间压到 $\mathcal{O}(m)$。
-
-## 参考实现
-
-```cpp
-#include <algorithm>
-#include <iostream>
-#include <limits>
-#include <vector>
-
-int main() {
-    std::ios::sync_with_stdio(false);
-    std::cin.tie(nullptr);
-
-    int n, m;
-    std::cin >> n >> m;
-    const long long NEG = std::numeric_limits<long long>::min() / 4;
-    std::vector<long long> dp(m + 1, NEG);
-    for (int i = 1; i <= n; ++i) {
-        for (int j = 1; j <= m; ++j) {
-            long long w;
-            std::cin >> w;
-            if (i == 1 && j == 1) {
-                dp[j] = w;
-            } else {
-                dp[j] = std::max(dp[j], dp[j - 1]) + w;
-            }
-        }
-    }
-    std::cout << dp[m] << '\n';
-    return 0;
-}
-```
-
-```typst
-#complexity($cal(O)(n m)$, $cal(O)(m)$)
-```
-"#,
     ),
     (
         "contests/welcome-round/contest.toml",
-        r#"name = "新生热身赛"
+        r#"name = "XCPC Workstation 示例赛"
 location = "XCPC Workstation"
 date = "2026 年 11 月"
 language = "chinese"
-show-cover = true
+cover = true
 
 [[problem]]
 label = "A"
-id = "lantern-walk"
+id = "typst-showcase"
 
 [[problem]]
 label = "B"
-id = "star-grid"
+id = "lantern-walk"
 "#,
     ),
     (
         "contests/oi-mock/contest.toml",
-        r#"name = "秋季模拟赛（OI / CNOI 模板）"
-location = "XCPC Workstation"
-date = "2026 年 11 月"
+        r#"name = "2026 CCF 非专业级软件能力认证（示例）"
+location = "CSP-S 模拟第二轮认证 提高级"
+date = "2026 年 11 月 22 日 14:30 ~ 18:30"
 language = "chinese"
 template = "cnoi-classic"
-show-cover = true
+cover = true
 
 [[problem]]
 label = "A"
 id = "lantern-walk"
+[problem.limits]
+time = "1.0 秒"
+memory = "512 MiB"
+input = "lantern.in"
+output = "lantern.out"
 
 [[problem]]
 label = "B"
-id = "star-grid"
-[problem.override.limits]
-time = "1.5s"
+id = "typst-showcase"
+[problem.limits]
+time = "2.0 秒"
+memory = "512 MiB"
+input = "showcase.in"
+output = "showcase.out"
 "#,
     ),
 ];
 
 /// Initializes an XCPC workspace at `dir` and populates it with the embedded example
 /// contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`),
-/// `.xcpc/preamble.typ`, and two problems (`lantern-walk`, `star-grid`).
+/// `.xcpc/preamble.typ`, and two problems (`typst-showcase`, `lantern-walk`).
 ///
 /// Existing files are left untouched so re-running is safe and idempotent.
 pub fn init_example_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {

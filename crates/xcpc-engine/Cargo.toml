@@ -17,6 +17,8 @@ typst-pdf.workspace = true
 siphasher.workspace = true
 ttf-parser.workspace = true
 typst-kit.workspace = true
+flate2.workspace = true
+tar.workspace = true
 comemo.workspace = true
 thiserror.workspace = true
 

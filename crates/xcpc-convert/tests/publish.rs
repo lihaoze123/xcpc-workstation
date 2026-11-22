@@ -1262,7 +1262,7 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
     let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["lantern-walk", "star-grid"]
+        vec!["lantern-walk", "typst-showcase"]
     );
     assert_eq!(
         ws.list_contests().unwrap(),
@@ -1276,7 +1276,7 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         (Target::Contest("oi-mock".into()), Kind::Statements),
         (Target::Contest("oi-mock".into()), Kind::Editorial),
         (Target::Problem("lantern-walk".into()), Kind::Statements),
-        (Target::Problem("star-grid".into()), Kind::Statements),
+        (Target::Problem("typst-showcase".into()), Kind::Statements),
     ] {
         let (compiled, _, report) =
             publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
@@ -1301,13 +1301,11 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     )
     .unwrap();
 
-    // 2. Add `.xcpc/preamble.typ` defining a custom macro & style tweak.
-    fs::create_dir_all(dir.path().join(".xcpc")).unwrap();
-    fs::write(
-        dir.path().join(".xcpc/preamble.typ"),
-        "#let xcpc-custom-badge(s) = strong(s)\n#set text(tracking: 0pt)\n",
-    )
-    .unwrap();
+    // 2. Append a custom macro & style tweak to `.xcpc/preamble.typ`.
+    let preamble_path = dir.path().join(".xcpc/preamble.typ");
+    let mut preamble = fs::read_to_string(&preamble_path).unwrap_or_default();
+    preamble.push_str("\n#let xcpc-custom-badge(s) = strong(s)\n#set text(tracking: 0pt)\n");
+    fs::write(&preamble_path, preamble).unwrap();
 
     let mut engine = publish::engine(&ws, &FontOptions::from_env());
     let (compiled, doc, report) = publish::check(

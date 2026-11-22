@@ -23,11 +23,11 @@
 
 ## 核心特性
 
-- **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内嵌严格对齐 [`polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)（`olymp.sty` 中文版）的 `olymp-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册，另附 CNOI/OI 风格预置模板 `cnoi-classic`。
+- **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内嵌严格对齐 `olymp.sty` 中文版的 `olymp-classic` 模板与高度还原 CCF CSP/NOI 官方版式的 `cnoi-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册。
+- **完整 Typst 生态与可编程排版**：原生支持 `@preview/*`（按需自动拉取并复用系统 Typst 缓存）与 `@local/*` 外部库，并内置 `cetz`（矢量绘图）与 `pinit`（公式高亮标注）离线回退包；配合 `.xcpc/preamble.typ` 自定义宏与 Typst 脚本编程能力，在 Markdown 题面中直接绘制图论/几何矢量图、标注递推公式或程序化生成表格。
 - **开放目录 + 活引用组卷与冻结**：全部数据以纯文本 Markdown + TOML 存储在本地目录中，天然适配 Git；比赛以活引用组织题目并仅覆写元数据，冻结后将源文件与两本 PDF 写入 `snapshot/` 永久只读复现。
 - **AI Agent / MCP 一等公民**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core。提供搜索、读写题面、组卷、编译诊断、页面渲染与导出 PDF 等完整 MCP 工具，支持 `--read-only` 只读守卫与外部修改无闪白实时同步。
-- **为出题人打磨的写作体验**：`/` 斜杠命令菜单（公式、矩阵、分段函数、子任务表、原始 Typst 块等）、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式，以及一键复制「带样例的完整 Markdown」。
-- **文件驱动的开放定制**：通过 `.xcpc/preamble.typ` 注入自定义 Typst 宏、在 `templates/*.typ` 扩展模板、用 `theme.toml`（全局 / 工作区两级）自定义配色与编辑器字体。
+- **为出题人打磨的写作与定制体验**：`/` 斜杠命令菜单（公式、矩阵、分段函数、子任务表、原始 Typst 块等）、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、在 `templates/*.typ` 扩展自定义模板，以及用 `theme.toml`（全局 / 工作区两级）自定义配色与编辑器字体。
 
 <p align="center">
   <img src="./docs/images/library.png" width="100%" alt="XCPC Workstation 题库中心：多维筛选、难度着色、比赛引用与即时题面预览" />
@@ -37,7 +37,7 @@
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载最新 `v0.2.0-beta.1` 安装包（所有桌面包均附带 `xcpc` 命令行工具）：
+前往 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载最新 `v0.2.0-beta.2` 安装包（所有桌面包均附带 `xcpc` 命令行工具）：
 
 | 平台 | 推荐安装包 | 说明 |
 |---|---|---|
@@ -150,5 +150,5 @@ scripts/package.sh --target linux
 ## 致谢与许可证
 
 - 题面默认版式致谢 [`olymp.sty`](https://github.com/GassaFM/olymp.sty/)，预置 CNOI 模板灵感致谢 [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement)。
-- 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)。
+- 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)；内置离线回退包包含 [CeTZ](https://github.com/cetz-package/cetz)（LGPL-3.0）、[oxifmt](https://github.com/PgBiel/typst-oxifmt) 与 [Pinit](https://github.com/OrangeX4/typst-pinit)。
 - 本项目采用 [Apache License 2.0](./LICENSE) 开源许可。

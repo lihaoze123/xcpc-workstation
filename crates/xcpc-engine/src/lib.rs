@@ -23,6 +23,7 @@ use typst_layout::PagedDocument;
 mod fingerprint;
 mod locate;
 mod overflow;
+mod packages;
 
 pub use typst_render::render as render_page_raw;
 
@@ -640,6 +641,9 @@ impl World for Engine {
                 .or_insert_with(|| Source::new(id, text.into()))
                 .clone());
         }
+        if let VirtualRoot::Package(spec) = id.root() {
+            return packages::load_package_source(id, spec);
+        }
         let bytes = self.file(id)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
         Ok(Source::new(id, text.into()))
@@ -653,8 +657,8 @@ impl World for Engine {
         if let Some(text) = template(id) {
             return Ok(Bytes::from_string(text));
         }
-        if !matches!(id.root(), VirtualRoot::Project) {
-            return Err(FileError::Other(Some("packages are not available".into())));
+        if let VirtualRoot::Package(spec) = id.root() {
+            return packages::load_package_file(spec, id.vpath());
         }
         let mut files = self.files.lock().unwrap();
         files
@@ -822,6 +826,38 @@ mod tests {
             assert!(
                 unexpected.is_empty(),
                 "unexpected non-fallback warnings: {unexpected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_preview_packages_compile_offline() {
+        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        let has_foundertype = engine.font_fallback_warning.is_none();
+        engine.set_main(
+            r#"#import "/xcpc/olymp-classic.typ": contest, problem
+#import "@preview/cetz:0.5.3"
+#import "@preview/pinit:0.2.2": *
+#show: contest.with(name: "Package Test", show-cover: false)
+#problem(label: "A", title: "Demo")[
+#cetz.canvas({
+  import cetz.draw: *
+  circle((0, 0), radius: 0.6, stroke: blue)
+  line((0.6, 0), (2, 0), mark: (end: ">"))
+})
+
+$ #pin(1) a_i #pin(2) + k $
+#pinit-highlight(1, 2)
+]
+"#,
+        );
+        let compiled = engine.compile().unwrap();
+        assert_eq!(compiled.page_count(), 1);
+        if has_foundertype {
+            assert!(
+                compiled.warnings.is_empty(),
+                "unexpected warnings: {:?}",
+                compiled.warnings
             );
         }
     }

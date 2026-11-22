@@ -64,6 +64,7 @@ jobs:
             libwebkitgtk-6.0-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
+            libssl-dev \
             pkg-config \
             dpkg-dev \
             libfuse2
