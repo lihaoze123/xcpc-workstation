@@ -62,7 +62,11 @@ jobs:
             | tar -xz -C ~/.local/nsh
 
       - name: Add NSH to PATH
-        run: echo "$HOME/.local/nsh/bin" >> "$GITHUB_PATH"
+        run: |
+          NSH_BIN=$(dirname "$(find "$HOME/.local/nsh" -name nsh -type f | head -n 1)")
+          test -n "$NSH_BIN"
+          echo "$NSH_BIN" >> "$GITHUB_PATH"
+          "$NSH_BIN/nsh" --version
 
       - uses: Swatinem/rust-cache@v2
         with:

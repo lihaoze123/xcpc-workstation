@@ -83,7 +83,11 @@ jobs:
             | tar -xz -C ~/.local/nsh
 
       - name: Add NSH to PATH
-        run: echo "$HOME/.local/nsh/bin" >> "$GITHUB_PATH"
+        run: |
+          NSH_BIN=$(dirname "$(find "$HOME/.local/nsh" -name nsh -type f | head -n 1)")
+          test -n "$NSH_BIN"
+          echo "$NSH_BIN" >> "$GITHUB_PATH"
+          "$NSH_BIN/nsh" --version
 
       - name: Cache bundled fonts
         id: cache-fonts
@@ -306,7 +310,8 @@ jobs:
           mkdir -p ~/.local/nsh
           curl -fsSL "https://github.com/longbridge/nsh/releases/download/v${NSH_VERSION}/nsh-linux-x86_64.tar.gz" \
             | tar -xz -C ~/.local/nsh
-          export PATH="$HOME/.local/nsh/bin:$PATH"
+          NSH_BIN=$(dirname "$(find "$HOME/.local/nsh" -name nsh -type f | head -n 1)")
+          export PATH="$NSH_BIN:$PATH"
           KEY_FILE=$(mktemp)
           trap 'rm -f "$KEY_FILE"' EXIT
           printf '%s\n' "$NSH_UPDATER_SECRET_KEY" > "$KEY_FILE"
