@@ -534,18 +534,22 @@ export function PickProblemsBody(props: { contestId: string }) {
         <If
           when={picked().length > 0}
           else={
-            <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {remaining() === 0 ? "已达 26 题上限" : `还可加入 ${remaining()} 题`}
-            </Text>
+            <If when={remaining() === 0}>
+              <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                已达 26 题上限（A–Z）
+              </Text>
+            </If>
           }
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Text style={{ fontSize: 12.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
               {`已选 ${picked().length} 题`}
             </Text>
-            <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {remainingAfterPick() === 0 ? "已达 26 题上限" : `剩余名额 ${remainingAfterPick()}`}
-            </Text>
+            <If when={remainingAfterPick() === 0}>
+              <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                已达 26 题上限（A–Z）
+              </Text>
+            </If>
             <Btn label="清空已选" variant="ghost" onPress={() => picked.set([])} />
           </View>
         </If>

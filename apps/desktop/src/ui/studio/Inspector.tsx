@@ -456,14 +456,22 @@ function ContestInfoTab(props: {
   hasFollowingSection?: boolean;
 }) {
   const c = () => props.contest;
-  const frozen = () => c().frozen;
-  const archived = () => c().archived;
+  const frozen = () => c()?.frozen ?? false;
+  const archived = () => c()?.archived ?? false;
   const wsReadOnly = () => info().readOnly;
-  const locked = () => frozen() || archived() || wsReadOnly();
-  const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
-  const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
+  const locked = () => !c() || frozen() || archived() || wsReadOnly();
+  const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => {
+    const cur = c();
+    if (!cur || locked()) return;
+    props.done(preview.updateContestMeta(cur.id, patch));
+  };
+  const over = (patch: Parameters<typeof preview.setOverride>[2]) => {
+    const cur = c();
+    if (!cur || locked() || !props.item) return;
+    props.done(preview.setOverride(cur.id, props.item.label, patch));
+  };
   const f = props.freeze;
-  const contestOwner = () => `contest:${c().id}`;
+  const contestOwner = () => `contest:${c()?.id ?? ""}`;
 
   return (
     <View>
@@ -665,12 +673,20 @@ function ContestLayoutTab(props: {
   onRequestPreset: () => void;
 }) {
   const c = () => props.contest;
-  const frozen = () => c().frozen;
-  const archived = () => c().archived;
+  const frozen = () => c()?.frozen ?? false;
+  const archived = () => c()?.archived ?? false;
   const wsReadOnly = () => info().readOnly;
-  const locked = () => frozen() || archived() || wsReadOnly();
-  const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
-  const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
+  const locked = () => !c() || frozen() || archived() || wsReadOnly();
+  const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => {
+    const cur = c();
+    if (!cur || locked()) return;
+    props.done(preview.updateContestMeta(cur.id, patch));
+  };
+  const over = (patch: Parameters<typeof preview.setOverride>[2]) => {
+    const cur = c();
+    if (!cur || locked() || !props.item) return;
+    props.done(preview.setOverride(cur.id, props.item.label, patch));
+  };
 
   const confirmRestoreOpen = signal(false);
 
