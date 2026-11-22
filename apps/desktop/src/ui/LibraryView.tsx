@@ -17,6 +17,7 @@ import {
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { PreviewRequest, ProblemSummaryJs } from "xcpc-workstation/native";
 import { Btn, Chevron, Chip, RatingBadge, Segmented, tip } from "./kit";
+import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DetailHeader, EmptyState, Spacer, Toolbar } from "./layout";
@@ -164,7 +165,7 @@ export function LibraryView(props: { active: boolean }) {
           if (b.rating == null) return -1;
           return (a.rating - b.rating) * dir;
         }
-        if (s.key === "title") return a.title.localeCompare(b.title, "zh-CN") * dir;
+        if (s.key === "title") return a.title.localeCompare(b.title, locale()) * dir;
         return a.id.localeCompare(b.id) * dir;
       });
     }
@@ -181,15 +182,15 @@ export function LibraryView(props: { active: boolean }) {
     const tagsW = w >= 560 ? FIXED.tags : 0;
     const used = FIXED.id + FIXED.rating + tagsW + (source ? FIXED.source : 0) + (marks ? 2 * FIXED.mark : 0);
     return [
-      { key: "id", title: "ID", width: FIXED.id, resizable: false, sortable: true },
-      { key: "title", title: "标题", width: Math.max(140, w - used - 2), resizable: false, sortable: true },
-      { key: "ratingText", title: "难度", width: FIXED.rating, align: "end" as const, resizable: false, sortable: true },
-      ...(tagsW ? [{ key: "tagsText", title: "标签", width: tagsW, resizable: false }] : []),
-      ...(source ? [{ key: "source", title: "来源", width: FIXED.source, resizable: false }] : []),
+      { key: "id", title: t("library.col.id"), width: FIXED.id, resizable: false, sortable: true },
+      { key: "title", title: t("library.col.title"), width: Math.max(140, w - used - 2), resizable: false, sortable: true },
+      { key: "ratingText", title: t("library.col.rating"), width: FIXED.rating, align: "end" as const, resizable: false, sortable: true },
+      ...(tagsW ? [{ key: "tagsText", title: t("library.col.tags"), width: tagsW, resizable: false }] : []),
+      ...(source ? [{ key: "source", title: t("library.col.source"), width: FIXED.source, resizable: false }] : []),
       ...(marks
         ? [
-            { key: "editorialMark", title: "题解", width: FIXED.mark, align: "center" as const, resizable: false },
-            { key: "codeMark", title: "代码", width: FIXED.mark, align: "center" as const, resizable: false },
+            { key: "editorialMark", title: t("library.col.editorial"), width: FIXED.mark, align: "center" as const, resizable: false },
+            { key: "codeMark", title: t("library.col.code"), width: FIXED.mark, align: "center" as const, resizable: false },
           ]
         : []),
     ];
@@ -253,16 +254,16 @@ export function LibraryView(props: { active: boolean }) {
 
   const tagItems = (): MenuEntry[] => facets().tags.map((t) => ({ id: t, label: t, checked: tags().includes(t) }));
   const tierItems = (): MenuEntry[] => [
-    { id: "", label: "全部难度", checked: tier() === undefined },
+    { id: "", label: t("library.filter.allRatings"), checked: tier() === undefined },
     ...TIER_RANGES.map((r) => ({ id: r.tier, label: r.label, checked: tier() === r.tier })),
   ];
   const platformItems = (): MenuEntry[] =>
     facets().platforms.length > 0
       ? [
-          { id: "", label: "全部来源", checked: platform() === undefined },
+          { id: "", label: t("library.filter.allSources"), checked: platform() === undefined },
           ...facets().platforms.map((p) => ({ id: p, label: p, checked: platform() === p })),
         ]
-      : [{ id: "__empty__", label: "没有来源", disabled: true }];
+      : [{ id: "__empty__", label: t("library.filter.noSources"), disabled: true }];
 
   const cell = (key: string, row: number, value: string) => {
     const r = rows()[row];
@@ -348,7 +349,7 @@ export function LibraryView(props: { active: boolean }) {
                   class="bg-transparent placeholder:text-muted-foreground"
                   style={{ flex: 1, height: 26, fontSize: 13 }}
                   value={inputText()}
-                  placeholder="搜索标题、ID 或标签"
+                  placeholder={t("library.searchPlaceholder")}
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoFocus
@@ -361,7 +362,7 @@ export function LibraryView(props: { active: boolean }) {
                       setSearch("");
                       search?.focus();
                     }}
-                    tooltip={tip("清除搜索", "escape")}
+                    tooltip={tip(t("library.clearSearch"), "escape")}
                     class="hover:bg-muted active:bg-accent"
                     style={{
                       width: 20,
@@ -380,38 +381,38 @@ export function LibraryView(props: { active: boolean }) {
                 </If>
               </View>
               <FilterMenu
-                label={tags().length === 0 ? "标签" : tags().length === 1 ? tags()[0] : `${tags().length} 标签`}
+                label={tags().length === 0 ? t("library.filter.tags") : tags().length === 1 ? tags()[0] : t("library.filter.tagsCount", { count: tags().length })}
                 active={tags().length > 0}
                 multi
-                entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: "没有标签", disabled: true }]}
+                entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: t("library.filter.noTags"), disabled: true }]}
                 onSelect={(id) => id && id !== "__empty__" && tags.set(tags().includes(id) ? tags().filter((t) => t !== id) : [...tags(), id])}
               />
               <FilterMenu
-                label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? "难度"}
+                label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? t("library.filter.rating")}
                 active={tier() !== undefined}
                 entries={tierItems()}
                 onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
               />
               <FilterMenu
-                label={platform() ?? "来源"}
+                label={platform() ?? t("library.filter.source")}
                 active={platform() !== undefined}
                 entries={platformItems()}
                 onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
               />
               <If when={filtered()}>
-                <Btn label={width() >= 580 ? "清除" : undefined} icon="filterX" variant="ghost" tooltip={tip("清除筛选")} onPress={clear} style={{ flexShrink: 0 }} />
+                <Btn label={width() >= 580 ? t("common.clear") : undefined} icon="filterX" variant="ghost" tooltip={tip(t("library.filter.clear"))} onPress={clear} style={{ flexShrink: 0 }} />
               </If>
               <Spacer />
               <If when={totalCount() > 0 && width() >= 500}>
                 <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
-                  {filtered() ? `${rows().length} / ${totalCount()}` : `${totalCount()} 题`}
+                  {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
                 </Text>
               </If>
               <Btn
-                label={width() >= 660 ? "新建题目" : undefined}
+                label={width() >= 660 ? t("library.newProblem") : undefined}
                 icon="plus"
                 disabled={readOnly()}
-                tooltip={tip(readOnly() ? "只读工作区无法新建" : "新建题目", readOnly() ? undefined : "mod+n")}
+                tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
                 onPress={() => dialog.set({ kind: "newProblem" })}
                 style={{ flexShrink: 0 }}
               />
@@ -455,9 +456,9 @@ export function LibraryView(props: { active: boolean }) {
                   const ro = readOnly();
                   void DesktopMenu.popup(
                     [
-                      { label: ro ? "查看" : "编辑", onSelect: () => openStudio({ target: "problem", id: row.id }) },
+                      { label: ro ? t("common.view") : t("common.edit"), onSelect: () => openStudio({ target: "problem", id: row.id }) },
                       {
-                        label: "复制带样例的 Markdown",
+                        label: t("library.menu.copyMarkdownWithSamples"),
                         onSelect: () => {
                           try {
                             void Clipboard.writeText(preview.exportMarkdownWithSamples(row.id, null));
@@ -466,11 +467,11 @@ export function LibraryView(props: { active: boolean }) {
                           }
                         },
                       },
-                      { label: "复制题目…", disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
-                      { label: "加入比赛…", disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
-                      { label: "在文件夹中显示", onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
+                      { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
+                      { label: t("library.menu.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
+                      { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
                       { type: "separator" },
-                      { label: "删除题目…", disabled: ro, destructive: true, onSelect: () => dialog.set({ kind: "deleteProblem", problemId: row.id }) },
+                      { label: t("library.menu.delete"), disabled: ro, destructive: true, onSelect: () => dialog.set({ kind: "deleteProblem", problemId: row.id }) },
                     ],
                     { x: e.x, y: e.y },
                   ).finally(() => table?.clearMenuTarget());
@@ -529,15 +530,15 @@ export function LibraryView(props: { active: boolean }) {
                 }}
                 empty={
                   filtered() ? (
-                    <EmptyState icon="searchX" title="没有符合条件的题目" hint="换个关键词，或者放宽筛选条件" action={<Btn label="清除筛选" icon="filterX" onPress={clear} />} />
+                    <EmptyState icon="searchX" title={t("library.emptyFilteredTitle")} hint={t("library.emptyFilteredHint")} action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clear} />} />
                   ) : (
                     <EmptyState
                       icon="libraryBig"
-                      title="题库还是空的"
-                      hint={readOnly() ? "工作区以只读方式打开" : "新建第一道题，写好题面就能排版出 PDF"}
+                      title={t("library.emptyTitle")}
+                      hint={readOnly() ? t("common.readOnlyWorkspaceHint") : t("library.emptyHint")}
                       action={
                         readOnly() ? undefined : (
-                          <Btn label="新建题目" icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newProblem" })} tooltip={tip("新建题目", "mod+n")} />
+                          <Btn label={t("library.newProblem")} icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newProblem" })} tooltip={tip(t("library.newProblem"), "mod+n")} />
                         )
                       }
                     />
@@ -600,9 +601,9 @@ function ProblemInspector(props: { id: string; active: boolean }) {
   });
 
   const tabs = computed(() => [
-    { value: "statements" as Tab, label: "题面" },
-    ...(detail().hasEditorial ? [{ value: "editorial" as Tab, label: "题解" }] : []),
-    ...(detail().solutions.length > 0 ? [{ value: "code" as Tab, label: "代码" }] : []),
+    { value: "statements" as Tab, label: t("library.inspector.statement") },
+    ...(detail().hasEditorial ? [{ value: "editorial" as Tab, label: t("library.inspector.editorial") }] : []),
+    ...(detail().solutions.length > 0 ? [{ value: "code" as Tab, label: t("library.inspector.code") }] : []),
   ]);
 
   const request = (): PreviewRequest | undefined => {
@@ -674,7 +675,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                   {(c) => (
                     <View
                       onPress={() => jumpContest(c().id)}
-                      tooltip={tip(`跳转到比赛「${c().name}」`)}
+                      tooltip={tip(t("library.inspector.jumpContest", { name: c().name }))}
                       class="bg-muted hover:bg-accent active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                       style={{
                         height: 20,
@@ -716,19 +717,19 @@ function ProblemInspector(props: { id: string; active: boolean }) {
               <Btn
                 variant="primary"
                 icon={readOnly() ? "fileText" : "pencil"}
-                label={readOnly() ? "查看" : "编辑"}
-                tooltip={tip(readOnly() ? "以只读方式查看题面和预览" : "编辑题面、样例和题解", "enter")}
+                label={readOnly() ? t("common.view") : t("common.edit")}
+                tooltip={tip(readOnly() ? t("library.inspector.viewTooltip") : t("library.inspector.editTooltip"), "enter")}
                 onPress={() => openStudio({ target: "problem", id: props.id })}
               />
               <AppMenu
                 align="end"
                 entries={[
-                  { id: "copyMd", label: "复制带样例的 Markdown", icon: "fileText" },
-                  { id: "duplicate", label: "复制题目…", icon: "copy", disabled: readOnly() },
-                  { id: "add", label: "加入比赛…", icon: "listPlus", disabled: readOnly() },
-                  { id: "reveal", label: "在文件夹中显示", icon: "folderOpen" },
+                  { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
+                  { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: readOnly() },
+                  { id: "add", label: t("library.menu.addToContest"), icon: "listPlus", disabled: readOnly() },
+                  { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
                   { separator: true, id: "sep" },
-                  { id: "delete", label: "删除题目…", icon: "trash", destructive: true, disabled: readOnly() },
+                  { id: "delete", label: t("library.menu.delete"), icon: "trash", destructive: true, disabled: readOnly() },
                 ]}
                 onSelect={(id) => {
                   if (id === "copyMd") {
@@ -750,7 +751,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
       </View>
       <If when={tabs().length > 1}>
         <View style={{ height: 36, flexDirection: "row", alignItems: "stretch", paddingLeft: 12, paddingRight: 12, gap: 8, borderBottomWidth: 1 }} class="border-border">
-          <Segmented items={tabs()} value={tab()} onChange={(v) => tab.set(v)} itemWidth={52} underline />
+          <Segmented items={tabs()} value={tab()} onChange={(v) => tab.set(v)} itemWidth={72} underline />
           <View style={{ flex: 1 }} />
           <If when={tab() === "code" && detail().solutions.length > 1}>
             <View style={{ justifyContent: "center" }}>

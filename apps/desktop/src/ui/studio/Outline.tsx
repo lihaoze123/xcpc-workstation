@@ -6,6 +6,7 @@
 import { computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { ContestDetailJs, PreviewStart } from "xcpc-workstation/native";
 import { ContestStats } from "../Contest";
+import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { tip } from "../kit";
 import { labels, moveItem } from "../logic";
@@ -74,7 +75,7 @@ export function Outline(props: {
             <Row
               isCover
               label=""
-              title="封面"
+              title={t("outline.cover")}
               page={1}
               active={!!props.coverActive}
               onPress={props.onCover}
@@ -135,7 +136,7 @@ export function Outline(props: {
           >
             <Icon name="listPlus" size={14} tone="secondary-foreground" />
             <Text style={{ fontSize: 12.5 }} class="text-foreground">
-              从题库挑题
+              {t("contests.pickProblems")}
             </Text>
           </View>
         </View>

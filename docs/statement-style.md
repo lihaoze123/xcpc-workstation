@@ -151,6 +151,24 @@
 
 支持的实用排版参数类型共 9 种：`bool`、`enum`、`string`、`lines`（多行/列表）、`number`、`length`（带单位）、`color`、`font`、`image`（图片选择并自动导入至 `assets/`），配合 `group` 分组与简单等值 `when` 条件显隐。
 
+#### 多语言文案（多态 `LocalizedText`）
+
+`#let schema` 中面向用户展示的 7 个文本字段（`schema.name`、`schema.description`、`schema.groups[].label`、`schema.fields[].label`、`schema.fields[].description`、`schema.fields[].choices[].label`、`schema.fields[].placeholder`）均支持**多态写法**：
+
+1. **纯字符串**（单语自定义模板零负担、向后兼容），例如 `label: "封面"`；
+2. **多语字典**（键为 BCP 47 语言标签或主语言子标签，如 `zh` / `zh-CN` / `en`），例如 `label: (zh: "封面与目录", en: "Cover & Table of Contents")`。
+
+给定目标界面语言 `locale`（如 `"zh-CN"` 或 `"en"`），Rust 与前端使用完全一致的 6 步回退解析规则（纯字符串直接返回；空字典按缺失处理）：
+
+1. 精确匹配（忽略大小写，且 `_` 与 `-` 等价，如 `"zh-CN"` 匹配 `"zh-cn"`）；
+2. 主语言子标签匹配（取 `-` 前部分，如 `"zh-CN"` 匹配 `"zh"`，或字典中首个同主语言键如 `"zh-Hans"`）；
+3. 回退到 `"en"`；
+4. 回退到 `"zh"` / `"zh-CN"`；
+5. 回退到字典按 key 排序的首个非空值；
+6. 仍无匹配返回空字符串 `""`。
+
+桌面端桥接原样透传 `LocalizedText`，切换界面语言时由前端响应式解析，无需重新求值 Typst。
+
 ### 2.4 三级作用域与命名空间隔离
 
 模板参数按**模板名分命名空间**持久化（比赛专属 `contests/<id>/template.typ` 使用独立命名空间 `local`），切换模板时不丢失原模板配置、不同模板同名键互不冲突，切回即恢复：
@@ -166,7 +184,7 @@
 - **`olymp-classic`**：默认输出严格对齐 `lihaoze123/polygon-chinese-template@10f9959`（视觉回归逐页一致），并在自身 `schema` 中声明 `cover`、`show-metadata`、`blank-pages`、封面徽标、字号/页边距、字体与单题 `show-metadata` / `sample-layout`（双栏 / 宽版）。
 - **`cnoi-classic`**：CCF CSP-J/S 与 NOI 风格，在自身 `schema` 中声明 `cover`、`show-metadata`、`blank-pages`、封面徽标、编译选项、提交/编译表开关、注意事项、样例框描边色与行号、中文着重号、字号/页边距、字体以及单题 `prob-type` / `source-file`。
 - **`minimal`**：约 40 行的极简空白起点模板，方便用户从零快速编写自定义比赛模板。
-- **工作区级样式注入（`.xcpc/preamble.typ`）**：仍在模板渲染前注入作用域，用于跨模板共享自定义数学宏或 Typst 包导入。
+- **工作区级样式注入（`templates/preamble.typ`）**：仍在模板渲染前注入作用域，随工作区纳入 Git，用于跨模板共享自定义数学宏或 Typst 包导入。
 
 ## 3. 题解册
 

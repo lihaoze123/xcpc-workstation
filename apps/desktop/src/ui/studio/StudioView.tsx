@@ -21,6 +21,7 @@ import type {
 } from "xcpc-workstation/native";
 import { createFreeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
+import { t, type MessageKey } from "../i18n";
 import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { minimalEdit, ratioOf, type Book } from "../logic";
@@ -60,10 +61,10 @@ import { Samples } from "./Samples";
 
 type Tab = "statement" | "samples" | "editorial";
 const SAVE_AFTER = 500;
-const TABS: { value: Tab; label: string; keys: string }[] = [
-  { value: "statement", label: "题面", keys: "alt+1" },
-  { value: "samples", label: "样例", keys: "alt+2" },
-  { value: "editorial", label: "题解", keys: "alt+3" },
+const TAB_DEFS: readonly { value: Tab; labelKey: MessageKey; keys: string }[] = [
+  { value: "statement", labelKey: "studio.tab.statement", keys: "alt+1" },
+  { value: "samples", labelKey: "studio.tab.samples", keys: "alt+2" },
+  { value: "editorial", labelKey: "studio.tab.editorial", keys: "alt+3" },
 ];
 
 /** Computes a non-zero-width range on `lineStr` starting at `col` so diagnostics show a visible squiggle and hover target. */
@@ -280,7 +281,7 @@ export function StudioView(props: { active: boolean }) {
       conflict.set({ text: disk.text, hash: disk.hash });
       return false;
     } else {
-      notice.set(errorOf(res, "保存"));
+      notice.set(errorOf(res, t("ctx.save")));
       return false;
     }
   }
@@ -382,7 +383,7 @@ export function StudioView(props: { active: boolean }) {
       const disk = preview.read(f.path);
       conflict.set({ text: disk.text, hash: disk.hash });
     } else {
-      notice.set(errorOf(res, "保存"));
+      notice.set(errorOf(res, t("ctx.save")));
     }
   }
 
@@ -447,7 +448,7 @@ export function StudioView(props: { active: boolean }) {
     const out = await preview.export({ ...req, book: b });
     exporting.set(undefined);
     if (out.error) {
-      notice.set({ error: out.error, context: b === "editorial" ? "导出题解册" : "导出题面册" });
+      notice.set({ error: out.error, context: b === "editorial" ? t("ctx.exportEditorial") : t("ctx.exportStatements") });
     } else {
       notice.set(undefined);
       exportedSeq.set(exportedSeq() + 1);
@@ -459,7 +460,7 @@ export function StudioView(props: { active: boolean }) {
     const s = status()?.[b];
     if (!s?.exists) return;
     const res = await preview.revealInFolder(s.absPath);
-    if (!res.ok) notice.set(errorOf(res, "在文件夹中显示"));
+    if (!res.ok) notice.set(errorOf(res, t("ctx.revealInFolder")));
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -523,13 +524,13 @@ export function StudioView(props: { active: boolean }) {
 
   /** Persists clipboard image bytes into `assets/` and returns the relative path for editor insertion. */
   function pasteImageBytes(ext: string, bytes: Uint8Array): string | null {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) return null;
+    const cur = untracked(target);
+    if (!cur || untracked(readOnly)) return null;
     try {
       const rel = preview.importImageBytes(
-        t.target,
-        t.id,
-        t.target === "contest" ? (untracked(label) ?? null) : null,
+        cur.target,
+        cur.id,
+        cur.target === "contest" ? (untracked(label) ?? null) : null,
         ext,
         bytes,
       );
@@ -539,7 +540,7 @@ export function StudioView(props: { active: boolean }) {
       return rel;
     } catch (err) {
       compileImmediate = false;
-      notice.set({ error: err instanceof Error ? err.message : String(err), context: "粘贴图片" });
+      notice.set({ error: err instanceof Error ? err.message : String(err), context: t("ctx.pasteImage") });
       return null;
     }
   }
@@ -573,20 +574,25 @@ export function StudioView(props: { active: boolean }) {
 
   /** Imports an image via the system picker into `assets/` without closing the gallery. */
   async function importImageToGallery(): Promise<string | null> {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) return null;
+    const tTarget = untracked(target);
+    if (!tTarget || untracked(readOnly)) return null;
     try {
       const rel = await preview.pickAndImportImage(
-        t.target,
-        t.id,
-        t.target === "contest" ? (untracked(label) ?? null) : null,
+        tTarget.target,
+        tTarget.id,
+        tTarget.target === "contest" ? (untracked(label) ?? null) : null,
+        {
+          title: t("dialog.pickImage.title"),
+          buttonLabel: t("dialog.pickImage.button"),
+          filterLabel: t("dialog.pickImage.filter"),
+        },
       );
       if (!rel) return null;
       notice.set(undefined);
       assetsRefreshSeq.set(assetsRefreshSeq() + 1);
       return rel;
     } catch (err) {
-      notice.set({ error: err instanceof Error ? err.message : String(err), context: "导入图片" });
+      notice.set({ error: err instanceof Error ? err.message : String(err), context: t("ctx.importImage") });
       return null;
     }
   }
@@ -610,15 +616,15 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function setAssetWidthFromGallery(assetName: string, widthPct: number, docPath?: string | null): ActionResult {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    const cur = untracked(target);
+    if (!cur || untracked(readOnly)) return { ok: false, error: t("error.notEditable"), code: "read_only" };
     if (!save()) {
-      return { ok: false, error: "当前文档尚未保存，已中止调整宽度", code: "conflict" };
+      return { ok: false, error: t("error.unsavedAbortWidth"), code: "conflict" };
     }
     const res = preview.setAssetWidth(
-      t.target,
-      t.id,
-      t.target === "contest" ? (untracked(label) ?? null) : null,
+      cur.target,
+      cur.id,
+      cur.target === "contest" ? (untracked(label) ?? null) : null,
       assetName,
       widthPct,
       docPath ?? null,
@@ -634,16 +640,16 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function renameAssetFromGallery(oldName: string, newName: string): ActionResult {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    const cur = untracked(target);
+    if (!cur || untracked(readOnly)) return { ok: false, error: t("error.notEditable"), code: "read_only" };
     // Persist unsaved edits first and abort if saving fails (e.g. external conflict).
     if (!save()) {
-      return { ok: false, error: "当前文档尚未保存，已中止重命名", code: "conflict" };
+      return { ok: false, error: t("error.unsavedAbortRename"), code: "conflict" };
     }
     const res = preview.renameProblemAsset(
-      t.target,
-      t.id,
-      t.target === "contest" ? (untracked(label) ?? null) : null,
+      cur.target,
+      cur.id,
+      cur.target === "contest" ? (untracked(label) ?? null) : null,
       oldName,
       newName,
     );
@@ -658,12 +664,12 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function deleteAssetFromGallery(name: string): ActionResult {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) return { ok: false, error: "当前不可编辑", code: "read_only" };
+    const cur = untracked(target);
+    if (!cur || untracked(readOnly)) return { ok: false, error: t("error.notEditable"), code: "read_only" };
     const res = preview.deleteProblemAsset(
-      t.target,
-      t.id,
-      t.target === "contest" ? (untracked(label) ?? null) : null,
+      cur.target,
+      cur.id,
+      cur.target === "contest" ? (untracked(label) ?? null) : null,
       name,
     );
     if (res.ok) {
@@ -676,14 +682,14 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function cleanUnusedAssetsFromGallery(): CleanUnusedAssetsResultJs {
-    const t = untracked(target);
-    if (!t || untracked(readOnly)) {
-      return { ok: false, removed: [], freedBytes: 0, error: "当前不可编辑", code: "read_only" };
+    const cur = untracked(target);
+    if (!cur || untracked(readOnly)) {
+      return { ok: false, removed: [], freedBytes: 0, error: t("error.notEditable"), code: "read_only" };
     }
     const res = preview.cleanUnusedAssets(
-      t.target,
-      t.id,
-      t.target === "contest" ? (untracked(label) ?? null) : null,
+      cur.target,
+      cur.id,
+      cur.target === "contest" ? (untracked(label) ?? null) : null,
     );
     if (res.ok || res.removed.length > 0) {
       assetsRefreshSeq.set(assetsRefreshSeq() + 1);
@@ -695,16 +701,16 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function compose(ids: string[]): boolean {
-    const t = target();
-    if (!t) return false;
+    const cur = target();
+    if (!cur) return false;
     const current = item()?.id;
-    const res = preview.composeContest(t.id, ids);
+    const res = preview.composeContest(cur.id, ids);
     if (!res.ok) {
-      notice.set(errorOf(res, "调整题序"));
+      notice.set(errorOf(res, t("ctx.reorderContest")));
       return false;
     }
     const at = current ? ids.indexOf(current) : -1;
-    if (at >= 0) openStudio({ ...t, label: String.fromCharCode(65 + at) });
+    if (at >= 0) openStudio({ ...cur, label: String.fromCharCode(65 + at) });
     refresh();
     compileNow();
     return true;
@@ -803,7 +809,7 @@ export function StudioView(props: { active: boolean }) {
             const md = preview.exportMarkdownWithSamples(id, isEditingStatement ? text : null);
             void Clipboard.writeText(md);
           } catch (err) {
-            notice.set({ error: err instanceof Error ? err.message : String(err), context: "复制带样例 Markdown" });
+            notice.set({ error: err instanceof Error ? err.message : String(err), context: t("ctx.copyMarkdownWithSamples") });
           }
         },
         reveal: () => void reveal(book()),
@@ -843,17 +849,22 @@ export function StudioView(props: { active: boolean }) {
     return it ? `${it.label}. ${it.title}` : "";
   };
   const readOnly = () => !!file()?.readOnly || frozen() || archived();
+  const tabs = computed(() => TAB_DEFS.map((d) => ({ value: d.value, label: t(d.labelKey), keys: d.keys })));
   const editorPlaceholder = () =>
     tab() === "editorial"
-      ? "输入 / 快速插入内容，支持 Markdown 与 LaTeX 公式…"
-      : "输入 / 快速插入内容，使用 ## 划分章节…";
+      ? t("studio.placeholder.editorial")
+      : t("studio.placeholder.statement");
+  const publishLanguage = () => {
+    const lang = contest()?.language;
+    return lang === "english" || lang === "chinese" ? lang : undefined;
+  };
 
   return (
     <View style={{ flex: 1 }} class="bg-background">
       <TitleBar
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
-            <IconBtn icon="arrowLeft" tooltip={tip("返回", "escape")} onPress={closeStudio} testID="studio-back" />
+            <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
             <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500 }}>
               {headerTitle()}
             </Text>
@@ -872,7 +883,7 @@ export function StudioView(props: { active: boolean }) {
                 style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 5, justifyContent: "center", flexShrink: 0 }}
               >
                 <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                  已归档
+                  {t("contests.archived")}
                 </Text>
               </View>
             </If>
@@ -881,20 +892,20 @@ export function StudioView(props: { active: boolean }) {
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Btn
-              label="预览"
+              label={t("studio.preview")}
               icon="fileText"
               variant="ghost"
               testID="toggle-preview"
-              tooltip={tip(previewHidden() ? "展开预览" : "收起预览")}
+              tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
               onPress={togglePreview}
               style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
             />
             <Btn
-              label="专注"
+              label={t("studio.focus")}
               icon="filePenLine"
               variant="ghost"
               testID="toggle-focus"
-              tooltip={tip(focusMode() ? "退出专注模式" : "专注模式", "mod+shift+f")}
+              tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
               onPress={toggleFocusMode}
               style={focusMode() ? { backgroundColor: token("accent") } : undefined}
             />
@@ -909,7 +920,7 @@ export function StudioView(props: { active: boolean }) {
             <IconBtn
               icon="panelRight"
               testID="toggle-inspector"
-              tooltip={tip("属性", "mod+i")}
+              tooltip={tip(t("studio.properties"), "mod+i")}
               onPress={toggleInspector}
               style={inspectorOpen() ? { backgroundColor: token("accent") } : undefined}
             />
@@ -972,7 +983,7 @@ export function StudioView(props: { active: boolean }) {
                   }}
                   class="border-border"
                 >
-                  <Segmented items={TABS} value={tab()} onChange={setTab} itemWidth={52} underline />
+                  <Segmented items={tabs()} value={tab()} onChange={setTab} itemWidth={72} underline />
                   <If
                     when={readOnly()}
                     else={
@@ -1005,28 +1016,28 @@ export function StudioView(props: { active: boolean }) {
                             icon="sigma"
                             size={26}
                             iconSize={14.5}
-                            tooltip={tip("行内公式", "mod+m")}
+                            tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
                             onPress={() => editorActions?.inlineMath()}
                           />
                           <IconBtn
                             icon="squareCode"
                             size={26}
                             iconSize={14.5}
-                            tooltip={tip("公式块", "mod+shift+m")}
+                            tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
                             onPress={() => editorActions?.displayMath()}
                           />
                           <IconBtn
                             icon="table"
                             size={26}
                             iconSize={14.5}
-                            tooltip={tip("表格")}
+                            tooltip={tip(t("studio.toolbar.table"))}
                             onPress={() => editorActions?.table()}
                           />
                           <IconBtn
                             icon="image"
                             size={26}
                             iconSize={14.5}
-                            tooltip={tip("插入图片")}
+                            tooltip={tip(t("studio.toolbar.insertImage"))}
                             onPress={openAssets}
                           />
                         </View>
@@ -1039,7 +1050,7 @@ export function StudioView(props: { active: boolean }) {
                       style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
                     >
                       <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                        {archived() ? "已归档" : frozen() ? "已定稿" : "只读工作区"}
+                        {archived() ? t("contests.archived") : frozen() ? t("contests.finalized") : t("common.readOnlyWorkspace")}
                       </Text>
                     </View>
                   </If>
@@ -1061,10 +1072,10 @@ export function StudioView(props: { active: boolean }) {
                     class="bg-muted/60 border-border"
                   >
                     <Text style={{ flex: 1, fontSize: 12.5 }} class="text-secondary-foreground">
-                      文件已在别处修改
+                      {t("studio.conflict.message")}
                     </Text>
-                    <Btn label="载入外部版本" variant="ghost" onPress={takeTheirs} />
-                    <Btn label="保留我的版本" onPress={keepMine} />
+                    <Btn label={t("studio.conflict.takeTheirs")} variant="ghost" onPress={takeTheirs} />
+                    <Btn label={t("studio.conflict.keepMine")} onPress={keepMine} />
                   </View>
                 </If>
 
@@ -1084,6 +1095,7 @@ export function StudioView(props: { active: boolean }) {
                           hidden={tab() === "samples"}
                           previewHidden={previewHidden()}
                           typewriter={focusMode()}
+                          publishLanguage={publishLanguage()}
                           onRef={(r) => {
                             editor = r;
                             editorPath = f().path;
@@ -1146,17 +1158,17 @@ export function StudioView(props: { active: boolean }) {
                     <If when={!file() && target()?.target === "contest"}>
                       <EmptyState
                         icon="listPlus"
-                        title="这场比赛还没有题目"
-                        hint="从题库挑题加进来，或者直接新建一道"
+                        title={t("contests.emptyProblemsTitle")}
+                        hint={t("studio.emptyContestHint")}
                         action={
                           <View style={{ flexDirection: "row", gap: 8 }}>
-                            <Btn label="去题库" icon="libraryBig" onPress={() => goSpace("problems")} />
+                            <Btn label={t("studio.goLibrary")} icon="libraryBig" onPress={() => goSpace("problems")} />
                             <Btn
-                              label="新建题目"
+                              label={t("library.newProblem")}
                               icon="plus"
                               variant="primary"
                               onPress={() => dialog.set({ kind: "newProblem", addTo: target()!.id })}
-                              tooltip={tip("新建题目", "mod+n")}
+                              tooltip={tip(t("library.newProblem"), "mod+n")}
                             />
                           </View>
                         }

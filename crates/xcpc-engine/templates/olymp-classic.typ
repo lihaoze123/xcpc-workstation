@@ -10,31 +10,37 @@
 // ---- Declarative Template Schema ------------------------------------------------------
 
 #let schema = (
-  name: "XCPC 经典",
-  description: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+  name: (zh: "XCPC 经典", en: "XCPC Classic"),
+  description: (
+    zh: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+    en: "Classic ICPC / XCPC layout aligned with olymp.sty",
+  ),
   groups: (
-    (id: "publishing", label: "出版与封面"),
-    (id: "layout", label: "页面与字体"),
-    (id: "problem", label: "单题排版"),
+    (id: "publishing", label: (zh: "出版与封面", en: "Publishing & Cover")),
+    (id: "layout", label: (zh: "页面与字体", en: "Page & Fonts")),
+    (id: "problem", label: (zh: "单题排版", en: "Problem Layout")),
   ),
   fields: (
     (
       key: "cover",
-      label: "封面与目录",
+      label: (zh: "封面与目录", en: "Cover & Table of Contents"),
       type: "enum",
       scope: "book",
       group: "publishing",
       default: "auto",
       choices: (
-        (value: "auto", label: "自动（多题时显示）"),
-        (value: "on", label: "总是显示"),
-        (value: "off", label: "不显示"),
+        (value: "auto", label: (zh: "自动（多题时显示）", en: "Auto (multi-problem)")),
+        (value: "on", label: (zh: "总是显示", en: "Always")),
+        (value: "off", label: (zh: "不显示", en: "Off")),
       ),
     ),
     (
       key: "logo",
-      label: "封面徽标",
-      description: "显示在封面顶部，留空则不显示",
+      label: (zh: "封面徽标", en: "Cover Logo"),
+      description: (
+        zh: "显示在封面顶部，留空则不显示",
+        en: "Displayed at the top of the cover; leave empty to hide",
+      ),
       type: "image",
       scope: "book",
       group: "publishing",
@@ -42,7 +48,7 @@
     ),
     (
       key: "show-metadata",
-      label: "显示题头限值表",
+      label: (zh: "显示题头限值表", en: "Show Problem Limits Header"),
       type: "bool",
       scope: "book",
       group: "publishing",
@@ -50,7 +56,7 @@
     ),
     (
       key: "blank-pages",
-      label: "奇数页起题（故意留白）",
+      label: (zh: "奇数页起题（故意留白）", en: "Start Problems on Odd Pages"),
       type: "bool",
       scope: "book",
       group: "publishing",
@@ -58,7 +64,7 @@
     ),
     (
       key: "body-size",
-      label: "正文字号",
+      label: (zh: "正文字号", en: "Body Font Size"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -68,7 +74,7 @@
     ),
     (
       key: "margin-x",
-      label: "左右页边距",
+      label: (zh: "左右页边距", en: "Horizontal Margin"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -78,7 +84,7 @@
     ),
     (
       key: "margin-y",
-      label: "上下页边距",
+      label: (zh: "上下页边距", en: "Vertical Margin"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -88,25 +94,25 @@
     ),
     (
       key: "cjk-body-font",
-      label: "中文正文字体",
+      label: (zh: "中文正文字体", en: "CJK Body Font"),
       type: "font",
       scope: "book",
       group: "layout",
       default: "",
-      placeholder: "默认（方正书宋）",
+      placeholder: (zh: "默认（方正书宋）", en: "Default (FZShuSong)"),
     ),
     (
       key: "cjk-heading-font",
-      label: "中文标题字体",
+      label: (zh: "中文标题字体", en: "CJK Heading Font"),
       type: "font",
       scope: "book",
       group: "layout",
       default: "",
-      placeholder: "默认（方正黑体）",
+      placeholder: (zh: "默认（方正黑体）", en: "Default (FZHei)"),
     ),
     (
       key: "show-metadata",
-      label: "显示题头限值表",
+      label: (zh: "显示题头限值表", en: "Show Problem Limits Header"),
       type: "bool",
       scope: "problem",
       group: "problem",
@@ -114,14 +120,14 @@
     ),
     (
       key: "sample-layout",
-      label: "样例排版",
+      label: (zh: "样例排版", en: "Sample Layout"),
       type: "enum",
       scope: "problem",
       group: "problem",
       default: "two-column",
       choices: (
-        (value: "two-column", label: "双栏并排"),
-        (value: "wide", label: "上下宽版"),
+        (value: "two-column", label: (zh: "双栏并排", en: "Two-column")),
+        (value: "wide", label: (zh: "上下宽版", en: "Stacked Wide")),
       ),
     ),
   ),

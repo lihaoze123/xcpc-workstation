@@ -9,6 +9,7 @@
 import { cleanup, computed, effect, signal, Text, untracked, View } from "nsh";
 import { Input, Switch } from "nsh/base";
 import { ErrorDisplay } from "./ErrorDisplay";
+import { resolveLocalized, t } from "./i18n";
 import { Icon } from "./Icon";
 import { Btn, Chevron, IconBtn, Segmented, tip } from "./kit";
 import { pathBase, validId } from "./logic";
@@ -42,17 +43,25 @@ export function TemplatePicker(props: {
   onAddFromPreset?: () => void;
 }) {
   const current = computed(() => props.templates.find((t) => t.id === props.value));
+  const currentName = () => {
+    const c = current();
+    return c ? resolveLocalized(c.name) || c.id : props.value;
+  };
+  const currentDesc = () => {
+    const c = current();
+    return c?.description ? resolveLocalized(c.description) : "";
+  };
   const entries = computed<MenuEntry[]>(() => {
-    const list: MenuEntry[] = props.templates.map((t) => ({
-      id: t.id,
-      label: t.name,
-      checked: t.id === props.value,
+    const list: MenuEntry[] = props.templates.map((tpl) => ({
+      id: tpl.id,
+      label: resolveLocalized(tpl.name) || tpl.id,
+      checked: tpl.id === props.value,
     }));
     if (props.onAddFromPreset) {
       if (list.length > 0) list.push({ separator: true, id: "sep-add-preset" });
       list.push({
         id: ADD_PRESET_ID,
-        label: "从预设添加模板…",
+        label: t("template.addFromPresetEllipsis"),
         icon: "plus",
       });
     }
@@ -63,10 +72,10 @@ export function TemplatePicker(props: {
     <View style={{ gap: 4 }}>
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
         <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
-          模板
+          {t("template.label")}
         </Text>
         <If when={props.overridden && !props.readOnly && !!props.onRestore}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.inheritedLabel ?? "还原为工作区默认模板")} onPress={() => props.onRestore?.()} />
+          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.inheritedLabel ?? t("template.restoreWorkspaceDefault"))} onPress={() => props.onRestore?.()} />
         </If>
       </View>
       <View style={{ flexDirection: "row" }}>
@@ -91,7 +100,7 @@ export function TemplatePicker(props: {
                 }}
               >
                 <Text style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
-                  {current()?.name ?? props.value}
+                  {currentName()}
                 </Text>
               </View>
             }
@@ -122,7 +131,7 @@ export function TemplatePicker(props: {
                   }}
                 >
                   <Text style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
-                    {current()?.name ?? props.value}
+                    {currentName()}
                   </Text>
                   <Chevron size={13} tone="muted-foreground" />
                 </View>
@@ -131,9 +140,9 @@ export function TemplatePicker(props: {
           </If>
         </View>
       </View>
-      <If when={!!current()?.description}>
+      <If when={!!currentDesc()}>
         <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-muted-foreground">
-          {current()!.description}
+          {currentDesc()}
         </Text>
       </If>
     </View>
@@ -198,7 +207,7 @@ export function TemplateOptionsEditor(props: {
     for (const g of groups) {
       const matching = list.filter((f) => f.group === g.id);
       if (matching.length > 0) {
-        out.push({ id: g.id, label: g.label, fields: matching });
+        out.push({ id: g.id, label: resolveLocalized(g.label), fields: matching });
         for (const f of matching) used.add(f.key);
       }
     }
@@ -261,7 +270,7 @@ export function TemplateOptionsEditor(props: {
                     value={resolved()[field().key] ?? field().default}
                     overridden={isOverridden(field())}
                     readOnly={props.readOnly}
-                    restoreTooltip={props.restoreTooltip ?? "恢复默认值"}
+                    restoreTooltip={props.restoreTooltip ?? t("template.restoreDefaultValue")}
                     fonts={props.fonts}
                     contestId={props.contestId}
                     onCommit={(v) => commitValue(field(), v)}
@@ -291,6 +300,9 @@ function SchemaFieldRow(props: {
 }) {
   const f = () => props.field;
   const ty = () => f().type;
+  const fieldLabel = () => resolveLocalized(f().label);
+  const fieldDesc = () => (f().description ? resolveLocalized(f().description) : "");
+  const fieldPlaceholder = () => (f().placeholder ? resolveLocalized(f().placeholder) : "");
 
   if (ty() === "bool") {
     const checked = () => Boolean(props.value);
@@ -302,7 +314,7 @@ function SchemaFieldRow(props: {
             class="bg-primary"
           />
           <Text style={{ flex: 1, fontSize: 13 }} class={props.readOnly ? "text-secondary-foreground" : "text-foreground"}>
-            {f().label}
+            {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
             <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
@@ -319,9 +331,9 @@ function SchemaFieldRow(props: {
             thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
           />
         </View>
-        <If when={!!f().description}>
+        <If when={!!fieldDesc()}>
           <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
-            {f().description}
+            {fieldDesc()}
           </Text>
         </If>
       </View>
@@ -329,7 +341,7 @@ function SchemaFieldRow(props: {
   }
 
   if (ty() === "enum") {
-    const choices = () => f().choices ?? [];
+    const choices = () => (f().choices ?? []).map((c) => ({ value: c.value, label: resolveLocalized(c.label) || c.value }));
     const strVal = () => String(props.value ?? "");
     const useSegmented = () => choices().length >= 2 && choices().length <= 3 && choices().every((c) => c.label.length <= 5);
     const currentLabel = () => choices().find((c) => c.value === strVal())?.label ?? strVal();
@@ -338,7 +350,7 @@ function SchemaFieldRow(props: {
       <View style={{ gap: 4 }}>
         <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
           <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
-            {f().label}
+            {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
             <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
@@ -394,8 +406,9 @@ function SchemaFieldRow(props: {
 
   if (ty() === "font") {
     const strVal = () => String(props.value ?? "");
+    const defaultFontLabel = () => fieldPlaceholder() || t("template.defaultFont");
     const fontEntries = computed<MenuEntry[]>(() => {
-      const list: MenuEntry[] = [{ id: "__default__", label: f().placeholder ?? "默认字体", checked: strVal() === "" }];
+      const list: MenuEntry[] = [{ id: "__default__", label: defaultFontLabel(), checked: strVal() === "" }];
       const unique = props.fonts.slice(0, 60);
       if (unique.length > 0) {
         list.push({ separator: true, id: "sep-fonts" });
@@ -409,7 +422,7 @@ function SchemaFieldRow(props: {
       <View style={{ gap: 4 }}>
         <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
           <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
-            {f().label}
+            {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
             <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
@@ -425,7 +438,7 @@ function SchemaFieldRow(props: {
               when={!props.readOnly}
               else={
                 <View class="border border-border bg-muted/50" style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 8, justifyContent: "center" }}>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{strVal() || (f().placeholder ?? "默认字体")}</Text>
+                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{strVal() || defaultFontLabel()}</Text>
                 </View>
               }
             >
@@ -442,7 +455,7 @@ function SchemaFieldRow(props: {
                       style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }}
                       class={strVal() ? "text-foreground" : "text-muted-foreground"}
                     >
-                      {strVal() || (f().placeholder ?? "默认字体")}
+                      {strVal() || defaultFontLabel()}
                     </Text>
                     <Chevron size={13} tone="muted-foreground" />
                   </View>
@@ -459,8 +472,8 @@ function SchemaFieldRow(props: {
     return (
       <LinesField
         ownerKey={props.ownerKey}
-        label={f().label}
-        description={f().description}
+        label={fieldLabel()}
+        description={fieldDesc() || undefined}
         value={Array.isArray(props.value) ? props.value : []}
         overridden={props.overridden}
         readOnly={props.readOnly}
@@ -474,9 +487,9 @@ function SchemaFieldRow(props: {
   if (ty() === "image") {
     return (
       <ImageOptionField
-        label={f().label}
-        description={f().description}
-        placeholder={f().placeholder}
+        label={fieldLabel()}
+        description={fieldDesc() || undefined}
+        placeholder={fieldPlaceholder() || undefined}
         value={String(props.value ?? "")}
         contestId={props.contestId}
         overridden={props.overridden}
@@ -562,7 +575,7 @@ function TextOptionField(props: {
     <View style={{ gap: 4 }}>
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
         <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
-          {props.field.label}
+          {resolveLocalized(props.field.label)}
         </Text>
         <If when={props.overridden && !props.readOnly}>
           <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
@@ -582,7 +595,7 @@ function TextOptionField(props: {
         <Input
           readonly={props.readOnly}
           value={draft()}
-          placeholder={props.field.placeholder}
+          placeholder={props.field.placeholder ? resolveLocalized(props.field.placeholder) : undefined}
           keyboardType={props.field.type === "number" ? "number-pad" : undefined}
           autoCapitalize="none"
           autoCorrect={false}
@@ -757,11 +770,15 @@ function ImageOptionField(props: {
     if (props.readOnly) return;
     err.set(undefined);
     try {
-      const rel = await preview.pickAndImportTemplateImage(props.contestId ?? null);
+      const rel = await preview.pickAndImportTemplateImage(props.contestId ?? null, {
+        title: t("dialog.pickImage.title"),
+        buttonLabel: t("dialog.pickImage.button"),
+        filterLabel: t("dialog.pickImage.filter"),
+      });
       if (rel) props.onCommit(rel);
     } catch (e) {
-      const raw = String(e ?? "无法导入图片").replace(/^Error:\s*/i, "").trim();
-      err.set({ context: "导入图片", error: raw || "无法导入图片，请检查文件权限后重试。" });
+      const raw = String(e ?? "").replace(/^Error:\s*/i, "").trim();
+      err.set({ context: t("ctx.importImage"), error: raw || t("error.importImageFailed") });
     }
   };
 
@@ -808,13 +825,13 @@ function ImageOptionField(props: {
             }}
             class={displayName() ? "text-foreground" : "text-muted-foreground"}
           >
-            {displayName() || (props.placeholder ?? "未选择图片")}
+            {displayName() || (props.placeholder ?? t("template.noImageSelected"))}
           </Text>
         </View>
         <If when={!props.readOnly}>
-          <Btn label="选择图片" onPress={() => void pickImage()} />
+          <Btn label={t("template.chooseImage")} onPress={() => void pickImage()} />
           <If when={!!currentPath()}>
-            <IconBtn icon="x" size={28} iconSize={13} tooltip={tip("清除图片")} onPress={() => props.onCommit("")} />
+            <IconBtn icon="x" size={28} iconSize={13} tooltip={tip(t("template.clearImage"))} onPress={() => props.onCommit("")} />
           </If>
         </If>
       </View>
@@ -866,9 +883,9 @@ export function ForkTemplateModal(props: {
 
   const validationError = computed(() => {
     const id = slug().trim();
-    if (!id) return submitted() ? "请输入新模板标识（如 my-icpc）" : undefined;
-    if (!validId(id)) return "标识只能包含小写字母、数字、- 和 _，并以字母或数字开头";
-    if ((props.existingIds ?? []).includes(id)) return "该模板标识已存在，请更换名称";
+    if (!id) return submitted() ? t("template.fork.idEmpty") : undefined;
+    if (!validId(id)) return t("template.fork.idInvalid");
+    if ((props.existingIds ?? []).includes(id)) return t("template.fork.idExists");
     return undefined;
   });
 
@@ -883,7 +900,7 @@ export function ForkTemplateModal(props: {
     const id = slug().trim();
     const res = preview.forkTemplate(props.sourceId, id);
     if (!res.ok) {
-      err.set(errorOf(res, "新建模板副本"));
+      err.set(errorOf(res, t("ctx.forkTemplate")));
       return;
     }
     props.onCreated(id);
@@ -899,16 +916,16 @@ export function ForkTemplateModal(props: {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
-              新建自定义模板
+              {t("template.fork.title")}
             </Text>
             <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-              {`基于「${props.sourceName}」创建一份工作区共享副本`}
+              {t("template.fork.desc", { name: props.sourceName })}
             </Text>
           </View>
         </View>
         <View style={{ gap: 5 }}>
           <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-            模板标识
+            {t("template.fork.idLabel")}
           </Text>
           <Input
             value={slug()}
@@ -932,15 +949,15 @@ export function ForkTemplateModal(props: {
             style={{ fontSize: 11.5, lineHeight: 16 }}
             class={validationError() ? "text-destructive" : "text-muted-foreground"}
           >
-            {validationError() ?? "小写字母、数字、- 或 _，最多 64 字符"}
+            {validationError() ?? t("template.fork.idHint")}
           </Text>
         </View>
         <If when={err()}>
           <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
         </If>
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-          <Btn label="取消" onPress={props.onClose} />
-          <Btn label="创建" variant="primary" disabled={!canSubmit()} onPress={submit} />
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn label={t("common.create")} variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>
       </View>
     </Modal>
@@ -1003,9 +1020,9 @@ export function InstallPresetModal(props: {
 
   const validationError = computed(() => {
     const name = targetName().trim();
-    if (!name) return submitted() ? "请输入模板标识（如 olymp-classic）" : undefined;
-    if (!validId(name)) return "标识只能包含小写字母、数字、- 和 _，并以字母或数字开头";
-    if (props.existingIds.includes(name)) return "该模板标识已存在，请更换名称";
+    if (!name) return submitted() ? t("template.preset.idEmpty") : undefined;
+    if (!validId(name)) return t("template.fork.idInvalid");
+    if (props.existingIds.includes(name)) return t("template.fork.idExists");
     return undefined;
   });
 
@@ -1021,7 +1038,7 @@ export function InstallPresetModal(props: {
     const name = targetName().trim();
     const res = preview.installPresetTemplate(preset, name);
     if (!res.ok) {
-      err.set(errorOf(res, "从预设安装模板"));
+      err.set(errorOf(res, t("ctx.installPresetTemplate")));
       return;
     }
     props.onInstalled(name);
@@ -1037,10 +1054,10 @@ export function InstallPresetModal(props: {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
-              从预设添加模板
+              {t("template.preset.title")}
             </Text>
             <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-              将预置模板复制到当前工作区，安装后可自由修改
+              {t("template.preset.desc")}
             </Text>
           </View>
         </View>
@@ -1065,14 +1082,14 @@ export function InstallPresetModal(props: {
                 >
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                      {preset().name}
+                      {resolveLocalized(preset().name) || preset().id}
                     </Text>
                     <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-muted-foreground">
                       {preset().id}
                     </Text>
                   </View>
                   <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
-                    {preset().description}
+                    {resolveLocalized(preset().description)}
                   </Text>
                 </View>
               );
@@ -1082,7 +1099,7 @@ export function InstallPresetModal(props: {
 
         <View style={{ gap: 5 }}>
           <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-            保存为模板标识
+            {t("template.preset.saveAsLabel")}
           </Text>
           <Input
             value={targetName()}
@@ -1107,7 +1124,7 @@ export function InstallPresetModal(props: {
             style={{ fontSize: 11.5, lineHeight: 16 }}
             class={validationError() ? "text-destructive" : "text-muted-foreground"}
           >
-            {validationError() ?? "小写字母、数字、- 或 _，安装后供整个工作区选用"}
+            {validationError() ?? t("template.preset.idHint")}
           </Text>
         </View>
 
@@ -1116,8 +1133,8 @@ export function InstallPresetModal(props: {
         </If>
 
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-          <Btn label="取消" onPress={props.onClose} />
-          <Btn label="添加" variant="primary" disabled={!canSubmit()} onPress={submit} />
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn label={t("common.add")} variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>
       </View>
     </Modal>

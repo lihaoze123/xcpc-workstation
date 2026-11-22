@@ -3,6 +3,7 @@
 // the built-in example workspace or create an empty workspace.
 
 import { colorScheme, signal, Text, View } from "nsh";
+import { t, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { IconBtn, tip } from "./kit";
 import { Modal } from "./Modal";
@@ -13,21 +14,21 @@ type DefaultTemplate = "olymp-classic" | "cnoi-classic";
 
 interface TemplateChoice {
   readonly id: DefaultTemplate;
-  readonly label: string;
+  readonly labelKey: MessageKey;
   readonly sub: string;
 }
 
 const TEMPLATES: readonly TemplateChoice[] = [
-  { id: "olymp-classic", label: "XCPC 经典", sub: "olymp-classic" },
-  { id: "cnoi-classic", label: "OI 风格", sub: "cnoi-classic" },
+  { id: "olymp-classic", labelKey: "newWorkspace.tpl.olympClassic", sub: "olymp-classic" },
+  { id: "cnoi-classic", labelKey: "newWorkspace.tpl.cnoiClassic", sub: "cnoi-classic" },
 ];
 
 interface ChoiceOption {
   readonly id: "template" | "empty";
   readonly testID: string;
   readonly icon: IconName;
-  readonly title: string;
-  readonly description: string;
+  readonly titleKey: MessageKey;
+  readonly descriptionKey: MessageKey;
   readonly run: () => void;
 }
 
@@ -40,8 +41,8 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
       id: "template",
       testID: "new-workspace-template",
       icon: "fileText",
-      title: "从示例创建",
-      description: "内置 2 道示例题、XCPC 与 OI 双模板比赛及 Typst 宏示范",
+      titleKey: "newWorkspace.fromExample.title",
+      descriptionKey: "newWorkspace.fromExample.desc",
       run: () => {
         const tpl = selectedTemplate();
         props.onClose();
@@ -52,8 +53,8 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
       id: "empty",
       testID: "new-workspace-empty",
       icon: "folderPlus",
-      title: "创建空工作区",
-      description: "干净的空白目录，按上方默认模板直接开始自己的题库与比赛",
+      titleKey: "newWorkspace.empty.title",
+      descriptionKey: "newWorkspace.empty.desc",
       run: () => {
         const tpl = selectedTemplate();
         props.onClose();
@@ -67,18 +68,18 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
       <View testID="new-workspace-modal" style={{ padding: 18, gap: 14 }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
-            新建工作区
+            {t("newWorkspace.title")}
           </Text>
-          <IconBtn icon="x" size={26} iconSize={14} tooltip={tip("关闭", "escape")} onPress={props.onClose} />
+          <IconBtn icon="x" size={26} iconSize={14} tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
         </View>
 
         <View style={{ gap: 6 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-              默认模板
+              {t("newWorkspace.defaultTemplate")}
             </Text>
             <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-              支持按比赛独立切换或自由定制模板
+              {t("newWorkspace.defaultTemplateHint")}
             </Text>
           </View>
           <View
@@ -110,7 +111,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                       style={{ fontSize: 12.5, fontWeight: active() ? 600 : 500, lineHeight: 17 }}
                       class={active() ? "text-foreground" : "text-secondary-foreground"}
                     >
-                      {tpl().label}
+                      {t(tpl().labelKey)}
                     </Text>
                     <Text style={{ fontSize: 11, lineHeight: 14 }} class="text-muted-foreground">
                       {tpl().sub}
@@ -174,10 +175,10 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                   </View>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Text style={{ fontSize: 13.5, fontWeight: 500, lineHeight: 18 }} class="text-foreground">
-                      {opt().title}
+                      {t(opt().titleKey)}
                     </Text>
                     <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-muted-foreground">
-                      {opt().description}
+                      {t(opt().descriptionKey)}
                     </Text>
                   </View>
                   <Icon name="chevronRight" size={15} tone="muted-foreground" />

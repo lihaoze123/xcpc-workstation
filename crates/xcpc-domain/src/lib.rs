@@ -85,18 +85,134 @@ pub enum TemplateFieldScope {
     Problem,
 }
 
+/// Polymorphic user-facing text in template `#let schema` and template/preset metadata.
+///
+/// Supports either a plain single-language string (`"Cover"`) or a BCP 47 language
+/// dictionary (`(zh: "封面", en: "Cover")`). Serializes transparently via `#[serde(untagged)]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LocalizedText {
+    Plain(String),
+    Map(BTreeMap<String, String>),
+}
+
+impl Default for LocalizedText {
+    fn default() -> Self {
+        Self::Plain(String::new())
+    }
+}
+
+impl From<String> for LocalizedText {
+    fn from(s: String) -> Self {
+        Self::Plain(s)
+    }
+}
+
+impl From<&str> for LocalizedText {
+    fn from(s: &str) -> Self {
+        Self::Plain(s.to_owned())
+    }
+}
+
+impl LocalizedText {
+    /// Constructs a bilingual `(zh, en)` localized text map.
+    pub fn bilingual(zh: impl Into<String>, en: impl Into<String>) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert("zh".to_owned(), zh.into());
+        map.insert("en".to_owned(), en.into());
+        Self::Map(map)
+    }
+
+    /// Resolves this text for `locale` (e.g. `"zh-CN"` or `"en"`) using the 6-step
+    /// fallback chain specified in `docs/specs/i18n.md` §3.2:
+    /// 1. Plain string → returned directly.
+    /// 2. Exact tag match (case-insensitive, `_` ≡ `-`).
+    /// 3. Primary subtag match (exact primary subtag first, then first sorted key with same primary subtag).
+    /// 4. Fallback to `"en"` (or `en-*`).
+    /// 5. Fallback to `"zh"` / `"zh-CN"` (or `zh-*`).
+    /// 6. First non-empty value sorted by key, else `""`.
+    pub fn resolve(&self, locale: &str) -> &str {
+        match self {
+            Self::Plain(s) => s.as_str(),
+            Self::Map(map) => {
+                if map.is_empty() {
+                    return "";
+                }
+                let normalize = |tag: &str| tag.trim().replace('_', "-").to_ascii_lowercase();
+                fn primary(norm: &str) -> &str {
+                    norm.split('-').next().unwrap_or("")
+                }
+
+                let target_norm = normalize(locale);
+                let target_primary = primary(&target_norm);
+
+                let find_exact = |needle: &str| -> Option<&str> {
+                    if needle.is_empty() {
+                        return None;
+                    }
+                    map.iter().find_map(|(k, v)| {
+                        (!v.is_empty() && normalize(k) == needle).then_some(v.as_str())
+                    })
+                };
+
+                let find_primary = |needle_primary: &str| -> Option<&str> {
+                    if needle_primary.is_empty() {
+                        return None;
+                    }
+                    if let Some(exact) = find_exact(needle_primary) {
+                        return Some(exact);
+                    }
+                    map.iter().find_map(|(k, v)| {
+                        if v.is_empty() {
+                            return None;
+                        }
+                        let k_norm = normalize(k);
+                        (primary(&k_norm) == needle_primary).then_some(v.as_str())
+                    })
+                };
+
+                // 1. Exact match (case-insensitive, `_` == `-`).
+                if let Some(v) = find_exact(&target_norm) {
+                    return v;
+                }
+                // 2. Primary subtag match (e.g. "zh-CN" -> "zh", or first same-primary key like "zh-Hans").
+                if let Some(v) = find_primary(target_primary) {
+                    return v;
+                }
+                // 3. Fallback to "en".
+                if let Some(v) = find_primary("en") {
+                    return v;
+                }
+                // 4. Fallback to "zh" / "zh-CN".
+                if let Some(v) = find_exact("zh")
+                    .or_else(|| find_exact("zh-cn"))
+                    .or_else(|| find_primary("zh"))
+                {
+                    return v;
+                }
+                // 5. First non-empty value sorted by key (BTreeMap is already key-sorted).
+                if let Some(v) = map.values().find(|v| !v.is_empty()) {
+                    return v.as_str();
+                }
+                // 6. Empty fallback.
+                ""
+            }
+        }
+    }
+}
+
 /// One selectable choice for an `enum` schema field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateChoice {
     pub value: String,
-    pub label: String,
+    pub label: LocalizedText,
 }
 
 /// A named visual group in a template's schema.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateGroup {
     pub id: String,
-    pub label: String,
+    pub label: LocalizedText,
 }
 
 /// One parameter declared in a template's `#let schema = (...)`.
@@ -104,9 +220,9 @@ pub struct TemplateGroup {
 #[serde(rename_all = "kebab-case")]
 pub struct TemplateField {
     pub key: String,
-    pub label: String,
+    pub label: LocalizedText,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     #[serde(rename = "type", default)]
     pub field_type: TemplateFieldType,
     #[serde(default)]
@@ -125,7 +241,7 @@ pub struct TemplateField {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub placeholder: Option<String>,
+    pub placeholder: Option<LocalizedText>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub when: BTreeMap<String, TemplateOptionValue>,
 }
@@ -135,9 +251,9 @@ pub struct TemplateField {
 #[serde(rename_all = "kebab-case")]
 pub struct TemplateSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: Option<LocalizedText>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<TemplateGroup>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -165,8 +281,8 @@ impl TemplateSchema {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresetInfo {
     pub id: String,
-    pub name: String,
-    pub description: String,
+    pub name: LocalizedText,
+    pub description: LocalizedText,
 }
 
 /// Metadata and declarative schema for one template file on disk.
@@ -175,9 +291,9 @@ pub struct TemplateInfo {
     pub id: String,
     /// Workspace-relative path (e.g. `"templates/olymp-classic.typ"` or `"contests/c1/template.typ"`).
     pub path: String,
-    pub name: String,
+    pub name: LocalizedText,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     pub schema: TemplateSchema,
 }
 
@@ -980,5 +1096,82 @@ custom_limit = true
         assert_eq!(RatingTier::from_rating(Some(2399)), RatingTier::Master);
         assert_eq!(RatingTier::from_rating(Some(2400)), RatingTier::Grandmaster);
         assert_eq!(RatingTier::from_rating(Some(3500)), RatingTier::Grandmaster);
+    }
+
+    #[test]
+    fn localized_text_serde_roundtrip() {
+        let plain = LocalizedText::Plain("Cover".to_owned());
+        let plain_json = serde_json::to_string(&plain).unwrap();
+        assert_eq!(plain_json, "\"Cover\"");
+        let plain_back: LocalizedText = serde_json::from_str(&plain_json).unwrap();
+        assert_eq!(plain_back, plain);
+
+        let bilingual = LocalizedText::bilingual("封面", "Cover");
+        let map_json = serde_json::to_string(&bilingual).unwrap();
+        assert_eq!(map_json, "{\"en\":\"Cover\",\"zh\":\"封面\"}");
+        let map_back: LocalizedText = serde_json::from_str(&map_json).unwrap();
+        assert_eq!(map_back, bilingual);
+    }
+
+    #[test]
+    fn localized_text_resolve_fallback_chain() {
+        // 1. Plain string.
+        assert_eq!(LocalizedText::from("Plain").resolve("en"), "Plain");
+        assert_eq!(LocalizedText::from("Plain").resolve("zh-CN"), "Plain");
+
+        // 2. Exact match (case-insensitive, `_` == `-`).
+        let exact = LocalizedText::Map(BTreeMap::from([
+            ("zh_cn".to_owned(), "简体".to_owned()),
+            ("zh-TW".to_owned(), "繁體".to_owned()),
+            ("en".to_owned(), "English".to_owned()),
+        ]));
+        assert_eq!(exact.resolve("zh-CN"), "简体");
+        assert_eq!(exact.resolve("ZH_tw"), "繁體");
+        assert_eq!(exact.resolve("en"), "English");
+
+        // 3. Primary subtag match (exact primary first, then first sorted same-primary key).
+        let primary_exact = LocalizedText::Map(BTreeMap::from([
+            ("zh".to_owned(), "中文".to_owned()),
+            ("zh-Hans".to_owned(), "简体中文".to_owned()),
+        ]));
+        assert_eq!(primary_exact.resolve("zh-CN"), "中文");
+
+        let primary_variant = LocalizedText::Map(BTreeMap::from([
+            ("en".to_owned(), "English".to_owned()),
+            ("zh-Hans".to_owned(), "简体中文".to_owned()),
+            ("zh-Hant".to_owned(), "繁體中文".to_owned()),
+        ]));
+        assert_eq!(primary_variant.resolve("zh-CN"), "简体中文");
+
+        // 4. Fallback to "en".
+        let en_fallback = LocalizedText::Map(BTreeMap::from([
+            ("de".to_owned(), "Deutsch".to_owned()),
+            ("en".to_owned(), "English".to_owned()),
+            ("zh".to_owned(), "中文".to_owned()),
+        ]));
+        assert_eq!(en_fallback.resolve("ja-JP"), "English");
+
+        // 5. Fallback to "zh" / "zh-CN".
+        let zh_fallback = LocalizedText::Map(BTreeMap::from([
+            ("fr".to_owned(), "Français".to_owned()),
+            ("zh-CN".to_owned(), "中文".to_owned()),
+        ]));
+        assert_eq!(zh_fallback.resolve("ja-JP"), "中文");
+
+        // 6. First non-empty sorted key.
+        let sorted_fallback = LocalizedText::Map(BTreeMap::from([
+            ("aa".to_owned(), String::new()),
+            ("de".to_owned(), "Deutsch".to_owned()),
+            ("fr".to_owned(), "Français".to_owned()),
+        ]));
+        assert_eq!(sorted_fallback.resolve("ja"), "Deutsch");
+
+        // 7. Empty map or all-empty values -> "".
+        assert_eq!(LocalizedText::Map(BTreeMap::new()).resolve("en"), "");
+        let all_empty = LocalizedText::Map(BTreeMap::from([
+            ("en".to_owned(), String::new()),
+            ("zh".to_owned(), String::new()),
+        ]));
+        assert_eq!(all_empty.resolve("en"), "");
     }
 }

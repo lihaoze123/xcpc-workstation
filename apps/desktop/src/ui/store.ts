@@ -13,6 +13,14 @@ import {
 import type { Book, Space } from "./logic";
 import { clampRatio } from "./logic";
 import {
+  languagePref,
+  normalizeLanguagePref,
+  normalizeLocale,
+  systemLocale,
+  t,
+  type LanguagePref,
+} from "./i18n";
+import {
   appearanceMode,
   applyAppearancePrefs,
   applyThemeOverrides,
@@ -48,7 +56,7 @@ export function errorOf(res: ActionResult, context?: string): UiError | undefine
 // ── Workspace ────────────────────────────────────────────────────────────────
 
 export const info = signal<WorkspaceInfo>(preview.workspace());
-/** Reloads and applies merged `theme.toml` overrides (global + active workspace). */
+/** Reloads and applies global `<dataDir>/theme.toml` overrides. */
 export function reloadThemeOverrides() {
   try {
     applyThemeOverrides(preview.loadThemeOverrides());
@@ -83,6 +91,20 @@ let prefs: AppPrefsJs = preview.loadPrefs();
 let prefsDirty = false;
 let prefsTimer: number | undefined;
 let visitTimer: number | undefined;
+
+// Initialize i18n from OS locale and persisted language preference.
+try {
+  systemLocale.set(normalizeLocale(preview.systemLocale()));
+} catch {
+  // Headless tests stay on default locale.
+}
+languagePref.set(normalizeLanguagePref(prefs.language));
+
+export function updateLanguagePref(pref: LanguagePref): void {
+  const next = normalizeLanguagePref(pref);
+  languagePref.set(next);
+  savePrefs({ language: next });
+}
 
 export function loadPrefs(): AppPrefsJs {
   return prefs;
@@ -217,7 +239,6 @@ function adopt(next: WorkspaceInfo, failContext: string) {
   });
   if (switched) {
     startWatch();
-    reloadThemeOverrides();
   }
   return true;
 }
@@ -225,48 +246,57 @@ function adopt(next: WorkspaceInfo, failContext: string) {
 /** The system's folder dialog, then the workspace there. */
 export async function pickWorkspace() {
   const before = info().root;
-  const next = await preview.pickWorkspace();
+  const next = await preview.pickWorkspace({
+    title: t("dialog.pickWorkspace.title"),
+    buttonLabel: t("dialog.pickWorkspace.button"),
+  });
   if (next.root === before && !next.error) return;
   if (next.root === "" && !next.error) return; // cancelled with none open
   if (next.root === before && next.error) {
-    openError.set({ error: next.error, context: "打开工作区" });
+    openError.set({ error: next.error, context: t("ctx.openWorkspace") });
     return;
   }
-  adopt(next, "打开工作区");
+  adopt(next, t("ctx.openWorkspace"));
 }
 
 /** A folder to make a workspace in: opens it when it already is one. */
 export async function newWorkspace(template?: string) {
-  const picked = await preview.pickFolder();
+  const picked = await preview.pickFolder({
+    title: t("dialog.pickFolder.title"),
+    buttonLabel: t("dialog.pickFolder.button"),
+  });
   if (picked.cancelled) return;
   if (picked.error) {
-    openError.set({ error: picked.error, context: "新建工作区" });
+    openError.set({ error: picked.error, context: t("ctx.newWorkspace") });
     return;
   }
   if (picked.isWorkspace && picked.workspaceRoot) {
-    adopt(preview.openWorkspace(picked.workspaceRoot, false), "打开工作区");
+    adopt(preview.openWorkspace(picked.workspaceRoot, false), t("ctx.openWorkspace"));
     return;
   }
-  adopt(preview.initWorkspace(picked.path, template ?? null), "新建工作区");
+  adopt(preview.initWorkspace(picked.path, template ?? null), t("ctx.newWorkspace"));
 }
 
 /** Opens a workspace from the recent list. */
 export function openRecent(path: string) {
   if (path === info().root) return;
-  adopt(preview.openWorkspace(path, false), "打开工作区");
+  adopt(preview.openWorkspace(path, false), t("ctx.openWorkspace"));
 }
 
 /** Picks a folder, initializes the built-in example workspace there, and opens its studio target. */
 export async function openExampleWorkspace(template?: string) {
   const before = info().root;
-  const next = await preview.pickAndInitExampleWorkspace(template ?? null);
+  const next = await preview.pickAndInitExampleWorkspace(template ?? null, {
+    title: t("dialog.pickExample.title"),
+    buttonLabel: t("dialog.pickExample.button"),
+  });
   if (next.root === before && !next.error) return;
   if (next.root === "" && !next.error) return; // cancelled with none open
   if (next.root === before && next.error) {
-    openError.set({ error: next.error, context: "打开示例工作区" });
+    openError.set({ error: next.error, context: t("ctx.openExampleWorkspace") });
     return;
   }
-  if (adopt(next, "打开示例工作区")) {
+  if (adopt(next, t("ctx.openExampleWorkspace"))) {
     brandReplayOpen.set(false);
     const preferredId = template === "cnoi-classic" ? "oi-mock" : "welcome-round";
     const welcome = next.contests.find((c) => c.id === preferredId) ?? next.contests[0];
@@ -368,9 +398,6 @@ export function startWatch() {
       const ev = await preview.nextChange();
       if (generation !== watchGeneration) return;
       if (ev.kind === "closed") return;
-      if (ev.kind === "rescan" || ev.paths.includes(".xcpc/theme.toml")) {
-        reloadThemeOverrides();
-      }
       refresh();
       for (const fn of listeners) fn(ev.paths, ev.kind === "rescan");
     }

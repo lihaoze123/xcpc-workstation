@@ -131,9 +131,9 @@
 **进度**（2026-11-22）：Phase 2.5A 与 2.5B 已全部完成并验收，进入 `v0.2.0-beta.1` 公开发布。
 
 1. **开放定制三件套（文件驱动 + 极简入口）**：
-   - **`.xcpc/preamble.typ`**：工作区级自定义 Typst 宏与样式微调，编译时自动注入模板作用域；
+   - **`templates/preamble.typ`**：工作区级自定义 Typst 宏与样式微调（随工作区进 Git），编译时自动注入模板作用域；
    - **自定义模板 `templates/*.typ`**：在 `workspace.toml` / `contest.toml` 指定 `template`，预置 `olymp-classic`，并参考 `Wallbreaker5th/fuzzy-cnoi-statement` 提供一个 CNOI/OI 风格示例模板与清晰接口；
-   - **`theme.toml`**：支持用户全局（`<dataDir>/theme.toml`）与工作区（`.xcpc/theme.toml`）覆写配色、字体与圆角，在「设置 → 外观」提供「打开 `theme.toml`」入口。
+   - **`theme.toml`**：支持用户全局 `<dataDir>/theme.toml` 覆写配色、字体与圆角（不设工作区级主题文件），在「设置 → 外观」提供「打开 `theme.toml`」入口。
 2. **Vim 实用子集模式**：
    - 默认关闭，设置页一键开启；基于 NSH 0.6 原生 `captureKeys` 实现（无 `readOnly` hack）；
    - 编辑器顶部 38pt 栏右侧低调显示 `NORMAL / INSERT / VISUAL` 小徽标；`Insert` 下 `Esc` 回 `Normal`，`Normal` 下 `Esc` 走原有逐层关闭；
@@ -149,9 +149,9 @@
 
 1. **预设降级为种子 + 比赛专属模板**：引擎只认磁盘上的 `.typ` 文件（`contests/<id>/template.typ` > `templates/<name>.typ`，无内置回退）；`olymp-classic`、`cnoi-classic`、`minimal` 作为预设种子在新建工作区或「从预设添加模板」时落盘到 `templates/`，全部可直接编辑。
 2. **单入口 `#let render(doc)` 与全平权 `#let schema`**：模板统一导出 `#let render(doc)`（`section / samples / subsection / runin` 可选覆写、缺省走 `/xcpc/defaults.typ`）；`cover / blank-pages / show-metadata` 从 Core/UI 硬编码下沉到各模板 `#let schema`；schema 支持 9 种实用控件（新增 `image` 选图导入 `assets/`）。
-3. **三级作用域与按模板名隔离持久化**：`workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`（`[template-options.<template>]` 与 `[problem.options.<template>]`，比赛专属模板用 `local` 命名空间），统一走 `toml_edit` 局部写回；`notify` 监听 `workspace.toml`、`templates/*.typ`、`contests/*/template.typ` 与 `.xcpc/preamble.typ`。
+3. **三级作用域与按模板名隔离持久化**：`workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`（`[template-options.<template>]` 与 `[problem.options.<template>]`，比赛专属模板用 `local` 命名空间），统一走 `toml_edit` 局部写回；`notify` 监听 `workspace.toml`、`templates/*.typ`（含 `templates/preamble.typ`）与 `contests/*/template.typ`。
 4. **「属性」抽屉双 Tab（`信息` | `版式`）与「设置 → 排版」**：「信息」只留纯内容元数据与语言；「版式」完全由当前模板 `schema` 动态渲染，支持一键「独立为本场专属模板」、直接打开任何模板文件编辑与从预设库添加模板。
-5. **定稿完整归档与 CLI / MCP 同步**：`freeze_contest` 将生效的 `template.typ`、`.xcpc/preamble.typ` 与合并参数固化进 `snapshot/`；CLI 新增 `xcpc template list|schema|add|fork`，MCP 新增 `list_templates`、`set_template_options` 并扩展 `set_override`。
+5. **定稿完整归档与 CLI / MCP 同步**：`freeze_contest` 将生效的 `template.typ`、`templates/preamble.typ` 与合并参数固化进 `snapshot/`；CLI 新增 `xcpc template list|schema|add|fork`，MCP 新增 `list_templates`、`set_template_options` 并扩展 `set_override`。
 
 **不做**：轮播引导、每次启动的启动页、slogan、常驻版本底栏、toast、行为触发的主动提示、改键、特定日期彩蛋、里程碑动效、icon 上的字母、ICPC 官方三色块组合、应用内 Typst IDE。
 
@@ -181,6 +181,7 @@
 ## 待定（尚未排期）
 
 - 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
+- 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
 - DOMjudge / Hydro / FPS / QOJ 包的导入导出。
 - 代码模板册（TRD）。
 - 双语并排校对与语义级 Diff。

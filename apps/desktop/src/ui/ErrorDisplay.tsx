@@ -6,6 +6,7 @@
 // not there is an error, so nothing below it moves.
 
 import { cleanup, Clipboard, signal, Text, View, type JSX } from "nsh";
+import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { errorCopy, errorDetails } from "./logic";
 import { EASE_STANDARD, ms } from "./theme";
@@ -53,7 +54,9 @@ export function ErrorDisplay(props: {
         {(w) => (
           <>
             <Text style={{ fontSize: 12 }} class={w().rule ? "text-secondary-foreground" : "text-destructive"}>
-              {props.error?.context && !w().rule ? `${props.error.context}：${w().message}` : w().message}
+              {props.error?.context && !w().rule
+                ? t("error.contextJoin", { context: props.error.context, message: w().message })
+                : w().message}
             </Text>
             <Each of={props.locate ?? []} key={(l, i) => `${i}:${l.label}`}>
               {(l) => (
@@ -70,7 +73,7 @@ export function ErrorDisplay(props: {
             {props.action}
             {(props.error?.code || props.error?.error) && (
               <Text style={{ fontSize: 11.5 }} class="text-muted-foreground hover:text-secondary-foreground" onPress={copy}>
-                {copied() ? "已复制" : "复制详情"}
+                {copied() ? t("common.copied") : t("common.copyDetails")}
               </Text>
             )}
             {props.onDismiss && (

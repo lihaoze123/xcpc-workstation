@@ -8,6 +8,7 @@ import type {
   PreviewView,
   SamplePairJs,
 } from "xcpc-workstation/native";
+import { t } from "./i18n";
 
 // ── Preview geometry ─────────────────────────────────────────────────────────
 
@@ -205,7 +206,18 @@ export function revealState(status: ExportBookStatusJs | undefined, book: Book):
 // ── Titles ───────────────────────────────────────────────────────────────────
 
 export type Space = "problems" | "contests" | "settings";
-export const SPACE_NAMES: Record<Space, string> = { problems: "题库", contests: "比赛", settings: "设置" };
+
+/** Reactive localized display name for a top-level space. */
+export function spaceName(s: Space): string {
+  switch (s) {
+    case "problems":
+      return t("space.problems");
+    case "contests":
+      return t("space.contests");
+    case "settings":
+      return t("space.settings");
+  }
+}
 
 export const APP_NAME = "XCPC Workstation";
 
@@ -223,7 +235,7 @@ export function windowTitle(state: {
     if (problem && s.contestName) return `${problem} — ${s.contestName}`;
     return problem ?? s.contestName ?? APP_NAME;
   }
-  const base = SPACE_NAMES[state.space];
+  const base = spaceName(state.space);
   return state.workspaceName ? `${base} — ${state.workspaceName}` : base;
 }
 
@@ -321,53 +333,53 @@ export interface ErrorCopy {
 
 const RULES = new Set(["contest_frozen", "contest_archived", "problem_referenced", "read_only", "already_frozen", "not_frozen"]);
 
-/** The words for a Core error `code` (the raw `error` stays for 复制详情). */
+/** The words for a Core error `code` (the raw `error` stays for Copy Details). */
 export function errorCopy(code: string | null | undefined, raw?: string | null): ErrorCopy {
   const rule = code ? RULES.has(code) : false;
   switch (code) {
     case "contest_frozen":
-      return { message: "比赛已定稿，内容只读", rule };
+      return { message: t("error.contestFrozen"), rule };
     case "contest_archived":
-      return { message: "比赛已归档，当前只读", next: "如需修改，请先取消归档", rule };
+      return { message: t("error.contestArchived"), next: t("error.contestArchivedNext"), rule };
     case "problem_referenced":
-      return { message: "题目仍被比赛引用", next: "先从这些比赛中移除后再删除", rule };
+      return { message: t("error.problemReferenced"), next: t("error.problemReferencedNext"), rule };
     case "read_only":
-      return { message: "工作区以只读方式打开", rule };
+      return { message: t("error.readOnly"), rule };
     case "already_frozen":
-      return { message: "比赛已经定稿", rule };
+      return { message: t("error.alreadyFrozen"), rule };
     case "not_frozen":
-      return { message: "比赛还没有定稿", rule };
+      return { message: t("error.notFrozen"), rule };
     case "invalid_id":
-      return { message: "ID 只能包含小写字母、数字、- 和 _，并以字母或数字开头", rule };
+      return { message: t("error.invalidId"), rule };
     case "too_many_problems":
-      return { message: "一场比赛最多 26 道题", rule };
+      return { message: t("error.tooManyProblems"), rule };
     case "conflict":
       if (raw && /already exists|已存在|expected\s+""/i.test(raw)) {
-        return { message: "同名文件或标识已存在", next: "请更换名称后重试", rule };
+        return { message: t("error.conflictExists"), next: t("error.conflictExistsNext"), rule };
       }
-      return { message: "文件已在别处被修改", rule };
+      return { message: t("error.conflictModified"), rule };
     case "not_found":
-      return { message: "文件或目录不存在", rule };
+      return { message: t("error.notFound"), rule };
     case "path_escape":
     case "disallowed_path":
-      return { message: "路径不在工作区内", rule };
+      return { message: t("error.pathEscape"), rule };
     case "invalid_file":
-      return { message: "文件格式有误", rule };
+      return { message: t("error.invalidFile"), rule };
     case "io":
-      return { message: "读写文件失败", rule };
+      return { message: t("error.io"), rule };
     case "preflight":
-      return { message: "定稿前的检查没有通过", rule };
+      return { message: t("error.preflight"), rule };
     case "no_workspace":
-      return { message: "没有打开的工作区", rule };
+      return { message: t("error.noWorkspace"), rule };
     case "missing_template":
-      return { message: "找不到当前使用的模板文件", next: "可在「版式」中从预设重新安装或切换其他模板", rule };
+      return { message: t("error.missingTemplate"), next: t("error.missingTemplateNext"), rule };
     default:
       break;
   }
-  if (raw && /already exists/.test(raw)) return { message: "同名 ID 已存在", rule: false };
-  if (raw && /read-only/.test(raw)) return { message: "工作区以只读方式打开", rule: true };
-  if (raw && /no workspace/i.test(raw)) return { message: "所选文件夹不是工作区", next: "可以在这里新建工作区", rule: false };
-  return { message: "操作没有完成", rule: false };
+  if (raw && /already exists/.test(raw)) return { message: t("error.duplicateIdExists"), rule: false };
+  if (raw && /read-only/.test(raw)) return { message: t("error.readOnly"), rule: true };
+  if (raw && /no workspace/i.test(raw)) return { message: t("error.notWorkspace"), next: t("error.notWorkspaceNext"), rule: false };
+  return { message: t("error.generic"), rule: false };
 }
 
 /** The text 复制详情 puts on the clipboard. */
@@ -428,16 +440,22 @@ export function filterAddableContests<T extends { archived: boolean }>(contests:
 
 // ── Unfreeze ─────────────────────────────────────────────────────────────────
 
-const DIFF_KINDS: Record<string, string> = {
-  statement_changed: "题面",
-  samples_changed: "样例",
-  editorial_changed: "题解",
-  assets_changed: "资源文件",
-  meta_changed: "题目信息",
-  problem_deleted: "题目已删除",
-};
-
 /** The words for an unfreeze difference kind. */
 export function diffKind(kind: string): string {
-  return DIFF_KINDS[kind] ?? kind;
+  switch (kind) {
+    case "statement_changed":
+      return t("diff.statementChanged");
+    case "samples_changed":
+      return t("diff.samplesChanged");
+    case "editorial_changed":
+      return t("diff.editorialChanged");
+    case "assets_changed":
+      return t("diff.assetsChanged");
+    case "meta_changed":
+      return t("diff.metaChanged");
+    case "problem_deleted":
+      return t("diff.problemDeleted");
+    default:
+      return kind;
+  }
 }

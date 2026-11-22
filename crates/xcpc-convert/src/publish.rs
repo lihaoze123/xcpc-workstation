@@ -651,7 +651,7 @@ pub fn freeze_contest(
     };
 
     // Build the template archive so frozen snapshots reproduce even if workspace
-    // defaults, templates, assets, or `.xcpc/preamble.typ` later change.
+    // defaults, templates, assets, or `templates/preamble.typ` later change.
     let (eff_template, tpl_import_path, template_bytes, mut merged_opts) =
         if ws.has_contest_template(contest_id) {
             let rel = format!("contests/{contest_id}/template.typ");
@@ -903,7 +903,10 @@ pub fn inspect_template(ws: &Workspace, engine: &Engine, name: &str) -> Option<T
     let rel_path = format!("templates/{name}.typ");
     let import_path = format!("/{rel_path}");
     let schema = engine.inspect_template_schema(&import_path);
-    let display_name = schema.name.clone().unwrap_or_else(|| name.to_owned());
+    let display_name = schema
+        .name
+        .clone()
+        .unwrap_or_else(|| xcpc_domain::LocalizedText::Plain(name.to_owned()));
     let description = schema.description.clone();
     Some(TemplateInfo {
         id: name.to_owned(),
@@ -927,10 +930,9 @@ pub fn inspect_contest_template(
     let rel_path = format!("contests/{contest_id}/template.typ");
     let import_path = format!("/{rel_path}");
     let schema = engine.inspect_template_schema(&import_path);
-    let display_name = schema
-        .name
-        .clone()
-        .unwrap_or_else(|| "本场专属模板".to_owned());
+    let display_name = schema.name.clone().unwrap_or_else(|| {
+        xcpc_domain::LocalizedText::bilingual("本场专属模板", "Contest Template")
+    });
     let description = schema.description.clone();
     Some(TemplateInfo {
         id: "local".to_owned(),

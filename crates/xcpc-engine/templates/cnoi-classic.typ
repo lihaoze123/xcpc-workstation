@@ -25,32 +25,38 @@
 )
 
 #let schema = (
-  name: "OI 风格",
-  description: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+  name: (zh: "OI 风格", en: "OI Classic"),
+  description: (
+    zh: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+    en: "Official CCF CSP-J/S and NOI style statements and editorials",
+  ),
   groups: (
-    (id: "cover", label: "封面与考试说明"),
-    (id: "samples", label: "样例与正文样式"),
-    (id: "layout", label: "页面与字体"),
-    (id: "problem", label: "单题设置"),
+    (id: "cover", label: (zh: "封面与考试说明", en: "Cover & Exam Notes")),
+    (id: "samples", label: (zh: "样例与正文样式", en: "Samples & Body Style")),
+    (id: "layout", label: (zh: "页面与字体", en: "Page & Fonts")),
+    (id: "problem", label: (zh: "单题设置", en: "Problem Settings")),
   ),
   fields: (
     (
       key: "cover",
-      label: "封面与考试说明",
+      label: (zh: "封面与考试说明", en: "Cover & Exam Notes"),
       type: "enum",
       scope: "book",
       group: "cover",
       default: "auto",
       choices: (
-        (value: "auto", label: "自动（多题时显示）"),
-        (value: "on", label: "总是显示"),
-        (value: "off", label: "不显示"),
+        (value: "auto", label: (zh: "自动（多题时显示）", en: "Auto (multi-problem)")),
+        (value: "on", label: (zh: "总是显示", en: "Always")),
+        (value: "off", label: (zh: "不显示", en: "Off")),
       ),
     ),
     (
       key: "logo",
-      label: "封面徽标",
-      description: "显示在封面顶部，留空则不显示",
+      label: (zh: "封面徽标", en: "Cover Logo"),
+      description: (
+        zh: "显示在封面顶部，留空则不显示",
+        en: "Displayed at the top of the cover; leave empty to hide",
+      ),
       type: "image",
       scope: "book",
       group: "cover",
@@ -58,7 +64,7 @@
     ),
     (
       key: "compile-opts",
-      label: "编译选项",
+      label: (zh: "编译选项", en: "Compiler Options"),
       type: "string",
       scope: "book",
       group: "cover",
@@ -66,7 +72,7 @@
     ),
     (
       key: "show-submit-table",
-      label: "显示提交源程序文件名表",
+      label: (zh: "显示提交源程序文件名表", en: "Show Source Filename Table"),
       type: "bool",
       scope: "book",
       group: "cover",
@@ -74,7 +80,7 @@
     ),
     (
       key: "show-compile-table",
-      label: "显示编译选项表",
+      label: (zh: "显示编译选项表", en: "Show Compiler Options Table"),
       type: "bool",
       scope: "book",
       group: "cover",
@@ -82,8 +88,11 @@
     ),
     (
       key: "notices",
-      label: "注意事项",
-      description: "每行一条，显示在封面底部",
+      label: (zh: "注意事项", en: "Contest Notices"),
+      description: (
+        zh: "每行一条，显示在封面底部",
+        en: "One item per line, shown at the bottom of the cover",
+      ),
       type: "lines",
       scope: "book",
       group: "cover",
@@ -91,7 +100,7 @@
     ),
     (
       key: "show-metadata",
-      label: "无封面时显示题头限值行",
+      label: (zh: "无封面时显示题头限值行", en: "Show Limits Row Without Cover"),
       type: "bool",
       scope: "book",
       group: "samples",
@@ -99,7 +108,7 @@
     ),
     (
       key: "blank-pages",
-      label: "奇数页起题（留白）",
+      label: (zh: "奇数页起题（留白）", en: "Start Problems on Odd Pages"),
       type: "bool",
       scope: "book",
       group: "samples",
@@ -107,7 +116,7 @@
     ),
     (
       key: "sample-border-color",
-      label: "样例框描边颜色",
+      label: (zh: "样例框描边颜色", en: "Sample Box Border Color"),
       type: "color",
       scope: "book",
       group: "samples",
@@ -115,7 +124,7 @@
     ),
     (
       key: "sample-line-numbers",
-      label: "样例显示行号",
+      label: (zh: "样例显示行号", en: "Show Sample Line Numbers"),
       type: "bool",
       scope: "book",
       group: "samples",
@@ -123,7 +132,7 @@
     ),
     (
       key: "dotted-emphasis",
-      label: "中文加粗加着重号",
+      label: (zh: "中文加粗加着重号", en: "Dotted Emphasis for CJK Bold"),
       type: "bool",
       scope: "book",
       group: "samples",
@@ -131,7 +140,7 @@
     ),
     (
       key: "body-size",
-      label: "正文字号",
+      label: (zh: "正文字号", en: "Body Font Size"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -141,7 +150,7 @@
     ),
     (
       key: "margin",
-      label: "页边距",
+      label: (zh: "页边距", en: "Page Margin"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -151,25 +160,25 @@
     ),
     (
       key: "cjk-body-font",
-      label: "中文正文字体",
+      label: (zh: "中文正文字体", en: "CJK Body Font"),
       type: "font",
       scope: "book",
       group: "layout",
       default: "",
-      placeholder: "默认（宋体）",
+      placeholder: (zh: "默认（宋体）", en: "Default (Songti)"),
     ),
     (
       key: "cjk-heading-font",
-      label: "中文标题字体",
+      label: (zh: "中文标题字体", en: "CJK Heading Font"),
       type: "font",
       scope: "book",
       group: "layout",
       default: "",
-      placeholder: "默认（黑体）",
+      placeholder: (zh: "默认（黑体）", en: "Default (Heiti)"),
     ),
     (
       key: "show-metadata",
-      label: "无封面时显示题头限值行",
+      label: (zh: "无封面时显示题头限值行", en: "Show Limits Row Without Cover"),
       type: "bool",
       scope: "problem",
       group: "problem",
@@ -177,25 +186,25 @@
     ),
     (
       key: "prob-type",
-      label: "题目类型",
+      label: (zh: "题目类型", en: "Problem Type"),
       type: "enum",
       scope: "problem",
       group: "problem",
       default: "传统型",
       choices: (
-        (value: "传统型", label: "传统型"),
-        (value: "交互型", label: "交互型"),
-        (value: "提交答案", label: "提交答案"),
+        (value: "传统型", label: (zh: "传统型", en: "Traditional")),
+        (value: "交互型", label: (zh: "交互型", en: "Interactive")),
+        (value: "提交答案", label: (zh: "提交答案", en: "Output-only")),
       ),
     ),
     (
       key: "source-file",
-      label: "可执行文件名",
+      label: (zh: "可执行文件名", en: "Executable Filename"),
       type: "string",
       scope: "problem",
       group: "problem",
       default: "",
-      placeholder: "自动从输入文件推导",
+      placeholder: (zh: "自动从输入文件推导", en: "Inferred from input filename"),
     ),
   ),
 )

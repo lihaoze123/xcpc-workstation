@@ -4,6 +4,7 @@
 
 import { computed, platform, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
 import { IconBtn, Kbd, keyLabel } from "./kit";
 import { Modal } from "./Modal";
@@ -16,7 +17,7 @@ export interface ShortcutItem {
   readonly context?: string;
   /** Standard NSH keystroke string (formatted via `keymap.label`). */
   readonly keys?: string;
-  /** Non-keystroke gesture label (e.g. Ctrl+点击 / Cmd+点击) when `keys` is not applicable. */
+  /** Non-keystroke gesture label (e.g. Ctrl+点击 / Cmd+Click) when `keys` is not applicable. */
   readonly gesture?: { readonly mac: string; readonly other: string };
   readonly keywords?: readonly string[];
 }
@@ -27,129 +28,164 @@ export interface ShortcutGroup {
   readonly items: readonly ShortcutItem[];
 }
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
+interface ShortcutItemDef {
+  readonly id: string;
+  readonly labelKey: MessageKey;
+  readonly contextKey?: MessageKey;
+  readonly contextLiteral?: string;
+  readonly keys?: string;
+  readonly gestureKeys?: { readonly mac: MessageKey; readonly other: MessageKey };
+  readonly gestureLiteral?: { readonly mac: string; readonly other: string };
+  readonly keywords?: readonly string[];
+}
+
+interface ShortcutGroupDef {
+  readonly id: string;
+  readonly titleKey: MessageKey;
+  readonly items: readonly ShortcutItemDef[];
+}
+
+const SHORTCUT_GROUP_DEFS: readonly ShortcutGroupDef[] = [
   {
     id: "global",
-    title: "全局与导航",
+    titleKey: "shortcuts.group.global",
     items: [
-      { id: "palette", label: "命令面板", keys: "mod+k", keywords: ["command", "search", "jump", "命令", "跳转"] },
-      { id: "shortcuts", label: "快捷键速查", keys: "mod+/", keywords: ["shortcut", "help", "key", "帮助"] },
-      { id: "space-problems", label: "切换到题库", context: "首页", keys: "mod+1", keywords: ["library", "problems", "题库"] },
-      { id: "space-contests", label: "切换到比赛", context: "首页", keys: "mod+2", keywords: ["contests", "比赛"] },
-      { id: "space-settings", label: "切换到设置", context: "首页", keys: "mod+3", keywords: ["settings", "设置"] },
-      { id: "open-workspace", label: "打开已有工作区", keys: "mod+o", keywords: ["workspace", "folder", "工作区"] },
-      { id: "escape", label: "关闭浮层或返回上级", keys: "escape", keywords: ["esc", "close", "back", "退出"] },
+      { id: "palette", labelKey: "shortcuts.item.palette", keys: "mod+k", keywords: ["command", "search", "jump", "命令", "跳转"] },
+      { id: "shortcuts", labelKey: "shortcuts.item.shortcuts", keys: "mod+/", keywords: ["shortcut", "help", "key", "帮助", "快捷键"] },
+      { id: "space-problems", labelKey: "shortcuts.item.spaceProblems", contextKey: "shortcuts.ctx.home", keys: "mod+1", keywords: ["library", "problems", "题库"] },
+      { id: "space-contests", labelKey: "shortcuts.item.spaceContests", contextKey: "shortcuts.ctx.home", keys: "mod+2", keywords: ["contests", "比赛"] },
+      { id: "space-settings", labelKey: "shortcuts.item.spaceSettings", contextKey: "shortcuts.ctx.home", keys: "mod+3", keywords: ["settings", "设置"] },
+      { id: "open-workspace", labelKey: "shortcuts.item.openWorkspace", keys: "mod+o", keywords: ["workspace", "folder", "工作区"] },
+      { id: "escape", labelKey: "shortcuts.item.escape", keys: "escape", keywords: ["esc", "close", "back", "退出", "关闭"] },
     ],
   },
   {
     id: "workspace",
-    title: "题库与比赛",
+    titleKey: "shortcuts.group.workspace",
     items: [
-      { id: "new-problem", label: "新建题目", keys: "mod+n", keywords: ["problem", "create", "新建"] },
-      { id: "new-contest", label: "新建比赛", keys: "mod+shift+n", keywords: ["contest", "create", "新建"] },
-      { id: "list-search", label: "聚焦搜索框", context: "题库与比赛列表", keys: "mod+f", keywords: ["find", "filter", "搜索", "筛选"] },
-      { id: "list-next", label: "列表下一项", keys: "j", keywords: ["down", "next", "下移"] },
-      { id: "list-prev", label: "列表上一项", keys: "k", keywords: ["up", "prev", "上移"] },
+      { id: "new-problem", labelKey: "shortcuts.item.newProblem", keys: "mod+n", keywords: ["problem", "create", "新建", "题目"] },
+      { id: "new-contest", labelKey: "shortcuts.item.newContest", keys: "mod+shift+n", keywords: ["contest", "create", "新建", "比赛"] },
+      { id: "list-search", labelKey: "shortcuts.item.listSearch", contextKey: "shortcuts.ctx.lists", keys: "mod+f", keywords: ["find", "filter", "搜索", "筛选"] },
+      { id: "list-next", labelKey: "shortcuts.item.listNext", keys: "j", keywords: ["down", "next", "下移"] },
+      { id: "list-prev", labelKey: "shortcuts.item.listPrev", keys: "k", keywords: ["up", "prev", "上移"] },
     ],
   },
   {
     id: "editor",
-    title: "出版编辑",
+    titleKey: "shortcuts.group.editor",
     items: [
-      { id: "tab-statement", label: "切到题面", keys: "alt+1", keywords: ["statement", "题面"] },
-      { id: "tab-samples", label: "切到样例", keys: "alt+2", keywords: ["samples", "样例"] },
-      { id: "tab-editorial", label: "切到题解", keys: "alt+3", keywords: ["editorial", "题解"] },
-      { id: "inspector", label: "开关属性面板", keys: "mod+i", keywords: ["inspector", "properties", "属性"] },
-      { id: "focus-mode", label: "专注模式", keys: "mod+shift+f", keywords: ["focus", "zen", "专注"] },
-      { id: "save", label: "保存当前文件", keys: "mod+s", keywords: ["save", "保存"] },
-      { id: "export-pdf", label: "导出 PDF", keys: "mod+e", keywords: ["pdf", "export", "导出"] },
-      { id: "editor-find", label: "页内查找与替换", context: "源码编辑器", keys: "mod+f", keywords: ["find", "replace", "查找", "替换"] },
-      { id: "heading-1", label: "一级标题", context: "源码编辑器", keys: "mod+1", keywords: ["h1", "heading", "title", "标题"] },
-      { id: "heading-2", label: "二级标题", context: "源码编辑器", keys: "mod+2", keywords: ["h2", "heading", "section", "标题", "章节"] },
-      { id: "heading-3", label: "三级标题", context: "源码编辑器", keys: "mod+3", keywords: ["h3", "heading", "标题"] },
-      { id: "heading-4", label: "四级标题", context: "源码编辑器", keys: "mod+4", keywords: ["h4", "heading", "标题"] },
-      { id: "bold", label: "加粗", keys: "mod+b", keywords: ["bold", "markdown", "粗体"] },
-      { id: "italic", label: "斜体", keys: "mod+shift+i", keywords: ["italic", "markdown", "斜体"] },
-      { id: "inline-code", label: "行内代码", keys: "mod+`", keywords: ["code", "inline", "backtick", "代码"] },
-      { id: "math-inline", label: "插入行内公式", keys: "mod+m", keywords: ["math", "latex", "tex", "公式"] },
-      { id: "math-block", label: "插入块级公式", keys: "mod+shift+m", keywords: ["math", "block", "latex", "公式块"] },
-      { id: "list-ul", label: "无序列表", keys: "mod+shift+8", keywords: ["ul", "list", "bullet", "无序", "列表"] },
-      { id: "list-ol", label: "有序列表", keys: "mod+shift+7", keywords: ["ol", "list", "ordered", "有序", "列表"] },
-      { id: "blockquote", label: "引用块", keys: "mod+shift+.", keywords: ["quote", "blockquote", "引用"] },
+      { id: "tab-statement", labelKey: "shortcuts.item.tabStatement", keys: "alt+1", keywords: ["statement", "题面"] },
+      { id: "tab-samples", labelKey: "shortcuts.item.tabSamples", keys: "alt+2", keywords: ["samples", "样例"] },
+      { id: "tab-editorial", labelKey: "shortcuts.item.tabEditorial", keys: "alt+3", keywords: ["editorial", "题解"] },
+      { id: "inspector", labelKey: "shortcuts.item.inspector", keys: "mod+i", keywords: ["inspector", "properties", "属性"] },
+      { id: "focus-mode", labelKey: "shortcuts.item.focusMode", keys: "mod+shift+f", keywords: ["focus", "zen", "专注"] },
+      { id: "save", labelKey: "shortcuts.item.save", keys: "mod+s", keywords: ["save", "保存"] },
+      { id: "export-pdf", labelKey: "shortcuts.item.exportPdf", keys: "mod+e", keywords: ["pdf", "export", "导出"] },
+      { id: "editor-find", labelKey: "shortcuts.item.editorFind", contextKey: "shortcuts.ctx.sourceEditor", keys: "mod+f", keywords: ["find", "replace", "查找", "替换"] },
+      { id: "heading-1", labelKey: "shortcuts.item.heading1", contextKey: "shortcuts.ctx.sourceEditor", keys: "mod+1", keywords: ["h1", "heading", "title", "标题"] },
+      { id: "heading-2", labelKey: "shortcuts.item.heading2", contextKey: "shortcuts.ctx.sourceEditor", keys: "mod+2", keywords: ["h2", "heading", "section", "标题", "章节"] },
+      { id: "heading-3", labelKey: "shortcuts.item.heading3", contextKey: "shortcuts.ctx.sourceEditor", keys: "mod+3", keywords: ["h3", "heading", "标题"] },
+      { id: "heading-4", labelKey: "shortcuts.item.heading4", contextKey: "shortcuts.ctx.sourceEditor", keys: "mod+4", keywords: ["h4", "heading", "标题"] },
+      { id: "bold", labelKey: "shortcuts.item.bold", keys: "mod+b", keywords: ["bold", "markdown", "粗体", "加粗"] },
+      { id: "italic", labelKey: "shortcuts.item.italic", keys: "mod+shift+i", keywords: ["italic", "markdown", "斜体"] },
+      { id: "inline-code", labelKey: "shortcuts.item.inlineCode", keys: "mod+`", keywords: ["code", "inline", "backtick", "代码"] },
+      { id: "math-inline", labelKey: "shortcuts.item.mathInline", keys: "mod+m", keywords: ["math", "latex", "tex", "公式"] },
+      { id: "math-block", labelKey: "shortcuts.item.mathBlock", keys: "mod+shift+m", keywords: ["math", "block", "latex", "公式块"] },
+      { id: "list-ul", labelKey: "shortcuts.item.listUl", keys: "mod+shift+8", keywords: ["ul", "list", "bullet", "无序", "列表"] },
+      { id: "list-ol", labelKey: "shortcuts.item.listOl", keys: "mod+shift+7", keywords: ["ol", "list", "ordered", "有序", "列表"] },
+      { id: "blockquote", labelKey: "shortcuts.item.blockquote", keys: "mod+shift+.", keywords: ["quote", "blockquote", "引用"] },
     ],
   },
   {
     id: "preview",
-    title: "预览画布",
+    titleKey: "shortcuts.group.preview",
     items: [
-      { id: "zoom-in", label: "放大预览", keys: "mod+plus", keywords: ["zoom", "scale", "放大"] },
-      { id: "zoom-out", label: "缩小预览", keys: "mod+minus", keywords: ["zoom", "scale", "缩小"] },
-      { id: "fit-width", label: "适合画布宽度", keys: "mod+0", keywords: ["fit", "reset", "适合宽度"] },
-      { id: "locate-preview", label: "从光标定位到预览页", keys: "mod+shift+l", keywords: ["sync", "locate", "定位"] },
+      { id: "zoom-in", labelKey: "shortcuts.item.zoomIn", keys: "mod+plus", keywords: ["zoom", "scale", "放大"] },
+      { id: "zoom-out", labelKey: "shortcuts.item.zoomOut", keys: "mod+minus", keywords: ["zoom", "scale", "缩小"] },
+      { id: "fit-width", labelKey: "shortcuts.item.fitWidth", keys: "mod+0", keywords: ["fit", "reset", "适合宽度"] },
+      { id: "locate-preview", labelKey: "shortcuts.item.locatePreview", keys: "mod+shift+l", keywords: ["sync", "locate", "定位"] },
       {
         id: "locate-source",
-        label: "从预览页跳回源码",
-        gesture: { mac: "⌘+点击", other: "Ctrl+点击" },
+        labelKey: "shortcuts.item.locateSource",
+        gestureKeys: { mac: "shortcuts.gesture.locateSourceMac", other: "shortcuts.gesture.locateSourceOther" },
         keywords: ["click", "source", "jump", "跳回源码"],
       },
     ],
   },
   {
     id: "vim",
-    title: "Vim 模式",
+    titleKey: "shortcuts.group.vim",
     items: [
       {
         id: "vim-escape",
-        label: "返回 Normal 模式",
-        context: "Insert / Visual",
-        gesture: { mac: "Esc / Ctrl+[", other: "Esc / Ctrl+[" },
+        labelKey: "shortcuts.item.vimEscape",
+        contextLiteral: "Insert / Visual",
+        gestureLiteral: { mac: "Esc / Ctrl+[", other: "Esc / Ctrl+[" },
         keywords: ["vim", "normal", "escape", "ctrl+["],
       },
       {
         id: "vim-motion",
-        label: "移动光标与按词跳转",
-        context: "Normal / Visual",
-        gesture: { mac: "h j k l / w b e / 0 $ / gg G", other: "h j k l / w b e / 0 $ / gg G" },
+        labelKey: "shortcuts.item.vimMotion",
+        contextLiteral: "Normal / Visual",
+        gestureLiteral: { mac: "h j k l / w b e / 0 $ / gg G", other: "h j k l / w b e / 0 $ / gg G" },
         keywords: ["vim", "motion", "hjkl", "word", "移动"],
       },
       {
         id: "vim-insert",
-        label: "进入 Insert 模式",
-        context: "Normal",
-        gesture: { mac: "i a I A o O", other: "i a I A o O" },
+        labelKey: "shortcuts.item.vimInsert",
+        contextLiteral: "Normal",
+        gestureLiteral: { mac: "i a I A o O", other: "i a I A o O" },
         keywords: ["vim", "insert", "插入"],
       },
       {
         id: "vim-edit",
-        label: "删除、复制与粘贴",
-        context: "Normal",
-        gesture: { mac: "x / dd / yy / p P", other: "x / dd / yy / p P" },
+        labelKey: "shortcuts.item.vimEdit",
+        contextLiteral: "Normal",
+        gestureLiteral: { mac: "x / dd / yy / p P", other: "x / dd / yy / p P" },
         keywords: ["vim", "delete", "yank", "paste", "dd", "yy"],
       },
       {
         id: "vim-undo",
-        label: "撤销与重做",
-        context: "Normal",
-        gesture: { mac: "u / Ctrl+r", other: "u / Ctrl+r" },
+        labelKey: "shortcuts.item.vimUndo",
+        contextLiteral: "Normal",
+        gestureLiteral: { mac: "u / Ctrl+r", other: "u / Ctrl+r" },
         keywords: ["vim", "undo", "redo", "撤销", "重做"],
       },
       {
         id: "vim-visual",
-        label: "字符 / 行可视选择",
-        context: "Normal",
-        gesture: { mac: "v / V（配合 d y c）", other: "v / V（配合 d y c）" },
+        labelKey: "shortcuts.item.vimVisual",
+        contextLiteral: "Normal",
+        gestureKeys: { mac: "shortcuts.gesture.vimVisual", other: "shortcuts.gesture.vimVisual" },
         keywords: ["vim", "visual", "select", "选择"],
       },
       {
         id: "vim-text-obj",
-        label: "内部文本对象",
-        context: "Normal / Visual",
-        gesture: { mac: "vi / ci / di / yi + w $ () \"\" '' ``", other: "vi / ci / di / yi + w $ () \"\" '' ``" },
+        labelKey: "shortcuts.item.vimTextObj",
+        contextLiteral: "Normal / Visual",
+        gestureLiteral: { mac: "vi / ci / di / yi + w $ () \"\" '' ``", other: "vi / ci / di / yi + w $ () \"\" '' ``" },
         keywords: ["vim", "text object", "viw", "ciw", "ci$", "文本对象"],
       },
     ],
   },
 ];
+
+/** Resolves all shortcut groups in the active `locale()`. */
+export function getShortcutGroups(): ShortcutGroup[] {
+  return SHORTCUT_GROUP_DEFS.map((g) => ({
+    id: g.id,
+    title: t(g.titleKey),
+    items: g.items.map((it) => ({
+      id: it.id,
+      label: t(it.labelKey),
+      context: it.contextKey ? t(it.contextKey) : it.contextLiteral,
+      keys: it.keys,
+      gesture: it.gestureKeys
+        ? { mac: t(it.gestureKeys.mac), other: t(it.gestureKeys.other) }
+        : it.gestureLiteral,
+      keywords: it.keywords,
+    })),
+  }));
+}
 
 /** Reactive open state for the global `Ctrl+/` shortcuts overlay. */
 export const shortcutsOpen = signal(false);
@@ -164,12 +200,13 @@ function itemKeyText(item: ShortcutItem): string {
   return "";
 }
 
-/** Filters `SHORTCUT_GROUPS` by label, group title, formatted shortcut, or keywords. */
+/** Filters shortcut groups by label, group title, formatted shortcut, or keywords. */
 export function filterShortcutGroups(query: string): ShortcutGroup[] {
+  const all = getShortcutGroups();
   const q = query.trim().toLowerCase();
-  if (!q) return [...SHORTCUT_GROUPS];
+  if (!q) return all;
   const out: ShortcutGroup[] = [];
-  for (const group of SHORTCUT_GROUPS) {
+  for (const group of all) {
     const groupMatch = group.title.toLowerCase().includes(q);
     const items = groupMatch
       ? group.items
@@ -225,7 +262,7 @@ export function ShortcutsList(props: {
           <View style={{ height: 96, alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="searchX" size={18} tone="muted-foreground" />
             <Text style={{ fontSize: 13 }} class="text-muted-foreground">
-              {`没有找到「${query().trim()}」`}
+              {t("common.searchNotFound", { query: query().trim() })}
             </Text>
           </View>
         }
@@ -316,7 +353,7 @@ export function ShortcutsList(props: {
           class="bg-transparent placeholder:text-muted-foreground"
           style={{ flex: 1, height: 28, fontSize: 13 }}
           value={query()}
-          placeholder="搜索快捷键或操作"
+          placeholder={t("shortcuts.searchPlaceholder")}
           autoCapitalize="none"
           autoCorrect={false}
           autoFocus={props.autoFocus}
@@ -352,7 +389,7 @@ export function ShortcutsModal(props?: { open?: boolean; onClose?: () => void })
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Text style={{ fontSize: 15, lineHeight: 20, fontWeight: 600 }} class="text-foreground">
-              快捷键
+              {t("shortcuts.title")}
             </Text>
             <Kbd keys="mod+/" faint />
           </View>

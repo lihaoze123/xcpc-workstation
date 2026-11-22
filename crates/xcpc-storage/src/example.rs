@@ -7,7 +7,7 @@
 //! - `tree-beacon`: Graph/tree DP problem with a publication-grade `@preview/cetz`
 //!   rooted-tree diagram (heavy-chain highlights & subtree shading) and Pinit editorial.
 //! - `typst-showcase`: Concentrated showcase of CeTZ vector graphics, Pinit formula
-//!   annotations, programmatic Typst scripting, and `.xcpc/preamble.typ` macros.
+//!   annotations, programmatic Typst scripting, and `templates/preamble.typ` macros.
 //!
 //! Two contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`)
 //! live-reference the same problem bank to demonstrate multi-template publishing.
@@ -20,7 +20,7 @@ use crate::{Result, Workspace, init_workspace_with_template};
 /// Static files seeded into an example workspace (relative to workspace root).
 const EXAMPLE_FILES: &[(&str, &str)] = &[
     (
-        ".xcpc/preamble.typ",
+        "templates/preamble.typ",
         r##"// 工作区级 Typst 自定义宏（自动注入所有题面与题解编译作用域）
 // 在题面或题解中使用 ```typst 代码块即可直接调用这里定义的宏。
 
@@ -798,7 +798,7 @@ memory = "512MB"
     ),
     (
         "problems/typst-showcase/statement.md",
-        r##"本篇用于集中展示 **XCPC Workstation** 内置 Typst 引擎的排版、外部库与编程能力：在同一份 Markdown 题面中自由混排 LaTeX 公式（MiTeX）、`@preview/cetz` 矢量绘图、`@preview/pinit` 公式标注、Typst 脚本自动生成以及工作区级自定义宏（`.xcpc/preamble.typ`）。
+        r##"本篇用于集中展示 **XCPC Workstation** 内置 Typst 引擎的排版、外部库与编程能力：在同一份 Markdown 题面中自由混排 LaTeX 公式（MiTeX）、`@preview/cetz` 矢量绘图、`@preview/pinit` 公式标注、Typst 脚本自动生成以及工作区级自定义宏（`templates/preamble.typ`）。
 
 ### 1. CeTZ 矢量图论与几何绘图
 
@@ -1017,8 +1017,8 @@ Typst 内置图灵完备的脚本语言：用几行 `for` 循环与递归/函数
 ```
 
 ```typst
-#insight(title: "自定义工作区宏（.xcpc/preamble.typ）")[
-  本提示框由 `.xcpc/preamble.typ` 中的 `#insight` 宏生成，全工作区所有题面与题解均可直接调用；
+#insight(title: "自定义工作区宏（templates/preamble.typ）")[
+  本提示框由 `templates/preamble.typ` 中的 `#insight` 宏生成，全工作区所有题面与题解均可直接调用；
   同时支持任意 `@preview/...` 官方生态包按需自动拉取缓存，以及 `@local/...` 本地自定义包。
 ]
 ```
@@ -1041,7 +1041,7 @@ Typst 内置图灵完备的脚本语言：用几行 `for` 循环与递归/函数
     ("problems/typst-showcase/samples/01.ans", "3148\n"),
     (
         "problems/typst-showcase/editorial.md",
-        r##"本篇演示题解册的典型排版结构：正文与公式沿用工作区统一字号，代码块使用内嵌的 JetBrains Mono 字体，并通过 `.xcpc/preamble.typ` 提供的自定义宏统一呈现关键观察与复杂度结论。
+        r##"本篇演示题解册的典型排版结构：正文与公式沿用工作区统一字号，代码块使用内嵌的 JetBrains Mono 字体，并通过 `templates/preamble.typ` 提供的自定义宏统一呈现关键观察与复杂度结论。
 
 ```typst
 #insight(title: "题解写作建议")[
@@ -1133,7 +1133,7 @@ output = "showcase.out"
 
 /// Initializes an XCPC workspace at `dir` and populates it with the embedded example
 /// contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`),
-/// `.xcpc/preamble.typ`, and three problems (`crc-check`, `tree-beacon`, `typst-showcase`).
+/// `templates/preamble.typ`, and three problems (`crc-check`, `tree-beacon`, `typst-showcase`).
 ///
 /// Existing files are left untouched so re-running is safe and idempotent.
 pub fn init_example_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {

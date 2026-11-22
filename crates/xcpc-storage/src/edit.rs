@@ -698,7 +698,7 @@ impl Workspace {
 
     /// Low-level atomic freeze commit, optionally archiving the contest's resolved
     /// template metadata (`snapshot/template.toml`), custom template file
-    /// (`snapshot/template.typ`), and `.xcpc/preamble.typ` (`snapshot/preamble.typ`).
+    /// (`snapshot/template.typ`), and `templates/preamble.typ` (`snapshot/preamble.typ`).
     pub fn freeze_commit_with_template(
         &self,
         contest_id: &str,

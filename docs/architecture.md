@@ -159,16 +159,14 @@ erDiagram
 
 ```text
 xcpc-workspace/
-├── .xcpc/                    # 不进 Git
-│   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存
+├── .xcpc/                    # 纯本地派生目录，固定写入 .gitignore，绝不进 Git
+│   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存（Phase 4）
 ├── xcpc.lock                 # 工具链锁定（Phase 3，进 Git）
-├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典、OJ 账号
+├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典（不含个人 OJ 账号）
 ├── AGENTS.md                 # 工作区级 Agent 指南（`xcpc init` 时写入的静态文本，之后归用户）
-├── templates/                # 工作区 Typst 模板（`<name>.typ`，初始化时按所选预设落盘，全部可自由编辑）
+├── templates/                # 工作区 Typst 模板（`<name>.typ`，初始化时按所选预设落盘，进 Git，全部可自由编辑）
+│   └── preamble.typ          # 可选：工作区级 Typst 宏与样式注入（保留名，进 Git，不列为可选比赛模板）
 ├── assets/                   # 工作区级共享静态资源（如通用校徽/Logo）
-├── .xcpc/
-│   ├── preamble.typ          # 工作区级 Typst 宏与样式注入（可选，可纳入 Git 或按需忽略）
-│   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存（不进 Git）
 ├── problems/
 │   └── cf-1999a/
 │       ├── problem.toml      # 元数据、限制、`[[source]]`、单题级 `[template-options.<template>]`；不含训练状态
@@ -192,9 +190,10 @@ xcpc-workspace/
 ```
 
 - 工作区的根目录以 `workspace.toml` 为标志（Phase 1 可以是空文件）。`xcpc` 依次用 `--workspace`、`XCPC_WORKSPACE`、当前目录向上查找来确定工作区，桌面端用后两者。
+- **个人数据与项目数据解耦**：外观主题（用户全局 `<dataDir>/theme.toml`，不设工作区级 `.xcpc/theme.toml`）、编辑器与界面偏好、OJ 账号及系统钥匙串凭据均属于用户个人配置，不写入任何工作区；工作区内的 `.xcpc/` 始终是纯本地派生目录，由 `init_workspace` 固定写入 `.gitignore`，绝不提交到 Git；影响编译结果的公共宏放在 `templates/preamble.typ` 随工作区纳入 Git。
 - 导出的 PDF 默认写到工作区的 `build/`（派生物，建议加入 `.gitignore`）：Phase 1–2 默认为 `build/<id>.pdf` / `build/<id>-editorial.pdf`；**Phase 2.5 起**在 Core（`crates/xcpc-convert/src/publish.rs`）统一改为按标题命名（如 `build/春季训练赛-试题册.pdf` / `build/春季训练赛-题解.pdf`，自动替换路径非法字符），GUI、CLI 与 MCP 保持一致；CLI 的 `-o` / `--output` 与 MCP 的 `output` 参数仍可覆盖输出路径。
 - **内置示例工作区（Phase 2.5）**：示例工作区静态资源打包进二进制，由 Core 提供「释放到指定目录」接口，供 CLI `xcpc init --example` 与 GUI「打开示例」共用。
-- **Phase 1** 直接扫描目录。**Phase 2** 起 Core 维护内存索引（元数据 + 题面/题解的规范化纯文本）：桌面端启动时扫描一遍，之后由 `notify` 增量更新（同时监听 `workspace.toml`、`templates/*.typ` 与 `.xcpc/preamble.typ`，外部编辑器保存后立即热刷新预览与模板 schema）；CLI 和 MCP 每次启动现扫。不引入 SQLite / FTS5，也不做 JSON Schema。
+- **Phase 1** 直接扫描目录。**Phase 2** 起 Core 维护内存索引（元数据 + 题面/题解的规范化纯文本）：桌面端启动时扫描一遍，之后由 `notify` 增量更新（同时监听 `workspace.toml`、`templates/*.typ`（含 `templates/preamble.typ`）与 `contests/*/template.typ`，外部编辑器保存后立即热刷新预览与模板 schema）；CLI 和 MCP 每次启动现扫。不引入 SQLite / FTS5，也不做 JSON Schema。
 - **TOML 写回**：一律用 `toml_edit` 做局部修改，保留注释、顺序和未知字段；读取仍用 `serde`。GUI 和 CLI 通过 Core 的语义操作写入（增删题、移动、设置/删除覆写、比赛元数据、冻结）。
 - **并发写入**：Core 记录每个打开文件上次读写时的内容哈希，保存前比对，磁盘已变则返回 `conflict`，不静默覆盖；自己写入引起的 `notify` 事件靠哈希过滤。
 

@@ -6,7 +6,7 @@
 import { effect, reduceMotion, signal, Text, View, type ViewStyle } from "nsh";
 import { Icon, type IconName } from "./Icon";
 import { tip } from "./kit";
-import { SPACE_NAMES, type Space } from "./logic";
+import { spaceName, type Space } from "./logic";
 import { colorTransition, indicatorTransition } from "./motion";
 import { EASE_STANDARD, ms } from "./theme";
 
@@ -20,7 +20,7 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
     <View
       testID={`nav-${props.space}`}
       onPress={() => props.onChange(props.space)}
-      tooltip={tip(SPACE_NAMES[props.space], props.keys, "right")}
+      tooltip={tip(spaceName(props.space), props.keys, "right")}
       style={{
         width: ITEM_SIZE,
         height: ITEM_SIZE,
@@ -38,7 +38,7 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
     >
       <Icon name={props.icon} size={18} tone={on() ? "foreground" : "secondary-foreground"} />
       <Text style={{ fontSize: 11, lineHeight: 14 }} class={on() ? "text-foreground" : "text-secondary-foreground"}>
-        {SPACE_NAMES[props.space]}
+        {spaceName(props.space)}
       </Text>
     </View>
   );

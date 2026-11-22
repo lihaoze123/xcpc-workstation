@@ -35,8 +35,10 @@ pub use typst_render::render as render_page_raw;
 #[derive(Debug, Clone, Copy)]
 pub struct PresetSeed {
     pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name_zh: &'static str,
+    pub name_en: &'static str,
+    pub description_zh: &'static str,
+    pub description_en: &'static str,
     pub source: &'static str,
 }
 
@@ -44,20 +46,26 @@ pub struct PresetSeed {
 pub const PRESETS: &[PresetSeed] = &[
     PresetSeed {
         id: "olymp-classic",
-        name: "XCPC 经典",
-        description: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+        name_zh: "XCPC 经典",
+        name_en: "XCPC Classic",
+        description_zh: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+        description_en: "Classic ICPC / XCPC layout aligned with olymp.sty",
         source: include_str!("../templates/olymp-classic.typ"),
     },
     PresetSeed {
         id: "cnoi-classic",
-        name: "OI 风格",
-        description: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+        name_zh: "OI 风格",
+        name_en: "OI Classic",
+        description_zh: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+        description_en: "Official CCF CSP-J/S and NOI style statements and editorials",
         source: include_str!("../templates/cnoi-classic.typ"),
     },
     PresetSeed {
         id: "minimal",
-        name: "极简空白",
-        description: "极简空白起点模板，方便从零编写自定义比赛模板",
+        name_zh: "极简空白",
+        name_en: "Minimal Blank",
+        description_zh: "极简空白起点模板，方便从零编写自定义比赛模板",
+        description_en: "Minimal blank starter template for building custom contest layouts from scratch",
         source: include_str!("../templates/minimal.typ"),
     },
 ];
@@ -68,8 +76,8 @@ pub fn list_presets() -> Vec<xcpc_domain::PresetInfo> {
         .iter()
         .map(|p| xcpc_domain::PresetInfo {
             id: p.id.to_owned(),
-            name: p.name.to_owned(),
-            description: p.description.to_owned(),
+            name: xcpc_domain::LocalizedText::bilingual(p.name_zh, p.name_en),
+            description: xcpc_domain::LocalizedText::bilingual(p.description_zh, p.description_en),
         })
         .collect()
 }
@@ -971,10 +979,21 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
 
         let olymp = engine.inspect_template_schema("/templates/olymp-classic.typ");
-        assert_eq!(olymp.name.as_deref(), Some("XCPC 经典"));
         assert_eq!(
-            olymp.description.as_deref(),
+            olymp.name.as_ref().map(|t| t.resolve("zh-CN")),
+            Some("XCPC 经典")
+        );
+        assert_eq!(
+            olymp.name.as_ref().map(|t| t.resolve("en")),
+            Some("XCPC Classic")
+        );
+        assert_eq!(
+            olymp.description.as_ref().map(|t| t.resolve("zh-CN")),
             Some("对齐 olymp.sty 的经典 ICPC / XCPC 版式")
+        );
+        assert_eq!(
+            olymp.description.as_ref().map(|t| t.resolve("en")),
+            Some("Classic ICPC / XCPC layout aligned with olymp.sty")
         );
         assert!(olymp.has_book_options());
         assert!(olymp.has_problem_options());
@@ -988,7 +1007,14 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         assert!(olymp.fields.iter().any(|f| f.key == "sample-layout"));
 
         let cnoi = engine.inspect_template_schema("/templates/cnoi-classic.typ");
-        assert_eq!(cnoi.name.as_deref(), Some("OI 风格"));
+        assert_eq!(
+            cnoi.name.as_ref().map(|t| t.resolve("zh-CN")),
+            Some("OI 风格")
+        );
+        assert_eq!(
+            cnoi.name.as_ref().map(|t| t.resolve("en")),
+            Some("OI Classic")
+        );
         assert!(cnoi.has_book_options());
         assert!(cnoi.has_problem_options());
         assert!(cnoi.fields.iter().any(|f| f.key == "cover"));
@@ -1002,7 +1028,14 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         assert!(cnoi.fields.iter().any(|f| f.key == "prob-type"));
 
         let minimal = engine.inspect_template_schema("/templates/minimal.typ");
-        assert_eq!(minimal.name.as_deref(), Some("极简空白"));
+        assert_eq!(
+            minimal.name.as_ref().map(|t| t.resolve("zh-CN")),
+            Some("极简空白")
+        );
+        assert_eq!(
+            minimal.name.as_ref().map(|t| t.resolve("en")),
+            Some("Minimal Blank")
+        );
         assert!(minimal.has_book_options());
         assert!(minimal.fields.iter().any(|f| f.key == "show-cover"));
 

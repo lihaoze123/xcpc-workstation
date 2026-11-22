@@ -1,5 +1,4 @@
-//! User-global (`<dataDir>/theme.toml`) and workspace-local (`.xcpc/theme.toml`)
-//! theme override loading and starter file generation.
+//! User-global (`<dataDir>/theme.toml`) theme override loading and starter file generation.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,7 +7,6 @@ use nsh_core::prelude::*;
 
 /// Starter template written when the user clicks "打开 theme.toml" and no file exists yet.
 pub(crate) const STARTER_THEME_TOML: &str = r##"# XCPC Workstation 主题定制（所有字段均可选，保存后自动生效）
-# 优先级：工作区 .xcpc/theme.toml 覆盖用户全局 theme.toml
 
 # [colors.light]
 # primary = "#0B6989"
@@ -71,15 +69,12 @@ pub struct ThemeOverridesJs {
     pub editor_font_family: Option<String>,
     pub editor_font_size: Option<f64>,
     pub editor_line_height: Option<f64>,
-    /// Absolute path of the active `theme.toml` (workspace override if present, else global).
+    /// Absolute path of the active global `theme.toml`, if present.
     pub active_path: Option<String>,
 }
 
-/// Loads `<dataDir>/theme.toml` and overlays `<workspace>/.xcpc/theme.toml` if present.
-pub(crate) fn load_theme_overrides(
-    data_dir: Option<&Path>,
-    workspace_root: Option<&Path>,
-) -> ThemeOverridesJs {
+/// Loads user-global `<dataDir>/theme.toml` if present.
+pub(crate) fn load_theme_overrides(data_dir: Option<&Path>) -> ThemeOverridesJs {
     let mut light: HashMap<String, String> = HashMap::new();
     let mut dark: HashMap<String, String> = HashMap::new();
     let mut radius: Option<f64> = None;
@@ -88,63 +83,56 @@ pub(crate) fn load_theme_overrides(
     let mut editor_line_height: Option<f64> = None;
     let mut active_path: Option<PathBuf> = None;
 
-    let candidates = [
-        data_dir.map(|d| d.join("theme.toml")),
-        workspace_root.map(|w| w.join(".xcpc/theme.toml")),
-    ];
-
-    for path in candidates.into_iter().flatten() {
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            continue;
-        };
+    if let Some(path) = data_dir.map(|d| d.join("theme.toml"))
+        && let Ok(raw) = std::fs::read_to_string(&path)
+    {
         active_path = Some(path);
-        let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
-            continue;
-        };
-        if let Some(colors) = table.get("colors").and_then(toml::Value::as_table) {
-            if let Some(tbl) = colors.get("light").and_then(toml::Value::as_table) {
-                merge_colors(&mut light, tbl);
+        if let Ok(table) = toml::from_str::<toml::Table>(&raw) {
+            if let Some(colors) = table.get("colors").and_then(toml::Value::as_table) {
+                if let Some(tbl) = colors.get("light").and_then(toml::Value::as_table) {
+                    merge_colors(&mut light, tbl);
+                }
+                if let Some(tbl) = colors.get("dark").and_then(toml::Value::as_table) {
+                    merge_colors(&mut dark, tbl);
+                }
             }
-            if let Some(tbl) = colors.get("dark").and_then(toml::Value::as_table) {
-                merge_colors(&mut dark, tbl);
+            if let Some(rad) = table.get("radius").and_then(toml::Value::as_table) {
+                let v = rad.get("base").or_else(|| rad.get("md")).and_then(as_f64);
+                if let Some(r) = v
+                    && r.is_finite()
+                    && (0.0..=20.0).contains(&r)
+                {
+                    radius = Some(r);
+                }
             }
-        }
-        if let Some(rad) = table.get("radius").and_then(toml::Value::as_table) {
-            let v = rad.get("base").or_else(|| rad.get("md")).and_then(as_f64);
-            if let Some(r) = v
-                && r.is_finite()
-                && (0.0..=20.0).contains(&r)
-            {
-                radius = Some(r);
-            }
-        }
-        if let Some(ed) = table.get("editor").and_then(toml::Value::as_table) {
-            if let Some(fam) = ed
-                .get("font_family")
-                .or_else(|| ed.get("font-family"))
-                .and_then(toml::Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                editor_font_family = Some(fam.to_owned());
-            }
-            if let Some(sz) = ed
-                .get("font_size")
-                .or_else(|| ed.get("font-size"))
-                .and_then(as_f64)
-                && sz.is_finite()
-                && (11.0..=22.0).contains(&sz)
-            {
-                editor_font_size = Some(sz);
-            }
-            if let Some(lh) = ed
-                .get("line_height")
-                .or_else(|| ed.get("line-height"))
-                .and_then(as_f64)
-                && lh.is_finite()
-                && (16.0..=36.0).contains(&lh)
-            {
-                editor_line_height = Some(lh);
+            if let Some(ed) = table.get("editor").and_then(toml::Value::as_table) {
+                if let Some(fam) = ed
+                    .get("font_family")
+                    .or_else(|| ed.get("font-family"))
+                    .and_then(toml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    editor_font_family = Some(fam.to_owned());
+                }
+                if let Some(sz) = ed
+                    .get("font_size")
+                    .or_else(|| ed.get("font-size"))
+                    .and_then(as_f64)
+                    && sz.is_finite()
+                    && (11.0..=22.0).contains(&sz)
+                {
+                    editor_font_size = Some(sz);
+                }
+                if let Some(lh) = ed
+                    .get("line_height")
+                    .or_else(|| ed.get("line-height"))
+                    .and_then(as_f64)
+                    && lh.is_finite()
+                    && (16.0..=36.0).contains(&lh)
+                {
+                    editor_line_height = Some(lh);
+                }
             }
         }
     }
@@ -169,18 +157,8 @@ pub(crate) fn load_theme_overrides(
     }
 }
 
-/// Ensures a `theme.toml` file exists (preferring workspace `.xcpc/theme.toml` if already
-/// created, else `<dataDir>/theme.toml`) and returns its absolute path.
-pub(crate) fn ensure_theme_file(
-    data_dir: Option<&Path>,
-    workspace_root: Option<&Path>,
-) -> Result<PathBuf, String> {
-    if let Some(ws) = workspace_root {
-        let ws_theme = ws.join(".xcpc/theme.toml");
-        if ws_theme.is_file() {
-            return Ok(ws_theme);
-        }
-    }
+/// Ensures `<dataDir>/theme.toml` exists and returns its absolute path.
+pub(crate) fn ensure_theme_file(data_dir: Option<&Path>) -> Result<PathBuf, String> {
     let dir =
         data_dir.ok_or_else(|| "当前环境未配置应用数据目录，无法创建 theme.toml".to_owned())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("无法创建配置目录：{e}"))?;

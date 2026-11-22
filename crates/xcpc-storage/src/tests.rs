@@ -1787,3 +1787,39 @@ fn detach_contest_template_copies_options_to_local_and_not_found_messages_guide_
     assert!(tpl_msg.contains("找不到模板「bar」"));
     assert!(tpl_msg.contains("xcpc template list"));
 }
+
+#[test]
+fn preamble_lives_in_templates_and_is_reserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    // Initially absent.
+    assert!(ws.load_preamble().is_none());
+
+    // ensure_preamble creates `templates/preamble.typ`.
+    let preamble_path = ws.ensure_preamble().unwrap();
+    assert!(preamble_path.ends_with("templates/preamble.typ"));
+    assert!(preamble_path.is_file());
+    assert!(ws.load_preamble().is_some());
+
+    // Legacy `.xcpc/preamble.typ` is never created or read.
+    assert!(!dir.path().join(".xcpc/preamble.typ").exists());
+
+    // `preamble` is excluded from `list_templates`, `has_custom_template`, and `template_file_path`.
+    assert!(!ws.list_templates().iter().any(|name| name == "preamble"));
+    assert!(!ws.has_custom_template("preamble"));
+    assert!(ws.template_file_path("preamble").unwrap().is_none());
+
+    // `fork_template` and `install_preset_template` reject `"preamble"`.
+    let err_fork = ws.fork_template("preamble", b"// nope").unwrap_err();
+    assert_eq!(err_fork.code(), "invalid_file");
+    let err_install = ws
+        .install_preset_template("minimal", Some("preamble"))
+        .unwrap_err();
+    assert_eq!(err_install.code(), "invalid_file");
+
+    // Watcher ignores `.xcpc/*` completely (including legacy paths) and watches `templates/preamble.typ`.
+    assert!(watcher::should_ignore(".xcpc/preamble.typ"));
+    assert!(watcher::should_ignore(".xcpc/theme.toml"));
+    assert!(!watcher::should_ignore("templates/preamble.typ"));
+}

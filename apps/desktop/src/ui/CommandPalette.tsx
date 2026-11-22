@@ -5,6 +5,7 @@
 
 import { Clipboard, computed, signal, Text, View } from "nsh";
 import { Command, type CommandEntry, type CommandItem } from "nsh/base";
+import { t } from "./i18n";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
 import { TITLE_BAR } from "./TitleBar";
@@ -40,13 +41,13 @@ function actions(): Action[] {
   const frozen = contest && s!.frozen();
   const archived = contest && s!.archived();
   const list: Action[] = [
-    { id: "a:export-statements", icon: "fileDown", label: "导出题面册", keywords: ["pdf", "export"], run: () => s!.exportBook("statements"), when: () => inStudio },
-    { id: "a:export-editorial", icon: "fileDown", label: "导出题解册", keywords: ["pdf", "export"], run: () => s!.exportBook("editorial"), when: () => inStudio },
+    { id: "a:export-statements", icon: "fileDown", label: t("palette.action.exportStatements"), keywords: ["pdf", "export", "statement", "statements", "导出", "题面册", "daochu", "timian"], run: () => s!.exportBook("statements"), when: () => inStudio },
+    { id: "a:export-editorial", icon: "fileDown", label: t("palette.action.exportEditorial"), keywords: ["pdf", "export", "editorial", "solution", "导出", "题解册", "daochu", "tijie"], run: () => s!.exportBook("editorial"), when: () => inStudio },
     {
       id: "a:copy-markdown-samples",
       icon: "copy",
-      label: "复制带样例的 Markdown",
-      keywords: ["copy", "markdown", "md", "samples", "复制", "样例"],
+      label: t("palette.action.copyMarkdownWithSamples"),
+      keywords: ["copy", "markdown", "md", "samples", "复制", "样例", "fuzhi", "yangli"],
       run: () => {
         if (inStudio) {
           s!.copyMarkdownWithSamples();
@@ -62,18 +63,19 @@ function actions(): Action[] {
       },
       when: () => (inStudio ? s!.hasAssets() : !!selectedProblem()),
     },
-    { id: "a:reveal", icon: "folderOpen", label: "在文件夹中显示", keywords: ["reveal", "folder"], run: () => s!.reveal(), when: () => inStudio },
-    { id: "a:tab-statement", icon: "fileText", label: "切到题面", shortcut: "alt+1", run: () => s!.setTab("statement"), when: () => inStudio },
-    { id: "a:tab-samples", icon: "table", label: "切到样例", shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },
-    { id: "a:tab-editorial", icon: "filePenLine", label: "切到题解", shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
-    { id: "a:inspector", icon: "panelRight", label: "属性", shortcut: "mod+i", run: () => s!.toggleInspector(), when: () => inStudio },
-    { id: "a:assets", icon: "image", label: "素材库", keywords: ["assets", "image", "gallery", "pic", "素材", "图片"], run: () => s!.openAssets(), when: () => inStudio && s!.hasAssets() },
-    { id: "a:freeze", icon: "stamp", label: "定稿比赛", keywords: ["freeze"], run: () => s!.freeze(), when: () => contest && !frozen && !archived },
-    { id: "a:unfreeze", icon: "lockOpen", label: "重新编辑已定稿的比赛", keywords: ["unfreeze"], run: () => unfreezeFor.set(target!.id), when: () => contest && !!frozen && !archived },
+    { id: "a:reveal", icon: "folderOpen", label: t("palette.action.reveal"), keywords: ["reveal", "folder", "finder", "explorer", "文件夹", "显示", "wenjianjia"], run: () => s!.reveal(), when: () => inStudio },
+    { id: "a:tab-statement", icon: "fileText", label: t("palette.action.tabStatement"), keywords: ["statement", "tab", "题面", "timian"], shortcut: "alt+1", run: () => s!.setTab("statement"), when: () => inStudio },
+    { id: "a:tab-samples", icon: "table", label: t("palette.action.tabSamples"), keywords: ["samples", "sample", "tab", "样例", "yangli"], shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },
+    { id: "a:tab-editorial", icon: "filePenLine", label: t("palette.action.tabEditorial"), keywords: ["editorial", "solution", "tab", "题解", "tijie"], shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
+    { id: "a:inspector", icon: "panelRight", label: t("palette.action.properties"), keywords: ["properties", "inspector", "layout", "属性", "版式", "shuxing"], shortcut: "mod+i", run: () => s!.toggleInspector(), when: () => inStudio },
+    { id: "a:assets", icon: "image", label: t("palette.action.assets"), keywords: ["assets", "image", "gallery", "pic", "素材", "图片", "sucai", "tupian"], run: () => s!.openAssets(), when: () => inStudio && s!.hasAssets() },
+    { id: "a:freeze", icon: "stamp", label: t("palette.action.finalize"), keywords: ["finalize", "freeze", "lock", "定稿", "冻结", "dinggao"], run: () => s!.freeze(), when: () => contest && !frozen && !archived },
+    { id: "a:unfreeze", icon: "lockOpen", label: t("palette.action.reopen"), keywords: ["reopen", "unfreeze", "unlock", "重新编辑", "解冻", "chongxin"], run: () => unfreezeFor.set(target!.id), when: () => contest && !!frozen && !archived },
     {
       id: "a:add-to-contest",
       icon: "listPlus",
-      label: "加入比赛",
+      label: t("palette.action.addToContest"),
+      keywords: ["add", "contest", "加入", "比赛", "jiaru", "bisai"],
       run: () => {
         const id = target?.target === "problem" ? target.id : selectedProblem();
         if (id) dialog.set({ kind: "addToContest", problemId: id });
@@ -83,20 +85,21 @@ function actions(): Action[] {
     {
       id: "a:new-problem",
       icon: "plus",
-      label: "新建题目",
+      label: t("palette.action.newProblem"),
+      keywords: ["new", "problem", "create", "新建", "题目", "xinjian", "timu"],
       shortcut: "mod+n",
       run: () => dialog.set({ kind: "newProblem", addTo: contest && !frozen && !archived ? target!.id : undefined }),
       when: hasWorkspace,
     },
-    { id: "a:new-contest", icon: "plus", label: "新建比赛", shortcut: "mod+shift+n", run: () => dialog.set({ kind: "newContest" }), when: hasWorkspace },
-    { id: "a:space-problems", icon: "libraryBig", label: "题库", shortcut: inStudio ? undefined : "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
-    { id: "a:space-contests", icon: "trophy", label: "比赛", shortcut: inStudio ? undefined : "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
-    { id: "a:space-settings", icon: "settings", label: "设置", shortcut: inStudio ? undefined : "mod+3", run: () => goSpace("settings"), when: hasWorkspace },
-    { id: "a:appearance", icon: "pencil", label: "外观设置", keywords: ["appearance", "theme", "dark", "light", "font", "外观", "主题", "字号"], run: () => goSettings("appearance"), when: hasWorkspace },
-    { id: "a:shortcuts", icon: "code", label: "快捷键速查", keywords: ["shortcut", "key", "help", "快捷键"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
-    { id: "a:about", icon: "fileText", label: "关于", keywords: ["about", "version", "update", "关于", "版本", "更新"], run: () => goSettings("about"), when: hasWorkspace },
-    { id: "a:open-workspace", icon: "folderOpen", label: "切换工作区", shortcut: "mod+o", run: () => void pickWorkspace() },
-    { id: "a:new-workspace", icon: "folderPlus", label: "新建工作区", run: () => requestNewWorkspace() },
+    { id: "a:new-contest", icon: "plus", label: t("palette.action.newContest"), keywords: ["new", "contest", "create", "新建", "比赛", "xinjian", "bisai"], shortcut: "mod+shift+n", run: () => dialog.set({ kind: "newContest" }), when: hasWorkspace },
+    { id: "a:space-problems", icon: "libraryBig", label: t("space.problems"), keywords: ["problems", "library", "题库", "tiku"], shortcut: inStudio ? undefined : "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
+    { id: "a:space-contests", icon: "trophy", label: t("space.contests"), keywords: ["contests", "比赛", "bisai"], shortcut: inStudio ? undefined : "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
+    { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio ? undefined : "mod+3", run: () => goSpace("settings"), when: hasWorkspace },
+    { id: "a:appearance", icon: "pencil", label: t("palette.action.appearance"), keywords: ["appearance", "theme", "dark", "light", "font", "language", "外观", "主题", "字号", "语言", "waiguan", "yuyan"], run: () => goSettings("appearance"), when: hasWorkspace },
+    { id: "a:shortcuts", icon: "code", label: t("palette.action.shortcuts"), keywords: ["shortcut", "shortcuts", "key", "help", "快捷键", "kuaijiejian"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
+    { id: "a:about", icon: "fileText", label: t("palette.action.about"), keywords: ["about", "version", "update", "关于", "版本", "更新", "guanyu"], run: () => goSettings("about"), when: hasWorkspace },
+    { id: "a:open-workspace", icon: "folderOpen", label: t("palette.action.switchWorkspace"), keywords: ["workspace", "open", "switch", "切换", "打开", "工作区", "gongzuoqu"], shortcut: "mod+o", run: () => void pickWorkspace() },
+    { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];
   return list.filter((a) => !a.when || a.when());
 }
@@ -153,9 +156,19 @@ function PaletteBody() {
       id: `j:${h.visitKey}`,
       label: h.title,
       keywords: [h.id],
-      group: h.kind === "contest" ? "比赛" : h.kind === "contest_item" ? "本场比赛" : "题目",
+      group:
+        h.kind === "contest"
+          ? t("palette.group.contest")
+          : h.kind === "contest_item"
+            ? t("palette.group.currentContest")
+            : t("palette.group.problem"),
     }));
-    const a: CommandItem[] = acts().map((x) => ({ id: x.id, label: x.label, group: "操作", shortcut: x.shortcut ?? null }));
+    const a: CommandItem[] = acts().map((x) => ({
+      id: x.id,
+      label: x.label,
+      group: t("palette.group.action"),
+      shortcut: x.shortcut ?? null,
+    }));
     // Objects first (by frecency without a query), then what can be done here.
     return [...j, ...a];
   });
@@ -208,7 +221,7 @@ function PaletteBody() {
       onSelect={(e) => select(e.id)}
       onCancel={close}
       autoFocus
-      placeholder="跳转到题目或比赛，或输入操作"
+      placeholder={t("palette.placeholder")}
       searchPrefix={<Icon name="search" size={16} tone="muted-foreground" />}
       searchSuffix={<Kbd keys="escape" faint />}
       searchBarClass="px-3.5 flex-row items-center gap-2.5 border-b border-border"
@@ -233,7 +246,7 @@ function PaletteBody() {
           {hitOf(entry.id)?.archived && (
             <View style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", flexShrink: 0 }} class="bg-muted">
               <Text style={{ fontSize: 11 }} class="text-muted-foreground">
-                已归档
+                {t("contests.archived")}
               </Text>
             </View>
           )}
@@ -245,7 +258,7 @@ function PaletteBody() {
         <View style={{ height: 72, alignItems: "center", justifyContent: "center", gap: 6 }}>
           <Icon name="searchX" size={18} tone="muted-foreground" />
           <Text style={{ fontSize: 13 }} class="text-muted-foreground">
-            {`没有找到「${query().trim()}」`}
+            {t("common.searchNotFound", { query: query().trim() })}
           </Text>
         </View>
       }

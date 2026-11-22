@@ -7,15 +7,18 @@
 #let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
 
 #let schema = (
-  name: "极简空白",
-  description: "极简空白起点模板，方便从零定制比赛版式",
+  name: (zh: "极简空白", en: "Minimal Blank"),
+  description: (
+    zh: "极简空白起点模板，方便从零定制比赛版式",
+    en: "Minimal blank starter template for building custom contest layouts from scratch",
+  ),
   groups: (
-    (id: "layout", label: "页面与封面"),
+    (id: "layout", label: (zh: "页面与封面", en: "Page & Cover")),
   ),
   fields: (
     (
       key: "body-size",
-      label: "正文字号",
+      label: (zh: "正文字号", en: "Body Font Size"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -24,7 +27,7 @@
     ),
     (
       key: "margin",
-      label: "页边距",
+      label: (zh: "页边距", en: "Page Margin"),
       type: "length",
       scope: "book",
       group: "layout",
@@ -33,7 +36,7 @@
     ),
     (
       key: "show-cover",
-      label: "显示封面",
+      label: (zh: "显示封面", en: "Show Cover"),
       type: "bool",
       scope: "book",
       group: "layout",

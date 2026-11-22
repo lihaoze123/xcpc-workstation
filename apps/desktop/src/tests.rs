@@ -2248,34 +2248,31 @@ fn about_info_exposes_build_and_runtime_diagnostics() {
 }
 
 #[test]
-fn theme_overrides_merge_global_and_workspace_layers() {
+fn theme_overrides_load_global_only() {
     let data = TempDir::new("theme-global");
-    let ws = TempDir::new("theme-ws");
     std::fs::write(
         data.0.join("theme.toml"),
-        "[colors.light]\nprimary = \"#112233\"\nbackground = \"#fafafa\"\n[editor]\nfont_size = 15\n[radius]\nbase = 10\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(ws.0.join(".xcpc")).unwrap();
-    std::fs::write(
-        ws.0.join(".xcpc/theme.toml"),
-        "[colors.light]\nprimary = \"#445566\"\n[editor]\nfont_family = \"JetBrains Mono\"\n",
+        "[colors.light]\nprimary = \"#112233\"\nbackground = \"#fafafa\"\n[editor]\nfont_family = \"JetBrains Mono\"\nfont_size = 15\n[radius]\nbase = 10\n",
     )
     .unwrap();
 
-    let merged = crate::theme_config::load_theme_overrides(Some(&data.0), Some(&ws.0));
+    let loaded = crate::theme_config::load_theme_overrides(Some(&data.0));
     let find_light = |k: &str| {
-        merged
+        loaded
             .light_colors
             .iter()
             .find(|c| c.key == k)
             .map(|c| c.value.as_str())
     };
-    assert_eq!(find_light("primary"), Some("#445566"));
+    assert_eq!(find_light("primary"), Some("#112233"));
     assert_eq!(find_light("background"), Some("#fafafa"));
-    assert_eq!(merged.editor_font_family.as_deref(), Some("JetBrains Mono"));
-    assert_eq!(merged.editor_font_size, Some(15.0));
-    assert_eq!(merged.radius, Some(10.0));
+    assert_eq!(loaded.editor_font_family.as_deref(), Some("JetBrains Mono"));
+    assert_eq!(loaded.editor_font_size, Some(15.0));
+    assert_eq!(loaded.radius, Some(10.0));
+    assert_eq!(
+        loaded.active_path.as_deref(),
+        Some(data.0.join("theme.toml").to_string_lossy().as_ref())
+    );
 }
 
 #[test]
@@ -2432,5 +2429,89 @@ fn duplicate_problem_and_contest_archive_bridge() {
         preview
             .compose_contest("alpha".into(), vec!["two-sum".into()])
             .ok
+    );
+}
+
+#[test]
+fn normalize_system_locale_maps_zh_and_fallbacks_to_en() {
+    use crate::normalize_system_locale;
+
+    assert_eq!(normalize_system_locale("zh_CN.UTF-8"), "zh-CN");
+    assert_eq!(normalize_system_locale("zh-TW"), "zh-CN");
+    assert_eq!(normalize_system_locale("ZH_HK.UTF-8@euro"), "zh-CN");
+    assert_eq!(normalize_system_locale("zh_Hans"), "zh-CN");
+    assert_eq!(normalize_system_locale(":zh_CN:en_US"), "zh-CN");
+    assert_eq!(normalize_system_locale("en_US.UTF-8"), "en");
+    assert_eq!(normalize_system_locale("en_GB:zh_CN"), "en");
+    assert_eq!(normalize_system_locale("C"), "en");
+    assert_eq!(normalize_system_locale("POSIX"), "en");
+    assert_eq!(normalize_system_locale("ja_JP.UTF-8"), "en");
+    assert_eq!(normalize_system_locale(""), "en");
+    assert_eq!(normalize_system_locale("   "), "en");
+}
+
+#[test]
+fn app_prefs_language_persists_and_validates() {
+    let data = TempDir::new("prefs-lang");
+    let mut stored = crate::prefs::StoredPrefs::load(Some(&data.0));
+    assert_eq!(stored.app.language, None);
+
+    // Valid values persist across save/load.
+    for lang in ["en", "zh-CN", "system"] {
+        let mut next = stored.app.clone();
+        next.language = Some(lang.to_owned());
+        stored.apply_app_prefs(next);
+        stored.persist(Some(&data.0));
+
+        let reloaded = crate::prefs::StoredPrefs::load(Some(&data.0));
+        assert_eq!(reloaded.app.language.as_deref(), Some(lang));
+    }
+
+    // Invalid language values are sanitized to None.
+    let mut bad = stored.app.clone();
+    bad.language = Some("fr-FR".to_owned());
+    stored.apply_app_prefs(bad);
+    assert_eq!(stored.app.language, None);
+}
+
+#[test]
+fn preset_schemas_emit_bilingual_localized_text() {
+    let (_dir, preview) = init_temp_preview("bilingual-schema");
+    let raw = preview.list_templates_json();
+    let catalog: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+    let presets = catalog["presets"].as_array().unwrap();
+    for preset in presets {
+        assert!(
+            preset["name"]["zh"].is_string(),
+            "missing zh on preset {preset}"
+        );
+        assert!(
+            preset["name"]["en"].is_string(),
+            "missing en on preset {preset}"
+        );
+        assert!(
+            preset["description"]["zh"].is_string(),
+            "missing zh desc on preset {preset}"
+        );
+        assert!(
+            preset["description"]["en"].is_string(),
+            "missing en desc on preset {preset}"
+        );
+    }
+
+    let olymp = catalog["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "olymp-classic")
+        .unwrap();
+    assert_eq!(olymp["schema"]["name"]["zh"], "XCPC 经典");
+    assert_eq!(olymp["schema"]["name"]["en"], "XCPC Classic");
+    let fields = olymp["schema"]["fields"].as_array().unwrap();
+    assert!(
+        fields
+            .iter()
+            .all(|f| f["label"]["zh"].is_string() && f["label"]["en"].is_string())
     );
 }

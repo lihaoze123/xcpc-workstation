@@ -125,7 +125,7 @@ pub struct Book {
     pub template_import: Option<String>,
     /// Book-level template options for `template_name` (merged workspace + contest).
     pub template_options: BTreeMap<String, TemplateOptionValue>,
-    /// Optional workspace `.xcpc/preamble.typ` content injected after `#show: contest.with(...)`.
+    /// Optional workspace `templates/preamble.typ` content injected after `#show: contest.with(...)`.
     pub preamble: Option<String>,
 }
 
@@ -489,7 +489,7 @@ fn render_head(
          #import \"/xcpc/markdown.typ\": m, dm\n\n"
     ));
     if let Some(preamble) = book.preamble.as_deref().filter(|s| !s.trim().is_empty()) {
-        let file = out.file(".xcpc/preamble.typ", preamble);
+        let file = out.file("templates/preamble.typ", preamble);
         let mut offset = 0usize;
         for line in preamble.split_inclusive('\n') {
             out.mark(file, offset);

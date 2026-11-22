@@ -96,11 +96,8 @@ pub fn should_ignore(rel: &str) -> bool {
     let Some(first) = parts.next() else {
         return true;
     };
-    if matches!(first, "build" | ".git" | ".jj") {
+    if matches!(first, "build" | ".xcpc" | ".git" | ".jj") {
         return true;
-    }
-    if first == ".xcpc" {
-        return !matches!(norm.as_str(), ".xcpc/preamble.typ" | ".xcpc/theme.toml");
     }
     norm.split('/')
         .any(|part| matches!(part, ".git" | ".jj") || part.contains(".tmp-"))

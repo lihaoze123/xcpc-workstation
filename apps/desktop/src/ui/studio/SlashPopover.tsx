@@ -20,6 +20,7 @@ import {
 } from "nsh";
 import { Input } from "nsh/base";
 import { Icon, type IconName } from "../Icon";
+import { locale, t, type Locale, type MessageKey } from "../i18n";
 import { Kbd, tip } from "../kit";
 import { colorTransition, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
@@ -28,11 +29,13 @@ export type SlashCommandGroup = "basic" | "common" | "advanced";
 
 export type SlashTint = "neutral" | "ochre" | "amber" | "emerald" | "indigo" | "teal" | "violet" | "sky";
 
+export type PublishLanguage = "chinese" | "english";
+
 export interface SlashCommand {
   readonly id: string;
   readonly group: SlashCommandGroup;
-  readonly label: string;
-  readonly description: string;
+  readonly labelKey: MessageKey;
+  readonly descKey: MessageKey;
   readonly keywords: readonly string[];
   readonly shortcut?: string;
   readonly icon?: IconName;
@@ -40,16 +43,47 @@ export interface SlashCommand {
   readonly tint: SlashTint;
   readonly kind?: "image";
   readonly template?: string;
+  readonly templateEn?: string;
   readonly caret?: { readonly line: number; readonly column: number };
+}
+
+export function slashCommandLabel(cmd: SlashCommand): string {
+  return t(cmd.labelKey);
+}
+
+export function slashCommandDescription(cmd: SlashCommand): string {
+  return t(cmd.descKey);
+}
+
+/** Resolves effective publishing language for natural-language slash snippets (`hint`, `interaction`, `table`, `subtasks`). */
+export function resolveSnippetLanguage(
+  publishLanguage?: PublishLanguage | string | null,
+  uiLocale?: Locale,
+): PublishLanguage {
+  if (publishLanguage === "english" || publishLanguage === "chinese") return publishLanguage;
+  return (uiLocale ?? locale()) === "en" ? "english" : "chinese";
+}
+
+/** Returns the Markdown template and caret offset for `cmd` (or command id) under the given publishing/UI language. */
+export function slashSnippetFor(
+  cmdOrId: SlashCommand | string,
+  publishLanguage?: PublishLanguage | string | null,
+  uiLocale?: Locale,
+): { template: string; caret?: { readonly line: number; readonly column: number } } | undefined {
+  const cmd = typeof cmdOrId === "string" ? SLASH_COMMANDS.find((c) => c.id === cmdOrId) : cmdOrId;
+  if (!cmd || cmd.template === undefined) return undefined;
+  const lang = resolveSnippetLanguage(publishLanguage, uiLocale);
+  const template = lang === "english" && cmd.templateEn !== undefined ? cmd.templateEn : cmd.template;
+  return { template, caret: cmd.caret };
 }
 
 export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "h2",
     group: "basic",
-    label: "二级标题",
-    description: "新增题面或题解章节",
-    keywords: ["h2", "heading", "title", "section", "biaoti", "bt", "zhangjie", "zj"],
+    labelKey: "slash.cmd.h2.label",
+    descKey: "slash.cmd.h2.desc",
+    keywords: ["h2", "heading", "title", "section", "二级标题", "标题", "章节", "biaoti", "bt", "zhangjie", "zj"],
     shortcut: "mod+2",
     badge: "H2",
     tint: "neutral",
@@ -59,9 +93,9 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "h3",
     group: "basic",
-    label: "三级标题",
-    description: "章节下的子标题",
-    keywords: ["h3", "subheading", "zibiaoti", "zbt"],
+    labelKey: "slash.cmd.h3.label",
+    descKey: "slash.cmd.h3.desc",
+    keywords: ["h3", "subheading", "heading", "三级标题", "子标题", "zibiaoti", "zbt"],
     shortcut: "mod+3",
     badge: "H3",
     tint: "neutral",
@@ -71,9 +105,9 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "ul",
     group: "basic",
-    label: "无序列表",
-    description: "项目符号列表",
-    keywords: ["ul", "list", "bullet", "liebiao", "lb"],
+    labelKey: "slash.cmd.ul.label",
+    descKey: "slash.cmd.ul.desc",
+    keywords: ["ul", "list", "bullet", "bulleted", "无序列表", "列表", "liebiao", "lb"],
     shortcut: "mod+shift+8",
     icon: "list",
     tint: "neutral",
@@ -83,9 +117,9 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "ol",
     group: "basic",
-    label: "有序列表",
-    description: "数字编号列表",
-    keywords: ["ol", "numbered", "ordered", "youxu", "yx"],
+    labelKey: "slash.cmd.ol.label",
+    descKey: "slash.cmd.ol.desc",
+    keywords: ["ol", "numbered", "ordered", "list", "有序列表", "有序", "youxu", "yx"],
     shortcut: "mod+shift+7",
     icon: "listOrdered",
     tint: "neutral",
@@ -95,9 +129,9 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "quote",
     group: "basic",
-    label: "引用块",
-    description: "引用说明或摘录",
-    keywords: ["quote", "blockquote", "yinyong", "yy"],
+    labelKey: "slash.cmd.quote.label",
+    descKey: "slash.cmd.quote.desc",
+    keywords: ["quote", "blockquote", "引用块", "引用", "yinyong", "yy"],
     shortcut: "mod+shift+.",
     badge: "❝",
     tint: "neutral",
@@ -107,9 +141,9 @@ export const SLASH_BASIC_COMMANDS: readonly SlashCommand[] = [
   {
     id: "inline-math",
     group: "basic",
-    label: "行内公式",
-    description: "正文行内 LaTeX 公式",
-    keywords: ["inline", "math", "formula", "$", "hangnei", "hn", "gongshi", "gs"],
+    labelKey: "slash.cmd.inlineMath.label",
+    descKey: "slash.cmd.inlineMath.desc",
+    keywords: ["inline", "math", "formula", "$", "行内公式", "公式", "hangnei", "hn", "gongshi", "gs"],
     shortcut: "mod+m",
     badge: "$",
     tint: "ochre",
@@ -122,9 +156,9 @@ export const SLASH_COMMON_COMMANDS: readonly SlashCommand[] = [
   {
     id: "display-math",
     group: "common",
-    label: "行间公式",
-    description: "居中显示的独立公式块",
-    keywords: ["math", "formula", "equation", "display", "gongshi", "gs", "$$"],
+    labelKey: "slash.cmd.displayMath.label",
+    descKey: "slash.cmd.displayMath.desc",
+    keywords: ["math", "formula", "equation", "display", "行间公式", "公式块", "gongshi", "gs", "$$"],
     shortcut: "mod+shift+m",
     icon: "sigma",
     tint: "ochre",
@@ -134,9 +168,9 @@ export const SLASH_COMMON_COMMANDS: readonly SlashCommand[] = [
   {
     id: "image",
     group: "common",
-    label: "插入图片",
-    description: "从素材库选择或导入",
-    keywords: ["image", "img", "pic", "picture", "figure", "tupian", "tp"],
+    labelKey: "slash.cmd.image.label",
+    descKey: "slash.cmd.image.desc",
+    keywords: ["image", "img", "pic", "picture", "figure", "插入图片", "图片", "tupian", "tp"],
     icon: "image",
     tint: "amber",
     kind: "image",
@@ -144,20 +178,21 @@ export const SLASH_COMMON_COMMANDS: readonly SlashCommand[] = [
   {
     id: "table",
     group: "common",
-    label: "Markdown 表格",
-    description: "标准数据表格",
-    keywords: ["table", "grid", "markdown", "biaoge", "bg"],
+    labelKey: "slash.cmd.table.label",
+    descKey: "slash.cmd.table.desc",
+    keywords: ["table", "grid", "markdown", "表格", "biaoge", "bg"],
     icon: "table",
     tint: "emerald",
     template: "| 列 1 | 列 2 |\n| --- | --- |\n|  |  |",
+    templateEn: "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |",
     caret: { line: 2, column: 2 },
   },
   {
     id: "cpp",
     group: "common",
-    label: "C++ 代码块",
-    description: "C++ 源代码块",
-    keywords: ["cpp", "c++", "code", "source", "daima", "dm"],
+    labelKey: "slash.cmd.cpp.label",
+    descKey: "slash.cmd.cpp.desc",
+    keywords: ["cpp", "c++", "code", "source", "代码块", "代码", "daima", "dm"],
     icon: "squareCode",
     tint: "indigo",
     template: "```cpp\n\n```",
@@ -169,9 +204,9 @@ export const SLASH_ADVANCED_COMMANDS: readonly SlashCommand[] = [
   {
     id: "cases",
     group: "advanced",
-    label: "分段函数",
-    description: "cases 分段公式",
-    keywords: ["cases", "piecewise", "fenduan", "fd", "math"],
+    labelKey: "slash.cmd.cases.label",
+    descKey: "slash.cmd.cases.desc",
+    keywords: ["cases", "piecewise", "分段函数", "分段", "fenduan", "fd", "math"],
     badge: "{",
     tint: "ochre",
     template: "$$\nf(x) = \\begin{cases}\n  , & x \\le 0 \\\\\n  , & x > 0\n\\end{cases}\n$$",
@@ -180,9 +215,9 @@ export const SLASH_ADVANCED_COMMANDS: readonly SlashCommand[] = [
   {
     id: "matrix",
     group: "advanced",
-    label: "矩阵",
-    description: "bmatrix 方括号矩阵",
-    keywords: ["matrix", "bmatrix", "juzhen", "jz", "math"],
+    labelKey: "slash.cmd.matrix.label",
+    descKey: "slash.cmd.matrix.desc",
+    keywords: ["matrix", "bmatrix", "矩阵", "juzhen", "jz", "math"],
     badge: "[ ]",
     tint: "ochre",
     template: "$$\n\\begin{bmatrix}\n  a & b \\\\\n  c & d\n\\end{bmatrix}\n$$",
@@ -191,43 +226,47 @@ export const SLASH_ADVANCED_COMMANDS: readonly SlashCommand[] = [
   {
     id: "subtasks",
     group: "advanced",
-    label: "子任务评分表",
-    description: "Subtask 分值与特殊性质",
-    keywords: ["subtask", "subtasks", "score", "zirenwu", "zrw", "table"],
+    labelKey: "slash.cmd.subtasks.label",
+    descKey: "slash.cmd.subtasks.desc",
+    keywords: ["subtask", "subtasks", "score", "子任务评分表", "子任务", "zirenwu", "zrw", "table"],
     icon: "listPlus",
     tint: "teal",
     template:
       "| 子任务 | 分值 | 特殊性质 |\n| :---: | :---: | --- |\n| 1 | 20 | $n \\le 10$ |\n| 2 | 30 | $n \\le 1000$ |\n| 3 | 50 | 无特殊限制 |",
+    templateEn:
+      "| Subtask | Score | Constraints |\n| :---: | :---: | --- |\n| 1 | 20 | $n \\le 10$ |\n| 2 | 30 | $n \\le 1000$ |\n| 3 | 50 | No additional constraints |",
     caret: { line: 2, column: 15 },
   },
   {
     id: "hint",
     group: "advanced",
-    label: "提示章节",
-    description: "提示与数据范围章节",
-    keywords: ["hint", "note", "tishi", "ts", "tszj", "h2", "section"],
+    labelKey: "slash.cmd.hint.label",
+    descKey: "slash.cmd.hint.desc",
+    keywords: ["hint", "note", "提示章节", "提示", "tishi", "ts", "tszj", "h2", "section"],
     icon: "info",
     tint: "teal",
     template: "## 提示\n\n",
+    templateEn: "## Note\n\n",
     caret: { line: 2, column: 0 },
   },
   {
     id: "interaction",
     group: "advanced",
-    label: "交互章节",
-    description: "交互题协议说明章节",
-    keywords: ["interaction", "interactive", "protocol", "jiaohu", "jh", "jhzj", "h2", "section"],
+    labelKey: "slash.cmd.interaction.label",
+    descKey: "slash.cmd.interaction.desc",
+    keywords: ["interaction", "interactive", "protocol", "交互章节", "交互", "jiaohu", "jh", "jhzj", "h2", "section"],
     icon: "bot",
     tint: "violet",
     template: "## 交互方式\n\n",
+    templateEn: "## Interaction\n\n",
     caret: { line: 2, column: 0 },
   },
   {
     id: "typst",
     group: "advanced",
-    label: "原始 Typst 块",
-    description: "直接绘图或排版",
-    keywords: ["typst", "raw", "vector", "diagram", "tu", "yst"],
+    labelKey: "slash.cmd.typst.label",
+    descKey: "slash.cmd.typst.desc",
+    keywords: ["typst", "raw", "vector", "diagram", "原始", "tu", "yst"],
     icon: "code",
     tint: "sky",
     template: "```typst\n\n```",
@@ -262,14 +301,14 @@ export function matchSlashTrigger(
 }
 
 /**
- * Strict prefix matching against command `id`, `label` (or its whitespace-separated tokens),
- * and `keywords` (English keywords + pinyin / pinyin-initial prefixes).
+ * Strict prefix matching against command `id`, localized `label` (or its whitespace-separated tokens),
+ * and `keywords` (bilingual keywords + pinyin / pinyin-initial prefixes).
  */
 export function matchesSlashCommand(cmd: SlashCommand, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (cmd.id.toLowerCase().startsWith(q)) return true;
-  const labelLower = cmd.label.toLowerCase();
+  const labelLower = slashCommandLabel(cmd).toLowerCase();
   if (labelLower.startsWith(q)) return true;
   for (const part of labelLower.split(/\s+/)) {
     if (part.startsWith(q)) return true;
@@ -496,13 +535,13 @@ export function SlashPopover(props: {
             style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-foreground"
           >
-            {cmd.label}
+            {slashCommandLabel(cmd)}
           </Text>
           <Text
             style={{ fontSize: 11, lineHeight: 14, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-muted-foreground"
           >
-            {cmd.description}
+            {slashCommandDescription(cmd)}
           </Text>
         </View>
         <If when={Boolean(cmd.shortcut)}>
@@ -572,7 +611,7 @@ export function SlashPopover(props: {
             }}
             testID="slash-filter-input"
             value={props.query}
-            placeholder="筛选命令…"
+            placeholder={t("slash.placeholder")}
             autoCapitalize="none"
             autoCorrect={false}
             submitBehavior="submit"
@@ -622,7 +661,7 @@ export function SlashPopover(props: {
                 else={
                   <View style={{ paddingTop: 14, paddingBottom: 14, alignItems: "center" }}>
                     <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                      无匹配命令
+                      {t("slash.noMatch")}
                     </Text>
                   </View>
                 }
@@ -648,7 +687,7 @@ export function SlashPopover(props: {
                 }}
                 class="text-muted-foreground"
               >
-                基础
+                {t("slash.group.basic")}
               </Text>
               <View style={{ flexDirection: "row", gap: 4, paddingLeft: 2, paddingRight: 2, paddingBottom: 4 }}>
                 <Each of={SLASH_BASIC_COMMANDS} key={(cmd) => cmd.id}>
@@ -659,7 +698,7 @@ export function SlashPopover(props: {
                         testID={`slash-item-${cmd().id}`}
                         onPress={() => props.onSelect(cmd())}
                         onMouseEnter={(e) => handlePointerHover(idx(), e.pagePosition)}
-                        tooltip={tip(cmd().label, cmd().shortcut)}
+                        tooltip={tip(slashCommandLabel(cmd()), cmd().shortcut)}
                         class={active() ? "bg-accent" : "hover:bg-muted/75"}
                         style={{
                           flex: 1,
@@ -694,7 +733,7 @@ export function SlashPopover(props: {
                 }}
                 class="text-muted-foreground"
               >
-                常用
+                {t("slash.group.common")}
               </Text>
               <View style={{ gap: 1 }}>
                 <Each of={SLASH_COMMON_COMMANDS} key={(cmd) => cmd.id}>
@@ -714,7 +753,7 @@ export function SlashPopover(props: {
                 }}
                 class="text-muted-foreground"
               >
-                题面与进阶
+                {t("slash.group.advanced")}
               </Text>
               <View style={{ gap: 1 }}>
                 <Each of={SLASH_ADVANCED_COMMANDS} key={(cmd) => cmd.id}>

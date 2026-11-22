@@ -24,6 +24,7 @@ import {
 import { Input } from "nsh/base";
 import type { ActionResult, CleanUnusedAssetsResultJs, ProblemAssetJs } from "xcpc-workstation/native";
 import { ErrorDisplay } from "../ErrorDisplay";
+import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, IconBtn, tip } from "../kit";
 import { Modal } from "../Modal";
@@ -64,8 +65,10 @@ function isPdfAsset(name: string): boolean {
 }
 
 function referenceLabel(file: string, line: number, total: number): string {
-  const doc = file.endsWith("editorial.md") ? "题解" : "题面";
-  return total > 1 ? `${doc} 第 ${line} 行 等 ${total} 处` : `${doc} 第 ${line} 行`;
+  const doc = file.endsWith("editorial.md") ? t("studio.tab.editorial") : t("studio.tab.statement");
+  return total > 1
+    ? t("assets.refMultiple", { doc, line, total })
+    : t("assets.refSingle", { doc, line });
 }
 
 export function AssetsGalleryModal(props: {
@@ -252,7 +255,7 @@ export function AssetsGalleryModal(props: {
     }
     const res = props.onRenameAsset(oldName, next);
     if (!res.ok) {
-      error.set(errorOf(res, "重命名素材"));
+      error.set(errorOf(res, t("ctx.renameAsset")));
       return;
     }
     error.set(undefined);
@@ -271,7 +274,7 @@ export function AssetsGalleryModal(props: {
     if (props.readOnly) return;
     const res = props.onDeleteAsset(asset.name);
     if (!res.ok) {
-      error.set(errorOf(res, "删除素材"));
+      error.set(errorOf(res, t("ctx.deleteAsset")));
       confirmingDelete.set(undefined);
       return;
     }
@@ -299,7 +302,7 @@ export function AssetsGalleryModal(props: {
       localRev.set(localRev() + 1);
     }
     if (!res.ok) {
-      error.set(errorOf(res, "清理未引用素材"));
+      error.set(errorOf(res, t("ctx.cleanUnusedAssets")));
       return;
     }
     error.set(undefined);
@@ -318,7 +321,7 @@ export function AssetsGalleryModal(props: {
     const docPath = asset.references[0]?.file ?? null;
     const res = props.onSetAssetWidth(asset.name, widthPct, docPath);
     if (!res.ok) {
-      error.set(errorOf(res, "调整图片宽度"));
+      error.set(errorOf(res, t("ctx.setAssetWidth")));
       return;
     }
     error.set(undefined);
@@ -438,7 +441,7 @@ export function AssetsGalleryModal(props: {
             else={
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
-                  素材库
+                  {t("assets.title")}
                 </Text>
                 <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                   {String(assets().length)}
@@ -448,11 +451,11 @@ export function AssetsGalleryModal(props: {
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
               <Btn
-                label="返回"
+                label={t("common.back")}
                 icon="arrowLeft"
                 variant="ghost"
                 size="sm"
-                tooltip={tip("返回素材库", "escape")}
+                tooltip={tip(t("assets.backToGrid"), "escape")}
                 onPress={() => mode.set("grid")}
               />
               <If
@@ -491,10 +494,10 @@ export function AssetsGalleryModal(props: {
                     icon="check"
                     size={24}
                     iconSize={13}
-                    tooltip={tip("确认重命名")}
+                    tooltip={tip(t("assets.confirmRename"))}
                     onPress={() => currentAsset() && commitRename(currentAsset()!.name)}
                   />
-                  <IconBtn icon="x" size={24} iconSize={13} tooltip={tip("取消")} onPress={cancelRename} />
+                  <IconBtn icon="x" size={24} iconSize={13} tooltip={tip(t("common.cancel"))} onPress={cancelRename} />
                 </View>
               </If>
             </View>
@@ -505,22 +508,22 @@ export function AssetsGalleryModal(props: {
               <If when={unusedCount() > 0}>
                 <Btn
                   testID="assets-clean-unused-btn"
-                  label={`清理未引用（${unusedCount()}）`}
+                  label={t("assets.cleanUnused", { count: unusedCount() })}
                   variant="ghost"
                   size="sm"
                   disabled={props.readOnly}
-                  tooltip={props.readOnly ? tip("只读状态无法清理") : tip("批量删除未被题面或题解引用的素材")}
+                  tooltip={props.readOnly ? tip(t("assets.readOnlyCannotClean")) : tip(t("assets.cleanUnusedTooltip"))}
                   onPress={askCleanUnused}
                 />
               </If>
               <Btn
                 testID="assets-import-btn"
-                label="导入"
+                label={t("assets.import")}
                 icon="plus"
                 variant="outline"
                 size="sm"
                 disabled={props.readOnly}
-                tooltip={props.readOnly ? tip("只读状态无法导入图片") : tip("导入图片到素材目录")}
+                tooltip={props.readOnly ? tip(t("assets.readOnlyCannotImport")) : tip(t("assets.importTooltip"))}
                 onPress={() => void handleImport()}
               />
             </If>
@@ -530,7 +533,7 @@ export function AssetsGalleryModal(props: {
                 size={26}
                 iconSize={13.5}
                 disabled={props.readOnly}
-                tooltip={tip("重命名", "f2")}
+                tooltip={tip(t("assets.rename"), "f2")}
                 onPress={() => currentAsset() && startRename(currentAsset()!)}
               />
               <IconBtn
@@ -538,11 +541,11 @@ export function AssetsGalleryModal(props: {
                 size={26}
                 iconSize={13.5}
                 disabled={props.readOnly}
-                tooltip={tip("删除素材", "delete")}
+                tooltip={tip(t("assets.deleteAsset"), "delete")}
                 onPress={() => currentAsset() && askDelete(currentAsset()!)}
               />
             </If>
-            <IconBtn icon="x" size={26} iconSize={14} tooltip={tip("关闭", "escape")} onPress={props.onClose} />
+            <IconBtn icon="x" size={26} iconSize={14} tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
           </View>
         </View>
 
@@ -576,25 +579,25 @@ export function AssetsGalleryModal(props: {
                   const cur = del();
                   if (cur.kind === "single") {
                     return cur.asset.referenced
-                      ? `「${cur.asset.name}」仍在文档中被引用，删除后题面会缺图，且无法撤销。`
-                      : `确定删除「${cur.asset.name}」？删除后无法撤销。`;
+                      ? t("assets.confirmDeleteReferenced", { name: cur.asset.name })
+                      : t("assets.confirmDeleteSingle", { name: cur.asset.name });
                   }
                   return props.hasTypstBlock
-                    ? `删除 ${unusedCount()} 个文件（共 ${formatBytes(unusedBytes())}），无法撤销。当前含原始 Typst 块，请确认未通过脚本动态引用。`
-                    : `删除 ${unusedCount()} 个文件（共 ${formatBytes(unusedBytes())}），无法撤销。`;
+                    ? t("assets.confirmDeleteUnusedTypst", { count: unusedCount(), size: formatBytes(unusedBytes()) })
+                    : t("assets.confirmDeleteUnused", { count: unusedCount(), size: formatBytes(unusedBytes()) });
                 })()}
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
                 <Btn
                   testID="assets-delete-cancel-btn"
-                  label="取消"
+                  label={t("common.cancel")}
                   variant="ghost"
                   size="sm"
                   onPress={() => confirmingDelete.set(undefined)}
                 />
                 <Btn
                   testID="assets-delete-confirm-btn"
-                  label="删除"
+                  label={t("common.delete")}
                   variant="danger"
                   size="sm"
                   onPress={() => {
@@ -638,10 +641,10 @@ export function AssetsGalleryModal(props: {
                     <Icon name="image" size={20} tone="muted-foreground" />
                   </View>
                   <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
-                    暂无图片素材
+                    {t("assets.empty")}
                   </Text>
                   <If when={!props.readOnly}>
-                    <Btn label="导入图片" icon="plus" variant="primary" size="sm" onPress={() => void handleImport()} />
+                    <Btn label={t("assets.importImage")} icon="plus" variant="primary" size="sm" onPress={() => void handleImport()} />
                   </If>
                 </View>
               }
@@ -770,7 +773,7 @@ export function AssetsGalleryModal(props: {
                           icon="chevronLeft"
                           size={30}
                           iconSize={16}
-                          tooltip={tip("上一张", "left")}
+                          tooltip={tip(t("assets.prevImage"), "left")}
                           onPress={() => stepSelection(-1)}
                           style={{ borderRadius: 9999 }}
                         />
@@ -780,7 +783,7 @@ export function AssetsGalleryModal(props: {
                           icon="chevronRight"
                           size={30}
                           iconSize={16}
-                          tooltip={tip("下一张", "right")}
+                          tooltip={tip(t("assets.nextImage"), "right")}
                           onPress={() => stepSelection(1)}
                           style={{ borderRadius: 9999 }}
                         />
@@ -816,7 +819,7 @@ export function AssetsGalleryModal(props: {
                         when={!!ref0}
                         else={
                           <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                            未引用
+                            {t("assets.unreferenced")}
                           </Text>
                         }
                       >
@@ -826,7 +829,7 @@ export function AssetsGalleryModal(props: {
                             props.onClose();
                             props.onLocateReference(ref0.file, ref0.line);
                           }}
-                          tooltip={tip("跳转到引用行")}
+                          tooltip={tip(t("assets.jumpToReference"))}
                           class="hover:bg-muted active:bg-accent"
                           style={{
                             paddingLeft: 6,
@@ -856,7 +859,7 @@ export function AssetsGalleryModal(props: {
                               return (
                                 <View
                                   onPress={() => handleSetWidth(asset, w())}
-                                  tooltip={tip(`设为 ${w()}% 宽度`)}
+                                  tooltip={tip(t("assets.setWidth", { pct: w() }))}
                                   class={
                                     active()
                                       ? "bg-accent border border-border"
@@ -886,7 +889,7 @@ export function AssetsGalleryModal(props: {
                       </If>
                       <Btn
                         testID="assets-lightbox-insert"
-                        label="插入到光标处"
+                        label={t("assets.insertAtCaret")}
                         variant="primary"
                         size="sm"
                         disabled={props.readOnly}
@@ -996,9 +999,9 @@ function AssetTile(props: {
               ...panelTransition(),
             }}
           >
-            <IconBtn icon="plus" size={22} iconSize={13} tooltip={tip("插入到光标处")} onPress={props.onInsert} />
-            <IconBtn icon="pencil" size={22} iconSize={12.5} tooltip={tip("重命名", "f2")} onPress={props.onStartRename} />
-            <IconBtn icon="trash" size={22} iconSize={12.5} tooltip={tip("删除素材", "delete")} onPress={props.onAskDelete} />
+            <IconBtn icon="plus" size={22} iconSize={13} tooltip={tip(t("assets.insertAtCaret"))} onPress={props.onInsert} />
+            <IconBtn icon="pencil" size={22} iconSize={12.5} tooltip={tip(t("assets.rename"), "f2")} onPress={props.onStartRename} />
+            <IconBtn icon="trash" size={22} iconSize={12.5} tooltip={tip(t("assets.deleteAsset"), "delete")} onPress={props.onAskDelete} />
           </View>
         </If>
       </View>
@@ -1031,7 +1034,7 @@ function AssetTile(props: {
             </View>
             <If when={!props.asset.referenced}>
               <Text style={{ fontSize: 10.5, lineHeight: 14 }} class="text-muted-foreground">
-                未引用
+                {t("assets.unreferenced")}
               </Text>
             </If>
           </View>
@@ -1052,8 +1055,8 @@ function AssetTile(props: {
             class="flex-1 h-6 px-1.5 rounded border border-primary bg-background text-[11.5px] text-foreground"
             style={{ fontFamily: MONO }}
           />
-          <IconBtn icon="check" size={20} iconSize={12} tooltip={tip("确认")} onPress={props.onCommitRename} />
-          <IconBtn icon="x" size={20} iconSize={12} tooltip={tip("取消")} onPress={props.onCancelRename} />
+          <IconBtn icon="check" size={20} iconSize={12} tooltip={tip(t("common.confirm"))} onPress={props.onCommitRename} />
+          <IconBtn icon="x" size={20} iconSize={12} tooltip={tip(t("common.cancel"))} onPress={props.onCancelRename} />
         </View>
       </If>
     </View>

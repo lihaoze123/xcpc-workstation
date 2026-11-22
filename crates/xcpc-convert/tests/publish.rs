@@ -1315,8 +1315,8 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     )
     .unwrap();
 
-    // 2. Append a custom macro & style tweak to `.xcpc/preamble.typ`.
-    let preamble_path = dir.path().join(".xcpc/preamble.typ");
+    // 2. Append a custom macro & style tweak to `templates/preamble.typ`.
+    let preamble_path = dir.path().join("templates/preamble.typ");
     let mut preamble = fs::read_to_string(&preamble_path).unwrap_or_default();
     preamble.push_str("\n#let xcpc-custom-badge(s) = strong(s)\n#set text(tracking: 0pt)\n");
     fs::write(&preamble_path, preamble).unwrap();

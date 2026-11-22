@@ -91,6 +91,7 @@ impl StoredPrefs {
         if next.last_book != "editorial" {
             next.last_book = "statements".to_owned();
         }
+        next.language = normalize_language_pref(next.language.as_deref());
         next.recent_workspaces = dedup_recent(next.recent_workspaces);
         self.app = next;
     }
@@ -169,6 +170,15 @@ fn read_legacy_last_workspace(data_dir: &Path) -> Option<PathBuf> {
     (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
 }
 
+fn normalize_language_pref(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim) {
+        Some("system") => Some("system".to_owned()),
+        Some("zh-CN") => Some("zh-CN".to_owned()),
+        Some("en") => Some("en".to_owned()),
+        _ => None,
+    }
+}
+
 fn dedup_recent(list: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(list.len().min(MAX_RECENT_WORKSPACES));
     for item in list {
@@ -230,6 +240,7 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
     if let Some(props_open) = obj.get("propsOpen").and_then(JsonValue::as_bool) {
         app.props_open = props_open;
     }
+    app.language = normalize_language_pref(obj.get("language").and_then(JsonValue::as_str));
 
     let mut frecency = HashMap::new();
     if let Some(frec_obj) = obj.get("frecency").and_then(JsonValue::as_object) {
@@ -289,6 +300,9 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     }
     root["lastBook"] = JsonValue::from(prefs.app.last_book.as_str());
     root["propsOpen"] = JsonValue::from(prefs.app.props_open);
+    if let Some(ref lang) = prefs.app.language {
+        root["language"] = JsonValue::from(lang.as_str());
+    }
     if let Some(ref window_state) = prefs.window_state {
         root["windowState"] = window_state.clone();
     }

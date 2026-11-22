@@ -62,8 +62,10 @@ problems/<slug>/         # One directory per problem (slug = immutable ID)
 contests/<id>/
   contest.toml           # Contest metadata, ordered [[problem]] live refs + metadata overrides
   snapshot/              # Created when frozen (read-only archive, committed to Git)
+templates/               # Workspace Typst templates (committed to Git)
+  preamble.typ           # Optional workspace-level Typst preamble injected after template show rule
 build/                   # Generated PDFs & temporary outputs (gitignored)
-.xcpc/                   # Local caches & derived data (gitignored)
+.xcpc/                   # Strictly local caches & derived data (gitignored, never committed)
 ```
 
 ## Authoring Rules
@@ -323,7 +325,7 @@ pub fn init_workspace_with_template(
 
 /// Archived template configuration stored inside `contests/<id>/snapshot/template.toml`
 /// when a contest is frozen, guaranteeing reproducible re-rendering even if the workspace's
-/// default template, custom templates, or `.xcpc/preamble.typ` later change.
+/// default template, custom templates, or `templates/preamble.typ` later change.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SnapshotTemplateMeta {
@@ -346,9 +348,15 @@ pub struct SnapshotTemplateArchive {
     pub assets: BTreeMap<String, Vec<u8>>,
 }
 
-/// Starter content written when creating `.xcpc/preamble.typ` for the first time.
+/// Reserved stem under `templates/` used by the workspace preamble (`templates/preamble.typ`).
+pub const RESERVED_PREAMBLE_NAME: &str = "preamble";
+
+/// Workspace-relative path of the shared Typst preamble.
+pub const PREAMBLE_REL_PATH: &str = "templates/preamble.typ";
+
+/// Starter content written when creating `templates/preamble.typ` for the first time.
 const DEFAULT_PREAMBLE_STARTER: &str = "\
-// XCPC Workstation 工作区级 Typst 样式注入（.xcpc/preamble.typ）\n\
+// XCPC Workstation 工作区级 Typst 样式注入（templates/preamble.typ）\n\
 // 此文件在模板 #show: contest.with(...) 之后自动注入，可在此定义自定义宏、导入包或微调样式。\n\
 // 保存后桌面端预览会自动热刷新。\n\n";
 
@@ -434,16 +442,16 @@ impl Workspace {
             .unwrap_or_default()
     }
 
-    /// Reads `.xcpc/preamble.typ` from the workspace if present and non-empty.
+    /// Reads `templates/preamble.typ` from the workspace if present and non-empty.
     pub fn load_preamble(&self) -> Option<String> {
-        let text = fs::read_to_string(self.root.join(".xcpc/preamble.typ")).ok()?;
+        let text = fs::read_to_string(self.root.join(PREAMBLE_REL_PATH)).ok()?;
         (!text.trim().is_empty()).then_some(text)
     }
 
-    /// Ensures `.xcpc/preamble.typ` exists (creating it with a starter comment if absent)
+    /// Ensures `templates/preamble.typ` exists (creating it with a starter comment if absent)
     /// and returns its resolved path on disk.
     pub fn ensure_preamble(&self) -> Result<PathBuf> {
-        let rel = ".xcpc/preamble.typ";
+        let rel = PREAMBLE_REL_PATH;
         let path = self.resolve(rel)?;
         if !path.is_file() {
             self.write(rel, DEFAULT_PREAMBLE_STARTER.as_bytes())?;
@@ -452,8 +460,10 @@ impl Workspace {
     }
 
     /// Returns `true` when `templates/<name>.typ` exists inside the workspace.
+    /// The reserved name `preamble` is never treated as a custom template.
     pub fn has_custom_template(&self, name: &str) -> bool {
-        check_id(name).is_ok()
+        name != RESERVED_PREAMBLE_NAME
+            && check_id(name).is_ok()
             && self
                 .root
                 .join("templates")
@@ -462,17 +472,29 @@ impl Workspace {
     }
 
     /// Returns the resolved disk path of `templates/<name>.typ` if it exists.
+    /// The reserved name `preamble` is never treated as a custom template.
     pub fn template_file_path(&self, name: &str) -> Result<Option<PathBuf>> {
         check_id(name)?;
+        if name == RESERVED_PREAMBLE_NAME {
+            return Ok(None);
+        }
         let rel = format!("templates/{name}.typ");
         let path = self.resolve(&rel)?;
         Ok(path.is_file().then_some(path))
     }
 
     /// Creates a new custom template `templates/<new_name>.typ` from `source_bytes`.
-    /// Refuses to overwrite an existing template file.
+    /// Refuses the reserved name `preamble` and refuses to overwrite an existing template file.
     pub fn fork_template(&self, new_name: &str, source_bytes: &[u8]) -> Result<String> {
         check_id(new_name)?;
+        if new_name == RESERVED_PREAMBLE_NAME {
+            return Err(Error::Invalid {
+                path: PREAMBLE_REL_PATH.to_owned(),
+                message: format!(
+                    "template name `{RESERVED_PREAMBLE_NAME}` is reserved for the workspace preamble ({PREAMBLE_REL_PATH})"
+                ),
+            });
+        }
         let rel = format!("templates/{new_name}.typ");
         self.check_writable(&rel)?;
         let path = self.resolve(&rel)?;
@@ -648,7 +670,8 @@ impl Workspace {
         (!text.trim().is_empty()).then_some(text)
     }
 
-    /// Lists available workspace template names by scanning `templates/*.typ` on disk.
+    /// Lists available workspace template names by scanning `templates/*.typ` on disk,
+    /// excluding the reserved `preamble` file (`templates/preamble.typ`).
     pub fn list_templates(&self) -> Vec<String> {
         let mut names = Vec::new();
         if let Ok(entries) = fs::read_dir(self.root.join("templates")) {
@@ -657,6 +680,7 @@ impl Workspace {
                 if path.is_file()
                     && path.extension().and_then(|e| e.to_str()) == Some("typ")
                     && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && stem != RESERVED_PREAMBLE_NAME
                     && check_id(stem).is_ok()
                 {
                     names.push(stem.to_owned());

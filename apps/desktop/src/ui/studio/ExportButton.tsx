@@ -6,6 +6,7 @@
 import { cleanup, effect, signal, Text, View } from "nsh";
 import type { ExportBookStatusJs } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
+import { t } from "../i18n";
 import { DelayedSpinner } from "../kit";
 import { revealState, type Book } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
@@ -63,23 +64,23 @@ export function ExportButton(props: {
   const entries = (): MenuEntry[] => [
     {
       id: "statements",
-      label: "导出题面册",
+      label: t("export.statements"),
       icon: "fileDown",
       keys: props.book === "statements" ? "mod+e" : undefined,
     },
     {
       id: "editorial",
-      label: "导出题解册",
+      label: t("export.editorial"),
       icon: "fileDown",
       keys: props.book === "editorial" ? "mod+e" : undefined,
     },
     { separator: true, id: "sep" },
     {
       id: "reveal",
-      label: "在文件夹中显示",
+      label: t("common.revealInFolder"),
       icon: "folderOpen",
       disabled: reveal() === "none",
-      note: reveal() === "stale" ? "较旧" : undefined,
+      note: reveal() === "stale" ? t("export.stale") : undefined,
     },
   ];
 
@@ -147,7 +148,7 @@ export function ExportButton(props: {
           <Icon name="check" size={14} tone="primary-foreground" style={{ marginRight: 5 }} />
         </If>
         <Text style={{ fontSize: 13 }} class="text-primary-foreground">
-          {confirmed() && !busy() ? "已导出" : "导出 PDF"}
+          {confirmed() && !busy() ? t("export.exported") : t("export.pdf")}
         </Text>
       </View>
       <View style={{ width: 1, alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.22)" }} />

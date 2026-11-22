@@ -648,6 +648,9 @@ pub struct AppPrefsJs {
     /// Whether the right-hand inspector/properties panel is open.
     #[prop(default = true)]
     pub props_open: bool,
+    /// UI language preference (`"system"`, `"zh-CN"`, or `"en"`).
+    #[prop(skip_none)]
+    pub language: Option<String>,
 }
 
 impl Default for AppPrefsJs {
@@ -661,8 +664,20 @@ impl Default for AppPrefsJs {
             last_label: None,
             last_book: "statements".to_owned(),
             props_open: true,
+            language: None,
         }
     }
+}
+
+/// Optional localized labels passed from JS to native file/folder dialogs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct DialogLabelsJs {
+    #[prop(default)]
+    pub title: Option<String>,
+    #[prop(default)]
+    pub button_label: Option<String>,
+    #[prop(default)]
+    pub filter_label: Option<String>,
 }
 
 // ---- Tri-state patch types (omitted/undefined = keep, null = clear, value = set) -------

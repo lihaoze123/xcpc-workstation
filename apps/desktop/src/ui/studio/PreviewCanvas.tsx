@@ -32,6 +32,7 @@ import {
   type SourceLocationJs,
 } from "xcpc-workstation/native";
 import { Icon, type IconName } from "../Icon";
+import { t } from "../i18n";
 import { DelayedSpinner, tip } from "../kit";
 import {
   BASE_SCALE,
@@ -1131,9 +1132,9 @@ export function PreviewCanvas(props: {
 
   const preflightLabel = () => {
     const c = counts();
-    if (c.errors > 0 && c.warnings > 0) return `${c.errors} 错  ${c.warnings} 警`;
-    if (c.errors > 0) return `${c.errors} 个错误`;
-    return `${c.warnings} 个警告`;
+    if (c.errors > 0 && c.warnings > 0) return t("preview.errorsAndWarnings", { errors: c.errors, warnings: c.warnings });
+    if (c.errors > 0) return t("preview.errorsOnly", { count: c.errors });
+    return t("preview.warningsOnly", { count: c.warnings });
   };
 
   return (
@@ -1301,7 +1302,7 @@ export function PreviewCanvas(props: {
         {(f) => (
           <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: 32, gap: 8 }}>
             <Text style={{ fontSize: 13, fontWeight: 500, lineHeight: 20 }} class="text-secondary-foreground">
-              排版出错，暂时没有页面
+              {t("preview.typesetFailed")}
             </Text>
             <If when={!!f().message}>
               <Text
@@ -1359,12 +1360,12 @@ export function PreviewCanvas(props: {
                 icon="minus"
                 disabled={zoom() === 0 || zoom() <= MIN_ZOOM + 0.001}
                 onPress={() => zoomWheel(1 / 1.25, { x: effectiveWidth() / 2, y: pane().height / 2 })}
-                tooltip={tip("缩小", "mod+minus")}
+                tooltip={tip(t("preview.zoomOut"), "mod+minus")}
               />
             </If>
             <View
               onPress={() => zoom() > 0 && fitWidth()}
-              tooltip={tip("适合宽度", "mod+0")}
+              tooltip={tip(t("preview.fitWidth"), "mod+0")}
               class={zoom() > 0 ? "hover:bg-muted active:bg-accent" : ""}
               style={{
                 height: 24,
@@ -1388,7 +1389,7 @@ export function PreviewCanvas(props: {
                 icon="plus"
                 disabled={zoom() === 0 || zoom() >= MAX_ZOOM - 0.001}
                 onPress={() => zoomWheel(1.25, { x: effectiveWidth() / 2, y: pane().height / 2 })}
-                tooltip={tip("放大", "mod+plus")}
+                tooltip={tip(t("preview.zoomIn"), "mod+plus")}
               />
             </If>
 
@@ -1399,7 +1400,7 @@ export function PreviewCanvas(props: {
               icon="chevronLeft"
               disabled={pages().length === 0 || currentPage() <= 0}
               onPress={() => goPage(currentPage() - 1)}
-              tooltip={tip("上一页")}
+              tooltip={tip(t("preview.prevPage"))}
             />
             <Text style={{ minWidth: 44, textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
               {pages().length > 0 ? `${currentPage() + 1} / ${pages().length}` : "–"}
@@ -1408,7 +1409,7 @@ export function PreviewCanvas(props: {
               icon="chevronRight"
               disabled={pages().length === 0 || currentPage() >= pages().length - 1}
               onPress={() => goPage(currentPage() + 1)}
-              tooltip={tip("下一页")}
+              tooltip={tip(t("preview.nextPage"))}
             />
 
             {/* Preflight diagnostics */}
@@ -1465,7 +1466,7 @@ export function PreviewCanvas(props: {
                           </Text>
                         </View>
                         <Text style={{ fontSize: 11.5, marginLeft: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                          {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : d().page != null ? `第 ${d().page! + 1} 页` : ""}
+                          {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : d().page != null ? t("preview.pageNumber", { page: d().page! + 1 }) : ""}
                         </Text>
                       </View>
                     )}

@@ -1,4 +1,5 @@
 import type { AppUpdate, UpdateProgress } from "nsh/updater";
+import { t } from "./i18n";
 
 export type UpdateState =
   | { kind: "idle" }
@@ -12,7 +13,7 @@ export type UpdateState =
 
 /** Primary action button label when an update is available. */
 export function updateAvailableActionLabel(update: Pick<AppUpdate, "canInstall">): string {
-  return update.canInstall ? "下载更新" : "前往发布页";
+  return update.canInstall ? t("update.download") : t("update.openReleasePage");
 }
 
 /** Trimmed release notes to display for the current update state, or empty string when hidden. */
@@ -28,35 +29,43 @@ export function visibleUpdateNotes(state: UpdateState): string {
   return "";
 }
 
-/** Subtitle shown under "检查更新" for a given update state. */
+/** Subtitle shown under "检查更新" / "Software Update" for a given update state. */
 export function formatUpdateSummary(
   state: UpdateState,
   devShell: boolean,
   formatVersion: (v: string) => string,
   formatBytes: (b: number) => string,
 ): string | undefined {
-  if (devShell) return "开发构建不提供自动更新";
+  if (devShell) return t("update.devBuild");
   switch (state.kind) {
     case "idle":
       return undefined;
     case "checking":
-      return "正在检查更新…";
+      return t("update.checking");
     case "upToDate":
-      return "已是最新版本";
+      return t("update.upToDate");
     case "available":
-      return `发现新版本 ${formatVersion(state.update.version)}`;
+      return t("update.available", { version: formatVersion(state.update.version) });
     case "downloading": {
       const { received, total } = state.progress;
       if (total && total > 0) {
         const pct = Math.min(100, Math.round((received / total) * 100));
-        return `正在下载 ${formatVersion(state.update.version)}（${pct}%，${formatBytes(received)} / ${formatBytes(total)}）`;
+        return t("update.downloadingWithTotal", {
+          version: formatVersion(state.update.version),
+          pct,
+          received: formatBytes(received),
+          total: formatBytes(total),
+        });
       }
-      return `正在下载 ${formatVersion(state.update.version)}（已接收 ${formatBytes(received)}）`;
+      return t("update.downloadingNoTotal", {
+        version: formatVersion(state.update.version),
+        received: formatBytes(received),
+      });
     }
     case "ready":
-      return `${formatVersion(state.update.version)} 已下载完成，可以安装`;
+      return t("update.ready", { version: formatVersion(state.update.version) });
     case "scheduled":
-      return `${formatVersion(state.update.version)} 已就绪，将在退出应用时安装`;
+      return t("update.scheduled", { version: formatVersion(state.update.version) });
     case "error":
       return state.message;
   }

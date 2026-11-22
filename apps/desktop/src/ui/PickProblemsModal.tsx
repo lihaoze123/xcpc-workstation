@@ -18,6 +18,7 @@ import {
 } from "nsh";
 import { Input } from "nsh/base";
 import { Btn, Chip, Chevron, RatingBadge, tip } from "./kit";
+import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
 import { EmptyState, Spacer } from "./layout";
@@ -215,7 +216,7 @@ export function PickProblemsBody(props: { contestId: string }) {
     const nextIds = [...c.items.map((i) => i.id), ...toAdd];
     const res = preview.composeContest(c.id, nextIds);
     if (!res.ok) {
-      error.set(errorOf(res, "加入比赛"));
+      error.set(errorOf(res, t("ctx.addToContest")));
       return;
     }
     refresh();
@@ -263,12 +264,12 @@ export function PickProblemsBody(props: { contestId: string }) {
     facets().tags.map((t) => ({ id: t, label: t, checked: tags().includes(t) })),
   );
   const tierItems = computed<MenuEntry[]>(() => [
-    { id: "", label: "全部难度", checked: tier() === undefined },
+    { id: "", label: t("library.filter.allRatings"), checked: tier() === undefined },
     { separator: true, id: "sep" },
     ...TIER_RANGES.map((r) => ({ id: r.tier, label: r.label, checked: tier() === r.tier })),
   ]);
   const platformItems = computed<MenuEntry[]>(() => [
-    { id: "", label: "全部来源", checked: platform() === undefined },
+    { id: "", label: t("library.filter.allSources"), checked: platform() === undefined },
     ...(facets().platforms.length > 0 ? [{ separator: true as const, id: "sep" }] : []),
     ...facets().platforms.map((p) => ({ id: p, label: p, checked: platform() === p })),
   ]);
@@ -286,8 +287,8 @@ export function PickProblemsBody(props: { contestId: string }) {
       <View style={{ padding: 18, paddingBottom: 12, gap: 12, borderBottomWidth: 1 }} class="border-border">
         <DialogHeader
           icon="listPlus"
-          title="从题库挑题"
-          description={contest() ? `加入「${contest()!.name}」末尾` : "选择题目加入比赛末尾"}
+          title={t("pickProblems.title")}
+          description={contest() ? t("pickProblems.descContest", { name: contest()!.name }) : t("pickProblems.descGeneric")}
         />
 
         {/* Filter bar (hidden when library is completely empty) */}
@@ -312,7 +313,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                 ref={(r) => (searchInput = r)}
                 style={{ flex: 1, height: 24, fontSize: 12.5 }}
                 value={inputText()}
-                placeholder="搜索标题、ID、标签或来源"
+                placeholder={t("pickProblems.searchPlaceholder")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoFocus
@@ -326,7 +327,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                     setSearch("");
                     searchInput?.focus();
                   }}
-                  tooltip={tip("清除搜索", "escape")}
+                  tooltip={tip(t("library.clearSearch"), "escape")}
                   class="hover:bg-muted active:bg-accent"
                   style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }}
                 >
@@ -335,26 +336,26 @@ export function PickProblemsBody(props: { contestId: string }) {
               </If>
             </View>
             <PickerFilterMenu
-              label={tags().length === 0 ? "标签" : tags().length === 1 ? tags()[0] : `${tags().length} 标签`}
+              label={tags().length === 0 ? t("library.filter.tags") : tags().length === 1 ? tags()[0] : t("library.filter.tagsCount", { count: tags().length })}
               active={tags().length > 0}
               multi
-              entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: "没有标签", disabled: true }]}
+              entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: t("library.filter.noTags"), disabled: true }]}
               onSelect={(id) => id && id !== "__empty__" && tags.set(tags().includes(id) ? tags().filter((t) => t !== id) : [...tags(), id])}
             />
             <PickerFilterMenu
-              label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? "难度"}
+              label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? t("library.filter.rating")}
               active={tier() !== undefined}
               entries={tierItems()}
               onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
             />
             <PickerFilterMenu
-              label={platform() ?? "来源"}
+              label={platform() ?? t("library.filter.source")}
               active={platform() !== undefined}
               entries={platformItems()}
               onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
             />
             <If when={filtered()}>
-              <Btn label="清除" icon="filterX" variant="ghost" onPress={clearFilters} />
+              <Btn label={t("common.clear")} icon="filterX" variant="ghost" onPress={clearFilters} />
             </If>
           </View>
         </If>
@@ -367,11 +368,11 @@ export function PickProblemsBody(props: { contestId: string }) {
           <View style={{ height: 240 }}>
             <EmptyState
               icon="libraryBig"
-              title="题库还没有题目"
-              hint="先新建一道题目，建好后会自动加入这场比赛"
+              title={t("pickProblems.emptyLibraryTitle")}
+              hint={t("pickProblems.emptyLibraryHint")}
               action={
                 <Btn
-                  label="新建题目加入"
+                  label={t("contests.newProblemAdd")}
                   icon="plus"
                   variant="primary"
                   onPress={() => dialog.set({ kind: "newProblem", addTo: props.contestId })}
@@ -387,9 +388,9 @@ export function PickProblemsBody(props: { contestId: string }) {
             <View style={{ height: PICK_LIST_HEIGHT }}>
               <EmptyState
                 icon="searchX"
-                title="没有符合条件的题目"
-                hint="试试更换关键词或清除筛选条件"
-                action={<Btn label="清除筛选" icon="filterX" onPress={clearFilters} />}
+                title={t("library.emptyFilteredTitle")}
+                hint={t("pickProblems.emptyFilteredHint")}
+                action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clearFilters} />}
               />
             </View>
           }
@@ -498,7 +499,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                       {/* Already in contest indicator */}
                       <If when={inContest()}>
                         <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
-                          已加入
+                          {t("pickProblems.alreadyAdded")}
                         </Text>
                       </If>
                     </View>
@@ -536,29 +537,29 @@ export function PickProblemsBody(props: { contestId: string }) {
           else={
             <If when={remaining() === 0}>
               <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                已达 26 题上限（A–Z）
+                {t("pickProblems.capReached")}
               </Text>
             </If>
           }
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Text style={{ fontSize: 12.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
-              {`已选 ${picked().length} 题`}
+              {t("pickProblems.selectedCount", { count: picked().length })}
             </Text>
             <If when={remainingAfterPick() === 0}>
               <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                已达 26 题上限（A–Z）
+                {t("pickProblems.capReached")}
               </Text>
             </If>
-            <Btn label="清空已选" variant="ghost" onPress={() => picked.set([])} />
+            <Btn label={t("pickProblems.clearSelected")} variant="ghost" onPress={() => picked.set([])} />
           </View>
         </If>
         <Spacer />
-        <Btn label="取消" variant="ghost" onPress={() => dialog.set(undefined)} />
+        <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <Btn
           testID="pick-problems-submit"
           variant="primary"
-          label={picked().length > 0 ? `加入 ${picked().length} 题` : "加入"}
+          label={picked().length > 0 ? t("pickProblems.submitCount", { count: picked().length }) : t("pickProblems.submit")}
           disabled={picked().length === 0}
           onPress={submit}
           style={{ minWidth: 80 }}

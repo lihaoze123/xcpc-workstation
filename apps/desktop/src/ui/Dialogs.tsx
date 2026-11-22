@@ -4,6 +4,7 @@
 import { batch, cleanup, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
 import { Btn } from "./kit";
+import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
 import { Icon } from "./Icon";
@@ -26,8 +27,8 @@ import {
 
 const message = (e: UiError | undefined) => {
   if (!e) return undefined;
-  if (e.code === "invalid_id") return "只能用小写字母、数字、- 和 _，以字母或数字开头";
-  if (e.code === "conflict") return "同名 ID 已存在，请换一个";
+  if (e.code === "invalid_id") return t("dialogs.invalidId");
+  if (e.code === "conflict") return t("dialogs.duplicateIdConflict");
   return errorCopy(e.code, e.error).message;
 };
 
@@ -89,7 +90,7 @@ function Form(props: { head: any; submit: string; onSubmit: () => void; children
       {props.head}
       <View style={{ gap: 12 }}>{props.children}</View>
       <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-        <Btn label="取消" variant="ghost" onPress={() => dialog.set(undefined)} />
+        <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <Btn variant="primary" label={props.submit} onPress={() => props.onSubmit()} style={{ minWidth: 72 }} />
       </View>
     </View>
@@ -133,14 +134,14 @@ function NewProblem(props: { addTo?: string }) {
 
   return (
     <Form
-      head={<DialogHeader icon="filePenLine" title="新建题目" description="建好后直接打开，开始写题面。" />}
-      submit="创建"
+      head={<DialogHeader icon="filePenLine" title={t("dialogs.newProblem.title")} description={t("dialogs.newProblem.desc")} />}
+      submit={t("common.create")}
       onSubmit={submit}
     >
       <Field
-        label="标题"
+        label={t("dialogs.newProblem.titleLabel")}
         value={title()}
-        placeholder="两数之和"
+        placeholder={t("dialogs.newProblem.titlePlaceholder")}
         autoFocus
         onChange={(v) =>
           batch(() => {
@@ -154,8 +155,8 @@ function NewProblem(props: { addTo?: string }) {
         onSubmit={onTitleSubmit}
       />
       <Field
-        label="ID"
-        hint="题目文件夹的名字，建好后不能改"
+        label={t("dialogs.newProblem.idLabel")}
+        hint={t("dialogs.newProblem.idHint")}
         error={message(error())}
         value={id()}
         placeholder="two-sum"
@@ -191,7 +192,7 @@ function DuplicateProblem(props: { open: boolean; problemId: string }) {
       const source = ws.problems.find((p) => p.id === sourceId);
       const sourceTitle = source?.title || sourceId;
       batch(() => {
-        title.set(`${sourceTitle}（副本）`);
+        title.set(t("dialogs.duplicateProblem.copySuffix", { title: sourceTitle }));
         id.set(suggestDuplicateId(sourceId, ws.problems.map((p) => p.id)));
         error.set(undefined);
       });
@@ -219,21 +220,21 @@ function DuplicateProblem(props: { open: boolean; problemId: string }) {
 
   return (
     <Form
-      head={<DialogHeader icon="copy" title="复制题目" description="复制整道题的题面、样例、配图和题解为新题目。" />}
-      submit="复制"
+      head={<DialogHeader icon="copy" title={t("dialogs.duplicateProblem.title")} description={t("dialogs.duplicateProblem.desc")} />}
+      submit={t("dialogs.duplicateProblem.submit")}
       onSubmit={submit}
     >
       <Field
-        label="标题"
+        label={t("dialogs.newProblem.titleLabel")}
         value={title()}
-        placeholder="新题目标题"
+        placeholder={t("dialogs.duplicateProblem.titlePlaceholder")}
         autoFocus
         onChange={(v) => title.set(v)}
         onSubmit={onTitleSubmit}
       />
       <Field
-        label="ID"
-        hint="新题目文件夹的名字，建好后不能改"
+        label={t("dialogs.newProblem.idLabel")}
+        hint={t("dialogs.duplicateProblem.idHint")}
         error={message(error())}
         value={id()}
         placeholder="problem-copy"
@@ -288,14 +289,14 @@ function NewContest(props: { withProblem?: string }) {
 
   return (
     <Form
-      head={<DialogHeader icon="trophy" title="新建比赛" description="之后可以从题库里挑题加进来。" />}
-      submit="创建"
+      head={<DialogHeader icon="trophy" title={t("dialogs.newContest.title")} description={t("dialogs.newContest.desc")} />}
+      submit={t("common.create")}
       onSubmit={submit}
     >
       <Field
-        label="名称"
+        label={t("dialogs.newContest.nameLabel")}
         value={name()}
-        placeholder="2026 春季集训第一场"
+        placeholder={t("dialogs.newContest.namePlaceholder")}
         autoFocus
         onChange={(v) =>
           batch(() => {
@@ -309,8 +310,8 @@ function NewContest(props: { withProblem?: string }) {
         onSubmit={onNameSubmit}
       />
       <Field
-        label="ID"
-        hint="比赛文件夹的名字，建好后不能改"
+        label={t("dialogs.newProblem.idLabel")}
+        hint={t("dialogs.newContest.idHint")}
         error={message(error())}
         value={id()}
         placeholder="spring-2026"
@@ -396,7 +397,7 @@ function AddToContest(props: { problemId: string }) {
       style={{ padding: 6, gap: 2 }}
     >
       <View style={{ padding: 14, paddingBottom: 10 }}>
-        <DialogHeader icon="listPlus" title="加入比赛" description="题目会排在比赛的最后。" />
+        <DialogHeader icon="listPlus" title={t("dialogs.addToContest.title")} description={t("dialogs.addToContest.desc")} />
       </View>
       <If when={contests().length > 0}>
         <Scroll style={{ maxHeight: 280 }}>
@@ -436,7 +437,13 @@ function AddToContest(props: { problemId: string }) {
                     </Text>
                     {c().frozen && <Icon name="lock" size={13} tone="muted-foreground" />}
                     <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                      {has() ? "已在其中" : c().frozen ? "已定稿" : full() ? "已满 26 题" : `${c().items.length} 题`}
+                      {has()
+                        ? t("dialogs.addToContest.alreadyIn")
+                        : c().frozen
+                          ? t("contests.finalized")
+                          : full()
+                            ? t("dialogs.addToContest.full")
+                            : t("contests.problemCount", { count: c().items.length })}
                     </Text>
                   </View>
                 );
@@ -468,7 +475,7 @@ function AddToContest(props: { problemId: string }) {
       >
         <Icon name="plus" size={15} tone="primary" />
         <Text style={{ fontSize: 13 }} class="text-primary">
-          新建比赛
+          {t("contests.newContest")}
         </Text>
       </View>
       <If when={error()}>
@@ -509,8 +516,8 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
             <DialogHeader
               icon="triangleAlert"
               tone="destructive"
-              title={`还不能删除「${p()?.title ?? props.problemId}」`}
-              description="它仍在以下未定稿的比赛中，请先从中移除："
+              title={t("dialogs.deleteProblem.blockedTitle", { title: p()?.title ?? props.problemId })}
+              description={t("dialogs.deleteProblem.blockedDesc")}
             />
             <View style={{ gap: 4, paddingLeft: 44 }}>
               <Each of={used()} key={(c) => c.id}>
@@ -546,17 +553,17 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
         <DialogHeader
           icon="trash"
           tone="destructive"
-          title={`删除「${p()?.title ?? props.problemId}」？`}
-          description="题面、样例、题解和代码会一起删掉，无法恢复。"
+          title={t("dialogs.deleteProblem.confirmTitle", { title: p()?.title ?? props.problemId })}
+          description={t("dialogs.deleteProblem.confirmDesc")}
         />
       </If>
       <If when={error()}>
         <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
       </If>
       <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-        <Btn label={used().length === 0 ? "取消" : "知道了"} variant="ghost" onPress={() => dialog.set(undefined)} />
+        <Btn label={used().length === 0 ? t("common.cancel") : t("common.gotIt")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <If when={used().length === 0}>
-          <Btn label="删除" variant="danger" onPress={remove} testID="confirm-delete" />
+          <Btn label={t("common.delete")} variant="danger" onPress={remove} testID="confirm-delete" />
         </If>
       </View>
     </View>

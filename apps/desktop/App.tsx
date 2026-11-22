@@ -8,6 +8,7 @@ import { Dialogs } from "./src/ui/Dialogs";
 import { ErrorDisplay } from "./src/ui/ErrorDisplay";
 import { Btn, Chevron, Kbd, tip } from "./src/ui/kit";
 import { Icon } from "./src/ui/Icon";
+import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
@@ -126,7 +127,7 @@ function BrandReplayOverlay(props: { version: string }) {
         leading={
           <Btn
             testID="brand-replay-close"
-            label="返回"
+            label={t("common.back")}
             icon="arrowLeft"
             variant="ghost"
             onPress={close}
@@ -181,10 +182,10 @@ function App() {
     return [
       ...recents.map((p): MenuEntry => ({ id: `recent:${p}`, label: pathBase(p), icon: "folder" })),
       ...(recents.length > 0 ? [{ separator: true as const, id: "sep-recent" }] : []),
-      { id: "open", label: "打开其他工作区…", icon: "folderOpen", keys: "mod+o" },
-      { id: "new", label: "新建工作区…", icon: "folderPlus" },
+      { id: "open", label: t("shell.openOtherWorkspace"), icon: "folderOpen", keys: "mod+o" },
+      { id: "new", label: t("shell.newWorkspaceEllipsis"), icon: "folderPlus" },
       { separator: true as const, id: "sep-reveal" },
-      { id: "reveal", label: "在文件夹中显示", icon: "folder" },
+      { id: "reveal", label: t("common.revealInFolder"), icon: "folder" },
     ];
   });
 
@@ -238,7 +239,7 @@ function App() {
             />
             <If when={info().readOnly}>
               <View
-                tooltip={tip("工作区以只读方式打开，写入操作已禁用")}
+                tooltip={tip(t("common.readOnlyWorkspaceDisabled"))}
                 class="bg-muted border border-border"
                 style={{
                   height: 22,
@@ -253,7 +254,7 @@ function App() {
               >
                 <Icon name="lock" size={11} tone="muted-foreground" />
                 <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
-                  只读
+                  {t("common.readOnly")}
                 </Text>
               </View>
             </If>
@@ -280,7 +281,7 @@ function App() {
           >
             <Icon name="search" size={14} tone="muted-foreground" />
             <Text style={{ flex: 1, fontSize: 12.5, lineHeight: 18 }} class="text-muted-foreground">
-              跳转或执行操作
+              {t("shell.paletteTrigger")}
             </Text>
             <Kbd keys="mod+k" faint />
           </View>

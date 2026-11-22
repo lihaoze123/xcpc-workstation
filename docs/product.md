@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-XCPC Workstation 是本地优先的 **个人 XCPC 工作站**。它**面向个人使用，不区分用户，也不做多人协作**；工作区可以放进 Git 做版本管理和备份。
+XCPC Workstation 是本地优先的 **个人 XCPC 工作站**。应用本身**不设账号体系与在线协同服务**；工作区是开放的项目目录（而非个人单例），既可以作为长期的个人题库与训练工作区，也可以为多人基于 Git 协同出题的赛事单独建仓并各自打开（详见 [specs/multi-author-workspace.md](./specs/multi-author-workspace.md)）。
 
 - **题库是底座**：题目独立持久化，不依附于任何一场比赛，包含题面、样例、标签/难度、题解、代码。
 - **比赛是题目的组合**：比赛通过「活引用 + 元数据覆写」组织题目，一键生成与参考模板版式一致的 PDF 题册和 A4 题解册；归档时可以冻结快照。
@@ -19,7 +19,7 @@ XCPC Workstation 是本地优先的 **个人 XCPC 工作站**。它**面向个�
 - **不导出 LaTeX**：PDF 只通过原生 Typst 生成。
 - **不做题解幻灯片**：题解只出 A4 文字版。
 - **不做气球颜色**。
-- **不做多人协作**，也不做团队训练看板。
+- **不做在线多人协作与团队训练看板**（多人出题协同通过独立 Git 工作区交由 Git 本身完成）。
 - **Web 版远期待定**：当前不做，代码里也不为它预留。
 
 ## 2. 题目（Problem）
@@ -141,7 +141,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 - **题号由顺序决定**：增删和移动题目后，Core 按顺序重排为 A、B、C……并写回 `label`；超过 26 题报错。
 - **冻结快照**：
   - 冻结前完整编译并跑 lint，有 error 就拒绝冻结（warning 不拦截）。
-  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）、生效的 `template.typ` 副本（无论是 `contests/<id>/template.typ` 还是 `templates/<name>.typ`）、`.xcpc/preamble.typ`（若存在）与合并解析后的模板参数一并固化到 `contests/<id>/snapshot/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，不再受题库、工作区模板或外部样式修改影响。
+  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）、生效的 `template.typ` 副本（无论是 `contests/<id>/template.typ` 还是 `templates/<name>.typ`）、`templates/preamble.typ`（若存在）与合并解析后的模板参数一并固化到 `contests/<id>/snapshot/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，不再受题库、工作区模板或外部样式修改影响。
   - 冻结后，Core 层对整场比赛强制只读，包括快照。
   - **只能由人在 GUI 或 CLI 中解冻**（`xcpc contest unfreeze`，需要二次确认），确认时列出快照与题库当前版本有差异的题（题面已改、样例已改、题目已删除，逐文件比较字节），CLI 先打印差异再要求输入比赛 ID（`--yes` 跳过）。解冻后删除快照目录，恢复活引用。**MCP 不提供解冻能力。**
 - **比赛归档（Archive）**：应用内不提供「删除比赛」，而是通过 `contest.toml` 的 `archived = true` 实现可逆收纳（取消归档时移除该键）。`archived` 与 `frozen` 完全正交：未定稿或已定稿的比赛均可归档；归档后 Core 层强制拦截一切写操作并返回 `contest_archived`，仅允许「取消归档」恢复。

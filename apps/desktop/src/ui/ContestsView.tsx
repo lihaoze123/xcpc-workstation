@@ -7,6 +7,7 @@ import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef } 
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { WorkspaceContest } from "xcpc-workstation/native";
 import { Btn, DelayedSpinner, Lock, RatingBadge, tip } from "./kit";
+import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger } from "./Menu";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -29,7 +30,6 @@ import {
   type UiError,
 } from "./store";
 
-const FREEZE_TIP = "存一份定稿：之后题库里的修改不再影响这场比赛";
 const ROW_STRIDE = 54; // 52pt row + 2pt gap
 
 function toggleContestArchive(
@@ -40,7 +40,7 @@ function toggleContestArchive(
   const before = info().contests;
   const res = preview.setContestArchived(id, archive);
   if (!res.ok) {
-    onError?.(errorOf(res, archive ? "归档比赛" : "取消归档")!);
+    onError?.(errorOf(res, archive ? t("ctx.archiveContest") : t("ctx.unarchiveContest"))!);
     return;
   }
   if (archive) {
@@ -165,24 +165,24 @@ export function ContestsView(props: { active: boolean }) {
           const locked = cur.frozen || cur.archived || ro;
           void DesktopMenu.popup(
             [
-              { label: locked ? "查看" : "编辑", onSelect: () => openStudio({ target: "contest", id: cur.id }) },
+              { label: locked ? t("common.view") : t("common.edit"), onSelect: () => openStudio({ target: "contest", id: cur.id }) },
               {
-                label: "从题库挑题…",
+                label: t("contests.pickProblemsEllipsis"),
                 disabled: locked,
                 onSelect: () => dialog.set({ kind: "pickProblems", contestId: cur.id }),
               },
               {
-                label: "新建题目加入…",
+                label: t("contests.newProblemAddEllipsis"),
                 disabled: locked,
                 onSelect: () => dialog.set({ kind: "newProblem", addTo: cur.id }),
               },
               { type: "separator" },
               {
-                label: cur.archived ? "取消归档" : "归档比赛",
+                label: cur.archived ? t("contests.unarchive") : t("contests.archive"),
                 disabled: ro,
                 onSelect: () => toggleContestArchive(cur.id, !cur.archived, (err) => listError.set(err)),
               },
-              { label: "在文件夹中显示", onSelect: () => void preview.revealInFolder(`contests/${cur.id}`) },
+              { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`contests/${cur.id}`) },
             ],
             e.pagePosition,
           );
@@ -206,11 +206,11 @@ export function ContestsView(props: { active: boolean }) {
           <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, lineHeight: 18 }}>{c().name}</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <Text style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {`${c().items.length} 题`}
+              {t("contests.problemCount", { count: c().items.length })}
             </Text>
             <If when={c().frozen}>
               <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-                已定稿
+                {t("contests.finalized")}
               </Text>
             </If>
           </View>
@@ -234,14 +234,14 @@ export function ContestsView(props: { active: boolean }) {
       <View style={{ width: 280, borderRightWidth: 1 }} class="border-border">
         <Toolbar>
           <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-            {activeContests().length > 0 ? `${activeContests().length} 场比赛` : ""}
+            {activeContests().length > 0 ? t("contests.count", { count: activeContests().length }) : ""}
           </Text>
           <Spacer />
           <Btn
-            label="新建比赛"
+            label={t("contests.newContest")}
             icon="plus"
             disabled={readOnly()}
-            tooltip={tip(readOnly() ? "只读工作区无法新建" : "新建比赛", readOnly() ? undefined : "mod+shift+n")}
+            tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("contests.newContest"), readOnly() ? undefined : "mod+shift+n")}
             onPress={() => dialog.set({ kind: "newContest" })}
           />
         </Toolbar>
@@ -292,7 +292,7 @@ export function ContestsView(props: { active: boolean }) {
                 }}
               />
               <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-muted-foreground">
-                已归档
+                {t("contests.archived")}
               </Text>
               <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {String(archivedContests().length)}
@@ -320,11 +320,11 @@ export function ContestsView(props: { active: boolean }) {
         else={
           <EmptyState
             icon="trophy"
-            title="还没有比赛"
-            hint={readOnly() ? "工作区以只读方式打开" : "新建一场比赛，再从题库里挑题加进来"}
+            title={t("contests.emptyTitle")}
+            hint={readOnly() ? t("common.readOnlyWorkspaceHint") : t("contests.emptyHint")}
             action={
               readOnly() ? undefined : (
-                <Btn label="新建比赛" icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newContest" })} tooltip={tip("新建比赛", "mod+shift+n")} />
+                <Btn label={t("contests.newContest")} icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newContest" })} tooltip={tip(t("contests.newContest"), "mod+shift+n")} />
               )
             }
           />
@@ -335,11 +335,11 @@ export function ContestsView(props: { active: boolean }) {
           else={
             <EmptyState
               icon="trophy"
-              title="没有进行中的比赛"
-              hint="已归档的比赛收纳在左侧底部，也可以新建一场比赛"
+              title={t("contests.noActiveTitle")}
+              hint={t("contests.noActiveHint")}
               action={
                 readOnly() ? undefined : (
-                  <Btn label="新建比赛" icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newContest" })} tooltip={tip("新建比赛", "mod+shift+n")} />
+                  <Btn label={t("contests.newContest")} icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newContest" })} tooltip={tip(t("contests.newContest"), "mod+shift+n")} />
                 )
               }
             />
@@ -388,14 +388,14 @@ function ContestPanel(props: { id: string }) {
                 <View style={{ height: 22, paddingLeft: 6, paddingRight: 7, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4 }} class="bg-muted">
                   <Icon name="lock" size={12} />
                   <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
-                    已定稿
+                    {t("contests.finalized")}
                   </Text>
                 </View>
               </If>
               <If when={detail().archived}>
                 <View style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 6, flexDirection: "row", alignItems: "center" }} class="bg-muted">
                   <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
-                    已归档
+                    {t("contests.archived")}
                   </Text>
                 </View>
               </If>
@@ -418,15 +418,15 @@ function ContestPanel(props: { id: string }) {
             <Btn
               variant="primary"
               icon={viewOnly() ? "fileText" : "pencil"}
-              label={viewOnly() ? "查看" : "编辑"}
+              label={viewOnly() ? t("common.view") : t("common.edit")}
               tooltip={tip(
                 detail().archived
-                  ? "查看已归档比赛的题面和预览"
+                  ? t("contests.editTooltip.archived")
                   : detail().frozen
-                    ? "查看已定稿的题面和预览"
+                    ? t("contests.editTooltip.finalized")
                     : readOnly()
-                      ? "以只读方式查看比赛"
-                      : "编辑题面、顺序和封面",
+                      ? t("contests.editTooltip.readOnly")
+                      : t("contests.editTooltip.editable"),
                 "enter",
               )}
               onPress={() => open()}
@@ -439,7 +439,7 @@ function ContestPanel(props: { id: string }) {
                   when={detail().frozen}
                   else={
                     <Btn
-                      tooltip={tip(readOnly() ? "只读工作区无法定稿" : FREEZE_TIP)}
+                      tooltip={tip(readOnly() ? t("contests.readOnlyCannotFinalize") : t("contests.finalizeTooltip"))}
                       disabled={f.busy() || readOnly() || detail().items.length === 0}
                       onPress={() => void f.freeze(props.id)}
                       style={{ minWidth: 76 }}
@@ -450,16 +450,16 @@ function ContestPanel(props: { id: string }) {
                         </If>
                       </View>
                       <Text class="text-foreground" style={{ fontSize: 13 }}>
-                        定稿
+                        {t("contests.finalize")}
                       </Text>
                     </Btn>
                   }
                 >
                   <Btn
                     icon="lockOpen"
-                    label="重新编辑"
+                    label={t("contests.reopen")}
                     disabled={readOnly()}
-                    tooltip={tip(readOnly() ? "只读工作区无法重新编辑" : "移除定稿副本，重新跟随题库")}
+                    tooltip={tip(readOnly() ? t("contests.readOnlyCannotReopen") : t("contests.reopenTooltip"))}
                     onPress={() => unfreezeFor.set(props.id)}
                   />
                 </If>
@@ -467,9 +467,9 @@ function ContestPanel(props: { id: string }) {
             >
               <Btn
                 icon="rotateCcw"
-                label="取消归档"
+                label={t("contests.unarchive")}
                 disabled={readOnly()}
-                tooltip={tip(readOnly() ? "只读工作区无法取消归档" : "恢复到进行中比赛列表")}
+                tooltip={tip(readOnly() ? t("contests.readOnlyCannotUnarchive") : t("contests.unarchiveTooltip"))}
                 onPress={() => toggleContestArchive(props.id, false, (e) => actionError.set(e))}
                 testID="contest-unarchive"
               />
@@ -477,16 +477,16 @@ function ContestPanel(props: { id: string }) {
             <AppMenu
               align="end"
               entries={[
-                { id: "pickProblems", label: "从题库挑题…", icon: "listPlus", disabled: viewOnly() },
-                { id: "newProblem", label: "新建题目加入…", icon: "plus", disabled: viewOnly() },
+                { id: "pickProblems", label: t("contests.pickProblemsEllipsis"), icon: "listPlus", disabled: viewOnly() },
+                { id: "newProblem", label: t("contests.newProblemAddEllipsis"), icon: "plus", disabled: viewOnly() },
                 { separator: true, id: "sep" },
                 {
                   id: "archive",
-                  label: detail().archived ? "取消归档" : "归档比赛",
+                  label: detail().archived ? t("contests.unarchive") : t("contests.archive"),
                   icon: detail().archived ? "rotateCcw" : "folder",
                   disabled: readOnly(),
                 },
-                { id: "reveal", label: "在文件夹中显示", icon: "folderOpen" },
+                { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
               ]}
               onSelect={(id) => {
                 if (id === "pickProblems") dialog.set({ kind: "pickProblems", contestId: props.id });
@@ -519,7 +519,10 @@ function ContestPanel(props: { id: string }) {
               f.error() && f.findings().length > 0 ? (
                 <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                   {f.findings().length > 4
-                    ? `${freezeBlockedCopy(f.findings().length)}（另 ${f.findings().length - 4} 项）`
+                    ? t("contests.freezeBlockedMore", {
+                        summary: freezeBlockedCopy(f.findings().length),
+                        more: f.findings().length - 4,
+                      })
                     : freezeBlockedCopy(f.findings().length)}
                 </Text>
               ) : undefined
@@ -532,25 +535,25 @@ function ContestPanel(props: { id: string }) {
         else={
           <EmptyState
             icon="listPlus"
-            title="这场比赛还没有题目"
+            title={t("contests.emptyProblemsTitle")}
             hint={
               detail().archived
-                ? "比赛已归档，如需加题请先取消归档"
+                ? t("contests.emptyProblemsArchivedHint")
                 : readOnly()
-                  ? "工作区以只读方式打开"
-                  : "从题库里挑题加进来，或者直接新建一道题"
+                  ? t("common.readOnlyWorkspaceHint")
+                  : t("contests.emptyProblemsHint")
             }
             action={
               !viewOnly() ? (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                   <Btn
-                    label="从题库挑题"
+                    label={t("contests.pickProblems")}
                     icon="listPlus"
                     variant="primary"
                     onPress={() => dialog.set({ kind: "pickProblems", contestId: props.id })}
                   />
                   <Btn
-                    label="新建题目加入"
+                    label={t("contests.newProblemAdd")}
                     icon="plus"
                     variant="outline"
                     onPress={() => dialog.set({ kind: "newProblem", addTo: props.id })}
@@ -564,15 +567,15 @@ function ContestPanel(props: { id: string }) {
         <Scroll style={{ flex: 1 }}>
           <View style={{ paddingLeft: GUTTER, paddingRight: GUTTER, paddingBottom: 24, gap: 20 }}>
             <Section
-              title="题目"
+              title={t("contests.section.problems")}
               trailing={
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                   <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                    {`${detail().items.length} 题`}
+                    {t("contests.problemCount", { count: detail().items.length })}
                   </Text>
                   <If when={!viewOnly()}>
                     <Btn
-                      label="挑题"
+                      label={t("contests.pickProblemsShort")}
                       icon="listPlus"
                       size="sm"
                       onPress={() => dialog.set({ kind: "pickProblems", contestId: props.id })}
@@ -583,16 +586,16 @@ function ContestPanel(props: { id: string }) {
               }
             >
               <View style={{ height: 32, paddingLeft: 14, paddingRight: 14, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1 }} class="border-border">
-                <Text style={{ width: 28, fontSize: 12 }} class="text-muted-foreground">题号</Text>
-                <Text style={{ flex: 1, fontSize: 12 }} class="text-muted-foreground">标题</Text>
-                <Text style={{ width: 110, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">时间 / 内存</Text>
-                <Text style={{ width: 44, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">难度</Text>
+                <Text style={{ width: 28, fontSize: 12 }} class="text-muted-foreground">{t("contests.col.label")}</Text>
+                <Text style={{ flex: 1, fontSize: 12 }} class="text-muted-foreground">{t("contests.col.title")}</Text>
+                <Text style={{ width: 110, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("contests.col.limits")}</Text>
+                <Text style={{ width: 44, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("contests.col.rating")}</Text>
               </View>
               <Each of={detail().items} key={(i) => i.label}>
                 {(item, n) => (
                   <View
                     onPress={item().missing ? undefined : () => open(item().label)}
-                    tooltip={item().missing ? tip("题库中找不到这道题，请先恢复或从比赛中移除") : undefined}
+                    tooltip={item().missing ? tip(t("contests.missingProblemTooltip")) : undefined}
                     class={item().missing ? "border-border" : "hover:bg-muted active:bg-accent border-border"}
                     style={{
                       height: 40,
@@ -610,7 +613,7 @@ function ContestPanel(props: { id: string }) {
                   >
                     <Text style={{ width: 28, fontSize: 13.5, fontWeight: 600, fontVariant: ["tabular-nums"] }}>{item().label}</Text>
                     <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13.5 }} class={item().missing ? "text-destructive" : ""}>
-                      {item().missing ? `${item().title}（缺失）` : item().title}
+                      {item().missing ? t("contests.missingSuffix", { title: item().title }) : item().title}
                     </Text>
                     <Text style={{ width: 110, fontSize: 12.5, textAlign: "right", fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                       {[item().limits.time, item().limits.memory].filter(Boolean).join(" / ")}
@@ -622,7 +625,7 @@ function ContestPanel(props: { id: string }) {
                 )}
               </Each>
             </Section>
-            <Section title="概况">
+            <Section title={t("contests.section.overview")}>
               <View style={{ padding: 14 }}>
                 <ContestStats id={props.id} />
               </View>

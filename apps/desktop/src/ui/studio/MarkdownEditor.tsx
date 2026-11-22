@@ -20,6 +20,7 @@ import {
 } from "nsh/base";
 import { PageImage, Preview, VimKeyBridge, type MarkdownSpanJs } from "xcpc-workstation/native";
 import { preview } from "../store";
+import { t } from "../i18n";
 import { Btn, IconBtn, tip } from "../kit";
 import {
   EASE_STANDARD,
@@ -47,6 +48,8 @@ import {
   SLASH_BASIC_COUNT,
   SLASH_COMMANDS,
   SlashPopover,
+  slashSnippetFor,
+  type PublishLanguage,
   type SlashCommand,
 } from "./SlashPopover";
 
@@ -128,6 +131,7 @@ export function MarkdownEditor(props: {
   typewriter?: boolean;
   defaultValue: string;
   placeholder?: string;
+  publishLanguage?: PublishLanguage;
   readOnly: boolean;
   diagnostics: EditorDiagnostic[];
   onRef: (ref: EditorRef) => void;
@@ -548,7 +552,8 @@ export function MarkdownEditor(props: {
       return;
     }
 
-    const template = cmd.template ?? "";
+    const snippet = slashSnippetFor(cmd, props.publishLanguage);
+    const template = snippet?.template ?? "";
     const isMultiLine = template.includes("\n");
     const beforeSlash = lineStr.slice(0, st.startColumn);
     const afterSlash = lineStr.slice(st.endColumn);
@@ -574,10 +579,10 @@ export function MarkdownEditor(props: {
     }
 
     applyEdit(ed, [{ range, text: insertText }]);
-    if (cmd.caret) {
+    if (snippet?.caret) {
       const pos: EditorPosition = {
-        line: baseLine + cmd.caret.line,
-        column: cmd.caret.line === 0 ? baseCol + cmd.caret.column : cmd.caret.column,
+        line: baseLine + snippet.caret.line,
+        column: snippet.caret.line === 0 ? baseCol + snippet.caret.column : snippet.caret.column,
       };
       ed.setSelections([{ anchor: pos, head: pos }]);
     }
@@ -1140,7 +1145,10 @@ export function MarkdownEditor(props: {
   const actions: MarkdownEditorActions = {
     inlineMath: () => void wrap("$"),
     displayMath: () => void block("$$\n\n$$", { line: 1, column: 0 }),
-    table: () => void block("| 列 1 | 列 2 |\n| --- | --- |\n|  |  |", { line: 2, column: 2 }),
+    table: () => {
+      const snippet = slashSnippetFor("table", props.publishLanguage);
+      if (snippet) void block(snippet.template, snippet.caret ?? { line: 2, column: 2 });
+    },
     insertImage,
     openFind,
     closeFind,
@@ -1261,8 +1269,8 @@ export function MarkdownEditor(props: {
   const matchLabel = () => {
     if (!findQuery()) return "";
     const r = searchResult();
-    if (r.count === 0) return "无匹配";
-    return r.current != null ? `${r.current + 1} / ${r.count}` : `${r.count} 处`;
+    if (r.count === 0) return t("editor.find.noMatch");
+    return r.current != null ? `${r.current + 1} / ${r.count}` : t("editor.find.matchCount", { count: r.count });
   };
 
   return (
@@ -1296,14 +1304,14 @@ export function MarkdownEditor(props: {
                 icon={replaceOpen() ? "chevronDown" : "chevronRight"}
                 size={24}
                 iconSize={13}
-                tooltip={tip(replaceOpen() ? "收起替换" : "展开替换")}
+                tooltip={tip(replaceOpen() ? t("editor.find.collapseReplace") : t("editor.find.expandReplace"))}
                 onPress={() => replaceOpen.set(!replaceOpen())}
               />
             </If>
             <Input
               ref={(r) => (findInput = r)}
               value={findQuery()}
-              placeholder="查找"
+              placeholder={t("editor.find.placeholder")}
               autoCapitalize="none"
               autoCorrect={false}
               submitBehavior="submit"
@@ -1323,7 +1331,7 @@ export function MarkdownEditor(props: {
             </Text>
             <View
               onPress={() => caseSensitive.set(!caseSensitive())}
-              tooltip={tip("区分大小写")}
+              tooltip={tip(t("editor.find.caseSensitive"))}
               class={caseSensitive() ? "bg-accent border border-border" : "hover:bg-muted"}
               style={{
                 width: 24,
@@ -1345,7 +1353,7 @@ export function MarkdownEditor(props: {
               size={24}
               iconSize={14}
               disabled={!findQuery() || searchResult().count === 0}
-              tooltip={tip("上一个匹配")}
+              tooltip={tip(t("editor.find.prevMatch"))}
               onPress={() => editor?.run("findPrevious")}
             />
             <IconBtn
@@ -1353,16 +1361,16 @@ export function MarkdownEditor(props: {
               size={24}
               iconSize={14}
               disabled={!findQuery() || searchResult().count === 0}
-              tooltip={tip("下一个匹配")}
+              tooltip={tip(t("editor.find.nextMatch"))}
               onPress={() => editor?.run("findNext")}
             />
-            <IconBtn icon="x" size={24} iconSize={13} tooltip={tip("关闭", "escape")} onPress={closeFind} />
+            <IconBtn icon="x" size={24} iconSize={13} tooltip={tip(t("common.close"), "escape")} onPress={closeFind} />
           </View>
           <If when={replaceOpen() && !props.readOnly}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 30 }}>
               <Input
                 value={replaceQuery()}
-                placeholder="替换为"
+                placeholder={t("editor.find.replacePlaceholder")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 submitBehavior="submit"
@@ -1375,14 +1383,14 @@ export function MarkdownEditor(props: {
                 style={{ fontFamily: EDITOR_MONO }}
               />
               <Btn
-                label="替换"
+                label={t("editor.find.replace")}
                 disabled={!findQuery() || searchResult().count === 0}
                 onPress={() => editor?.replace(replaceQuery())}
                 style={{ height: 26, paddingLeft: 8, paddingRight: 8 }}
                 textStyle={{ fontSize: 12 }}
               />
               <Btn
-                label="全部"
+                label={t("editor.find.replaceAll")}
                 disabled={!findQuery() || searchResult().count === 0}
                 onPress={() => void editor?.replaceAll(replaceQuery())}
                 style={{ height: 26, paddingLeft: 8, paddingRight: 8 }}
@@ -1533,7 +1541,7 @@ export function MarkdownEditor(props: {
                 }}
                 class="text-muted-foreground/40"
               >
-                输入 / 快速插入
+                {t("editor.emptyLineHint")}
               </Text>
             </View>
           )}
@@ -1585,7 +1593,7 @@ export function MarkdownEditor(props: {
               when={!!mathPreview()!.key}
               else={
                 <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-destructive">
-                  {mathPreview()!.error ?? "公式语法有误"}
+                  {mathPreview()!.error ?? t("editor.mathSyntaxError")}
                 </Text>
               }
             >

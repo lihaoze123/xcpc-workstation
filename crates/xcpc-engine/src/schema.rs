@@ -17,8 +17,8 @@ use typst::utils::{LazyHash, PicoStr};
 use typst::{Library, World};
 use typst_layout::PagedDocument;
 use xcpc_domain::{
-    TemplateChoice, TemplateField, TemplateFieldScope, TemplateFieldType, TemplateGroup,
-    TemplateOptionValue, TemplateSchema,
+    LocalizedText, TemplateChoice, TemplateField, TemplateFieldScope, TemplateFieldType,
+    TemplateGroup, TemplateOptionValue, TemplateSchema,
 };
 
 use crate::{Engine, project_id};
@@ -104,8 +104,8 @@ pub(crate) fn inspect(engine: &Engine, import_path: &str) -> TemplateSchema {
 }
 
 fn parse_schema(dict: &Dict) -> TemplateSchema {
-    let name = get_str(dict, "name");
-    let description = get_str(dict, "description");
+    let name = get_localized(dict, "name");
+    let description = get_localized(dict, "description");
     let groups = dict
         .get("groups")
         .ok()
@@ -146,14 +146,14 @@ fn parse_schema(dict: &Dict) -> TemplateSchema {
 
 fn parse_group(dict: &Dict) -> Option<TemplateGroup> {
     let id = get_str(dict, "id")?;
-    let label = get_str(dict, "label").unwrap_or_else(|| id.clone());
+    let label = get_localized(dict, "label").unwrap_or_else(|| LocalizedText::Plain(id.clone()));
     Some(TemplateGroup { id, label })
 }
 
 fn parse_field(dict: &Dict) -> Option<TemplateField> {
     let key = get_str(dict, "key")?;
-    let label = get_str(dict, "label").unwrap_or_else(|| key.clone());
-    let description = get_str(dict, "description");
+    let label = get_localized(dict, "label").unwrap_or_else(|| LocalizedText::Plain(key.clone()));
+    let description = get_localized(dict, "description");
     let field_type = match get_str(dict, "type").as_deref() {
         Some("bool") => TemplateFieldType::Bool,
         Some("enum") => TemplateFieldType::Enum,
@@ -184,13 +184,14 @@ fn parse_field(dict: &Dict) -> Option<TemplateField> {
                     .filter_map(|item| match item {
                         Value::Dict(d) => {
                             let value = get_str(d, "value")?;
-                            let label = get_str(d, "label").unwrap_or_else(|| value.clone());
+                            let label = get_localized(d, "label")
+                                .unwrap_or_else(|| LocalizedText::Plain(value.clone()));
                             Some(TemplateChoice { value, label })
                         }
                         Value::Str(s) => {
                             let v = s.as_str().to_owned();
                             Some(TemplateChoice {
-                                label: v.clone(),
+                                label: LocalizedText::Plain(v.clone()),
                                 value: v,
                             })
                         }
@@ -219,7 +220,7 @@ fn parse_field(dict: &Dict) -> Option<TemplateField> {
     let min = get_f64(dict, "min");
     let max = get_f64(dict, "max");
     let step = get_f64(dict, "step");
-    let placeholder = get_str(dict, "placeholder");
+    let placeholder = get_localized(dict, "placeholder");
     let mut when = BTreeMap::new();
     if let Ok(Value::Dict(when_dict)) = dict.get("when") {
         for (k, v) in when_dict.iter() {
@@ -280,6 +281,22 @@ fn default_for_type(ty: TemplateFieldType) -> TemplateOptionValue {
     }
 }
 
+fn get_localized(dict: &Dict, key: &str) -> Option<LocalizedText> {
+    match dict.get(key).ok()? {
+        Value::Str(s) => Some(LocalizedText::Plain(s.as_str().to_owned())),
+        Value::Dict(d) => {
+            let mut map = BTreeMap::new();
+            for (k, v) in d.iter() {
+                if let Value::Str(s) = v {
+                    map.insert(k.as_str().to_owned(), s.as_str().to_owned());
+                }
+            }
+            (!map.is_empty()).then_some(LocalizedText::Map(map))
+        }
+        _ => None,
+    }
+}
+
 fn get_str(dict: &Dict, key: &str) -> Option<String> {
     match dict.get(key).ok()? {
         Value::Str(s) => Some(s.as_str().to_owned()),
@@ -292,5 +309,109 @@ fn get_f64(dict: &Dict, key: &str) -> Option<f64> {
         Value::Float(f) => Some(*f),
         Value::Int(i) => Some(*i as f64),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Engine, FontOptions};
+
+    #[test]
+    fn parses_plain_and_bilingual_localized_schema_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let tpl_dir = dir.path().join("templates");
+        std::fs::create_dir_all(&tpl_dir).unwrap();
+        std::fs::write(
+            tpl_dir.join("test-i18n.typ"),
+            r#"
+#let schema = (
+  name: (zh: "测试模板", en: "Test Template"),
+  description: "Plain description",
+  groups: (
+    (id: "g1", label: (zh: "分组一", en: "Group 1")),
+    (id: "g2", label: "Plain Group"),
+    (id: "g3", label: (:)),
+  ),
+  fields: (
+    (
+      key: "cover",
+      label: (zh: "封面", en: "Cover"),
+      description: (zh: "显示封面", en: "Show cover"),
+      type: "enum",
+      scope: "book",
+      group: "g1",
+      default: "auto",
+      placeholder: (zh: "选择模式", en: "Select mode"),
+      choices: (
+        (value: "auto", label: (zh: "自动", en: "Auto")),
+        (value: "off", label: "Off"),
+        "raw-choice",
+      ),
+    ),
+    (
+      key: "note",
+      label: "Plain Label",
+      description: (:),
+      type: "string",
+      default: "",
+      placeholder: "Type here",
+    ),
+  ),
+)
+"#,
+        )
+        .unwrap();
+        let engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
+        let schema = inspect(&engine, "/templates/test-i18n.typ");
+        assert_eq!(
+            schema.name,
+            Some(LocalizedText::bilingual("测试模板", "Test Template"))
+        );
+        assert_eq!(
+            schema.description,
+            Some(LocalizedText::Plain("Plain description".to_owned()))
+        );
+        assert_eq!(schema.groups.len(), 3);
+        assert_eq!(
+            schema.groups[0].label,
+            LocalizedText::bilingual("分组一", "Group 1")
+        );
+        assert_eq!(
+            schema.groups[1].label,
+            LocalizedText::Plain("Plain Group".to_owned())
+        );
+        // Empty dict treated as missing -> falls back to group id.
+        assert_eq!(
+            schema.groups[2].label,
+            LocalizedText::Plain("g3".to_owned())
+        );
+
+        assert_eq!(schema.fields.len(), 2);
+        let cover = &schema.fields[0];
+        assert_eq!(cover.label.resolve("zh-CN"), "封面");
+        assert_eq!(cover.label.resolve("en"), "Cover");
+        assert_eq!(
+            cover.description.as_ref().map(|d| d.resolve("en")),
+            Some("Show cover")
+        );
+        assert_eq!(
+            cover.placeholder.as_ref().map(|p| p.resolve("zh-CN")),
+            Some("选择模式")
+        );
+        assert_eq!(cover.choices.len(), 3);
+        assert_eq!(cover.choices[0].label.resolve("en"), "Auto");
+        assert_eq!(cover.choices[0].label.resolve("zh-CN"), "自动");
+        assert_eq!(cover.choices[1].label.resolve("zh-CN"), "Off");
+        assert_eq!(cover.choices[2].label.resolve("en"), "raw-choice");
+
+        let note = &schema.fields[1];
+        assert_eq!(note.label, LocalizedText::Plain("Plain Label".to_owned()));
+        // Empty dict treated as missing -> None.
+        assert_eq!(note.description, None);
+        assert_eq!(
+            note.placeholder,
+            Some(LocalizedText::Plain("Type here".to_owned()))
+        );
     }
 }

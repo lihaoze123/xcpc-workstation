@@ -779,14 +779,19 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                         "{mark}\t{}\t{}\t{}\t{} field(s)",
                         tpl.id,
                         tpl.path,
-                        tpl.name,
+                        tpl.name.resolve("zh-CN"),
                         tpl.schema.fields.len()
                     );
                 }
                 if !presets.is_empty() {
                     println!("\npresets:");
                     for p in &presets {
-                        println!("  {}\t{}\t{}", p.id, p.name, p.description);
+                        println!(
+                            "  {}\t{}\t{}",
+                            p.id,
+                            p.name.resolve("zh-CN"),
+                            p.description.resolve("zh-CN")
+                        );
                     }
                 }
             }
@@ -807,14 +812,17 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                     .expect("serializable")
                 );
             } else {
-                println!("{} ({})", info.name, info.id);
+                println!("{} ({})", info.name.resolve("zh-CN"), info.id);
                 if let Some(desc) = &info.description {
-                    println!("{desc}");
+                    println!("{}", desc.resolve("zh-CN"));
                 }
                 for f in &info.schema.fields {
                     println!(
                         "  {}\t{:?}\t{:?}\t{}",
-                        f.key, f.scope, f.field_type, f.label
+                        f.key,
+                        f.scope,
+                        f.field_type,
+                        f.label.resolve("zh-CN")
                     );
                 }
             }

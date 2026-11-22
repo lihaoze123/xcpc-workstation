@@ -40,8 +40,8 @@ pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
     AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
     ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
-    OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
+    DialogLabelsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs,
+    MathPreviewJs, OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
     PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
     ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
     ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
@@ -194,14 +194,21 @@ impl Preview {
     pub async fn pick_and_init_example_workspace(
         this: Instance<Self>,
         template: Option<String>,
+        labels: Option<DialogLabelsJs>,
     ) -> WorkspaceInfo {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
         let start = this.with(|p| p.state.workspace_root());
-        let mut dialog = OpenDialog::folders()
-            .title("选择示例工作区存放目录")
-            .button_label("创建示例");
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择示例工作区存放目录",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "创建示例",
+        );
+        let mut dialog = OpenDialog::folders().title(title).button_label(button);
         if let Some(dir) = start.as_ref().and_then(|r| r.parent()) {
             dialog = dialog.directory(dir);
         }
@@ -240,7 +247,7 @@ impl Preview {
     /// Opens the system folder picker and reports whether the selected directory belongs to
     /// an existing workspace (`isWorkspace`, `workspaceRoot`), allowing the GUI to offer
     /// initializing a new workspace when `isWorkspace` is false.
-    pub async fn pick_folder(this: Instance<Self>) -> PickedFolder {
+    pub async fn pick_folder(this: Instance<Self>, labels: Option<DialogLabelsJs>) -> PickedFolder {
         if this.is_disposed() {
             return PickedFolder {
                 cancelled: true,
@@ -248,9 +255,15 @@ impl Preview {
             };
         }
         let start = this.with(|p| p.state.workspace_root());
-        let mut dialog = OpenDialog::folders()
-            .title("选择工作区目录")
-            .button_label("选择");
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择工作区目录",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "选择",
+        );
+        let mut dialog = OpenDialog::folders().title(title).button_label(button);
         if let Some(dir) = start.as_ref().and_then(|r| r.parent()) {
             dialog = dialog.directory(dir);
         }
@@ -296,14 +309,23 @@ impl Preview {
     /// (it, or the nearest folder above it with a `workspace.toml`). Cancelled, the
     /// workspace stays as it was; a folder in no workspace leaves it too, with the
     /// error said.
-    pub async fn pick_workspace(this: Instance<Self>) -> WorkspaceInfo {
+    pub async fn pick_workspace(
+        this: Instance<Self>,
+        labels: Option<DialogLabelsJs>,
+    ) -> WorkspaceInfo {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
         let start = this.with(|p| p.state.workspace_root());
-        let mut dialog = OpenDialog::folders()
-            .title("打开工作区")
-            .button_label("打开");
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "打开工作区",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "打开",
+        );
+        let mut dialog = OpenDialog::folders().title(title).button_label(button);
         if let Some(dir) = start.as_ref().and_then(|r| r.parent()) {
             dialog = dialog.directory(dir);
         }
@@ -590,22 +612,22 @@ impl Preview {
         }
     }
 
-    /// Loads merged theme overrides from `<dataDir>/theme.toml` and `<workspace>/.xcpc/theme.toml`.
+    /// Loads user-global theme overrides from `<dataDir>/theme.toml`.
     pub fn load_theme_overrides(&self) -> ThemeOverridesJs {
-        let ws_root = self.state.workspace_root();
-        theme_config::load_theme_overrides(self.state.data_dir.as_deref(), ws_root.as_deref())
+        theme_config::load_theme_overrides(self.state.data_dir.as_deref())
     }
 
-    /// Ensures `theme.toml` exists (preferring workspace `.xcpc/theme.toml` if present,
-    /// else `<dataDir>/theme.toml`) and reveals it in the system file manager.
+    /// Detects the operating system UI locale and normalizes it to `"zh-CN"` or `"en"`.
+    pub fn system_locale(&self) -> String {
+        detect_system_locale().to_owned()
+    }
+
+    /// Ensures `<dataDir>/theme.toml` exists and reveals it in the system file manager.
     pub async fn open_theme_file(this: Instance<Self>) -> ActionResult {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let ensured = this.with(|p| {
-            let ws_root = p.state.workspace_root();
-            theme_config::ensure_theme_file(p.state.data_dir.as_deref(), ws_root.as_deref())
-        });
+        let ensured = this.with(|p| theme_config::ensure_theme_file(p.state.data_dir.as_deref()));
         let path = match ensured {
             Ok(p) => p,
             Err(e) => return ActionResult::err("io", e),
@@ -695,6 +717,7 @@ impl Preview {
         target: String,
         id: String,
         label: Option<String>,
+        labels: Option<DialogLabelsJs>,
     ) -> Result<Option<String>, JsError> {
         if this.is_disposed() {
             return Err(JsError::Error("preview disposed".into()));
@@ -707,11 +730,20 @@ impl Preview {
         if let Err(err) = check {
             return Err(JsError::Error(err));
         }
+        let title = label_or(labels.as_ref().and_then(|l| l.title.as_deref()), "插入图片");
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "插入",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "图片文件",
+        );
         let dialog = OpenDialog::files()
-            .title("插入图片")
-            .button_label("插入")
+            .title(title)
+            .button_label(button)
             .filter(FileFilter::new(
-                "图片文件",
+                filter,
                 ["png", "jpg", "jpeg", "svg", "webp", "pdf"],
             ));
         let picked = pick_paths(dialog).await.map_err(JsError::Error)?;
@@ -994,6 +1026,7 @@ impl Preview {
     pub async fn pick_and_import_template_image(
         this: Instance<Self>,
         contest_id: Option<String>,
+        labels: Option<DialogLabelsJs>,
     ) -> Result<Option<String>, JsError> {
         if this.is_disposed() {
             return Err(JsError::Error("preview disposed".into()));
@@ -1005,11 +1038,23 @@ impl Preview {
         if let Err(err) = check {
             return Err(JsError::Error(err));
         }
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择模板图片",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "选择",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "图片文件",
+        );
         let dialog = OpenDialog::files()
-            .title("选择模板图片")
-            .button_label("选择")
+            .title(title)
+            .button_label(button)
             .filter(FileFilter::new(
-                "图片文件",
+                filter,
                 ["png", "jpg", "jpeg", "svg", "webp", "pdf"],
             ));
         let picked = pick_paths(dialog).await.map_err(JsError::Error)?;
@@ -1027,7 +1072,7 @@ impl Preview {
         Ok(Some(rel))
     }
 
-    /// Ensures `.xcpc/preamble.typ` exists and reveals it in the system file manager.
+    /// Ensures `templates/preamble.typ` exists and opens it in the external editor.
     pub async fn open_preamble_file(this: Instance<Self>) -> ActionResult {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
@@ -1252,6 +1297,61 @@ async fn open_in_external_editor(path: PathBuf) -> Result<(), String> {
         return Ok(());
     }
     reveal_path(path).await
+}
+
+fn label_or<'a>(opt: Option<&'a str>, fallback: &'a str) -> &'a str {
+    opt.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(fallback)
+}
+
+#[cfg(windows)]
+fn windows_user_locale() -> Option<String> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetUserDefaultLocaleName(lp_locale_name: *mut u16, cch_locale_name: i32) -> i32;
+    }
+    let mut buf = [0u16; 85];
+    // SAFETY: `buf` is a valid writable buffer of `buf.len()` UTF-16 code units.
+    let len = unsafe { GetUserDefaultLocaleName(buf.as_mut_ptr(), buf.len() as i32) };
+    if len > 1 {
+        let slice = &buf[..(len as usize - 1)];
+        let s = String::from_utf16_lossy(slice);
+        if !s.trim().is_empty() {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn detect_system_locale() -> &'static str {
+    #[cfg(windows)]
+    if let Some(raw) = windows_user_locale() {
+        return normalize_system_locale(&raw);
+    }
+
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] {
+        if let Ok(val) = std::env::var(var)
+            && !val.trim().is_empty()
+        {
+            return normalize_system_locale(&val);
+        }
+    }
+    "en"
+}
+
+pub(crate) fn normalize_system_locale(raw: &str) -> &'static str {
+    let Some(first) = raw.split(':').map(str::trim).find(|s| !s.is_empty()) else {
+        return "en";
+    };
+    let no_mod = first.split('@').next().unwrap_or(first);
+    let no_enc = no_mod.split('.').next().unwrap_or(no_mod);
+    let norm = no_enc.trim().replace('_', "-").to_ascii_lowercase();
+    if norm.starts_with("zh") {
+        "zh-CN"
+    } else {
+        "en"
+    }
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ import { Input } from "nsh/base";
 import type { ContestDetailJs, ContestItemDetailJs, PreviewDiagnostic } from "xcpc-workstation/native";
 import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
+import { resolveLocalized, t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
 import { Modal } from "../Modal";
@@ -127,15 +128,15 @@ export function Inspector(props: {
       >
         <Segmented
           items={[
-            { value: "info" as InspectorTab, label: "信息" },
-            { value: "layout" as InspectorTab, label: "版式" },
+            { value: "info" as InspectorTab, label: t("inspector.tab.info") },
+            { value: "layout" as InspectorTab, label: t("inspector.tab.layout") },
           ]}
-          itemWidth={58}
+          itemWidth={62}
           value={activeTab()}
           onChange={(v) => activeTab.set(v)}
         />
         <View style={{ flex: 1 }} />
-        <IconBtn icon="x" tooltip={tip("关闭", "mod+i")} onPress={props.onClose} />
+        <IconBtn icon="x" tooltip={tip(t("common.close"), "mod+i")} onPress={props.onClose} />
       </View>
 
       <If when={everOpened()}>
@@ -173,7 +174,7 @@ export function Inspector(props: {
                 >
                   <Icon name="image" size={15} tone="secondary-foreground" />
                   <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                    {`素材 ${assetCount()} 个`}
+                    {t("inspector.assetsCount", { count: assetCount() })}
                   </Text>
                   <Icon name="chevronRight" size={14} tone="muted-foreground" />
                 </View>
@@ -208,7 +209,7 @@ export function Inspector(props: {
       <ForkTemplateModal
         open={!!forkModal()}
         sourceId={forkModal()?.sourceId ?? "olymp-classic"}
-        sourceName={forkModal()?.sourceName ?? "XCPC 经典"}
+        sourceName={forkModal()?.sourceName ?? t("newWorkspace.tpl.olympClassic")}
         existingIds={catalog().templates.map((t) => t.id)}
         onCreated={(newId) => {
           if (props.target === "contest" && props.contest && !props.contest.frozen && !props.contest.archived && !info().readOnly) {
@@ -335,7 +336,7 @@ function Field(props: {
           {props.label}
         </Text>
         <If when={props.overridden && !props.readOnly}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip("还原为题库的值")} onPress={() => props.onRestore?.()} />
+          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(t("common.restoreLibraryValue"))} onPress={() => props.onRestore?.()} />
         </If>
       </View>
       <View style={{ flexDirection: "row" }}>
@@ -389,10 +390,10 @@ function ProblemInfoTab(props: {
   const write = (patch: Parameters<typeof preview.updateProblemMeta>[1]) => !wsReadOnly() && props.done(preview.updateProblemMeta(props.id, patch));
   const owner = () => `problem:${props.id}`;
   return (
-    <Section title="题目信息" last={!props.hasFollowingSection}>
+    <Section title={t("inspector.problemInfo")} last={!props.hasFollowingSection}>
       <Field
         ownerKey={owner()}
-        label="标题"
+        label={t("inspector.field.title")}
         readOnly={wsReadOnly()}
         value={d().title}
         onCommit={(v) => {
@@ -402,10 +403,10 @@ function ProblemInfoTab(props: {
       />
       <Field
         ownerKey={owner()}
-        label="难度"
+        label={t("inspector.field.rating")}
         numeric
         readOnly={wsReadOnly()}
-        placeholder="未分级"
+        placeholder={t("inspector.field.unrated")}
         value={d().rating == null ? "" : String(d().rating)}
         onCommit={(v) => {
           if (v === "") {
@@ -420,7 +421,7 @@ function ProblemInfoTab(props: {
       />
       <Field
         ownerKey={owner()}
-        label="标签"
+        label={t("inspector.field.tags")}
         readOnly={wsReadOnly()}
         value={d().tags.join(", ")}
         placeholder="dp, greedy"
@@ -428,21 +429,21 @@ function ProblemInfoTab(props: {
       />
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Field ownerKey={owner()} label="时间限制" readOnly={wsReadOnly()} value={d().limits.time ?? ""} placeholder="1 s" onCommit={(v) => write({ time: nul(v) })} />
+          <Field ownerKey={owner()} label={t("inspector.field.timeLimit")} readOnly={wsReadOnly()} value={d().limits.time ?? ""} placeholder="1 s" onCommit={(v) => write({ time: nul(v) })} />
         </View>
         <View style={{ flex: 1 }}>
-          <Field ownerKey={owner()} label="空间限制" readOnly={wsReadOnly()} value={d().limits.memory ?? ""} placeholder="256 MB" onCommit={(v) => write({ memory: nul(v) })} />
+          <Field ownerKey={owner()} label={t("inspector.field.memoryLimit")} readOnly={wsReadOnly()} value={d().limits.memory ?? ""} placeholder="256 MB" onCommit={(v) => write({ memory: nul(v) })} />
         </View>
       </View>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Field ownerKey={owner()} label="输入文件" readOnly={wsReadOnly()} value={d().limits.input ?? ""} placeholder="标准输入" onCommit={(v) => write({ input: nul(v) })} />
+          <Field ownerKey={owner()} label={t("inspector.field.inputFile")} readOnly={wsReadOnly()} value={d().limits.input ?? ""} placeholder={t("inspector.field.stdin")} onCommit={(v) => write({ input: nul(v) })} />
         </View>
         <View style={{ flex: 1 }}>
-          <Field ownerKey={owner()} label="输出文件" readOnly={wsReadOnly()} value={d().limits.output ?? ""} placeholder="标准输出" onCommit={(v) => write({ output: nul(v) })} />
+          <Field ownerKey={owner()} label={t("inspector.field.outputFile")} readOnly={wsReadOnly()} value={d().limits.output ?? ""} placeholder={t("inspector.field.stdout")} onCommit={(v) => write({ output: nul(v) })} />
         </View>
       </View>
-      <Field ownerKey={owner()} label="作者" readOnly={wsReadOnly()} value={d().author ?? ""} onCommit={(v) => write({ author: nul(v) })} />
+      <Field ownerKey={owner()} label={t("inspector.field.author")} readOnly={wsReadOnly()} value={d().author ?? ""} onCommit={(v) => write({ author: nul(v) })} />
     </Section>
   );
 }
@@ -480,7 +481,7 @@ function ContestInfoTab(props: {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name={archived() ? "folder" : frozen() ? "lock" : "stamp"} size={14} tone={archived() || frozen() ? "secondary-foreground" : "foreground"} />
             <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }}>
-              {archived() ? (frozen() ? "已归档  已定稿" : "已归档") : frozen() ? "已定稿" : "未定稿"}
+              {archived() ? (frozen() ? t("contests.archivedAndFinalized") : t("contests.archived")) : frozen() ? t("contests.finalized") : t("contests.unfinalized")}
             </Text>
             <If
               when={archived()}
@@ -490,7 +491,7 @@ function ContestInfoTab(props: {
                   else={
                     <Btn
                       disabled={f.busy() || wsReadOnly() || c().items.length === 0}
-                      tooltip={wsReadOnly() ? tip("只读工作区无法定稿") : undefined}
+                      tooltip={wsReadOnly() ? tip(t("contests.readOnlyCannotFinalize")) : undefined}
                       onPress={() => void f.freeze(c().id).then(() => props.done({ ok: true }))}
                       style={{ minWidth: 74 }}
                     >
@@ -500,16 +501,16 @@ function ContestInfoTab(props: {
                         </If>
                       </View>
                       <Text class="text-foreground" style={{ fontSize: 13 }}>
-                        定稿
+                        {t("contests.finalize")}
                       </Text>
                     </Btn>
                   }
                 >
                   <Btn
-                    label="重新编辑"
+                    label={t("contests.reopen")}
                     icon="lockOpen"
                     disabled={wsReadOnly()}
-                    tooltip={wsReadOnly() ? tip("只读工作区无法重新编辑") : undefined}
+                    tooltip={wsReadOnly() ? tip(t("contests.readOnlyCannotReopen")) : undefined}
                     onPress={() => unfreezeFor.set(c().id)}
                     testID="inspector-unfreeze"
                   />
@@ -517,10 +518,10 @@ function ContestInfoTab(props: {
               }
             >
               <Btn
-                label="取消归档"
+                label={t("contests.unarchive")}
                 icon="rotateCcw"
                 disabled={wsReadOnly()}
-                tooltip={wsReadOnly() ? tip("只读工作区无法取消归档") : undefined}
+                tooltip={wsReadOnly() ? tip(t("contests.readOnlyCannotUnarchive")) : undefined}
                 onPress={() => props.done(preview.setContestArchived(c().id, false))}
                 testID="inspector-unarchive"
               />
@@ -528,10 +529,10 @@ function ContestInfoTab(props: {
           </View>
           <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
             {archived()
-              ? "比赛已归档，当前只读；取消归档后可恢复编辑"
+              ? t("inspector.status.archivedHint")
               : frozen()
-                ? "内容已锁定，仅支持查看和导出"
-                : "定稿后，题库里的修改不再影响这场比赛"}
+                ? t("inspector.status.finalizedHint")
+                : t("inspector.status.editableHint")}
           </Text>
         </View>
         <ErrorDisplay
@@ -550,10 +551,10 @@ function ContestInfoTab(props: {
         />
       </Section>
 
-      <Section title="比赛信息" last={!props.item && !props.hasFollowingSection}>
+      <Section title={t("inspector.contestInfo")} last={!props.item && !props.hasFollowingSection}>
         <Field
           ownerKey={contestOwner()}
-          label="比赛名称"
+          label={t("inspector.field.contestName")}
           readOnly={locked()}
           value={c().name}
           onCommit={(v) => {
@@ -563,16 +564,16 @@ function ContestInfoTab(props: {
         />
         <View style={{ flexDirection: "row", gap: 8 }}>
           <View style={{ flex: 1 }}>
-            <Field ownerKey={contestOwner()} label="日期" readOnly={locked()} value={c().date ?? ""} placeholder="2026-04-12" onCommit={(v) => meta({ date: nul(v) })} />
+            <Field ownerKey={contestOwner()} label={t("inspector.field.date")} readOnly={locked()} value={c().date ?? ""} placeholder="2026-04-12" onCommit={(v) => meta({ date: nul(v) })} />
           </View>
           <View style={{ flex: 1 }}>
-            <Field ownerKey={contestOwner()} label="地点" readOnly={locked()} value={c().location ?? ""} onCommit={(v) => meta({ location: nul(v) })} />
+            <Field ownerKey={contestOwner()} label={t("inspector.field.location")} readOnly={locked()} value={c().location ?? ""} onCommit={(v) => meta({ location: nul(v) })} />
           </View>
         </View>
-        <Field ownerKey={contestOwner()} label="署名" readOnly={locked()} value={c().author ?? ""} onCommit={(v) => meta({ author: nul(v) })} />
+        <Field ownerKey={contestOwner()} label={t("inspector.field.signature")} readOnly={locked()} value={c().author ?? ""} onCommit={(v) => meta({ author: nul(v) })} />
         <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
           <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
-            语言
+            {t("inspector.field.language")}
           </Text>
           <Segmented
             disabled={locked()}
@@ -591,10 +592,10 @@ function ContestInfoTab(props: {
         {(item) => {
           const itemOwner = () => `contest:${c().id}:item:${item().label}:${item().id}`;
           return (
-            <Section title={`${item().label} 题在这场比赛中的设置`} last={!props.hasFollowingSection}>
+            <Section title={t("inspector.itemOverrides", { label: item().label })} last={!props.hasFollowingSection}>
               <Field
                 ownerKey={itemOwner()}
-                label="标题"
+                label={t("inspector.field.title")}
                 readOnly={locked()}
                 value={item().title}
                 placeholder={item().originalTitle}
@@ -606,7 +607,7 @@ function ContestInfoTab(props: {
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
-                    label="时间限制"
+                    label={t("inspector.field.timeLimit")}
                     readOnly={locked()}
                     value={item().limits.time ?? ""}
                     placeholder={item().originalLimits.time ?? ""}
@@ -618,7 +619,7 @@ function ContestInfoTab(props: {
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
-                    label="空间限制"
+                    label={t("inspector.field.memoryLimit")}
                     readOnly={locked()}
                     value={item().limits.memory ?? ""}
                     placeholder={item().originalLimits.memory ?? ""}
@@ -632,10 +633,10 @@ function ContestInfoTab(props: {
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
-                    label="输入文件"
+                    label={t("inspector.field.inputFile")}
                     readOnly={locked()}
                     value={item().limits.input ?? ""}
-                    placeholder={item().originalLimits.input ?? "标准输入"}
+                    placeholder={item().originalLimits.input ?? t("inspector.field.stdin")}
                     overridden={item().overriddenInput}
                     onCommit={(v) => over({ input: nul(v) })}
                     onRestore={() => over({ input: null })}
@@ -644,10 +645,10 @@ function ContestInfoTab(props: {
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
-                    label="输出文件"
+                    label={t("inspector.field.outputFile")}
                     readOnly={locked()}
                     value={item().limits.output ?? ""}
-                    placeholder={item().originalLimits.output ?? "标准输出"}
+                    placeholder={item().originalLimits.output ?? t("inspector.field.stdout")}
                     overridden={item().overriddenOutput}
                     onCommit={(v) => over({ output: nul(v) })}
                     onRestore={() => over({ output: null })}
@@ -694,7 +695,8 @@ function ContestLayoutTab(props: {
   const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
   const wsDefaultName = computed(() => {
     const defId = props.catalog.default || "olymp-classic";
-    return props.catalog.templates.find((t) => t.id === defId)?.name ?? defId;
+    const found = props.catalog.templates.find((t) => t.id === defId);
+    return found ? resolveLocalized(found.name) || defId : defId;
   });
   const localTplInfo = computed(() => (hasLocal() ? parseContestTemplateInfo(c().contestTemplateJson) : undefined));
   const wsTplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
@@ -718,7 +720,7 @@ function ContestLayoutTab(props: {
 
   return (
     <View>
-      <Section title="模板">
+      <Section title={t("template.label")}>
         <If
           when={hasLocal()}
           else={
@@ -729,7 +731,7 @@ function ContestLayoutTab(props: {
                   <TemplatePicker
                     templates={props.catalog.templates}
                     value={effTemplateId()}
-                    inheritedLabel={`还原为工作区默认（${wsDefaultName()}）`}
+                    inheritedLabel={t("template.restoreWorkspaceDefaultNamed", { name: wsDefaultName() })}
                     overridden={templateOverridden()}
                     readOnly={locked()}
                     onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
@@ -739,15 +741,15 @@ function ContestLayoutTab(props: {
                   <If when={!locked()}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                       <Btn
-                        label="编辑模板"
+                        label={t("settings.layout.editTemplate")}
                         icon="filePenLine"
-                        tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
+                        tooltip={tip(t("settings.layout.editTemplateTooltip"))}
                         onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
                       />
                       <Btn
-                        label="独立为本场模板"
+                        label={t("inspector.layout.detach")}
                         icon="copy"
-                        tooltip={tip("复制一份仅对本场比赛生效的模板，修改不影响其他比赛")}
+                        tooltip={tip(t("inspector.layout.detachTooltip"))}
                         onPress={() => props.done(preview.detachContestTemplate(c().id))}
                       />
                     </View>
@@ -760,25 +762,25 @@ function ContestLayoutTab(props: {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Icon name="triangleAlert" size={14} tone="destructive" />
                     <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
-                      {`模板「${effTemplateId()}」不存在`}
+                      {t("inspector.layout.missingTitle", { id: effTemplateId() })}
                     </Text>
                   </View>
                   <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
-                    工作区中缺少该模板文件，无法排版预览。
+                    {t("inspector.layout.missingDesc")}
                   </Text>
                   <If when={!locked()}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
                       <If when={canInstallMissingPreset()}>
                         <Btn
                           variant="primary"
-                          label="从预设安装"
+                          label={t("settings.layout.installFromPreset")}
                           icon="plus"
                           onPress={() => props.done(preview.installPresetTemplate(effTemplateId(), effTemplateId()))}
                         />
                       </If>
                       <Btn
                         variant={canInstallMissingPreset() ? undefined : "primary"}
-                        label="从预设添加模板…"
+                        label={t("template.addFromPresetEllipsis")}
                         icon="plus"
                         onPress={props.onRequestPreset}
                       />
@@ -789,7 +791,7 @@ function ContestLayoutTab(props: {
                   <TemplatePicker
                     templates={props.catalog.templates}
                     value={effTemplateId()}
-                    inheritedLabel={`还原为工作区默认（${wsDefaultName()}）`}
+                    inheritedLabel={t("template.restoreWorkspaceDefaultNamed", { name: wsDefaultName() })}
                     overridden={templateOverridden()}
                     readOnly={locked()}
                     onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
@@ -805,24 +807,24 @@ function ContestLayoutTab(props: {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <Icon name="fileText" size={14} tone="primary" />
               <Text style={{ flex: 1, fontSize: 13, fontWeight: 600 }} class="text-foreground">
-                本场专属模板
+                {t("inspector.layout.localTitle")}
               </Text>
             </View>
             <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
               {localTplInfo()?.name
-                ? `当前使用本场比赛独立模板「${localTplInfo()!.name}」，修改不影响其他比赛；在外部编辑器保存后预览会自动刷新。`
-                : "当前使用本场比赛独立模板，修改不影响其他比赛；在外部编辑器保存后预览会自动刷新。"}
+                ? t("inspector.layout.localDescNamed", { name: resolveLocalized(localTplInfo()!.name) })
+                : t("inspector.layout.localDesc")}
             </Text>
             <If when={!locked()}>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                 <Btn
-                  label="编辑本场模板"
+                  label={t("inspector.layout.editLocal")}
                   icon="filePenLine"
-                  tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
+                  tooltip={tip(t("settings.layout.editTemplateTooltip"))}
                   onPress={() => void preview.openContestTemplateFile(c().id).then((res) => !res.ok && props.done(res))}
                 />
                 <Btn
-                  label="恢复引用工作区模板"
+                  label={t("inspector.layout.restoreWorkspaceRef")}
                   icon="rotateCcw"
                   onPress={() => confirmRestoreOpen.set(true)}
                 />
@@ -843,7 +845,7 @@ function ContestLayoutTab(props: {
           fonts={props.catalog.fonts}
           contestId={c().id}
           readOnly={locked()}
-          restoreTooltip={hasLocal() ? "恢复模板默认值" : "还原为工作区默认值"}
+          restoreTooltip={hasLocal() ? t("common.restoreTemplateDefault") : t("common.restoreWorkspaceDefault")}
           sectioned
           lastSection={!props.item || !hasProblemFields() ? locked() : false}
           onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(optsNs(), key, value) })}
@@ -855,7 +857,7 @@ function ContestLayoutTab(props: {
           const origOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().originalOptionsJson)[optsNs()] ?? {});
           const overOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().overrideOptionsJson)[optsNs()] ?? {});
           return (
-            <Section title={`${item().label} 题版式设置`} last={locked()}>
+            <Section title={t("inspector.layout.itemLayout", { label: item().label })} last={locked()}>
               <TemplateOptionsEditor
                 ownerKey={`contest:${c().id}:item:${item().label}:${item().id}:${optsNs()}`}
                 template={tplInfo()}
@@ -866,7 +868,7 @@ function ContestLayoutTab(props: {
                 fonts={props.catalog.fonts}
                 contestId={c().id}
                 readOnly={locked()}
-                restoreTooltip="还原为题库的值"
+                restoreTooltip={t("common.restoreLibraryValue")}
                 hideGroupLabels
                 onChange={(key, value) => over({ optionsJson: encodeSingleOptionPatch(optsNs(), key, value) })}
               />
@@ -876,20 +878,20 @@ function ContestLayoutTab(props: {
       </If>
 
       <If when={!locked()}>
-        <Section title="进阶定制" last>
+        <Section title={t("inspector.layout.advanced")} last>
           <View style={{ gap: 6 }}>
             <If when={!hasLocal() && !!tplInfo()}>
               <Btn
-                label="基于当前模板新建副本"
+                label={t("inspector.layout.forkCurrent")}
                 icon="copy"
-                tooltip={tip("创建一份新的工作区共享模板，可供其他比赛选用")}
-                onPress={() => props.onRequestFork(effTemplateId(), tplInfo()?.name ?? effTemplateId())}
+                tooltip={tip(t("inspector.layout.forkCurrentTooltip"))}
+                onPress={() => props.onRequestFork(effTemplateId(), tplInfo() ? resolveLocalized(tplInfo()!.name) || effTemplateId() : effTemplateId())}
               />
             </If>
             <Btn
-              label="自定义样式代码"
+              label={t("settings.layout.preamble")}
               icon="code"
-              tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
+              tooltip={tip(t("settings.layout.preambleTooltip"))}
               onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
             />
           </View>
@@ -904,17 +906,17 @@ function ContestLayoutTab(props: {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
-                恢复引用工作区模板？
+                {t("inspector.layout.restoreConfirmTitle")}
               </Text>
               <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-muted-foreground">
-                将永久删除本场的专属模板文件（不可撤销），并恢复使用工作区模板。如需保留，请先手动备份。
+                {t("inspector.layout.restoreConfirmDesc")}
               </Text>
             </View>
           </View>
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-            <Btn label="取消" onPress={() => confirmRestoreOpen.set(false)} />
+            <Btn label={t("common.cancel")} onPress={() => confirmRestoreOpen.set(false)} />
             <Btn
-              label="恢复引用"
+              label={t("inspector.layout.restoreConfirmAction")}
               variant="danger"
               onPress={() => {
                 confirmRestoreOpen.set(false);
@@ -948,35 +950,35 @@ function ProblemLayoutTab(props: {
 
   return (
     <View>
-      <Section title="当前模板" last={!hasProblemFields() && wsReadOnly()}>
+      <Section title={t("inspector.layout.currentTemplate")} last={!hasProblemFields() && wsReadOnly()}>
         <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name={tplInfo() ? "fileText" : "triangleAlert"} size={14} tone={tplInfo() ? "secondary-foreground" : "destructive"} />
             <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
-              {tplInfo()?.name ?? `${tplId()}（缺失）`}
+              {tplInfo() ? resolveLocalized(tplInfo()!.name) || tplId() : t("contests.missingSuffix", { title: tplId() })}
             </Text>
           </View>
           <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
             {tplInfo()
-              ? "单题预览沿用工作区默认模板与版式参数。"
-              : "工作区中缺少该模板文件，可从预设安装或在设置中切换模板。"}
+              ? t("inspector.layout.problemFollowsDefault")
+              : t("inspector.layout.problemMissingTemplate")}
           </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
             <If when={!wsReadOnly() && canInstallPreset()}>
               <Btn
                 variant="primary"
-                label="从预设安装"
+                label={t("settings.layout.installFromPreset")}
                 icon="plus"
                 onPress={() => props.done(preview.installPresetTemplate(tplId(), tplId()))}
               />
             </If>
-            <Btn label="调整工作区默认版式" icon="settings" onPress={() => goSettings("layout")} />
+            <Btn label={t("inspector.layout.adjustWorkspaceDefault")} icon="settings" onPress={() => goSettings("layout")} />
           </View>
         </View>
       </Section>
 
       <If when={hasProblemFields()}>
-        <Section title="本题版式设置" last={wsReadOnly()}>
+        <Section title={t("inspector.layout.problemSettings")} last={wsReadOnly()}>
           <TemplateOptionsEditor
             ownerKey={`problem:${props.id}`}
             template={tplInfo()}
@@ -985,7 +987,7 @@ function ProblemLayoutTab(props: {
             overrideValues={probOpts()}
             fonts={props.catalog.fonts}
             readOnly={wsReadOnly()}
-            restoreTooltip="恢复模板默认值"
+            restoreTooltip={t("common.restoreTemplateDefault")}
             hideGroupLabels
             onChange={(key, value) => write({ templateOptionsJson: encodeSingleOptionPatch(tplId(), key, value) })}
           />
@@ -993,11 +995,11 @@ function ProblemLayoutTab(props: {
       </If>
 
       <If when={!wsReadOnly()}>
-        <Section title="进阶定制" last>
+        <Section title={t("inspector.layout.advanced")} last>
           <Btn
-            label="自定义样式代码"
+            label={t("settings.layout.preamble")}
             icon="code"
-            tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
+            tooltip={tip(t("settings.layout.preambleTooltip"))}
             onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
           />
         </Section>

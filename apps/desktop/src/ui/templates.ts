@@ -1,6 +1,7 @@
 // Client-side types and helpers for declarative Typst template schemas (`#let schema = (...)`)
 // and three-tier namespaced template options (`workspace.toml` -> `contest.toml` -> `problem.toml` / `[[problem]]`).
 
+import type { LocalizedText } from "./i18n";
 import { preview } from "./store";
 
 export type TemplateOptionValue = boolean | number | string | string[];
@@ -15,18 +16,18 @@ export const LOCAL_TEMPLATE_NAMESPACE = "local";
 
 export interface TemplateChoice {
   value: string;
-  label: string;
+  label: LocalizedText;
 }
 
 export interface TemplateGroup {
   id: string;
-  label: string;
+  label: LocalizedText;
 }
 
 export interface TemplateField {
   key: string;
-  label: string;
-  description?: string;
+  label: LocalizedText;
+  description?: LocalizedText;
   type: TemplateFieldType;
   scope: TemplateFieldScope;
   group?: string;
@@ -36,13 +37,13 @@ export interface TemplateField {
   min?: number;
   max?: number;
   step?: number;
-  placeholder?: string;
+  placeholder?: LocalizedText;
   when?: Record<string, TemplateOptionValue>;
 }
 
 export interface TemplateSchema {
-  name?: string;
-  description?: string;
+  name?: LocalizedText;
+  description?: LocalizedText;
   groups: TemplateGroup[];
   fields: TemplateField[];
 }
@@ -50,15 +51,15 @@ export interface TemplateSchema {
 export interface TemplateInfo {
   id: string;
   path: string;
-  name: string;
-  description?: string;
+  name: LocalizedText;
+  description?: LocalizedText;
   schema: TemplateSchema;
 }
 
 export interface PresetInfo {
   id: string;
-  name: string;
-  description: string;
+  name: LocalizedText;
+  description: LocalizedText;
 }
 
 export interface TemplatesCatalog {

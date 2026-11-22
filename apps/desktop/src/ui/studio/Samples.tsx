@@ -5,6 +5,7 @@
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { Input } from "nsh/base";
 import { ErrorDisplay } from "../ErrorDisplay";
+import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, IconBtn, tip } from "../kit";
 import { EmptyState } from "../layout";
@@ -59,7 +60,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
     if (!dirty || !loadedFor) return;
     dirty = false;
     const res = preview.saveSamples(loadedFor, list().map(({ input, output }) => ({ input, output })));
-    error.set(errorOf(res, "保存样例"));
+    error.set(errorOf(res, t("ctx.saveSamples")));
     if (res.ok) props.onSaved();
   }
   cleanup(() => {
@@ -113,11 +114,11 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
           <View style={{ flex: 1 }}>
             <EmptyState
               icon="fileText"
-              title="暂无样例"
-              hint={props.readOnly ? "该题没有样例" : "添加输入与输出样例，将自动编入题面"}
+              title={t("samples.emptyTitle")}
+              hint={props.readOnly ? t("samples.emptyReadOnlyHint") : t("samples.emptyHint")}
               action={
                 !props.readOnly ? (
-                  <Btn label="添加样例" icon="plus" variant="primary" onPress={addSample} />
+                  <Btn label={t("samples.add")} icon="plus" variant="primary" onPress={addSample} />
                 ) : undefined
               }
             />
@@ -177,7 +178,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                           style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
                           class="text-secondary-foreground"
                         >
-                          {`样例 ${String(index() + 1).padStart(2, "0")}`}
+                          {t("samples.cardTitle", { num: String(index() + 1).padStart(2, "0") })}
                         </Text>
                       </View>
                       <If when={!props.readOnly}>
@@ -186,7 +187,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                           size={24}
                           iconSize={13}
                           tone="muted-foreground"
-                          tooltip={tip("删除样例")}
+                          tooltip={tip(t("samples.deleteTooltip"))}
                           onPress={() => removeSample(s(), index())}
                         />
                       </If>
@@ -195,12 +196,12 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <View style={{ paddingLeft: 10, paddingTop: 6, paddingBottom: 2 }}>
                           <Text style={{ fontSize: 11 }} class="text-muted-foreground">
-                            输入
+                            {t("samples.input")}
                           </Text>
                         </View>
                         <SampleField
                           value={s().input}
-                          placeholder="输入"
+                          placeholder={t("samples.input")}
                           readOnly={props.readOnly}
                           onChange={(v) => update(s().key, { input: v })}
                         />
@@ -209,12 +210,12 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <View style={{ paddingLeft: 10, paddingTop: 6, paddingBottom: 2 }}>
                           <Text style={{ fontSize: 11 }} class="text-muted-foreground">
-                            输出
+                            {t("samples.output")}
                           </Text>
                         </View>
                         <SampleField
                           value={s().output}
-                          placeholder="输出"
+                          placeholder={t("samples.output")}
                           readOnly={props.readOnly}
                           onChange={(v) => update(s().key, { output: v })}
                         />
@@ -235,7 +236,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
             </If>
             <If when={!props.readOnly}>
               <View style={{ flexDirection: "row" }}>
-                <Btn label="添加样例" icon="plus" onPress={addSample} />
+                <Btn label={t("samples.add")} icon="plus" onPress={addSample} />
               </View>
             </If>
             <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
@@ -261,9 +262,9 @@ function UndoBar(props: { index: number; onUndo: () => void; onDismiss: () => vo
       }}
     >
       <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-        {`已删除样例 ${String(props.index + 1).padStart(2, "0")}`}
+        {t("samples.deletedBanner", { num: String(props.index + 1).padStart(2, "0") })}
       </Text>
-      <Btn label="撤销" variant="ghost" onPress={props.onUndo} />
+      <Btn label={t("common.undo")} variant="ghost" onPress={props.onUndo} />
       <IconBtn icon="x" size={24} iconSize={13} tone="muted-foreground" onPress={props.onDismiss} />
     </View>
   );

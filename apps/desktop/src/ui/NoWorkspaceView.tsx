@@ -20,6 +20,7 @@ import {
 } from "nsh";
 import { BrandIcon, type BrandIconController } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
+import { t } from "./i18n";
 import { Btn, tip } from "./kit";
 import { EASE_EXPO_CURVE } from "./motion";
 import { formatAppVersion, readAboutInfo } from "./SettingsView";
@@ -215,7 +216,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               testID="new-workspace"
               variant="primary"
               size="md"
-              label="新建工作区"
+              label={t("brand.newWorkspace")}
               onPress={handleNew}
               style={btnStyle}
               textStyle={{ fontSize: 13.5, fontWeight: 500 }}
@@ -232,9 +233,9 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               testID="open-workspace"
               variant="outline"
               size="md"
-              label="打开已有文件夹"
+              label={t("brand.openExistingFolder")}
               onPress={handleOpen}
-              tooltip={props.replayOnly ? undefined : tip("打开已有文件夹", "mod+o")}
+              tooltip={props.replayOnly ? undefined : tip(t("brand.openExistingFolder"), "mod+o")}
               style={btnStyle}
               textStyle={{ fontSize: 13.5, fontWeight: 500 }}
             />
@@ -259,7 +260,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
             else={
               !props.replayOnly && info().lastWorkspaceMissing ? (
                 <Text style={{ fontSize: 12, textAlign: "center" }} class="text-secondary-foreground">
-                  上次的工作区已不存在
+                  {t("brand.lastWorkspaceMissing")}
                 </Text>
               ) : null
             }
@@ -287,7 +288,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
           {versionText}
         </Text>
         <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-          chumeng 用 ♥ 制作
+          {t("brand.madeWithLove")}
         </Text>
       </View>
     </View>

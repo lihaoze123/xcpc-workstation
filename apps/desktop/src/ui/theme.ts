@@ -70,7 +70,7 @@ setTheme({
 
 const customEditorFontFamily = signal<string | undefined>(undefined);
 
-/** Applies merged `theme.toml` overrides (global `<dataDir>/theme.toml` + workspace `.xcpc/theme.toml`). */
+/** Applies global `<dataDir>/theme.toml` overrides. */
 export function applyThemeOverrides(overrides: {
   lightColors: readonly { key: string; value: string }[];
   darkColors: readonly { key: string; value: string }[];

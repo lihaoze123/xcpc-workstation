@@ -4,6 +4,7 @@
 
 import { cleanup, computed, Scroll, signal, Text, View } from "nsh";
 import type { PreviewDiagnostic } from "xcpc-workstation/native";
+import { t } from "./i18n";
 import { Btn, Chip, tip } from "./kit";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
@@ -11,10 +12,14 @@ import { diffKind, TIER_RANGES } from "./logic";
 import { MONO, tierColor, type Tier } from "./theme";
 import { errorOf, info, preview, refresh, revision, unfreezeFor, type UiError } from "./store";
 
-const TIER_LABEL: Record<string, string> = Object.fromEntries([
-  ...TIER_RANGES.map((r) => [r.tier, r.label]),
-  ["unrated", "未评级"],
-]);
+const TIER_RANGE_LABEL: Record<string, string> = Object.fromEntries(
+  TIER_RANGES.map((r) => [r.tier, r.label]),
+);
+
+function tierLabel(tier: string): string {
+  if (tier === "unrated") return t("contests.stats.unrated");
+  return TIER_RANGE_LABEL[tier] ?? tier;
+}
 
 /** The 8-tier distribution as one bar with its legend, and the tags by count. */
 export function ContestStats(props: { id: string; compact?: boolean }) {
@@ -39,16 +44,18 @@ export function ContestStats(props: { id: string; compact?: boolean }) {
         <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
           {(b) => (
             <View
-              tooltip={props.compact ? tip(TIER_LABEL[b().tier] ?? b().tier) : undefined}
+              tooltip={props.compact ? tip(tierLabel(b().tier)) : undefined}
               style={{ flexDirection: "row", alignItems: "center", gap: 5 }}
             >
               <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: tierColor(b().tier as Tier) }} />
               <If when={!props.compact}>
                 <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                  {TIER_LABEL[b().tier] ?? b().tier}
+                  {tierLabel(b().tier)}
                 </Text>
               </If>
-              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], fontWeight: 500 }}>{`${b().count} 题`}</Text>
+              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], fontWeight: 500 }}>
+                {t("contests.problemCount", { count: b().count })}
+              </Text>
             </View>
           )}
         </Each>
@@ -79,12 +86,12 @@ export function ContestStats(props: { id: string; compact?: boolean }) {
   return (
     <View style={{ gap: 14 }}>
       <View style={{ flexDirection: "row", gap: 12 }}>
-        {label("难度分布")}
+        {label(t("contests.stats.difficulty"))}
         {bar}
       </View>
       <If when={stats().tagCounts.length > 0}>
         <View style={{ flexDirection: "row", gap: 12 }}>
-          {label("标签")}
+          {label(t("contests.stats.tags"))}
           {tags}
         </View>
       </If>
@@ -125,8 +132,8 @@ export function createFreeze() {
       findings.set(blocking.length > 0 ? blocking : res.diagnostics);
       error.set(
         res.code
-          ? errorOf({ ok: false, code: res.code, error: res.error }, "定稿")
-          : { context: "定稿", error: res.error, code: blocking.length > 0 ? "preflight" : undefined },
+          ? errorOf({ ok: false, code: res.code, error: res.error }, t("ctx.freeze"))
+          : { context: t("ctx.freeze"), error: res.error, code: blocking.length > 0 ? "preflight" : undefined },
       );
     }
     refresh();
@@ -138,7 +145,7 @@ export type Freeze = ReturnType<typeof createFreeze>;
 
 /** The message for a freeze stopped by preflight findings. */
 export function freezeBlockedCopy(n: number): string {
-  return n === 1 ? "有 1 个问题需要先处理" : `有 ${n} 个问题需要先处理`;
+  return n === 1 ? t("contests.freezeBlockedOne") : t("contests.freezeBlockedMany", { count: n });
 }
 
 /** The confirmation before unfreezing: what differs between the snapshot and the library. */
@@ -160,7 +167,7 @@ export function UnfreezeDialog() {
     if (!id) return;
     const res = preview.unfreezeContest(id);
     if (!res.ok) {
-      error.set(errorOf(res, "重新编辑"));
+      error.set(errorOf(res, t("ctx.unfreeze")));
       return;
     }
     refresh();
@@ -172,13 +179,13 @@ export function UnfreezeDialog() {
       <View style={{ padding: 20, gap: 16 }}>
         <DialogHeader
           icon="lockOpen"
-          title={`重新编辑「${name()}」？`}
+          title={t("contests.unfreeze.title", { name: name() })}
           description={
             diffFailed()
-              ? "无法检查定稿副本与题库的差异，暂时不能重新编辑。"
+              ? t("contests.unfreeze.diffFailed")
               : (diff()?.diffs.length ?? 0) > 0
-                ? "定稿时存下的副本会被移除，比赛改用题库里的最新版本。下面这些题目和定稿时不一样："
-                : "定稿时存下的副本会被移除，比赛重新跟随题库。目前两者一致，内容不会变化。"
+                ? t("contests.unfreeze.hasDiff")
+                : t("contests.unfreeze.noDiff")
           }
         />
         <If when={!diffFailed() && (diff()?.diffs.length ?? 0) > 0}>
@@ -190,7 +197,7 @@ export function UnfreezeDialog() {
                     <View style={{ gap: 2 }}>
                       <View style={{ flexDirection: "row", gap: 8 }}>
                         <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"], width: 16, fontWeight: 600 }}>{d().label}</Text>
-                        <Text style={{ fontSize: 13, flex: 1 }}>{d().kinds.map(diffKind).join("、")}</Text>
+                        <Text style={{ fontSize: 13, flex: 1 }}>{d().kinds.map(diffKind).join(t("diff.listSeparator"))}</Text>
                       </View>
                       <Each of={d().changedFiles.slice(0, 6)} key={(f) => f}>
                         {(f) => (
@@ -204,7 +211,7 @@ export function UnfreezeDialog() {
                       </Each>
                       <If when={d().changedFiles.length > 6}>
                         <Text style={{ fontSize: 11.5, marginLeft: 24, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                          {`等共 ${d().changedFiles.length} 个文件`}
+                          {t("contests.unfreeze.moreFiles", { count: d().changedFiles.length })}
                         </Text>
                       </If>
                     </View>
@@ -218,8 +225,8 @@ export function UnfreezeDialog() {
           <ErrorDisplay error={displayedError()} />
         </If>
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-          <Btn label="取消" variant="ghost" onPress={close} />
-          <Btn label="重新编辑" variant="primary" disabled={diffFailed() || info().readOnly} onPress={confirm} testID="confirm-unfreeze" />
+          <Btn label={t("common.cancel")} variant="ghost" onPress={close} />
+          <Btn label={t("contests.reopen")} variant="primary" disabled={diffFailed() || info().readOnly} onPress={confirm} testID="confirm-unfreeze" />
         </View>
       </View>
     </Modal>

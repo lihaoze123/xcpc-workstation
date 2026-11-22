@@ -30,6 +30,7 @@ import {
 import { Preview, type AboutInfoJs } from "xcpc-workstation/native";
 import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
+import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "./kit";
 import { Section, SectionRow } from "./layout";
@@ -54,6 +55,7 @@ import {
   updateEditorLigatures,
   updateEditorLineHeight,
   updateEditorVimMode,
+  updateLanguagePref,
   workspaceVersion,
   type SettingsSection,
   type UiError,
@@ -85,21 +87,27 @@ import {
   type UpdateState,
 } from "./updateNotes";
 
-const NAV_ITEMS: readonly { id: SettingsSection; label: string; icon: IconName }[] = [
-  { id: "workspace", label: "工作区", icon: "folder" },
-  { id: "layout", label: "排版", icon: "fileText" },
-  { id: "appearance", label: "外观", icon: "palette" },
-  { id: "shortcuts", label: "快捷键", icon: "code" },
-  { id: "about", label: "关于", icon: "info" },
+const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: IconName }[] = [
+  { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
+  { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
+  { id: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
+  { id: "shortcuts", labelKey: "settings.nav.shortcuts", icon: "code" },
+  { id: "about", labelKey: "settings.nav.about", icon: "info" },
 ];
 
 const NAV_ITEM_HEIGHT = 34;
 const NAV_ITEM_GAP = 4;
 
-const APPEARANCE_OPTIONS: readonly { value: AppearanceMode; label: string }[] = [
-  { value: "light", label: "浅色" },
-  { value: "dark", label: "深色" },
-  { value: "system", label: "跟随系统" },
+const APPEARANCE_OPTIONS: readonly { value: AppearanceMode; labelKey: MessageKey }[] = [
+  { value: "light", labelKey: "settings.appearance.light" },
+  { value: "dark", labelKey: "settings.appearance.dark" },
+  { value: "system", labelKey: "settings.appearance.system" },
+];
+
+const LANGUAGE_OPTIONS: readonly { value: LanguagePref; label: () => string }[] = [
+  { value: "system", label: () => t("settings.appearance.system") },
+  { value: "zh-CN", label: () => "简体中文" },
+  { value: "en", label: () => "English" },
 ];
 
 const MIN_FONT_SIZE = 12;
@@ -325,14 +333,14 @@ function WorkspacePane() {
 
   return (
     <View style={{ gap: 24 }}>
-      <Section title="当前工作区" description="题目和比赛都保存在这个文件夹里，可以用 Git 管理。">
-        <SectionRow first trailing={<Btn label="在文件夹中显示" icon="folderOpen" onPress={() => void reveal()} />}>
-          <Folder path={info().root} note={info().readOnly ? "只读" : undefined} />
+      <Section title={t("settings.workspace.title")} description={t("settings.workspace.desc")}>
+        <SectionRow first trailing={<Btn label={t("common.revealInFolder")} icon="folderOpen" onPress={() => void reveal()} />}>
+          <Folder path={info().root} note={info().readOnly ? t("common.readOnly") : undefined} />
         </SectionRow>
         <If when={recent().length > 0}>
           <View style={{ paddingLeft: 14, paddingTop: 10, paddingBottom: 2, borderTopWidth: 1 }} class="border-border">
             <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-              最近打开
+              {t("settings.workspace.recent")}
             </Text>
           </View>
           <View style={{ padding: 4, paddingTop: 2 }}>
@@ -367,24 +375,24 @@ function WorkspacePane() {
           </View>
         </If>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: 12, borderTopWidth: 1 }} class="border-border bg-muted/40">
-          <Btn label="打开已有文件夹…" icon="folderOpen" onPress={() => void pickWorkspace()} />
-          <Btn label="新建工作区…" icon="folderPlus" onPress={() => requestNewWorkspace()} />
+          <Btn label={t("settings.workspace.openExisting")} icon="folderOpen" onPress={() => void pickWorkspace()} />
+          <Btn label={t("settings.workspace.newWorkspace")} icon="folderPlus" onPress={() => requestNewWorkspace()} />
         </View>
       </Section>
 
       <Section
-        title="AI 助手接入"
+        title={t("settings.mcp.title")}
         description={
           info().readOnly
-            ? "当前工作区以只读方式打开。如需限制 AI 助手仅读取，可在配置参数中加入 --read-only。"
-            : "让 AI 助手通过 MCP 直接读写这个工作区里的题目和比赛。"
+            ? t("settings.mcp.descReadOnly")
+            : t("settings.mcp.desc")
         }
       >
         <SectionRow
           first
           trailing={
             <Btn
-              label={copied() ? "已复制" : "复制配置"}
+              label={copied() ? t("common.copied") : t("settings.mcp.copyConfig")}
               icon={copied() ? "check" : "copy"}
               variant="primary"
               onPress={copy}
@@ -394,7 +402,7 @@ function WorkspacePane() {
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Icon name="bot" size={18} />
-            <Text style={{ fontSize: 13, lineHeight: 18 }}>把这段配置粘贴到助手的 MCP 设置里</Text>
+            <Text style={{ fontSize: 13, lineHeight: 18 }}>{t("settings.mcp.hint")}</Text>
           </View>
         </SectionRow>
         <View
@@ -422,7 +430,7 @@ function WorkspacePane() {
             }}
           />
           <Text style={{ fontSize: 12.5 }} class="text-secondary-foreground">
-            {showJson() ? "收起配置内容" : "查看配置内容"}
+            {showJson() ? t("settings.mcp.hideConfig") : t("settings.mcp.showConfig")}
           </Text>
         </View>
         <If when={showJson()}>
@@ -472,22 +480,22 @@ function LayoutPane() {
     for (const k of keys) clearMap[k] = null;
     apply(
       preview.updateWorkspaceTemplate(null, false, JSON.stringify({ [tplId()]: clearMap })),
-      "恢复默认版式参数",
+      t("ctx.restoreDefaultLayout"),
     );
   };
 
   return (
     <View style={{ gap: 24 }}>
       <Section
-        title="工作区默认模板"
-        description="新建比赛与单题预览默认使用这里的模板；单场比赛可在比赛的「版式」属性中独立切换。"
+        title={t("settings.layout.defaultTemplateTitle")}
+        description={t("settings.layout.defaultTemplateDesc")}
       >
         <View style={{ padding: 14, gap: 12 }}>
           <TemplatePicker
             templates={catalog().templates}
             value={tplId()}
             readOnly={wsReadOnly()}
-            onChange={(nextId) => apply(preview.updateWorkspaceTemplate(nextId, false, null), "切换默认模板")}
+            onChange={(nextId) => apply(preview.updateWorkspaceTemplate(nextId, false, null), t("ctx.switchDefaultTemplate"))}
             onAddFromPreset={!wsReadOnly() ? () => presetOpen.set(true) : undefined}
           />
           <If when={!tplInfo()}>
@@ -495,11 +503,11 @@ function LayoutPane() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 <Icon name="triangleAlert" size={14} tone="destructive" />
                 <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
-                  {`默认模板「${tplId()}」不存在`}
+                  {t("settings.layout.missingTemplateTitle", { id: tplId() })}
                 </Text>
               </View>
               <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
-                工作区中缺少该模板文件。可从预设重新安装，或在上方切换其他模板。
+                {t("settings.layout.missingTemplateDesc")}
               </Text>
               <If when={!wsReadOnly()}>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
@@ -508,7 +516,7 @@ function LayoutPane() {
                     else={
                       <Btn
                         variant="primary"
-                        label="从预设添加模板"
+                        label={t("settings.layout.addFromPreset")}
                         icon="plus"
                         onPress={() => presetOpen.set(true)}
                       />
@@ -516,9 +524,9 @@ function LayoutPane() {
                   >
                     <Btn
                       variant="primary"
-                      label="从预设安装"
+                      label={t("settings.layout.installFromPreset")}
                       icon="plus"
-                      onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), "从预设安装模板")}
+                      onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), t("ctx.installPresetTemplate"))}
                     />
                   </If>
                 </View>
@@ -527,26 +535,26 @@ function LayoutPane() {
           </If>
           <If when={!wsReadOnly()}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingTop: 2 }}>
-              <Btn label="从预设添加模板" icon="plus" onPress={() => presetOpen.set(true)} />
+              <Btn label={t("settings.layout.addFromPreset")} icon="plus" onPress={() => presetOpen.set(true)} />
               <If when={!!tplInfo()}>
                 <Btn
-                  label="编辑模板"
+                  label={t("settings.layout.editTemplate")}
                   icon="filePenLine"
-                  tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
-                  onPress={() => void preview.openTemplateFile(tplId()).then((res) => !res.ok && err.set(errorOf(res, "打开模板文件")))}
+                  tooltip={tip(t("settings.layout.editTemplateTooltip"))}
+                  onPress={() => void preview.openTemplateFile(tplId()).then((res) => !res.ok && err.set(errorOf(res, t("ctx.openTemplateFile"))))}
                 />
                 <Btn
-                  label="新建副本"
+                  label={t("settings.layout.forkTemplate")}
                   icon="copy"
-                  tooltip={tip("基于当前模板创建一份新的工作区共享模板")}
+                  tooltip={tip(t("settings.layout.forkTemplateTooltip"))}
                   onPress={() => forkOpen.set(true)}
                 />
               </If>
               <Btn
-                label="自定义样式代码"
+                label={t("settings.layout.preamble")}
                 icon="code"
-                tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
-                onPress={() => void preview.openPreambleFile().then((res) => !res.ok && err.set(errorOf(res, "打开样式代码")))}
+                tooltip={tip(t("settings.layout.preambleTooltip"))}
+                onPress={() => void preview.openPreambleFile().then((res) => !res.ok && err.set(errorOf(res, t("ctx.openPreambleFile"))))}
               />
             </View>
           </If>
@@ -555,11 +563,11 @@ function LayoutPane() {
 
       <If when={hasBookFields()}>
         <Section
-          title="默认版式参数"
-          description="对当前模板生效的工作区级默认值；每场比赛可在比赛的「版式」属性中单独覆写。"
+          title={t("settings.layout.defaultParamsTitle")}
+          description={t("settings.layout.defaultParamsDesc")}
           trailing={
             <If when={!wsReadOnly() && hasCustomOpts()}>
-              <Btn label="恢复默认" icon="rotateCcw" variant="ghost" onPress={resetAllOpts} />
+              <Btn label={t("common.restoreDefault")} icon="rotateCcw" variant="ghost" onPress={resetAllOpts} />
             </If>
           }
         >
@@ -572,11 +580,11 @@ function LayoutPane() {
               overrideValues={wsOpts()}
               fonts={catalog().fonts}
               readOnly={wsReadOnly()}
-              restoreTooltip="恢复模板默认值"
+              restoreTooltip={t("common.restoreTemplateDefault")}
               onChange={(key, value) =>
                 apply(
                   preview.updateWorkspaceTemplate(null, false, encodeSingleOptionPatch(tplId(), key, value)),
-                  "更新默认版式参数",
+                  t("ctx.updateDefaultLayout"),
                 )
               }
             />
@@ -591,9 +599,9 @@ function LayoutPane() {
       <ForkTemplateModal
         open={forkOpen()}
         sourceId={tplId()}
-        sourceName={tplInfo()?.name ?? tplId()}
+        sourceName={tplInfo() ? resolveLocalized(tplInfo()!.name) || tplId() : tplId()}
         existingIds={catalog().templates.map((t) => t.id)}
-        onCreated={(newId) => apply(preview.updateWorkspaceTemplate(newId, false, null), "切换默认模板")}
+        onCreated={(newId) => apply(preview.updateWorkspaceTemplate(newId, false, null), t("ctx.switchDefaultTemplate"))}
         onClose={() => forkOpen.set(false)}
       />
 
@@ -602,7 +610,7 @@ function LayoutPane() {
         presets={catalog().presets}
         existingIds={catalog().templates.map((t) => t.id)}
         initialTargetName={!tplInfo() ? tplId() : undefined}
-        onInstalled={(installedId) => apply(preview.updateWorkspaceTemplate(installedId, false, null), "切换默认模板")}
+        onInstalled={(installedId) => apply(preview.updateWorkspaceTemplate(installedId, false, null), t("ctx.switchDefaultTemplate"))}
         onClose={() => presetOpen.set(false)}
       />
     </View>
@@ -620,6 +628,13 @@ function AppearancePane() {
   const decLineHeight = () => updateEditorLineHeight(Math.max(MIN_LINE_HEIGHT, Number((editorLineHeight() - LINE_HEIGHT_STEP).toFixed(2))));
   const incLineHeight = () => updateEditorLineHeight(Math.min(MAX_LINE_HEIGHT, Number((editorLineHeight() + LINE_HEIGHT_STEP).toFixed(2))));
 
+  const appearanceItems = computed(() =>
+    APPEARANCE_OPTIONS.map((o) => ({ value: o.value, label: t(o.labelKey) })),
+  );
+  const languageItems = computed(() =>
+    LANGUAGE_OPTIONS.map((o) => ({ value: o.value, label: o.label() })),
+  );
+
   return (
     <View style={{ gap: 24 }}>
       <Card>
@@ -627,7 +642,7 @@ function AppearancePane() {
           first
           trailing={
             <Segmented
-              items={APPEARANCE_OPTIONS}
+              items={appearanceItems()}
               value={appearanceMode()}
               onChange={(mode) => updateAppearanceMode(mode)}
               itemWidth={74}
@@ -636,17 +651,36 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              主题模式
+              {t("settings.appearance.themeMode")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              浅色、深色或跟随系统
+              {t("settings.appearance.themeModeDesc")}
+            </Text>
+          </View>
+        </SectionRow>
+        <SectionRow
+          trailing={
+            <Segmented
+              items={languageItems()}
+              value={languagePref()}
+              onChange={(pref) => updateLanguagePref(pref)}
+              itemWidth={76}
+            />
+          }
+        >
+          <View style={{ gap: 2 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              {t("settings.appearance.language")}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              {t("settings.appearance.languageDesc")}
             </Text>
           </View>
         </SectionRow>
         <SectionRow
           trailing={
             <Btn
-              label="打开 theme.toml"
+              label={t("settings.appearance.openThemeFile")}
               icon="palette"
               onPress={() => void preview.openThemeFile()}
               testID="open-theme-file"
@@ -655,21 +689,21 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              主题定制
+              {t("settings.appearance.themeCustom")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              支持全局与工作区 .xcpc/theme.toml 覆写配色、字体与圆角
+              {t("settings.appearance.themeCustomDesc")}
             </Text>
           </View>
         </SectionRow>
       </Card>
 
       <Section
-        title="编辑器排版"
-        description="调整题面与题解源码编辑区的字号、行高与连字显示。"
+        title={t("settings.editor.title")}
+        description={t("settings.editor.desc")}
         trailing={
           <If when={!isDefaultTypography()}>
-            <Btn label="恢复默认" icon="rotateCcw" variant="ghost" onPress={resetEditorTypography} />
+            <Btn label={t("common.restoreDefault")} icon="rotateCcw" variant="ghost" onPress={resetEditorTypography} />
           </If>
         }
       >
@@ -688,10 +722,10 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              字体大小
+              {t("settings.editor.fontSize")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              范围 12 至 18 px
+              {t("settings.editor.fontSizeDesc")}
             </Text>
           </View>
         </SectionRow>
@@ -710,10 +744,10 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              行高倍数
+              {t("settings.editor.lineHeight")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              范围 1.40 至 1.80
+              {t("settings.editor.lineHeightDesc")}
             </Text>
           </View>
         </SectionRow>
@@ -731,10 +765,10 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              编程连字
+              {t("settings.editor.ligatures")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              合并显示箭头与比较运算符等连字字形
+              {t("settings.editor.ligaturesDesc")}
             </Text>
           </View>
         </SectionRow>
@@ -752,10 +786,10 @@ function AppearancePane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              Vim 模式
+              {t("settings.editor.vimMode")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              支持 Normal / Insert / Visual、常用移动与文本对象（ci$/ci(/ci"）
+              {t("settings.editor.vimModeDesc")}
             </Text>
           </View>
         </SectionRow>
@@ -860,7 +894,7 @@ export function AboutPane() {
     if (devShell) return;
     updateState.set({ kind: "checking" });
     try {
-      const found = await checkForUpdate({ locale: "zh-CN" });
+      const found = await checkForUpdate({ locale: locale() });
       if (!found) {
         updateState.set({ kind: "upToDate" });
         return;
@@ -868,11 +902,11 @@ export function AboutPane() {
       updateState.set({ kind: "available", update: found });
     } catch (err) {
       if (isDevOrUnsupportedUpdateError(err)) {
-        updateState.set({ kind: "error", message: "当前构建未启用自动更新" });
+        updateState.set({ kind: "error", message: t("settings.about.updateErr.unsupported") });
       } else if (isMissingOrPrivateUpdateChannelError(err)) {
-        updateState.set({ kind: "error", message: "暂无可用更新或更新通道尚未公开" });
+        updateState.set({ kind: "error", message: t("settings.about.updateErr.channel") });
       } else {
-        updateState.set({ kind: "error", message: "检查更新失败，请检查网络后重试" });
+        updateState.set({ kind: "error", message: t("settings.about.updateErr.checkFailed") });
       }
     }
   };
@@ -885,10 +919,10 @@ export function AboutPane() {
       try {
         const res = await openUrl(resolveReleasePageUrl(update));
         if (!res.opened) {
-          releaseOpenErr.set("无法打开发布页面，请稍后重试");
+          releaseOpenErr.set(t("settings.about.updateErr.openReleaseFailed"));
         }
       } catch {
-        releaseOpenErr.set("无法打开发布页面，请稍后重试");
+        releaseOpenErr.set(t("settings.about.updateErr.openReleaseFailed"));
       }
       return;
     }
@@ -900,9 +934,9 @@ export function AboutPane() {
       updateState.set({ kind: "ready", update });
     } catch (err) {
       if (isDevOrUnsupportedUpdateError(err)) {
-        updateState.set({ kind: "error", message: "当前构建未启用自动更新" });
+        updateState.set({ kind: "error", message: t("settings.about.updateErr.unsupported") });
       } else {
-        updateState.set({ kind: "error", message: "下载更新失败，请检查网络后重试" });
+        updateState.set({ kind: "error", message: t("settings.about.updateErr.downloadFailed") });
       }
     }
   };
@@ -914,7 +948,7 @@ export function AboutPane() {
       await installAndRestart();
     } catch {
       installing.set(false);
-      updateState.set({ kind: "error", message: "安装更新失败，请稍后重试" });
+      updateState.set({ kind: "error", message: t("settings.about.updateErr.installFailed") });
     }
   };
 
@@ -927,7 +961,7 @@ export function AboutPane() {
       updateState.set({ kind: "scheduled", update });
     } catch {
       installing.set(false);
-      updateState.set({ kind: "error", message: "准备退出时安装失败，请稍后重试" });
+      updateState.set({ kind: "error", message: t("settings.about.updateErr.scheduleFailed") });
     }
   };
 
@@ -992,12 +1026,12 @@ export function AboutPane() {
                 >
                   <Btn
                     testID="check-update-btn"
-                    label={updateState().kind === "error" ? "重试" : "立即检查"}
+                    label={updateState().kind === "error" ? t("common.retry") : t("settings.about.checkNow")}
                     onPress={() => void handleCheckUpdate()}
                   />
                 </If>
                 <If when={updateState().kind === "checking"}>
-                  <Btn label="检查中…" disabled />
+                  <Btn label={t("settings.about.checking")} disabled />
                 </If>
                 <If when={updateState().kind === "available"}>
                   <Btn
@@ -1015,7 +1049,7 @@ export function AboutPane() {
                     <If when={updateState().kind === "ready"}>
                       <Btn
                         testID="update-install-on-quit-btn"
-                        label="退出时安装"
+                        label={t("settings.about.installOnQuit")}
                         disabled={installing()}
                         onPress={() => {
                           const st = updateState();
@@ -1026,7 +1060,7 @@ export function AboutPane() {
                     <Btn
                       testID="update-install-now-btn"
                       variant="primary"
-                      label="立即重启安装"
+                      label={t("settings.about.installNow")}
                       disabled={installing()}
                       onPress={() => void handleInstallNow()}
                     />
@@ -1038,7 +1072,7 @@ export function AboutPane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              检查更新
+              {t("settings.about.checkUpdate")}
             </Text>
             <If when={Boolean(updateSummary())}>
               <Text
@@ -1080,13 +1114,13 @@ export function AboutPane() {
           trailing={
             <Btn
               testID="replay-brand-btn"
-              label="播放"
+              label={t("settings.about.play")}
               onPress={() => brandReplayOpen.set(true)}
             />
           }
         >
           <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-            重播首次引导
+            {t("settings.about.replayIntro")}
           </Text>
         </SectionRow>
 
@@ -1094,7 +1128,7 @@ export function AboutPane() {
           trailing={
             <Btn
               testID="about-copy-diagnostics"
-              label={copiedDiag() ? "已复制" : "复制诊断信息"}
+              label={copiedDiag() ? t("common.copied") : t("settings.about.copyDiagnostics")}
               icon={copiedDiag() ? "check" : "copy"}
               onPress={copyDiagnostics}
               style={{ minWidth: 124 }}
@@ -1103,38 +1137,38 @@ export function AboutPane() {
         >
           <View style={{ gap: 2 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              诊断信息
+              {t("settings.about.diagnostics")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-              用于反馈问题时附带环境信息
+              {t("settings.about.diagnosticsDesc")}
             </Text>
           </View>
         </SectionRow>
       </Card>
 
       {/* Credits & licenses */}
-      <Section title="致谢与许可">
+      <Section title={t("settings.about.creditsTitle")}>
         <SectionRow first>
           <View style={{ gap: 4 }}>
             <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              开源致谢
+              {t("settings.about.openSource")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-              olymp.sty（GassaFM/olymp.sty）、fuzzy-cnoi-statement（Wallbreaker5th）、Typst、NSH、MiTeX、CeTZ（LGPL-3.0）、oxifmt、Pinit、Mannot、Tiptoe
+              olymp.sty (GassaFM/olymp.sty), fuzzy-cnoi-statement (Wallbreaker5th), Typst, NSH, MiTeX, CeTZ (LGPL-3.0), oxifmt, Pinit, Mannot, Tiptoe
             </Text>
           </View>
         </SectionRow>
         <SectionRow>
           <View style={{ gap: 6 }}>
             <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              字体许可
+              {t("settings.about.fontLicense")}
             </Text>
             <View style={{ gap: 3 }}>
               <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-                Latin Modern（GUST Font License）
+                Latin Modern (GUST Font License)
               </Text>
               <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-                JetBrains Mono（SIL Open Font License, OFL）
+                JetBrains Mono (SIL Open Font License, OFL)
               </Text>
             </View>
           </View>
@@ -1142,7 +1176,7 @@ export function AboutPane() {
         <SectionRow>
           <View style={{ gap: 4 }}>
             <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-              许可证
+              {t("settings.about.license")}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
               Apache-2.0 License
@@ -1154,7 +1188,7 @@ export function AboutPane() {
       {/* Quiet dedication footer */}
       <View style={{ alignItems: "center", paddingTop: 4, paddingBottom: 12 }}>
         <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
-          献给每一个和 WA 较劲到深夜的人
+          {t("settings.about.dedication")}
         </Text>
       </View>
     </View>
@@ -1263,7 +1297,7 @@ export function SettingsView() {
                     }}
                     class={selected() ? "text-foreground" : "text-secondary-foreground"}
                   >
-                    {item().label}
+                    {t(item().labelKey)}
                   </Text>
                 </View>
               );
