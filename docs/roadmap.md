@@ -143,7 +143,16 @@
 4. **一键复制「带样例的完整 Markdown」**：
    - 走 `Cmd+K` 与右键菜单（零常驻按钮），在 Core 中将 `samples/` 组装为标准样例区块自动插入 `## 提示` / `## Note` 之前并复制到剪贴板，不修改源文件。
 
-**不做**：轮播引导、每次启动的启动页、slogan、常驻版本底栏、toast、行为触发的主动提示、改键、特定日期彩蛋、里程碑动效、icon 上的字母、ICPC 官方三色块组合。
+### Phase 2.5C（声明式模板 Schema 与可视化版式定制）
+
+2026-11-22 讨论确认，解决 Typst 定制能力扩展后「属性」面板能力不足、定制完全依赖手改代码的问题。规格见 [statement-style.md §2](./statement-style.md#2-模板与声明式定制)、[architecture.md](./architecture.md) 与 [design-system.md §9.1](./design-system.md#91-图标页面结构与组件规则2026-11-20-打磨)。
+
+1. **模板原生 `#let schema` 声明与 Core 求值**：内置 `olymp-classic`、`cnoi-classic` 与用户 `templates/*.typ` 在单文件内导出 `#let schema = (...)`（支持 `bool / enum / string / lines / number / length / color / font`、分组与简单 `when` 条件显隐），`xcpc-engine` 轻量求值读取；`olymp-classic` 默认严格锁死基准并开放少量可还原覆写，`cnoi-classic` 全面参数化现有硬编码项。
+2. **三级作用域与按模板名隔离持久化**：`workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`（`[template-options.<template>]` 与 `[problem.options.<template>]`），切换模板不丢配置，统一走 `toml_edit` 局部写回；`notify` 同步监听 `workspace.toml`、`templates/*.typ` 与 `.xcpc/preamble.typ`。
+3. **「属性」抽屉双 Tab（`信息` | `版式`）与「设置 → 排版」**：抽屉内分「信息」与「版式」两页，按当前模板 schema 动态渲染控件、标注继承覆写并支持一键还原；工作区默认模板与参数归入「设置 → 排版」，单题视图只编辑本题参数；提供「派生自定义模板副本」与「用系统编辑器打开样式/模板」衔接代码定制（不做应用内 Typst IDE）。
+4. **定稿完整归档与 CLI / MCP 同步**：`freeze_contest` 将自定义模板、`.xcpc/preamble.typ` 与合并后的模板参数一并固化进 `snapshot/` 保证可复现；CLI 新增 `xcpc template list|schema|fork`，MCP 新增 `list_templates`、`set_template_options` 并扩展 `set_override`。
+
+**不做**：轮播引导、每次启动的启动页、slogan、常驻版本底栏、toast、行为触发的主动提示、改键、特定日期彩蛋、里程碑动效、icon 上的字母、ICPC 官方三色块组合、应用内 Typst IDE。
 
 ## Phase 3：本地 Polygon（可复现的题目包）
 

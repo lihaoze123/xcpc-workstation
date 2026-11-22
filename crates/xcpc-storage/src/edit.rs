@@ -9,11 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
 use xcpc_domain::{
     ContestItem, ContestMeta, ContestMetaPatch, DiffKind, LimitsPatch, MAX_CONTEST_PROBLEMS,
-    OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch, Source, UnfreezeProblemDiff,
-    check_id, label_for_index,
+    OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch, Source, TemplateOptionValue,
+    TemplateOptionsMap, TemplateOptionsPatch, UnfreezeProblemDiff, check_id, label_for_index,
 };
 
-use crate::{Contest, Error, Result, Workspace, content_hash, io, parse_toml, write_atomic};
+use crate::{
+    Contest, Error, Result, SnapshotTemplateArchive, WORKSPACE_FILE, Workspace, content_hash, io,
+    parse_toml, write_atomic,
+};
 
 /// Default skeleton written to `statement.md` by [`Workspace::create_problem`].
 const STATEMENT_SKELETON: &str = "\n## 输入格式\n\n## 输出格式\n\n## 提示\n";
@@ -34,6 +37,48 @@ const ALLOWED_PROBLEM_ROOT_FILES: &[&str] = &[
 const ALLOWED_PROBLEM_SUBDIRS: &[&str] = &["samples", "solutions", "generators", "tests"];
 
 impl Workspace {
+    // ---- Workspace-level template settings ---------------------------------------------
+
+    /// Partially updates `workspace.toml`'s default `template` and `[template-options.<tpl>]`
+    /// via `toml_edit`, preserving comments, key order, and unknown fields.
+    pub fn update_workspace_template(
+        &self,
+        template: &Patch<String>,
+        options: &BTreeMap<String, TemplateOptionsPatch>,
+    ) -> Result<()> {
+        self.check_writable(WORKSPACE_FILE)?;
+        let raw = match self.read_text(WORKSPACE_FILE) {
+            Ok(s) => s,
+            Err(Error::NotFound(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
+        let mut doc = parse_doc(WORKSPACE_FILE, &raw)?;
+        let root = doc.as_table_mut();
+
+        match template {
+            Patch::Keep => {}
+            Patch::Set(name) => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    root.remove("template");
+                } else {
+                    check_id(trimmed)?;
+                    set_scalar(root, "template", Value::from(trimmed));
+                }
+            }
+            Patch::Clear => {
+                root.remove("template");
+            }
+        }
+        if !options.is_empty() {
+            apply_template_options_patch(root, "template-options", options, None)?;
+        }
+
+        let rendered = doc.to_string();
+        let _: toml::Table = parse_toml(WORKSPACE_FILE, &rendered)?;
+        self.write(WORKSPACE_FILE, rendered.as_bytes())
+    }
+
     // ---- Problem mutations -------------------------------------------------------------
 
     /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton,
@@ -123,6 +168,9 @@ impl Workspace {
         }
         if let Some(sources) = &patch.sources {
             apply_sources(root, sources);
+        }
+        if !patch.template_options.is_empty() {
+            apply_template_options_patch(root, "template-options", &patch.template_options, None)?;
         }
 
         let rendered = doc.to_string();
@@ -330,7 +378,7 @@ impl Workspace {
         };
 
         if let Some(patch) = meta_patch {
-            apply_contest_meta_patch(doc.as_table_mut(), patch);
+            apply_contest_meta_patch(doc.as_table_mut(), patch)?;
         }
         rewrite_contest_problem_tables(&mut doc, problem_ids);
 
@@ -352,7 +400,7 @@ impl Workspace {
             other => other,
         })?;
         let mut doc = parse_doc(&rel, &raw)?;
-        apply_contest_meta_patch(doc.as_table_mut(), patch);
+        apply_contest_meta_patch(doc.as_table_mut(), patch)?;
 
         let rendered = doc.to_string();
         let meta: ContestMeta = parse_toml(&rel, &rendered)?;
@@ -533,6 +581,15 @@ impl Workspace {
             apply_limits_patch(tbl, &effective);
         }
 
+        if !patch.options.is_empty() {
+            apply_template_options_patch(
+                tbl,
+                "options",
+                &patch.options,
+                Some(&problem.meta.template_options),
+            )?;
+        }
+
         let rendered = doc.to_string();
         let _: ContestMeta = parse_toml(&rel, &rendered)?;
         self.write(&rel, rendered.as_bytes())?;
@@ -541,18 +598,25 @@ impl Workspace {
 
     // ---- Freeze & Unfreeze -------------------------------------------------------------
 
-    /// Low-level atomic freeze commit.
-    ///
-    /// Copies each problem's publication files (`problem.toml` with contest overrides
-    /// merged, `statement*.md`, `editorial.md`, `samples/`, `assets/` — explicitly
-    /// excluding problem-package code/tests) into `contests/<id>/snapshot/<label>/`,
-    /// writes `snapshot/<id>.pdf` and optional `snapshot/<id>-editorial.pdf`, and
-    /// finally sets `frozen = true` in `contest.toml` via `toml_edit`.
+    /// Low-level atomic freeze commit (without extra template archive).
     pub fn freeze_commit(
         &self,
         contest_id: &str,
         pdf_statements: &[u8],
         pdf_editorial: Option<&[u8]>,
+    ) -> Result<Contest> {
+        self.freeze_commit_with_template(contest_id, pdf_statements, pdf_editorial, None)
+    }
+
+    /// Low-level atomic freeze commit, optionally archiving the contest's resolved
+    /// template metadata (`snapshot/template.toml`), custom template file
+    /// (`snapshot/template.typ`), and `.xcpc/preamble.typ` (`snapshot/preamble.typ`).
+    pub fn freeze_commit_with_template(
+        &self,
+        contest_id: &str,
+        pdf_statements: &[u8],
+        pdf_editorial: Option<&[u8]>,
+        template_archive: Option<&SnapshotTemplateArchive>,
     ) -> Result<Contest> {
         check_id(contest_id)?;
         if self.is_read_only() {
@@ -611,6 +675,20 @@ impl Workspace {
             if let Some(ed_pdf) = pdf_editorial {
                 let ed_path = stage_dir.join(format!("{contest_id}-editorial.pdf"));
                 write_atomic(&ed_path, ed_pdf).map_err(|e| io(&snapshot_rel, e))?;
+            }
+            if let Some(archive) = template_archive {
+                let meta_text =
+                    toml::to_string(&archive.meta).expect("snapshot template meta serializes");
+                write_atomic(&stage_dir.join("template.toml"), meta_text.as_bytes())
+                    .map_err(|e| io(&snapshot_rel, e))?;
+                if let Some(tpl_bytes) = &archive.custom_template_bytes {
+                    write_atomic(&stage_dir.join("template.typ"), tpl_bytes)
+                        .map_err(|e| io(&snapshot_rel, e))?;
+                }
+                if let Some(pre_bytes) = &archive.preamble_bytes {
+                    write_atomic(&stage_dir.join("preamble.typ"), pre_bytes)
+                        .map_err(|e| io(&snapshot_rel, e))?;
+                }
             }
             Ok(())
         })();
@@ -982,7 +1060,7 @@ fn apply_sources(parent: &mut dyn TableLike, sources: &[Source]) {
     }
 }
 
-fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) {
+fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) -> Result<()> {
     if let Some(name) = &patch.name {
         set_scalar(root, "name", Value::from(name.as_str()));
     }
@@ -1030,6 +1108,94 @@ fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) 
             root.remove("template");
         }
     }
+    if !patch.template_options.is_empty() {
+        apply_template_options_patch(root, "template-options", &patch.template_options, None)?;
+    }
+    Ok(())
+}
+
+fn option_value_to_toml(val: &TemplateOptionValue) -> Value {
+    match val {
+        TemplateOptionValue::Bool(b) => Value::from(*b),
+        TemplateOptionValue::Int(i) => Value::from(*i),
+        TemplateOptionValue::Float(f) => Value::from(*f),
+        TemplateOptionValue::String(s) => Value::from(s.as_str()),
+        TemplateOptionValue::Lines(lines) => {
+            let mut arr = Array::new();
+            for line in lines {
+                arr.push(line.as_str());
+            }
+            Value::Array(arr)
+        }
+    }
+}
+
+fn apply_template_options_patch(
+    parent: &mut dyn TableLike,
+    section_key: &str,
+    patches: &BTreeMap<String, TemplateOptionsPatch>,
+    base_values: Option<&TemplateOptionsMap>,
+) -> Result<()> {
+    for (tpl, fields) in patches {
+        check_id(tpl)?;
+        let has_set = fields.values().any(|p| matches!(p, Patch::Set(_)));
+        if parent.get(section_key).is_none() {
+            if !has_set {
+                continue;
+            }
+            let mut outer = Table::new();
+            outer.set_implicit(true);
+            parent.insert(section_key, Item::Table(outer));
+        }
+
+        if let Some(outer_tbl) = parent
+            .get_mut(section_key)
+            .and_then(Item::as_table_like_mut)
+        {
+            if outer_tbl.get(tpl).is_none() {
+                if !has_set {
+                    continue;
+                }
+                let mut inner = Table::new();
+                inner.set_implicit(false);
+                outer_tbl.insert(tpl, Item::Table(inner));
+            }
+            if let Some(inner_tbl) = outer_tbl.get_mut(tpl).and_then(Item::as_table_like_mut) {
+                let base_for_tpl = base_values.and_then(|m| m.get(tpl));
+                for (key, field_patch) in fields {
+                    match field_patch {
+                        Patch::Keep => {}
+                        Patch::Clear => {
+                            inner_tbl.remove(key);
+                        }
+                        Patch::Set(v) => {
+                            if base_for_tpl.and_then(|b| b.get(key)) == Some(v) {
+                                inner_tbl.remove(key);
+                            } else {
+                                set_scalar(inner_tbl, key, option_value_to_toml(v));
+                            }
+                        }
+                    }
+                }
+            }
+            if outer_tbl
+                .get(tpl)
+                .and_then(Item::as_table_like)
+                .is_some_and(TableLike::is_empty)
+            {
+                outer_tbl.remove(tpl);
+            }
+        }
+    }
+
+    if parent
+        .get(section_key)
+        .and_then(Item::as_table_like)
+        .is_some_and(TableLike::is_empty)
+    {
+        parent.remove(section_key);
+    }
+    Ok(())
 }
 
 fn rewrite_contest_problem_tables(doc: &mut DocumentMut, problem_ids: &[String]) {
@@ -1108,7 +1274,7 @@ fn set_position_recursive(table: &mut Table, pos: usize) {
 }
 
 fn apply_item_overrides_to_toml(raw: &str, item: &ContestItem, path: &str) -> Result<String> {
-    if item.title.is_none() && item.limits.is_none() {
+    if item.title.is_none() && item.limits.is_none() && item.options.is_empty() {
         return Ok(raw.to_owned());
     }
     let mut doc = parse_doc(path, raw)?;
@@ -1123,6 +1289,20 @@ fn apply_item_overrides_to_toml(raw: &str, item: &ContestItem, path: &str) -> Re
             output: limits.output.clone().map_or(Patch::Keep, Patch::Set),
         };
         apply_limits_patch(doc.as_table_mut(), &patch);
+    }
+    if !item.options.is_empty() {
+        let patches: BTreeMap<String, TemplateOptionsPatch> = item
+            .options
+            .iter()
+            .map(|(tpl, opts)| {
+                let fp = opts
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Patch::Set(v.clone())))
+                    .collect();
+                (tpl.clone(), fp)
+            })
+            .collect();
+        apply_template_options_patch(doc.as_table_mut(), "template-options", &patches, None)?;
     }
     Ok(doc.to_string())
 }

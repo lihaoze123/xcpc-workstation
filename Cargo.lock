@@ -5094,6 +5094,7 @@ dependencies = [
  "nsh-base",
  "nsh-core",
  "png",
+ "serde_json",
  "toml 1.2.1+spec-1.1.0",
  "xcpc-convert",
  "xcpc-domain",
@@ -5127,6 +5128,7 @@ dependencies = [
  "typst-layout",
  "typst-pdf",
  "typst-render",
+ "xcpc-domain",
 ]
 
 [[package]]

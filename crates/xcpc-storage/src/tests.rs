@@ -404,6 +404,7 @@ main = true
                     ..Default::default()
                 },
                 sources: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -674,6 +675,7 @@ fn set_override_applies_and_auto_cleans_matching_defaults() {
                     ..Default::default()
                 },
                 show_metadata: Patch::Set(false),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -700,6 +702,7 @@ fn set_override_applies_and_auto_cleans_matching_defaults() {
                     ..Default::default()
                 },
                 show_metadata: Patch::Set(true),
+                ..Default::default()
             },
         )
         .unwrap();

@@ -76,19 +76,75 @@
 - 方正字体包来自 `github:brsvh/chinese-fonts-overlay`，在 `flake.nix` 中锁定版本。开发环境通过 `XCPC_FONT_DIRS` 提供字体目录，引擎**优先**从这些目录加载字体，保证在任何机器上排版结果一致；release 构建同时内嵌 Latin Modern 与 JetBrains Mono 字体作为兜底。
 - 设置了 `XCPC_FONT_DIRS` 时，引擎默认只加载该目录集合（以及 release 构建内嵌的 Latin Modern / JetBrains Mono），不扫描系统字体，保证跨机器排版与视觉回归确定性；CLI 可额外传入 `--system-fonts`。当 `XCPC_FONT_DIRS` 未设置或为空时（独立打包或 Windows 分发场景），引擎自动扫描可执行文件同级的 `fonts/` 目录并开启系统字体回退，按角色依次查找方正字体 → 思源 / Noto CJK → Windows 常见中文字体（`SimSun` / `SimHei` / `KaiTi` / `FangSong` 等），若发生替换则在编译诊断中给出非致命警告。
 
-## 2. 主题定制
+## 2. 模板与声明式定制
 
-**当前只实现 `olymp-classic` 一套主题。** 比赛的 `contest.toml` 里只开放参考模板本身就有的开关：
+系统支持多套 Typst 模板与三层开放定制：内置模板（`olymp-classic`、`cnoi-classic`）、工作区自定义模板（`templates/<name>.typ`）以及工作区级样式注入（`.xcpc/preamble.typ`）。
+
+### 2.1 通用出版契约
+
+所有模板共享同一套顶层函数签名（`contest`、`problem`、`section`、`samples`、`tutorial`、`subsection`、`runin`），以及以下跨模板通用开关（由 `contest.toml` 声明，无需在各模板 schema 中重复定义）：
 
 | 键 | 含义 |
 | :--- | :--- |
+| `template` | 模板名（默认沿用 `workspace.toml`，缺省为 `olymp-classic`） |
 | `language` | `chinese` / `english`，决定题面关键词 |
-| `show-metadata` | 是否显示限制表（可以按题覆盖） |
+| `show-metadata` | 是否显示限制表（可按题覆写） |
 | `cover` | 是否生成封面和试题列表 |
 | `blank-pages` | 是否为奇偶页插入「此页故意留白」 |
 | `name` / `location` / `date` / `author` | 页眉和封面上显示的信息 |
 
-更多预设、可视化的 Token 检查器、Typst 插槽覆写等定制体系，**等核心出版功能验证之后再考虑**。
+`contest(..., options: (:))` 与 `problem(..., options: (:))` 额外接收一个可选的 `options` 字典参数，用来传入该模板对应的结构化定制项；旧模板或未声明 `options` 的自定义模板可省略该参数（Core 仅在模板声明了对应作用域的 schema 时传入 `options`，保证向后兼容）。
+
+### 2.2 模板声明式 Schema（`#let schema`）
+
+每个模板可在自身的 `.typ` 文件内原生导出一个 `#let schema = (...)` 字典，单文件自包含、默认值直接复用模板常量不漂移。Core 通过内置 Typst 引擎轻量求值读取该字典，驱动 GUI 属性面板动态渲染控件，并同步开放给 CLI / MCP 校验与查询；未导出 `schema` 的自定义模板优雅降级为空扩展参数。
+
+```typst
+#let schema = (
+  name: "OI 风格",                     // 显示名称（缺省用文件名）
+  description: "CCF CSP-J/S 与 NOI 风格题面与题解",
+  groups: (
+    (id: "cover", label: "封面与说明"),
+    (id: "samples", label: "样例样式"),
+    (id: "problem", label: "单题设置"),
+  ),
+  fields: (
+    (
+      key: "compile-opts",             // 对应 TOML 键名（kebab-case）
+      label: "编译选项",
+      type: "string",                  // bool | enum | string | lines | number | length | color | font
+      scope: "book",                   // book（整册）| problem（单题）
+      group: "cover",                  // 可选，对应 groups[].id
+      default: "-O2 -std=c++14 -static",
+      when: (cover: true),             // 可选，简单等值条件显隐（可引用通用开关或同作用域字段）
+    ),
+    // enum: 额外声明 choices: ((value: "...", label: "..."), ...)
+    // number: 可选 min / max / step
+    // length: 默认带单位字符串（如 "12pt"、"2.4cm"），可选 presets
+    // lines: 字符串数组（多行编辑）
+    // color: 十六进制色值字符串（如 "#0000ff"）
+    // font: 字体族名字符串（GUI 从引擎已加载字体中提供候选）
+  ),
+)
+```
+
+支持的实用排版参数类型共 8 种：`bool`、`enum`、`string`、`lines`（多行/列表）、`number`、`length`（带单位）、`color`、`font`，配合 `group` 分组与简单等值 `when` 条件显隐。
+
+### 2.3 三级作用域与命名空间隔离
+
+模板参数按**模板名分命名空间**持久化，切换模板时不丢失原模板配置、不同模板同名键互不冲突，切回即恢复：
+
+1. **工作区默认**（`workspace.toml` 的 `[template-options.<template>]`）：作为整套工作区的默认值，单题预览与未覆写的比赛均继承于此；
+2. **比赛级覆写**（`contest.toml` 的 `[template-options.<template>]`）：覆写该场比赛的 `scope: "book"` 参数；
+3. **单题级参数**（`problem.toml` 的 `[template-options.<template>]` 与 `contest.toml` 中 `[[problem]]` 的 `[problem.options.<template>]`）：用于 `scope: "problem"` 参数；比赛中先取 `[[problem]]` 覆写，缺省回退到 `problem.toml`，再回退到模板默认值。
+
+未显式设置的字段不写入 TOML；将覆写改回上级值或点击还原时自动删除对应键。所有写回统一走 `toml_edit` 保留注释与未知字段。
+
+### 2.4 内置模板的参数开放策略
+
+- **`olymp-classic`**：所有默认值严格锁死参考基准（`lihaoze123/polygon-chinese-template@10f9959`），保证默认输出与视觉回归逐页一致；仅开放少量实用且可一键还原的可选覆写（如 `sample-layout` 双栏/宽版 `examplewide`、正文/标题字体、字号与页边距覆写）。
+- **`cnoi-classic`**：全面参数化现有硬编码项，包括封面编译选项（`compile-opts`）、注意事项列表（`notices`）、样例框描边色（`sample-border-color`）与行号开关（`sample-line-numbers`）、中文加粗着重号开关（`dotted-emphasis`）、字号与页边距，以及单题级的题目类型（`prob-type`：传统型/交互型/提交答案）与可执行文件名覆盖。
+- **代码级逃生舱（`.xcpc/preamble.typ` 与 `templates/*.typ`）**：结构化参数在模板内部生效，`.xcpc/preamble.typ` 仍在其后注入，用于自定义宏、包导入与深度 Typst 规则。
 
 ## 3. 题解册
 

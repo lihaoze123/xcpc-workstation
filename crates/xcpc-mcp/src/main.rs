@@ -117,12 +117,35 @@ enum Command {
         #[command(subcommand)]
         action: ContestCommand,
     },
+    /// Inspect built-in and custom Typst templates and their declarative schemas.
+    Template {
+        #[command(subcommand)]
+        action: TemplateCommand,
+    },
     /// List the workspace's problems and contests.
     List,
     /// List the font families the engine sees.
     Fonts,
     /// Serve MCP on stdin and stdout.
     Mcp,
+}
+
+#[derive(Subcommand)]
+enum TemplateCommand {
+    /// List available templates (built-in and workspace templates/*.typ).
+    List,
+    /// Show the parsed declarative `#let schema` of one template.
+    Schema {
+        /// Template ID (e.g. olymp-classic, cnoi-classic, or custom template name).
+        name: String,
+    },
+    /// Fork an existing template into `templates/<new_name>.typ`.
+    Fork {
+        /// Source template ID (built-in or workspace custom template).
+        source: String,
+        /// New template ID (slug under templates/).
+        new_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -149,6 +172,9 @@ enum ContestCommand {
         /// Contest language.
         #[arg(long)]
         language: Option<Lang>,
+        /// Template ID (e.g. olymp-classic, cnoi-classic, or custom templates/<name>.typ).
+        #[arg(long)]
+        template: Option<String>,
         /// Show cover page (`true` or `false`).
         #[arg(long)]
         cover: Option<bool>,
@@ -646,6 +672,89 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Contest { action } => run_contest(cli, action),
+        Command::Template { action } => run_template(cli, action),
+    }
+}
+
+fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    match action {
+        TemplateCommand::List => {
+            let engine = publish::engine(&ws, &fonts(cli));
+            let templates = publish::list_templates(&ws, &engine);
+            let default_tpl = ws
+                .default_template()
+                .unwrap_or_else(|| "olymp-classic".into());
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "default": default_tpl,
+                        "templates": templates,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                for tpl in &templates {
+                    let kind = if tpl.builtin { "builtin" } else { "custom" };
+                    let mark = if tpl.id == default_tpl { "*" } else { " " };
+                    println!(
+                        "{mark}\t{}\t{kind}\t{}\t{} field(s)",
+                        tpl.id,
+                        tpl.name,
+                        tpl.schema.fields.len()
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TemplateCommand::Schema { name } => {
+            let engine = publish::engine(&ws, &fonts(cli));
+            let Some(info) = publish::inspect_template(&ws, &engine, name) else {
+                return Err(xcpc_storage::Error::NotFound(format!("template {name:?}")).into());
+            };
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "template": info,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("{} ({})", info.name, info.id);
+                if let Some(desc) = &info.description {
+                    println!("{desc}");
+                }
+                for f in &info.schema.fields {
+                    println!(
+                        "  {}\t{:?}\t{:?}\t{}",
+                        f.key, f.scope, f.field_type, f.label
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TemplateCommand::Fork { source, new_name } => {
+            let rel = publish::fork_template(&ws, source, new_name)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "source": source,
+                        "id": new_name,
+                        "path": rel,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("forked template {source} -> {rel}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -660,6 +769,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
             date,
             author,
             language,
+            template,
             cover,
             blank_pages,
             show_metadata,
@@ -670,10 +780,11 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                 date: date.clone().map_or(Patch::Keep, Patch::Set),
                 author: author.clone().map_or(Patch::Keep, Patch::Set),
                 language: language.map(Lang::into_language),
-                template: Patch::Keep,
+                template: template.clone().map_or(Patch::Keep, Patch::Set),
                 show_metadata: *show_metadata,
                 cover: cover.map_or(Patch::Keep, Patch::Set),
                 blank_pages: *blank_pages,
+                ..Default::default()
             };
             let has_patch = patch != ContestMetaPatch::default();
             let contest = ws.compose_contest(id, problems, has_patch.then_some(&patch))?;
@@ -725,6 +836,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                     output: flag_patch(output.clone(), *clear_output),
                 },
                 show_metadata: flag_patch(*show_metadata, *clear_show_metadata),
+                ..Default::default()
             };
             let updated = ws.set_override(contest, label, &patch)?;
             let item = updated.meta.problems.iter().find(|p| p.label == *label);

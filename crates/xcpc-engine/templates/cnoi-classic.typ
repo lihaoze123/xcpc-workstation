@@ -16,6 +16,176 @@
 
 #import "/xcpc/fonts.typ": cjk-song, cjk-hei, cjk-kai, cjk-fangsong
 
+#let default-notices = (
+  "文件名（程序名和输入输出文件名）必须使用英文小写。",
+  "main 函数的返回值类型必须是 int，程序正常结束时的返回值必须是 0。",
+  "若无特殊说明，结果的比较方式为全文比较（过滤行末空格及文末回车）。",
+  "程序可使用的栈空间内存限制与题目的内存限制一致。",
+  "评测在当前最新公布的 NOI Linux 下进行，各语言的编译器版本以此为准。",
+)
+
+#let schema = (
+  name: "OI 风格",
+  description: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+  groups: (
+    (id: "cover", label: "封面与考试说明"),
+    (id: "samples", label: "样例与正文样式"),
+    (id: "layout", label: "页面与字体"),
+    (id: "problem", label: "单题设置"),
+  ),
+  fields: (
+    (
+      key: "compile-opts",
+      label: "编译选项",
+      type: "string",
+      scope: "book",
+      group: "cover",
+      default: "-O2 -std=c++14 -static",
+      when: (cover: true),
+    ),
+    (
+      key: "show-submit-table",
+      label: "显示提交源程序文件名表",
+      type: "bool",
+      scope: "book",
+      group: "cover",
+      default: true,
+      when: (cover: true),
+    ),
+    (
+      key: "show-compile-table",
+      label: "显示编译选项表",
+      type: "bool",
+      scope: "book",
+      group: "cover",
+      default: true,
+      when: (cover: true),
+    ),
+    (
+      key: "notices",
+      label: "注意事项",
+      description: "每行一条，显示在封面底部",
+      type: "lines",
+      scope: "book",
+      group: "cover",
+      default: default-notices,
+      when: (cover: true),
+    ),
+    (
+      key: "sample-border-color",
+      label: "样例框描边颜色",
+      type: "color",
+      scope: "book",
+      group: "samples",
+      default: "#0000ff",
+    ),
+    (
+      key: "sample-line-numbers",
+      label: "样例显示行号",
+      type: "bool",
+      scope: "book",
+      group: "samples",
+      default: true,
+    ),
+    (
+      key: "dotted-emphasis",
+      label: "中文加粗加着重号",
+      type: "bool",
+      scope: "book",
+      group: "samples",
+      default: true,
+    ),
+    (
+      key: "body-size",
+      label: "正文字号",
+      type: "length",
+      scope: "book",
+      group: "layout",
+      default: "12pt",
+      presets: ("10.5pt", "11pt", "12pt", "14pt"),
+      placeholder: "12pt",
+    ),
+    (
+      key: "margin",
+      label: "页边距",
+      type: "length",
+      scope: "book",
+      group: "layout",
+      default: "2.4cm",
+      presets: ("2cm", "2.4cm", "2.54cm"),
+      placeholder: "2.4cm",
+    ),
+    (
+      key: "cjk-body-font",
+      label: "中文正文字体",
+      type: "font",
+      scope: "book",
+      group: "layout",
+      default: "",
+      placeholder: "默认（宋体）",
+    ),
+    (
+      key: "cjk-heading-font",
+      label: "中文标题字体",
+      type: "font",
+      scope: "book",
+      group: "layout",
+      default: "",
+      placeholder: "默认（黑体）",
+    ),
+    (
+      key: "prob-type",
+      label: "题目类型",
+      type: "enum",
+      scope: "problem",
+      group: "problem",
+      default: "传统型",
+      choices: (
+        (value: "传统型", label: "传统型"),
+        (value: "交互型", label: "交互型"),
+        (value: "提交答案", label: "提交答案"),
+      ),
+    ),
+    (
+      key: "source-file",
+      label: "可执行文件名",
+      type: "string",
+      scope: "problem",
+      group: "problem",
+      default: "",
+      placeholder: "自动从输入文件推导",
+    ),
+  ),
+)
+
+#let parse-len(s, fallback) = {
+  if type(s) == length { return s }
+  if type(s) != str { return fallback }
+  let t = s.trim()
+  if t == "" { return fallback }
+  let m = t.match(regex("^([0-9]+(?:\\.[0-9]+)?)\\s*(pt|mm|cm|in|em)$"))
+  if m == none { return fallback }
+  let num = float(m.captures.at(0))
+  let unit = m.captures.at(1)
+  if unit == "pt" { num * 1pt }
+  else if unit == "mm" { num * 1mm }
+  else if unit == "cm" { num * 1cm }
+  else if unit == "in" { num * 1in }
+  else if unit == "em" { num * 1em }
+  else { fallback }
+}
+
+#let parse-color(s, fallback) = {
+  if type(s) == color { return s }
+  if type(s) != str { return fallback }
+  let t = s.trim()
+  if t.match(regex("^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3}|[0-9a-fA-F]{8})$")) != none {
+    rgb(t)
+  } else {
+    fallback
+  }
+}
+
 #let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
 #let song-font = with-cjk("Latin Modern Roman 12", cjk-song)
 #let hei-font = with-cjk("Latin Modern Sans 12", cjk-hei)
@@ -36,6 +206,10 @@
 #let cover-state = state("xcpc-cnoi-has-cover", false)
 #let problem-list = state("xcpc-cnoi-problems", ())
 #let current-problem-state = state("xcpc-cnoi-current", none)
+#let sample-border-state = state("xcpc-cnoi-sample-border", rgb("#0000ff"))
+#let sample-linenos-state = state("xcpc-cnoi-sample-linenos", true)
+#let body-size-state = state("xcpc-cnoi-body-size", size-xiaosi)
+#let hei-font-state = state("xcpc-cnoi-hei-font", hei-font)
 
 #let words = (
   chinese: (
@@ -159,28 +333,39 @@
 #let cnoi-sample-box(content-str) = {
   let trimmed = content-str.trim("\n", at: end)
   let lines = if trimmed == "" { ("",) } else { trimmed.split("\n") }
-  pad(
-    left: 0.5em,
-    rect(
-      width: 100%,
-      stroke: 0.5pt + rgb("#0000ff"),
-      inset: (x: 8pt, y: 0.65em),
-      {
-        set par(first-line-indent: 0pt, leading: 0.65em, spacing: 0.3em)
-        for (idx, ln) in lines.enumerate() {
-          block(above: 0pt, below: if idx + 1 < lines.len() { 0.3em } else { 0pt }, grid(
-            columns: (0em, 1fr),
-            align: (right + horizon, left + horizon),
-            move(
-              dx: -1.25em,
-              text(font: song-font, size: 0.8em, fill: luma(45%), str(idx + 1)),
-            ),
-            text(font: mono-font, size: size-xiaosi, raw(if ln == "" { " " } else { ln })),
-          ))
-        }
-      },
-    ),
-  )
+  context {
+    let border-col = sample-border-state.get()
+    let show-linenos = sample-linenos-state.get()
+    let bsize = body-size-state.get()
+    pad(
+      left: if show-linenos { 0.5em } else { 0pt },
+      rect(
+        width: 100%,
+        stroke: 0.5pt + border-col,
+        inset: (x: 8pt, y: 0.65em),
+        {
+          set par(first-line-indent: 0pt, leading: 0.65em, spacing: 0.3em)
+          for (idx, ln) in lines.enumerate() {
+            if show-linenos {
+              block(above: 0pt, below: if idx + 1 < lines.len() { 0.3em } else { 0pt }, grid(
+                columns: (0em, 1fr),
+                align: (right + horizon, left + horizon),
+                move(
+                  dx: -1.25em,
+                  text(font: song-font, size: 0.8em, fill: luma(45%), str(idx + 1)),
+                ),
+                text(font: mono-font, size: bsize, raw(if ln == "" { " " } else { ln })),
+              ))
+            } else {
+              block(above: 0pt, below: if idx + 1 < lines.len() { 0.3em } else { 0pt },
+                text(font: mono-font, size: bsize, raw(if ln == "" { " " } else { ln })),
+              )
+            }
+          }
+        },
+      ),
+    )
+  }
 }
 
 #let samples(..pairs) = {
@@ -220,11 +405,23 @@
   time-limit: none,
   memory-limit: none,
   show-metadata: true,
+  options: (:),
   body,
 ) = {
   blank-page-if-even()
   pagebreak(weak: true)
-  let heading-display = format-problem-heading(label, title, input, output)
+  let prob-type = options.at("prob-type", default: none)
+  let custom-source = options.at("source-file", default: "")
+  let effective-slug = if type(custom-source) == str and custom-source.trim() != "" {
+    custom-source.trim()
+  } else {
+    none
+  }
+  let heading-display = if effective-slug != none {
+    [#title（#effective-slug）]
+  } else {
+    format-problem-heading(label, title, input, output)
+  }
   let in-text = if input != none and input != "" { raw(input) } else { word("stdin") }
   let out-text = if output != none and output != "" { raw(output) } else { word("stdout") }
   let time-text = if time-limit != none { time-limit } else { "1.0 秒" }
@@ -237,6 +434,8 @@
     output: output,
     time: time-limit,
     memory: memory-limit,
+    prob-type: prob-type,
+    source-file: effective-slug,
   ),))
   current-problem-state.update(heading-display)
 
@@ -244,7 +443,7 @@
     #set par(first-line-indent: 0pt)
     #metadata((label: label, title: title, display: heading-display)) <xcpc-problem>
     #align(center)[
-      #text(font: hei-font, weight: "regular", size: size-xiaoer)[#heading-display]
+      #context text(font: hei-font-state.get(), weight: "regular", size: size-xiaoer)[#heading-display]
     ]
     #context if show-metadata and not cover-state.get() {
       v(4pt)
@@ -266,18 +465,22 @@
   body
 }
 
-#let cover(name, location, date, author) = {
+#let cover(name, location, date, author, options: (:)) = {
+  let compile-opts = options.at("compile-opts", default: "-O2 -std=c++14 -static")
+  let show-submit-table = options.at("show-submit-table", default: true)
+  let show-compile-table = options.at("show-compile-table", default: true)
+  let notices = options.at("notices", default: default-notices)
   set par(first-line-indent: 0pt)
   v(14pt)
   align(center)[
-    #text(font: hei-font, weight: "regular", size: size-er)[#name]
+    #context text(font: hei-font-state.get(), weight: "regular", size: size-er)[#name]
     #if location != none and location != "" {
       v(8pt)
       text(font: kai-font, size: size-xiaoer)[#location]
     }
     #if author != none and author != "" {
       v(6pt)
-      text(font: hei-font, size: size-xiaosan)[#author]
+      context text(font: hei-font-state.get(), size: size-xiaosan)[#author]
     }
     #if date != none and date != "" {
       v(8pt)
@@ -293,6 +496,11 @@
       let first-col = if n <= 3 { 24% } else { 1.25fr }
       let cols = (first-col,) + (1fr,) * n
       let is-zh = lang-state.get() == "chinese"
+      let slug-of(r) = if r.source-file != none and r.source-file != "" {
+        r.source-file
+      } else {
+        derive-slug(r.input, r.output, r.label)
+      }
 
       set text(size: size-wu)
       table(
@@ -301,51 +509,49 @@
         stroke: 0.4pt + black,
         align: left + horizon,
         [#word("title")], ..rows.map(r => [#r.title]),
-        [#word("prob-type")], ..rows.map(_ => [#word("traditional")]),
-        [#word("source-file")], ..rows.map(r => raw(derive-slug(r.input, r.output, r.label))),
+        [#word("prob-type")], ..rows.map(r => if r.prob-type != none and r.prob-type != "" { [#r.prob-type] } else { [#word("traditional")] }),
+        [#word("source-file")], ..rows.map(r => raw(slug-of(r))),
         [#word("input-file")], ..rows.map(r => if r.input != none and r.input != "" { raw(r.input) } else { word("stdin") }),
         [#word("output-file")], ..rows.map(r => if r.output != none and r.output != "" { raw(r.output) } else { word("stdout") }),
         [#word("time-limit")], ..rows.map(r => if r.time != none { [#r.time] } else { [1.0 秒] }),
         [#word("memory-limit")], ..rows.map(r => if r.memory != none { [#r.memory] } else { [512 MiB] }),
       )
 
-      v(6pt)
-      pad(left: 1.5em, text(size: size-wu, word("submit-filename")))
-      v(2pt)
-      table(
-        columns: cols,
-        inset: (x: 6pt, y: 4.5pt),
-        stroke: 0.4pt + black,
-        align: left + horizon,
-        [#word("for-cpp-left") #word("for-cpp-right")],
-        ..rows.map(r => raw(derive-slug(r.input, r.output, r.label) + ".cpp")),
-      )
+      if show-submit-table {
+        v(6pt)
+        pad(left: 1.5em, text(size: size-wu, word("submit-filename")))
+        v(2pt)
+        table(
+          columns: cols,
+          inset: (x: 6pt, y: 4.5pt),
+          stroke: 0.4pt + black,
+          align: left + horizon,
+          [#word("for-cpp-left") #word("for-cpp-right")],
+          ..rows.map(r => raw(slug-of(r) + ".cpp")),
+        )
+      }
 
-      v(6pt)
-      pad(left: 1.5em, text(size: size-wu, word("compile-opts")))
-      v(2pt)
-      table(
-        columns: cols,
-        inset: (x: 6pt, y: 4.5pt),
-        stroke: 0.4pt + black,
-        align: (left + horizon, center + horizon),
-        [#word("for-cpp-left") #word("for-cpp-right")],
-        table.cell(colspan: n, raw("-O2 -std=c++14 -static")),
-      )
+      if show-compile-table {
+        v(6pt)
+        pad(left: 1.5em, text(size: size-wu, word("compile-opts")))
+        v(2pt)
+        table(
+          columns: cols,
+          inset: (x: 6pt, y: 4.5pt),
+          stroke: 0.4pt + black,
+          align: (left + horizon, center + horizon),
+          [#word("for-cpp-left") #word("for-cpp-right")],
+          table.cell(colspan: n, raw(compile-opts)),
+        )
+      }
 
-      if is-zh {
+      if is-zh and type(notices) == array and notices.len() > 0 {
         v(10pt)
         pad(left: 1.5em, strong(text(size: size-wu, word("notices-title"))))
         v(4pt)
         set text(size: size-wu)
         set enum(indent: 1.5em, spacing: 0.45em)
-        [
-          + 文件名（程序名和输入输出文件名）必须使用英文小写。
-          + `main` 函数的返回值类型必须是 `int`，程序正常结束时的返回值必须是 `0`。
-          + 若无特殊说明，结果的比较方式为全文比较（过滤行末空格及文末回车）。
-          + 程序可使用的栈空间内存限制与题目的内存限制一致。
-          + 评测在当前最新公布的 NOI Linux 下进行，各语言的编译器版本以此为准。
-        ]
+        enum(..notices.map(n => [#n]))
       }
     }
   }
@@ -446,23 +652,34 @@
   book: "statements",
   pdf-title: none,
   pdf-author: none,
+  options: (:),
   body,
 ) = {
   let lang = if language == "english" { "english" } else { "chinese" }
+  let eff-body-size = parse-len(options.at("body-size", default: "12pt"), size-xiaosi)
+  let eff-margin = parse-len(options.at("margin", default: "2.4cm"), 2.4cm)
+  let eff-border-color = parse-color(options.at("sample-border-color", default: "#0000ff"), rgb("#0000ff"))
+  let eff-linenos = options.at("sample-line-numbers", default: true)
+  let eff-dotted = options.at("dotted-emphasis", default: true)
+  let opt-song = options.at("cjk-body-font", default: "")
+  let eff-song-font = if type(opt-song) == str and opt-song.trim() != "" { with-cjk("Latin Modern Roman 12", opt-song.trim()) } else { song-font }
+  let opt-hei = options.at("cjk-heading-font", default: "")
+  let eff-hei-font = if type(opt-hei) == str and opt-hei.trim() != "" { with-cjk("Latin Modern Sans 12", opt-hei.trim()) } else { hei-font }
+
   set document(
     title: if pdf-title != none { pdf-title } else { name },
     author: if pdf-author != none { (pdf-author,) } else if author != none { (author,) } else { () },
   )
   set page(
     paper: "a4",
-    margin: 2.4cm,
+    margin: eff-margin,
     header: context {
       let page-num = counter(page).get().first()
       let probs = query(selector(<xcpc-problem>)).filter(el => el.location().page() <= page-num)
       let cur = if probs.len() > 0 { probs.last().value.display } else { none }
       if (page-num > 1 or not show-cover) and cur != none {
         set par(first-line-indent: 0pt)
-        set text(font: song-font, size: size-wu, fill: black)
+        set text(font: eff-song-font, size: size-wu, fill: black)
         block(width: 100%, {
           grid(
             columns: (1fr, auto),
@@ -478,7 +695,7 @@
       let page-num = counter(page).get().first()
       if page-num > 1 or not show-cover {
         set par(first-line-indent: 0pt)
-        set text(font: song-font, size: size-wu, fill: black)
+        set text(font: eff-song-font, size: size-wu, fill: black)
         let total = counter(page).final().first()
         align(center)[
           #if lang == "chinese" [
@@ -492,8 +709,8 @@
   )
 
   set text(
-    font: song-font,
-    size: size-xiaosi,
+    font: eff-song-font,
+    size: eff-body-size,
     lang: if lang == "chinese" { "zh" } else { "en" },
     region: if lang == "chinese" { "CN" } else { "US" },
   )
@@ -508,8 +725,8 @@
 
   show emph: set text(font: kai-font)
   show strong: it => {
-    set text(font: hei-font, weight: "regular")
-    if lang == "chinese" and book == "statements" {
+    set text(font: eff-hei-font, weight: "regular")
+    if eff-dotted and lang == "chinese" and book == "statements" {
       show regex("\p{sc=Hani}+"): s => {
         underline(
           s,
@@ -534,8 +751,8 @@
     show underline: u => u.body
     it
   }
-  show math.equation: set text(font: "Latin Modern Math", size: size-xiaosi)
-  show raw.where(block: false): set text(font: mono-font, size: size-xiaosi)
+  show math.equation: set text(font: "Latin Modern Math", size: eff-body-size)
+  show raw.where(block: false): set text(font: mono-font, size: eff-body-size)
   show raw.where(block: true): it => {
     set text(font: code-font, size: 9.5pt, ligatures: false, features: (calt: 0))
     set par(first-line-indent: 0pt, leading: 0.55em)
@@ -567,12 +784,16 @@
   lang-state.update(lang)
   blank-state.update(blank-pages)
   cover-state.update(show-cover)
+  sample-border-state.update(eff-border-color)
+  sample-linenos-state.update(eff-linenos)
+  body-size-state.update(eff-body-size)
+  hei-font-state.update(eff-hei-font)
 
   if show-cover {
     if book == "editorial" {
       editorial-cover(name, location, date, author)
     } else {
-      cover(name, location, date, author)
+      cover(name, location, date, author, options: options)
     }
   }
 

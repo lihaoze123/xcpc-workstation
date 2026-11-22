@@ -9,6 +9,7 @@ publish.workspace = true
 bundled-fonts = []
 
 [dependencies]
+xcpc-domain.workspace = true
 typst.workspace = true
 typst-layout.workspace = true
 typst-render.workspace = true

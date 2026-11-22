@@ -5,6 +5,7 @@ import {
   Animated,
   cleanup,
   Clipboard,
+  computed,
   createAnimatedValue,
   effect,
   openUrl,
@@ -43,6 +44,7 @@ import {
   openRecent,
   pickWorkspace,
   preview,
+  refresh,
   requestNewWorkspace,
   resetEditorTypography,
   revision,
@@ -56,6 +58,8 @@ import {
   type SettingsSection,
   type UiError,
 } from "./store";
+import { encodeSingleOptionPatch, loadTemplatesCatalog, type TemplateOptionMap } from "./templates";
+import { ForkTemplateModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
 import {
   appearanceMode,
   cardShadow,
@@ -74,6 +78,7 @@ import {
 
 const NAV_ITEMS: readonly { id: SettingsSection; label: string; icon: IconName }[] = [
   { id: "workspace", label: "工作区", icon: "folder" },
+  { id: "layout", label: "排版", icon: "fileText" },
   { id: "appearance", label: "外观", icon: "palette" },
   { id: "shortcuts", label: "快捷键", icon: "code" },
   { id: "about", label: "关于", icon: "info" },
@@ -423,6 +428,119 @@ function WorkspacePane() {
           </View>
         </If>
       </Section>
+    </View>
+  );
+}
+
+function LayoutPane() {
+  const err = signal<UiError | undefined>(undefined);
+  const forkOpen = signal(false);
+
+  const catalog = computed(() => {
+    void revision();
+    void workspaceVersion();
+    return loadTemplatesCatalog();
+  });
+
+  const wsReadOnly = () => info().readOnly;
+  const tplId = () => catalog().default || "olymp-classic";
+  const tplInfo = computed(() => catalog().templates.find((t) => t.id === tplId()));
+  const wsOpts = computed<TemplateOptionMap>(() => catalog().workspaceOptions[tplId()] ?? {});
+  const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
+  const hasCustomOpts = computed(() => Object.keys(wsOpts()).length > 0);
+
+  const apply = (res: { ok: boolean; code?: string | null; error?: string | null }, ctx: string) => {
+    err.set(errorOf(res, ctx));
+    if (res.ok) refresh();
+  };
+
+  const resetAllOpts = () => {
+    const keys = Object.keys(wsOpts());
+    if (keys.length === 0) return;
+    const clearMap: Record<string, null> = {};
+    for (const k of keys) clearMap[k] = null;
+    apply(
+      preview.updateWorkspaceTemplate(null, false, JSON.stringify({ [tplId()]: clearMap })),
+      "恢复默认版式参数",
+    );
+  };
+
+  return (
+    <View style={{ gap: 24 }}>
+      <Section
+        title="工作区默认模板"
+        description="新建比赛与单题预览默认使用这里的模板；单场比赛可在出版工作室「版式」中独立切换。"
+      >
+        <View style={{ padding: 14, gap: 12 }}>
+          <TemplatePicker
+            templates={catalog().templates}
+            value={tplId()}
+            readOnly={wsReadOnly()}
+            onChange={(nextId) => apply(preview.updateWorkspaceTemplate(nextId, false, null), "切换默认模板")}
+          />
+          <If when={!wsReadOnly()}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingTop: 2 }}>
+              <Btn label="基于当前模板新建副本" icon="copy" onPress={() => forkOpen.set(true)} />
+              <If when={!!tplInfo() && !tplInfo()!.builtin}>
+                <Btn
+                  label="在外部编辑器中打开模板"
+                  icon="filePenLine"
+                  onPress={() => void preview.openTemplateFile(tplId()).then((res) => !res.ok && err.set(errorOf(res, "打开模板文件")))}
+                />
+              </If>
+              <Btn
+                label="自定义样式代码"
+                icon="code"
+                onPress={() => void preview.openPreambleFile().then((res) => !res.ok && err.set(errorOf(res, "打开样式代码")))}
+              />
+            </View>
+          </If>
+        </View>
+      </Section>
+
+      <If when={hasBookFields()}>
+        <Section
+          title="默认版式参数"
+          description="对当前模板生效的工作区级默认值；每场比赛可在工作室中单独覆写。"
+          trailing={
+            <If when={!wsReadOnly() && hasCustomOpts()}>
+              <Btn label="恢复默认" icon="rotateCcw" variant="ghost" onPress={resetAllOpts} />
+            </If>
+          }
+        >
+          <View style={{ padding: 14 }}>
+            <TemplateOptionsEditor
+              ownerKey={`workspace:${info().root}`}
+              template={tplInfo()}
+              scope="book"
+              baseValues={{}}
+              overrideValues={wsOpts()}
+              context={{ cover: true }}
+              fonts={catalog().fonts}
+              readOnly={wsReadOnly()}
+              restoreTooltip="恢复模板默认值"
+              onChange={(key, value) =>
+                apply(
+                  preview.updateWorkspaceTemplate(null, false, encodeSingleOptionPatch(tplId(), key, value)),
+                  "更新默认版式参数",
+                )
+              }
+            />
+          </View>
+        </Section>
+      </If>
+
+      <If when={err()}>
+        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+      </If>
+
+      <ForkTemplateModal
+        open={forkOpen()}
+        sourceId={tplId()}
+        sourceName={tplInfo()?.name ?? tplId()}
+        onCreated={(newId) => apply(preview.updateWorkspaceTemplate(newId, false, null), "切换默认模板")}
+        onClose={() => forkOpen.set(false)}
+      />
     </View>
   );
 }
@@ -1049,6 +1167,9 @@ export function SettingsView() {
         >
           <If when={active() === "workspace"}>
             <WorkspacePane />
+          </If>
+          <If when={active() === "layout"}>
+            <LayoutPane />
           </If>
           <If when={active() === "appearance"}>
             <AppearancePane />

@@ -4,12 +4,14 @@
 //! These types are reflected directly into `.nsh/types/xcpc-workstation/native.d.ts` by
 //! `nsh check`.
 
+use std::collections::BTreeMap;
+
 use nsh_core::element::{JsHost, JsIn, JsKind, JsOwned, JsValue, PropError, TsTypes};
 use nsh_core::prelude::*;
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
     ContestMetaPatch, DiffKind, Language, Limits, LimitsPatch, OverridePatch, Patch,
-    ProblemMetaPatch, RatingTier, Source,
+    ProblemMetaPatch, RatingTier, Source, TemplateOptionValue, TemplateOptionsPatch,
 };
 
 // ---- Preview & diagnostics -------------------------------------------------------------
@@ -439,6 +441,8 @@ pub struct ProblemDetailJs {
     pub solutions: Vec<String>,
     /// Sorted IDs of contests whose `contest.toml` references this problem.
     pub referencing_contests: Vec<String>,
+    /// JSON-serialized `[template-options.<tpl>]` map from `problem.toml`.
+    pub template_options_json: String,
     #[prop(skip_none)]
     pub error: Option<String>,
 }
@@ -479,6 +483,12 @@ pub struct ContestItemDetailJs {
     #[prop(skip_none)]
     pub rating: Option<u32>,
     pub tags: Vec<String>,
+    /// JSON-serialized effective merged problem-scoped template options.
+    pub options_json: String,
+    /// JSON-serialized library problem `problem.toml` template options.
+    pub original_options_json: String,
+    /// JSON-serialized contest item `[problem.options.<tpl>]` overrides.
+    pub override_options_json: String,
 }
 
 /// Full contest details for the contest composer and studio inspector.
@@ -494,6 +504,13 @@ pub struct ContestDetailJs {
     pub author: Option<String>,
     /// `"chinese"` or `"english"`.
     pub language: String,
+    /// Explicit template ID on this contest (`null` means inheriting workspace default).
+    #[prop(skip_none)]
+    pub template: Option<String>,
+    /// Effective resolved template ID (contest override -> workspace default -> `"olymp-classic"`).
+    pub effective_template: String,
+    /// JSON-serialized `[template-options.<tpl>]` map from `contest.toml`.
+    pub template_options_json: String,
     pub show_metadata: bool,
     /// Explicit `cover` value (`null` means auto: enabled when `items.length >= 2`).
     #[prop(skip_none)]
@@ -657,11 +674,14 @@ pub struct ProblemMetaPatchJs {
     pub input: Patch<String>,
     pub output: Patch<String>,
     pub sources: Option<Vec<ProblemSourceJs>>,
+    pub template_options_json: Option<String>,
 }
 
 impl ProblemMetaPatchJs {
-    pub(crate) fn into_core(self) -> ProblemMetaPatch {
-        ProblemMetaPatch {
+    pub(crate) fn into_core(self) -> Result<ProblemMetaPatch, String> {
+        let template_options =
+            parse_namespaced_options_json(self.template_options_json.as_deref())?;
+        Ok(ProblemMetaPatch {
             title: self.title,
             rating: self.rating,
             tags: self.tags,
@@ -681,7 +701,8 @@ impl ProblemMetaPatchJs {
                     })
                     .collect()
             }),
-        }
+            template_options,
+        })
     }
 }
 
@@ -706,7 +727,9 @@ export interface ProblemMetaPatchJs {{\n  \
   input?: string | null;\n  \
   /** Output filename (`null` clears). */\n  \
   output?: string | null;\n  \
-  sources?: ({source_ty})[];\n\
+  sources?: ({source_ty})[];\n  \
+  /** JSON-encoded namespaced template options patch: `{{ [tpl]: {{ [key]: value | null }} }}`. */\n  \
+  templateOptionsJson?: string;\n\
 }}"
             )
         })
@@ -726,6 +749,7 @@ export interface ProblemMetaPatchJs {{\n  \
             input: read_patch_field(value, "input")?,
             output: read_patch_field(value, "output")?,
             sources: read_opt_field(value, "sources")?,
+            template_options_json: read_opt_field(value, "templateOptionsJson")?,
         })
     }
 
@@ -741,14 +765,15 @@ export interface ProblemMetaPatchJs {{\n  \
         write_patch_field(host, obj, "input", &self.input)?;
         write_patch_field(host, obj, "output", &self.output)?;
         write_opt_field(host, obj, "sources", &self.sources)?;
+        write_opt_field(host, obj, "templateOptionsJson", &self.template_options_json)?;
         Ok(owned)
     }
 }
 
 /// Partial update for `contest.toml` metadata via `toml_edit`.
 ///
-/// Omitting a nullable field (`location`, `date`, `author`, `cover`) leaves it untouched;
-/// passing `null` removes the key (e.g. resetting `cover` to auto).
+/// Omitting a nullable field (`location`, `date`, `author`, `cover`, `template`) leaves it untouched;
+/// passing `null` removes the key (e.g. resetting `cover` to auto or `template` to workspace default).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContestMetaPatchJs {
     pub name: Option<String>,
@@ -759,6 +784,8 @@ pub struct ContestMetaPatchJs {
     pub show_metadata: Option<bool>,
     pub cover: Patch<bool>,
     pub blank_pages: Option<bool>,
+    pub template: Patch<String>,
+    pub template_options_json: Option<String>,
 }
 
 impl ContestMetaPatchJs {
@@ -770,6 +797,8 @@ impl ContestMetaPatchJs {
                     format!("invalid language {s:?}: expected chinese or english")
                 })?),
             };
+        let template_options =
+            parse_namespaced_options_json(self.template_options_json.as_deref())?;
         Ok(ContestMetaPatch {
             name: self.name,
             location: self.location,
@@ -779,7 +808,8 @@ impl ContestMetaPatchJs {
             show_metadata: self.show_metadata,
             cover: self.cover,
             blank_pages: self.blank_pages,
-            template: Patch::Keep,
+            template: self.template,
+            template_options,
         })
     }
 }
@@ -801,7 +831,11 @@ export interface ContestMetaPatchJs {\n  \
   showMetadata?: boolean;\n  \
   /** Explicit cover toggle (`null` resets to auto: enabled when 2+ problems). */\n  \
   cover?: boolean | null;\n  \
-  blankPages?: boolean;\n\
+  blankPages?: boolean;\n  \
+  /** Template ID (`null` restores workspace default). */\n  \
+  template?: string | null;\n  \
+  /** JSON-encoded namespaced template options patch: `{ [tpl]: { [key]: value | null } }`. */\n  \
+  templateOptionsJson?: string;\n\
 }"
             .to_owned()
         })
@@ -820,6 +854,8 @@ export interface ContestMetaPatchJs {\n  \
             show_metadata: read_opt_field(value, "showMetadata")?,
             cover: read_patch_field(value, "cover")?,
             blank_pages: read_opt_field(value, "blankPages")?,
+            template: read_patch_field(value, "template")?,
+            template_options_json: read_opt_field(value, "templateOptionsJson")?,
         })
     }
 
@@ -834,6 +870,8 @@ export interface ContestMetaPatchJs {\n  \
         write_opt_field(host, obj, "showMetadata", &self.show_metadata)?;
         write_patch_field(host, obj, "cover", &self.cover)?;
         write_opt_field(host, obj, "blankPages", &self.blank_pages)?;
+        write_patch_field(host, obj, "template", &self.template)?;
+        write_opt_field(host, obj, "templateOptionsJson", &self.template_options_json)?;
         Ok(owned)
     }
 }
@@ -851,11 +889,13 @@ pub struct OverridePatchJs {
     pub input: Patch<String>,
     pub output: Patch<String>,
     pub show_metadata: Patch<bool>,
+    pub options_json: Option<String>,
 }
 
 impl OverridePatchJs {
-    pub(crate) fn into_core(self) -> OverridePatch {
-        OverridePatch {
+    pub(crate) fn into_core(self) -> Result<OverridePatch, String> {
+        let options = parse_namespaced_options_json(self.options_json.as_deref())?;
+        Ok(OverridePatch {
             title: self.title,
             limits: LimitsPatch {
                 time: self.time,
@@ -864,7 +904,8 @@ impl OverridePatchJs {
                 output: self.output,
             },
             show_metadata: self.show_metadata,
-        }
+            options,
+        })
     }
 }
 
@@ -878,7 +919,9 @@ export interface OverridePatchJs {\n  \
   memory?: string | null;\n  \
   input?: string | null;\n  \
   output?: string | null;\n  \
-  showMetadata?: boolean | null;\n\
+  showMetadata?: boolean | null;\n  \
+  /** JSON-encoded namespaced problem-scope template options patch: `{ [tpl]: { [key]: value | null } }`. */\n  \
+  optionsJson?: string;\n\
 }"
             .to_owned()
         })
@@ -895,6 +938,7 @@ export interface OverridePatchJs {\n  \
             input: read_patch_field(value, "input")?,
             output: read_patch_field(value, "output")?,
             show_metadata: read_patch_field(value, "showMetadata")?,
+            options_json: read_opt_field(value, "optionsJson")?,
         })
     }
 
@@ -907,8 +951,63 @@ export interface OverridePatchJs {\n  \
         write_patch_field(host, obj, "input", &self.input)?;
         write_patch_field(host, obj, "output", &self.output)?;
         write_patch_field(host, obj, "showMetadata", &self.show_metadata)?;
+        write_opt_field(host, obj, "optionsJson", &self.options_json)?;
         Ok(owned)
     }
+}
+
+/// Parses a JSON object `{ "<template-id>": { "<key>": <value | null> } }` into Core patches.
+pub(crate) fn parse_namespaced_options_json(
+    raw: Option<&str>,
+) -> Result<BTreeMap<String, TemplateOptionsPatch>, String> {
+    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Ok(BTreeMap::new());
+    };
+    let root: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid template options JSON: {e}"))?;
+    let Some(outer) = root.as_object() else {
+        return Err("template options JSON must be an object".into());
+    };
+    let mut out = BTreeMap::new();
+    for (tpl, val) in outer {
+        let Some(inner) = val.as_object() else {
+            return Err(format!("options for template {tpl:?} must be an object"));
+        };
+        let mut fields = TemplateOptionsPatch::new();
+        for (key, fv) in inner {
+            if fv.is_null() {
+                fields.insert(key.clone(), Patch::Clear);
+            } else {
+                let parsed = match fv {
+                    serde_json::Value::Bool(b) => TemplateOptionValue::Bool(*b),
+                    serde_json::Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            TemplateOptionValue::Int(i)
+                        } else if let Some(f) = n.as_f64() {
+                            TemplateOptionValue::Float(f)
+                        } else {
+                            return Err(format!("invalid numeric value for {key:?}"));
+                        }
+                    }
+                    serde_json::Value::String(s) => TemplateOptionValue::String(s.clone()),
+                    serde_json::Value::Array(arr) => {
+                        let mut lines = Vec::with_capacity(arr.len());
+                        for item in arr {
+                            let s = item.as_str().ok_or_else(|| {
+                                format!("array option {key:?} must contain strings")
+                            })?;
+                            lines.push(s.to_owned());
+                        }
+                        TemplateOptionValue::Lines(lines)
+                    }
+                    _ => return Err(format!("unsupported option value type for {key:?}")),
+                };
+                fields.insert(key.clone(), Patch::Set(parsed));
+            }
+        }
+        out.insert(tpl.clone(), fields);
+    }
+    Ok(out)
 }
 
 fn read_opt_field<T: JsValue>(obj: JsIn<'_>, key: &str) -> Result<Option<T>, PropError> {

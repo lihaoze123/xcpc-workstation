@@ -131,7 +131,7 @@ function initialSpace(): Space {
 }
 
 export const space = signal<Space>(initialSpace());
-export type SettingsSection = "workspace" | "appearance" | "shortcuts" | "about";
+export type SettingsSection = "workspace" | "layout" | "appearance" | "shortcuts" | "about";
 export const settingsSection = signal<SettingsSection>("workspace");
 export const brandReplayOpen = signal(false);
 export const newWorkspaceModalOpen = signal(false);

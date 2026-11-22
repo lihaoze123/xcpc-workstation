@@ -28,7 +28,10 @@ use anyhow::Result;
 use base64::Engine as _;
 use serde_json::{Map, Value, json};
 use xcpc_convert::publish::{self, Kind, Target};
-use xcpc_domain::{ContestMetaPatch, Language, LimitsPatch, OverridePatch, Patch, SearchQuery};
+use xcpc_domain::{
+    ContestMetaPatch, Language, LimitsPatch, OverridePatch, Patch, ProblemMetaPatch, SearchQuery,
+    TemplateOptionValue, TemplateOptionsPatch,
+};
 use xcpc_engine::{Engine, FontOptions};
 use xcpc_storage::{Workspace, WorkspaceIndex};
 
@@ -135,12 +138,14 @@ impl Server {
             "compile_and_diagnose" => self.tool_compile_and_diagnose(obj),
             "render_page_png" => self.tool_render_page_png(obj),
             "export_pdf" => self.tool_export_pdf(obj),
+            "list_templates" => self.tool_list_templates(obj),
             "search_problems" => self.tool_search_problems(obj),
             "get_problem" => self.tool_get_problem(obj),
             "get_contest" => self.tool_get_contest(obj),
             "write_problem" => self.tool_write_problem(obj),
             "compose_contest" => self.tool_compose_contest(obj),
             "set_override" => self.tool_set_override(obj),
+            "set_template_options" => self.tool_set_template_options(obj),
             "freeze_contest" => self.tool_freeze_contest(obj),
             _ => Err(None),
         }
@@ -343,6 +348,7 @@ impl Server {
             "date",
             "author",
             "language",
+            "template",
             "show-metadata",
             "show_metadata",
             "cover",
@@ -366,6 +372,7 @@ impl Server {
                     .ok_or_else(|| fail("invalid_arguments", format!("unknown language {l:?}")))?,
             ),
         };
+        let template = patch_str(args, "template").map_err(|m| fail("invalid_arguments", m))?;
         let show_metadata = opt_bool_alias(args, "show-metadata", "show_metadata")
             .map_err(|m| fail("invalid_arguments", m))?;
         let cover = patch_bool(args, "cover").map_err(|m| fail("invalid_arguments", m))?;
@@ -378,10 +385,11 @@ impl Server {
             date,
             author,
             language,
-            template: Patch::Keep,
+            template,
             show_metadata,
             cover,
             blank_pages,
+            ..Default::default()
         };
         let has_patch = patch != ContestMetaPatch::default();
         let contest = self
@@ -411,7 +419,7 @@ impl Server {
             })?;
         reject_unknown_keys(
             fields,
-            &["title", "limits", "show-metadata", "show_metadata"],
+            &["title", "limits", "show-metadata", "show_metadata", "options"],
             "fields",
         )
         .map_err(|m| fail("invalid_arguments", m))?;
@@ -441,11 +449,23 @@ impl Server {
                 ));
             }
         };
+        let options = match fields.get("options") {
+            None | Some(Value::Null) => BTreeMap::new(),
+            Some(Value::Object(outer)) => parse_namespaced_options_patch(outer)
+                .map_err(|m| fail("invalid_arguments", m))?,
+            Some(_) => {
+                return Err(fail(
+                    "invalid_arguments",
+                    "`fields.options` must be an object mapping template IDs to option patches",
+                ));
+            }
+        };
 
         let patch = OverridePatch {
             title,
             limits,
             show_metadata,
+            options,
         };
         let contest = self
             .ws
@@ -460,6 +480,100 @@ impl Server {
             "item": item,
             "meta": contest.meta,
         })))
+    }
+
+    fn tool_list_templates(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(args, &[], "list_templates")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        self.engine.reset_files();
+        let templates = publish::list_templates(&self.ws, &self.engine);
+        let default_tpl = self
+            .ws
+            .default_template()
+            .unwrap_or_else(|| "olymp-classic".into());
+        let workspace_options = self.ws.workspace_template_options();
+        Ok(structured(json!({
+            "ok": true,
+            "default": default_tpl,
+            "workspace_options": workspace_options,
+            "templates": templates,
+        })))
+    }
+
+    fn tool_set_template_options(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["scope", "id", "template", "options"],
+            "set_template_options",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let scope = req_str(args, "scope").map_err(|m| fail("invalid_arguments", m))?;
+        let template_patch =
+            patch_str(args, "template").map_err(|m| fail("invalid_arguments", m))?;
+        let options_patch = match args.get("options") {
+            None | Some(Value::Null) => BTreeMap::new(),
+            Some(Value::Object(outer)) => parse_namespaced_options_patch(outer)
+                .map_err(|m| fail("invalid_arguments", m))?,
+            Some(_) => {
+                return Err(fail(
+                    "invalid_arguments",
+                    "`options` must be an object mapping template IDs to option patches",
+                ));
+            }
+        };
+
+        match scope.as_str() {
+            "workspace" => {
+                self.ws
+                    .update_workspace_template(&template_patch, &options_patch)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "scope": "workspace",
+                    "default": self.ws.default_template().unwrap_or_else(|| "olymp-classic".into()),
+                    "workspace_options": self.ws.workspace_template_options(),
+                })))
+            }
+            "contest" => {
+                let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+                let patch = ContestMetaPatch {
+                    template: template_patch,
+                    template_options: options_patch,
+                    ..Default::default()
+                };
+                let meta = self
+                    .ws
+                    .update_contest_meta(&id, &patch)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "scope": "contest",
+                    "id": id,
+                    "meta": meta,
+                })))
+            }
+            "problem" => {
+                let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+                let patch = ProblemMetaPatch {
+                    template_options: options_patch,
+                    ..Default::default()
+                };
+                let meta = self
+                    .ws
+                    .update_problem_meta(&id, &patch)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "scope": "problem",
+                    "id": id,
+                    "meta": meta,
+                })))
+            }
+            other => Err(fail(
+                "invalid_arguments",
+                format!("unknown scope {other:?}: expected \"workspace\", \"contest\", or \"problem\""),
+            )),
+        }
     }
 
     fn tool_freeze_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
@@ -481,14 +595,64 @@ fn is_known_tool(name: &str) -> bool {
         "compile_and_diagnose"
             | "render_page_png"
             | "export_pdf"
+            | "list_templates"
             | "search_problems"
             | "get_problem"
             | "get_contest"
             | "write_problem"
             | "compose_contest"
             | "set_override"
+            | "set_template_options"
             | "freeze_contest"
     )
+}
+
+fn parse_option_value(v: &Value) -> Result<TemplateOptionValue, String> {
+    match v {
+        Value::Bool(b) => Ok(TemplateOptionValue::Bool(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(TemplateOptionValue::Int(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(TemplateOptionValue::Float(f))
+            } else {
+                Err("invalid numeric template option value".into())
+            }
+        }
+        Value::String(s) => Ok(TemplateOptionValue::String(s.clone())),
+        Value::Array(arr) => {
+            let mut lines = Vec::with_capacity(arr.len());
+            for item in arr {
+                let s = item
+                    .as_str()
+                    .ok_or_else(|| "array template option values must contain strings".to_owned())?;
+                lines.push(s.to_owned());
+            }
+            Ok(TemplateOptionValue::Lines(lines))
+        }
+        _ => Err("template option value must be a boolean, number, string, array of strings, or null".into()),
+    }
+}
+
+fn parse_namespaced_options_patch(
+    outer: &Map<String, Value>,
+) -> Result<BTreeMap<String, TemplateOptionsPatch>, String> {
+    let mut out = BTreeMap::new();
+    for (tpl, val) in outer {
+        let Some(inner) = val.as_object() else {
+            return Err(format!("`options[{tpl:?}]` must be an object"));
+        };
+        let mut fields = TemplateOptionsPatch::new();
+        for (key, fv) in inner {
+            if fv.is_null() {
+                fields.insert(key.clone(), Patch::Clear);
+            } else {
+                fields.insert(key.clone(), Patch::Set(parse_option_value(fv)?));
+            }
+        }
+        out.insert(tpl.clone(), fields);
+    }
+    Ok(out)
 }
 
 /// A result carrying `value` both as structured content and as text.
@@ -702,6 +866,17 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
         },
         {
+            "name": "list_templates",
+            "title": "List templates and schemas",
+            "description": "List all built-in and workspace custom Typst templates (templates/*.typ) together with their declarative `#let schema` fields, groups, defaults, and current workspace defaults.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
             "name": "search_problems",
             "title": "Search problems",
             "description": "Search the workspace problem library by optional text, tags, rating range, or source platform. \
@@ -790,6 +965,7 @@ fn tools() -> Value {
                     "date": { "type": ["string", "null"], "description": "Contest date (null to clear)." },
                     "author": { "type": ["string", "null"], "description": "Cover author line (null to clear)." },
                     "language": { "type": "string", "enum": ["chinese", "english"], "description": "Contest language." },
+                    "template": { "type": ["string", "null"], "description": "Template ID (e.g. olymp-classic, cnoi-classic, or custom; null to inherit workspace default)." },
                     "show-metadata": { "type": "boolean", "description": "Show limits table by default." },
                     "cover": { "type": ["boolean", "null"], "description": "Show cover page (null for default: >= 2 problems)." },
                     "blank-pages": { "type": "boolean", "description": "Start every problem on an odd page." },
@@ -826,11 +1002,35 @@ fn tools() -> Value {
                                 },
                                 "additionalProperties": false,
                             },
+                            "options": {
+                                "type": ["object", "null"],
+                                "description": "Problem-scoped template option overrides, namespaced by template ID ({ \"<template>\": { \"<key>\": value | null } }).",
+                            },
                         },
                         "additionalProperties": false,
                     },
                 },
                 "required": ["contest", "label", "fields"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "set_template_options",
+            "title": "Set template and template options",
+            "description": "Update template selection and namespaced template schema options at workspace, contest, or problem scope. Pass null for an option key to clear it and inherit from the parent scope.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scope": { "type": "string", "enum": ["workspace", "contest", "problem"], "description": "Target scope to update." },
+                    "id": { "type": "string", "description": "Contest ID or problem ID (required when scope is \"contest\" or \"problem\")." },
+                    "template": { "type": ["string", "null"], "description": "Template ID to select (workspace or contest scope; null clears to default)." },
+                    "options": {
+                        "type": ["object", "null"],
+                        "description": "Namespaced option patch: { \"<template-id>\": { \"<key>\": value | null } }.",
+                    },
+                },
+                "required": ["scope"],
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
@@ -900,12 +1100,14 @@ mod tests {
                 "compile_and_diagnose",
                 "render_page_png",
                 "export_pdf",
+                "list_templates",
                 "search_problems",
                 "get_problem",
                 "get_contest",
                 "write_problem",
                 "compose_contest",
                 "set_override",
+                "set_template_options",
                 "freeze_contest",
             ]
         );

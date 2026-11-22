@@ -49,6 +49,10 @@ url = "https://codeforces.com/problemset/problem/1999/A"
 platform = "luogu"
 id = "CF1999A"
 
+# 单题级模板参数（可选，按模板名隔离；比赛中可由 [[problem]] 覆写）
+[template-options.olymp-classic]
+sample-layout = "wide"       # 可选，例：长样例改上下宽版
+
 # 题目包（Phase 3，见 §7）：只声明路径约定推导不出来的东西
 [[test]]                     # 有顺序，编号即顺序
 gen = "random"               # generators/random.cpp
@@ -108,10 +112,15 @@ location = "上海"             # 可选
 date = "2026 年 11 月 20 日"  # 可选，页眉右侧和封面
 author = "命题组"             # 可选，封面作者行，默认「出题人」
 language = "chinese"          # chinese | english
+template = "olymp-classic"    # 可选，缺省沿用 workspace.toml
 show-metadata = true          # 限制表，可按题覆写
 cover = true                  # 默认：不少于 2 道题时有封面
 blank-pages = false           # 每题从奇数页开始，空出的偶数页写「此页故意留白」
 frozen = false                # 冻结后只读，从 snapshot/ 渲染
+
+# 比赛级模板参数（可选，按模板名隔离，覆写 workspace.toml 中的默认值）
+[template-options.cnoi-classic]
+compile-opts = "-O2 -std=c++20 -static"
 
 [[problem]]
 id = "cf-1999a"               # 题库中的题目 ID
@@ -124,14 +133,16 @@ title = "线段树"              # 以下为元数据覆写，都可省略
 show-metadata = false
 [problem.limits]
 time = "2s"
+[problem.options.cnoi-classic]
+prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔离）
 ```
 
 - **活引用**：`contest.toml` 按顺序列出题目 ID 和题号（A/B/C…）。题库中修正一处错别字，所有引用该题且**未冻结**的比赛都会同步更新。
-- **元数据覆写**：可以按题覆写**元数据**，包括 `title`、`limits`（时间、内存、输入输出文件名）、`show-metadata`。**题面正文、样例、配图不能覆写**；需要改动时，在题库里复制出一道新题（不提供专门的 fork 功能），再在比赛中引用新题。
+- **元数据与单题版式覆写**：可以按题覆写**元数据**（`title`、`limits`、`show-metadata`）以及当前模板声明的**单题级模板参数**（`[problem.options.<template>]`）。**题面正文、样例、配图不能覆写**；需要改动时，在题库里复制出一道新题（不提供专门的 fork 功能），再在比赛中引用新题。
 - **题号由顺序决定**：增删和移动题目后，Core 按顺序重排为 A、B、C……并写回 `label`；超过 26 题报错。
 - **冻结快照**：
   - 冻结前完整编译并跑 lint，有 error 就拒绝冻结（warning 不拦截）。
-  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）复制到 `contests/<id>/snapshot/<label>/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，`contest.toml` 里的覆写不再生效。
+  - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）、生效的自定义模板副本（若使用了 `templates/<name>.typ`）、`.xcpc/preamble.typ`（若存在）与合并解析后的模板参数一并固化到 `contests/<id>/snapshot/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，不再受题库、工作区默认模板或外部样式修改影响。
   - 冻结后，Core 层对整场比赛强制只读，包括快照。
   - **只能由人在 GUI 或 CLI 中解冻**（`xcpc contest unfreeze`，需要二次确认），确认时列出快照与题库当前版本有差异的题（题面已改、样例已改、题目已删除，逐文件比较字节），CLI 先打印差异再要求输入比赛 ID（`--yes` 跳过）。解冻后删除快照目录，恢复活引用。**MCP 不提供解冻能力。**
 - **删除题目**：被未冻结的比赛引用时拒绝删除并列出这些比赛；只被冻结的比赛引用时允许。

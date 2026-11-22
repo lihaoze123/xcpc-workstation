@@ -24,8 +24,19 @@ mod fingerprint;
 mod locate;
 mod overflow;
 mod packages;
+mod schema;
 
 pub use typst_render::render as render_page_raw;
+
+/// Returns the bundled Typst source for a built-in template ID (`"olymp-classic"` or
+/// `"cnoi-classic"`), used when forking a built-in template into `templates/<name>.typ`.
+pub fn builtin_template_source(name: &str) -> Option<&'static str> {
+    let target = format!("/xcpc/{name}.typ");
+    TEMPLATES
+        .iter()
+        .find(|(path, _)| *path == target)
+        .map(|(_, src)| *src)
+}
 
 /// The bundled templates, addressable from Typst as `/xcpc/<name>`: `olymp-classic`,
 /// what the Markdown converter emits calls (`markdown.typ`), MiTeX's scope for it, and
@@ -453,6 +464,12 @@ impl Engine {
         }
     }
 
+    /// Evaluates `import_path` (e.g. `"/xcpc/olymp-classic.typ"` or `"/templates/my.typ"`)
+    /// and returns its exported `#let schema = (...)`, or an empty schema if absent.
+    pub fn inspect_template_schema(&self, import_path: &str) -> xcpc_domain::TemplateSchema {
+        schema::inspect(self, import_path)
+    }
+
     /// Resolves a point `(x_pt, y_pt)` (typographic points from the top-left of 0-based
     /// `page`) to the corresponding byte offset in the main source (`/main.typ`).
     pub fn locate_point(
@@ -871,5 +888,63 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
                 compiled.warnings
             );
         }
+    }
+
+    #[test]
+    fn builtin_templates_export_declarative_schemas_and_compile_with_options() {
+        let mut engine = Engine::new(&FontOptions::from_env(), None);
+
+        let olymp = engine.inspect_template_schema("/xcpc/olymp-classic.typ");
+        assert_eq!(olymp.name.as_deref(), Some("XCPC 经典"));
+        assert_eq!(
+            olymp.description.as_deref(),
+            Some("对齐 olymp.sty 的经典 ICPC / XCPC 版式")
+        );
+        assert!(olymp.has_book_options());
+        assert!(olymp.has_problem_options());
+        assert!(olymp.fields.iter().any(|f| f.key == "sample-layout"));
+
+        let cnoi = engine.inspect_template_schema("/xcpc/cnoi-classic.typ");
+        assert_eq!(cnoi.name.as_deref(), Some("OI 风格"));
+        assert!(cnoi.has_book_options());
+        assert!(cnoi.has_problem_options());
+        assert!(cnoi.fields.iter().any(|f| f.key == "compile-opts"));
+        assert!(cnoi.fields.iter().any(|f| f.key == "notices"));
+        assert!(cnoi.fields.iter().any(|f| f.key == "prob-type"));
+
+        // Verify olymp-classic wide sample layout + cnoi-classic options compile cleanly.
+        engine.set_main(
+            r#"#import "/xcpc/olymp-classic.typ": *
+#show: contest.with(name: "Test", show-cover: false, options: ("body-size": "11pt", "margin-x": "20mm"))
+#problem(label: "A", title: "Wide", options: ("sample-layout": "wide"))[
+  正文内容。
+  #samples(("1 2\n", "3\n"),)
+]
+"#,
+        );
+        let compiled = engine.compile().unwrap();
+        assert_eq!(compiled.page_count(), 1);
+
+        engine.set_main(
+            r##"#import "/xcpc/cnoi-classic.typ": *
+#show: contest.with(
+  name: "NOI 模拟赛",
+  show-cover: true,
+  options: (
+    "compile-opts": "-O2 -std=c++20 -static",
+    "sample-border-color": "#1166aa",
+    "sample-line-numbers": false,
+    "dotted-emphasis": false,
+    "notices": ("测试说明 1", "测试说明 2"),
+  ),
+)
+#problem(label: "A", title: "交互题", options: ("prob-type": "交互型", "source-file": "inter"))[
+  给定 *重点* 内容。
+  #samples(("1\n", "2\n"),)
+]
+"##,
+        );
+        let compiled_cnoi = engine.compile().unwrap();
+        assert!(compiled_cnoi.page_count() >= 2);
     }
 }

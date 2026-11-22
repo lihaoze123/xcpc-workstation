@@ -12,7 +12,7 @@ use std::time::{Instant, SystemTime};
 
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
-    ContestMetaPatch, FuzzyMatchKind, Language, Problem, RatingTier, SearchQuery, check_id,
+    ContestMetaPatch, FuzzyMatchKind, Language, Patch, Problem, RatingTier, SearchQuery, check_id,
 };
 use xcpc_engine::{Compiled, Engine, FontOptions};
 use xcpc_storage::{
@@ -33,8 +33,8 @@ use crate::types::{
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
     SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
     WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js, rating_tier_str,
-    source_to_js,
+    WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js,
+    parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -1031,6 +1031,9 @@ impl State {
             .collect();
         let solutions = ws.list_solutions(id).unwrap_or_default();
 
+        let template_options_json =
+            serde_json::to_string(&problem.meta.template_options).unwrap_or_else(|_| "{}".into());
+
         ProblemDetailJs {
             id: problem.id,
             title: problem.meta.title,
@@ -1046,6 +1049,7 @@ impl State {
             samples,
             solutions,
             referencing_contests,
+            template_options_json,
             error: None,
         }
     }
@@ -1213,7 +1217,11 @@ impl State {
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
-        match ws.update_problem_meta(id, &patch.into_core()) {
+        let core_patch = match patch.into_core() {
+            Ok(p) => p,
+            Err(msg) => return ActionResult::err("invalid_argument", msg),
+        };
+        match ws.update_problem_meta(id, &core_patch) {
             Ok(_) => {
                 let _ = self.core.lock().unwrap().index.refresh_problem(&ws, id);
                 self.invalidate_cache();
@@ -1281,6 +1289,21 @@ impl State {
         let frozen = meta.frozen;
         let default_show = meta.show_metadata;
         let mut error = None;
+        let effective_template = if frozen
+            && let Some(snap) = ws.load_snapshot_template(id)
+        {
+            snap.template
+        } else {
+            meta.template
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .or_else(|| ws.default_template())
+                .unwrap_or_else(|| "olymp-classic".into())
+        };
+        let template_options_json =
+            serde_json::to_string(&meta.template_options).unwrap_or_else(|_| "{}".into());
 
         let items = if frozen {
             match ws.contest_problems(&contest) {
@@ -1288,6 +1311,8 @@ impl State {
                     .into_iter()
                     .map(|(item, p)| {
                         let show_metadata = item.show_metadata.unwrap_or(default_show);
+                        let opts_json = serde_json::to_string(&p.meta.template_options)
+                            .unwrap_or_else(|_| "{}".into());
                         ContestItemDetailJs {
                             label: item.label,
                             id: item.id,
@@ -1308,6 +1333,9 @@ impl State {
                             editorial: format!("{}/editorial.md", p.dir),
                             rating: p.meta.rating,
                             tags: p.meta.tags,
+                            options_json: opts_json.clone(),
+                            original_options_json: opts_json,
+                            override_options_json: "{}".into(),
                         }
                     })
                     .collect(),
@@ -1329,10 +1357,17 @@ impl State {
                         item.limits.as_ref().is_some_and(|l| l.output.is_some());
                     let overridden_show_metadata = item.show_metadata.is_some();
                     let show_metadata = item.show_metadata.unwrap_or(default_show);
+                    let override_options_json =
+                        serde_json::to_string(&item.options).unwrap_or_else(|_| "{}".into());
 
                     match ws.load_problem(&item.id) {
                         Ok(p) => {
                             let effective = item.apply(&p.meta);
+                            let options_json = serde_json::to_string(&effective.template_options)
+                                .unwrap_or_else(|_| "{}".into());
+                            let original_options_json =
+                                serde_json::to_string(&p.meta.template_options)
+                                    .unwrap_or_else(|_| "{}".into());
                             ContestItemDetailJs {
                                 label: item.label.clone(),
                                 id: item.id.clone(),
@@ -1353,6 +1388,9 @@ impl State {
                                 editorial: format!("{}/editorial.md", p.dir),
                                 rating: p.meta.rating,
                                 tags: p.meta.tags,
+                                options_json,
+                                original_options_json,
+                                override_options_json,
                             }
                         }
                         Err(_) => {
@@ -1377,6 +1415,9 @@ impl State {
                                 editorial: format!("problems/{}/editorial.md", item.id),
                                 rating: None,
                                 tags: Vec::new(),
+                                options_json: override_options_json.clone(),
+                                original_options_json: "{}".into(),
+                                override_options_json,
                             }
                         }
                     }
@@ -1391,6 +1432,9 @@ impl State {
             date: meta.date.clone(),
             author: meta.author.clone(),
             language: meta.language.name().to_owned(),
+            template: meta.template.clone(),
+            effective_template,
+            template_options_json,
             show_metadata: meta.show_metadata,
             cover: meta.cover,
             has_cover: meta.has_cover(),
@@ -1526,7 +1570,11 @@ impl State {
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
-        match ws.set_override(contest_id, label, &patch.into_core()) {
+        let core_patch = match patch.into_core() {
+            Ok(p) => p,
+            Err(msg) => return ActionResult::err("invalid_argument", msg),
+        };
+        match ws.set_override(contest_id, label, &core_patch) {
             Ok(_) => {
                 let _ = self
                     .core
@@ -1640,6 +1688,107 @@ impl State {
             }
             Err(e) => ActionResult::from_storage_err(e),
         }
+    }
+
+    // ---- Templates & declarative schemas -----------------------------------------------
+
+    pub(crate) fn list_templates_json(&self) -> String {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return r#"{"default":"olymp-classic","workspaceOptions":{},"templates":[],"fonts":[]}"#
+                .into();
+        };
+        let (templates, fonts) = {
+            let mut engine = self.math_engine.lock().unwrap();
+            engine.set_root(Some(ws.root().to_path_buf()));
+            let templates = publish::list_templates(&ws, &engine);
+            let mut fonts: Vec<String> = engine
+                .font_families()
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+            fonts.sort();
+            fonts.dedup();
+            (templates, fonts)
+        };
+        let default_tpl = ws
+            .default_template()
+            .unwrap_or_else(|| "olymp-classic".into());
+        let workspace_options = ws.workspace_template_options();
+        serde_json::to_string(&serde_json::json!({
+            "default": default_tpl,
+            "workspaceOptions": workspace_options,
+            "templates": templates,
+            "fonts": fonts,
+        }))
+        .unwrap_or_else(|_| "{}".into())
+    }
+
+    pub(crate) fn update_workspace_template(
+        &self,
+        template: Option<String>,
+        clear_template: bool,
+        options_json: Option<String>,
+    ) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        let tpl_patch = if clear_template {
+            Patch::Clear
+        } else if let Some(t) = template {
+            Patch::Set(t)
+        } else {
+            Patch::Keep
+        };
+        let options = match parse_namespaced_options_json(options_json.as_deref()) {
+            Ok(o) => o,
+            Err(msg) => return ActionResult::err("invalid_argument", msg),
+        };
+        match ws.update_workspace_template(&tpl_patch, &options) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn fork_template(&self, source: &str, new_name: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match publish::fork_template(&ws, source, new_name) {
+            Ok(_) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn resolve_template_file(&self, name: &str) -> Result<PathBuf, ActionResult> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err(ActionResult::err("no_workspace", "no workspace open"));
+        };
+        match ws.template_file_path(name) {
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => Err(ActionResult::err(
+                "not_found",
+                format!("模板「{name}」是内置模板，请先新建自定义模板副本再编辑"),
+            )),
+            Err(e) => Err(ActionResult::from_storage_err(e)),
+        }
+    }
+
+    pub(crate) fn ensure_preamble_file(&self) -> Result<PathBuf, ActionResult> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err(ActionResult::err("no_workspace", "no workspace open"));
+        };
+        ws.ensure_preamble().map_err(ActionResult::from_storage_err)
     }
 
     // ---- Cmd+K fuzzy jump, Frecency & preferences --------------------------------------

@@ -7,6 +7,96 @@
 // TeX points (1/72.27 in) to Typst points (1/72 in).
 #let tex(x) = x * 72 / 72.27 * 1pt
 
+// ---- Declarative Template Schema ------------------------------------------------------
+
+#let schema = (
+  name: "XCPC 经典",
+  description: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+  groups: (
+    (id: "layout", label: "页面与字体"),
+    (id: "problem", label: "单题排版"),
+  ),
+  fields: (
+    (
+      key: "body-size",
+      label: "正文字号",
+      type: "length",
+      scope: "book",
+      group: "layout",
+      default: "12pt",
+      presets: ("10pt", "11pt", "12pt", "13pt"),
+      placeholder: "12pt",
+    ),
+    (
+      key: "margin-x",
+      label: "左右页边距",
+      type: "length",
+      scope: "book",
+      group: "layout",
+      default: "17.5mm",
+      presets: ("15mm", "17.5mm", "20mm", "25mm"),
+      placeholder: "17.5mm",
+    ),
+    (
+      key: "margin-y",
+      label: "上下页边距",
+      type: "length",
+      scope: "book",
+      group: "layout",
+      default: "26mm",
+      presets: ("20mm", "26mm", "30mm"),
+      placeholder: "26mm",
+    ),
+    (
+      key: "cjk-body-font",
+      label: "中文正文字体",
+      type: "font",
+      scope: "book",
+      group: "layout",
+      default: "",
+      placeholder: "默认（方正书宋）",
+    ),
+    (
+      key: "cjk-heading-font",
+      label: "中文标题字体",
+      type: "font",
+      scope: "book",
+      group: "layout",
+      default: "",
+      placeholder: "默认（方正黑体）",
+    ),
+    (
+      key: "sample-layout",
+      label: "样例排版",
+      type: "enum",
+      scope: "problem",
+      group: "problem",
+      default: "two-column",
+      choices: (
+        (value: "two-column", label: "双栏并排"),
+        (value: "wide", label: "上下宽版"),
+      ),
+    ),
+  ),
+)
+
+#let parse-len(s, fallback) = {
+  if type(s) == length { return s }
+  if type(s) != str { return fallback }
+  let t = s.trim()
+  if t == "" { return fallback }
+  let m = t.match(regex("^([0-9]+(?:\\.[0-9]+)?)\\s*(pt|mm|cm|in|em)$"))
+  if m == none { return fallback }
+  let num = float(m.captures.at(0))
+  let unit = m.captures.at(1)
+  if unit == "pt" { num * 1pt }
+  else if unit == "mm" { num * 1mm }
+  else if unit == "cm" { num * 1cm }
+  else if unit == "in" { num * 1in }
+  else if unit == "em" { num * 1em }
+  else { fallback }
+}
+
 // ---- Design parameters ----------------------------------------------------------------
 
 #let text-width = 175mm                       // olymp.sty, A4 portrait, 12pt
@@ -66,6 +156,9 @@
 )
 #let lang-state = state("xcpc-language", "chinese")
 #let blank-state = state("xcpc-blank-pages", false)
+#let sample-layout-state = state("xcpc-sample-layout", "two-column")
+#let cjk-song-state = state("xcpc-olymp-song", cjk-song)
+#let cjk-hei-state = state("xcpc-olymp-hei", cjk-hei)
 #let word(key) = context words.at(lang-state.get()).at(key)
 
 // \problemend with `intentionallyblankpages`: every problem starts on an odd page; an
@@ -96,16 +189,34 @@
   let pairs = pairs.pos()
   let cell(body) = raw(body.trim("\n", at: end))
   let head(key) = align(center, mono(text(weight: "bold", word(key))))
-  let column = 0.43 * text-width + 2 * tabcolsep
-  let body = pad(left: parindent, table(
-    columns: (column, column),
-    stroke: rule,
-    inset: (x: tabcolsep, y: 0pt),
-    table.header(head("stdin"), head("stdout"), repeat: true),
-    ..pairs.map(((input, output)) => (cell(input), cell(output))).flatten(),
-  ))
   section(if pairs.len() == 1 { "example" } else { "examples" })
-  context block(breakable: measure(body, width: text-width).height > text-height, below: smallskip, body)
+  context {
+    let layout = sample-layout-state.get()
+    let body = if layout == "wide" {
+      let col = text-width - parindent
+      pad(left: parindent, table(
+        columns: (col,),
+        stroke: rule,
+        inset: (x: tabcolsep, y: 2pt),
+        ..pairs.map(((input, output)) => (
+          head("stdin"),
+          cell(input),
+          head("stdout"),
+          cell(output),
+        )).flatten(),
+      ))
+    } else {
+      let column = 0.43 * text-width + 2 * tabcolsep
+      pad(left: parindent, table(
+        columns: (column, column),
+        stroke: rule,
+        inset: (x: tabcolsep, y: 0pt),
+        table.header(head("stdin"), head("stdout"), repeat: true),
+        ..pairs.map(((input, output)) => (cell(input), cell(output))).flatten(),
+      ))
+    }
+    block(breakable: measure(body, width: text-width).height > text-height, below: smallskip, body)
+  }
 }
 
 #let problem(
@@ -116,12 +227,15 @@
   time-limit: none,
   memory-limit: none,
   show-metadata: true,
+  options: (:),
   body,
 ) = {
   pagebreak(weak: true)
   blank-page-if-even()
+  let sample-layout = options.at("sample-layout", default: "two-column")
+  sample-layout-state.update(sample-layout)
   [#metadata((label: label, title: title)) <xcpc-problem>]
-  block(sticky: true, below: 3mm, bold-sans(sizes.LARGE)[#word("problem") #label. #title])
+  block(sticky: true, below: 3mm, context text(font: with-cjk("Latin Modern Sans", cjk-hei-state.get()), weight: "bold", size: sizes.LARGE)[#word("problem") #label. #title])
   if show-metadata {
     // No file name: standard input and output, which the reference sets as file names.
     let file(name, key) = mono(if name == none { word(key) } else { name })
@@ -276,34 +390,60 @@
   book: "statements",
   pdf-title: none,
   pdf-author: none,
+  options: (:),
   body,
 ) = {
   let editorial = book == "editorial"
   let chinese = language == "chinese"
+  let opt-body-size = options.at("body-size", default: "12pt")
+  let eff-body-size = if type(opt-body-size) == str and opt-body-size.trim() != "" and opt-body-size.trim() != "12pt" {
+    parse-len(opt-body-size, sizes.normal)
+  } else {
+    sizes.normal
+  }
+  let opt-margin-x = options.at("margin-x", default: "17.5mm")
+  let custom-mx = type(opt-margin-x) == str and opt-margin-x.trim() != "" and opt-margin-x.trim() != "17.5mm"
+  let eff-left = if custom-mx { parse-len(opt-margin-x, text-left) } else { text-left }
+  let eff-right = if custom-mx { parse-len(opt-margin-x, 210mm - text-left - text-width) } else { 210mm - text-left - text-width }
+  let eff-text-width = if custom-mx { 210mm - eff-left - eff-right } else { text-width }
+
+  let opt-margin-y = options.at("margin-y", default: "26mm")
+  let custom-my = type(opt-margin-y) == str and opt-margin-y.trim() != "" and opt-margin-y.trim() != "26mm"
+  let eff-top = if custom-my { parse-len(opt-margin-y, text-top) } else { text-top }
+  let eff-bottom = if custom-my { parse-len(opt-margin-y, 297mm - text-top - text-height) } else { 297mm - text-top - text-height }
+  let eff-text-height = if custom-my { 297mm - eff-top - eff-bottom } else { text-height }
+
+  let opt-song = options.at("cjk-body-font", default: "")
+  let eff-song = if type(opt-song) == str and opt-song.trim() != "" { opt-song.trim() } else { cjk-song }
+  let opt-hei = options.at("cjk-heading-font", default: "")
+  let eff-hei = if type(opt-hei) == str and opt-hei.trim() != "" { opt-hei.trim() } else { cjk-hei }
+
   lang-state.update(language)
   blank-state.update(blank-pages)
+  cjk-song-state.update(eff-song)
+  cjk-hei-state.update(eff-hei)
   let doc-title = if pdf-title != none and pdf-title != "" { pdf-title } else { name }
   let doc-author = if pdf-author != none and pdf-author != "" { pdf-author } else if author != none and author != "" { author } else { () }
   set document(title: doc-title, author: doc-author)
   set text(lang: if chinese { "zh" } else { "en" }, region: if chinese { "cn" } else { none })
 
-  set text(..strut(sizes.normal))
+  set text(..strut(eff-body-size))
   // olymp.sty: no space between paragraphs in Chinese, \parskip = 1ex (0.43em in Latin Modern) otherwise.
   set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
-  set text(font: with-cjk("Latin Modern Roman 12", cjk-song), size: sizes.normal)
-  show raw.where(block: false): set text(font: mono-font, size: sizes.normal)
-  show raw.where(block: true): set text(font: code-font, size: sizes.normal, ligatures: false, features: (calt: 0))
+  set text(font: with-cjk("Latin Modern Roman 12", eff-song), size: eff-body-size)
+  show raw.where(block: false): set text(font: mono-font, size: eff-body-size)
+  show raw.where(block: true): set text(font: code-font, size: eff-body-size, ligatures: false, features: (calt: 0))
   // ctex's founder fontset: CJK bold is FZ Hei, CJK italic FZ Kai.
-  show strong: set text(font: with-cjk("Latin Modern Roman 12", cjk-hei))
+  show strong: set text(font: with-cjk("Latin Modern Roman 12", eff-hei))
   show emph: set text(font: with-cjk("Latin Modern Roman 12", cjk-kai))
   // Highlighted raw emits strong/emph; keep monospace inside raw.
   show raw.where(block: false): it => {
-    show strong: set text(font: with-cjk("Latin Modern Mono 12", cjk-hei))
+    show strong: set text(font: with-cjk("Latin Modern Mono 12", eff-hei))
     show emph: set text(font: with-cjk("Latin Modern Mono 12", cjk-kai))
     it
   }
   show raw.where(block: true): it => {
-    show strong: set text(font: with-cjk("JetBrains Mono", cjk-hei))
+    show strong: set text(font: with-cjk("JetBrains Mono", eff-hei))
     show emph: set text(font: with-cjk("JetBrains Mono", cjk-kai))
     it
   }
@@ -332,7 +472,7 @@
   set page(
     width: 210mm,
     height: 297mm,
-    margin: (left: text-left, right: 210mm - text-left - text-width, top: text-top, bottom: 297mm - text-top - text-height),
+    margin: (left: eff-left, right: eff-right, top: eff-top, bottom: eff-bottom),
     // Running head: name left, date right, its baseline \headsep above the text; the
     // rule hangs 2pt below the ink (\\[2pt] then \hrule).
     header-ascent: 6mm,
@@ -342,13 +482,13 @@
       let head = if editorial {
         // The problem whose editorial this page is in: the last one started by here.
         let current = query(<xcpc-tutorial>).filter(t => t.location().page() <= here().page()).at(-1, default: none)
-        serif(if name == none or name == "" { word("editorial") } else { name })
+        serif(cjk: eff-song, if name == none or name == "" { word("editorial") } else { name })
         h(1fr)
         if current != none {
           let v = current.value
-          serif(if v.label == none { v.title } else [#v.label#h(1em)#v.title])
+          serif(cjk: eff-song, if v.label == none { v.title } else [#v.label#h(1em)#v.title])
         }
-      } else { serif(name); h(1fr); serif(date) }
+      } else { serif(cjk: eff-song, name); h(1fr); serif(cjk: eff-song, date) }
       let depth = measure(text(top-edge: "baseline", bottom-edge: "bounds", head)).height
       block(text(top-edge: "bounds", bottom-edge: "baseline", head))
       block(height: 0pt, move(dy: depth + 2pt, line(length: 100%, stroke: rule)))
@@ -369,7 +509,7 @@
     if editorial { title-page(name, author, date) } else { cover(name, author, date) }
   }
   // Where the text may go, for the engine's overflow check.
-  [#metadata((left: text-left, top: text-top, width: text-width, height: text-height)) <xcpc-text-area>]
+  [#metadata((left: eff-left, top: eff-top, width: eff-text-width, height: eff-text-height)) <xcpc-text-area>]
   body
   // The last problem's \problemend: the book ends on an even page. The parity is the
   // end of the text's, not where the blank page itself would start.

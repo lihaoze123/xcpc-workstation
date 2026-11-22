@@ -729,6 +729,7 @@ fn problem_library_crud_search_facets_samples_and_solutions() {
                 id: "1999A".into(),
                 url: Some("https://codeforces.com/problemset/problem/1999/A".into()),
             }]),
+            ..Default::default()
         },
     );
     assert!(upd.ok, "update_problem_meta failed: {:?}", upd.error);

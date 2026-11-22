@@ -43,6 +43,134 @@ impl Language {
     }
 }
 
+/// One scalar or list value for a template schema option.
+///
+/// Serializes naturally in both TOML and JSON (booleans, integers, floats, strings,
+/// and string arrays for multiline/list options).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TemplateOptionValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Lines(Vec<String>),
+}
+
+/// Template options namespaced by template ID: `<template-id> -> (<key> -> <value>)`.
+pub type TemplateOptionsMap = BTreeMap<String, BTreeMap<String, TemplateOptionValue>>;
+
+/// Supported control types in a template's `#let schema = (...)` declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplateFieldType {
+    Bool,
+    Enum,
+    #[default]
+    String,
+    Lines,
+    Number,
+    Length,
+    Color,
+    Font,
+}
+
+/// Which level a template schema field applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplateFieldScope {
+    #[default]
+    Book,
+    Problem,
+}
+
+/// One selectable choice for an `enum` schema field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateChoice {
+    pub value: String,
+    pub label: String,
+}
+
+/// A named visual group in a template's schema.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateGroup {
+    pub id: String,
+    pub label: String,
+}
+
+/// One parameter declared in a template's `#let schema = (...)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TemplateField {
+    pub key: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "type", default)]
+    pub field_type: TemplateFieldType,
+    #[serde(default)]
+    pub scope: TemplateFieldScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    pub default: TemplateOptionValue,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<TemplateChoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub when: BTreeMap<String, TemplateOptionValue>,
+}
+
+/// Parsed `#let schema = (...)` exported by a Typst template.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TemplateSchema {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<TemplateGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<TemplateField>,
+}
+
+impl TemplateSchema {
+    pub fn has_book_options(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|f| f.scope == TemplateFieldScope::Book)
+    }
+
+    pub fn has_problem_options(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|f| f.scope == TemplateFieldScope::Problem)
+    }
+}
+
+/// Metadata and declarative schema for one available template (built-in or custom).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub id: String,
+    pub builtin: bool,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub schema: TemplateSchema,
+}
+
+/// Partial update for one template's option keys (`Set` writes, `Clear` removes).
+pub type TemplateOptionsPatch = BTreeMap<String, Patch<TemplateOptionValue>>;
+
 /// `problem.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -59,6 +187,9 @@ pub struct ProblemMeta {
     /// External identities (a Codeforces original, a Luogu copy); none for an original.
     #[serde(default, rename = "source", skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,
+    /// Problem-scoped template options, namespaced by template ID (`[template-options.<tpl>]`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub template_options: TemplateOptionsMap,
     /// Phase 5 (a declarative local Polygon): parsed and kept, not used yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtasks: Option<toml::Value>,
@@ -134,6 +265,9 @@ pub struct ContestMeta {
     /// `templates/<name>.typ` in the workspace).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    /// Contest-level template options, namespaced by template ID (`[template-options.<tpl>]`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub template_options: TemplateOptionsMap,
     /// Archived: the contest renders from `snapshot/` and nothing in it may be written.
     #[serde(default)]
     pub frozen: bool,
@@ -154,7 +288,8 @@ impl ContestMeta {
 }
 
 /// One problem of a contest (`[[problem]]`): a live reference by ID, with metadata
-/// overrides only. Statements, samples and pictures cannot be overridden.
+/// and problem-scoped template option overrides only. Statements, samples and pictures
+/// cannot be overridden.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ContestItem {
@@ -166,6 +301,9 @@ pub struct ContestItem {
     pub limits: Option<Limits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_metadata: Option<bool>,
+    /// Problem-scoped template option overrides, namespaced by template ID (`[problem.options.<tpl>]`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: TemplateOptionsMap,
 }
 
 impl ContestItem {
@@ -177,6 +315,12 @@ impl ContestItem {
         }
         if let Some(limits) = &self.limits {
             out.limits = meta.limits.merged(limits);
+        }
+        for (tpl, opts) in &self.options {
+            let entry = out.template_options.entry(tpl.clone()).or_default();
+            for (k, v) in opts {
+                entry.insert(k.clone(), v.clone());
+            }
         }
         out
     }
@@ -424,10 +568,12 @@ pub struct ProblemMetaPatch {
     pub limits: LimitsPatch,
     #[serde(default)]
     pub sources: Option<Vec<Source>>,
+    #[serde(default)]
+    pub template_options: BTreeMap<String, TemplateOptionsPatch>,
 }
 
 /// Partial update for `contest.toml` metadata (written via `toml_edit`; excludes `frozen` and `[[problem]]`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContestMetaPatch {
     #[serde(default)]
     pub name: Option<String>,
@@ -447,10 +593,12 @@ pub struct ContestMetaPatch {
     pub blank_pages: Option<bool>,
     #[serde(default)]
     pub template: Patch<String>,
+    #[serde(default)]
+    pub template_options: BTreeMap<String, TemplateOptionsPatch>,
 }
 
-/// Partial update for one `[[problem]]` item's metadata overrides inside `contest.toml`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Partial update for one `[[problem]]` item's metadata and template option overrides inside `contest.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OverridePatch {
     #[serde(default)]
     pub title: Patch<String>,
@@ -458,6 +606,8 @@ pub struct OverridePatch {
     pub limits: LimitsPatch,
     #[serde(default)]
     pub show_metadata: Patch<bool>,
+    #[serde(default)]
+    pub options: BTreeMap<String, TemplateOptionsPatch>,
 }
 
 /// Inspection result of a `samples/` directory.
@@ -701,6 +851,7 @@ custom_limit = true
                 ..Default::default()
             }),
             show_metadata: Some(false),
+            ..Default::default()
         };
         let out = item.apply(&meta);
         assert_eq!(out.title, "New");

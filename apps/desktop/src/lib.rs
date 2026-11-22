@@ -885,6 +885,63 @@ impl Preview {
         self.state.unfreeze_contest(&id)
     }
 
+    // ---- Templates & declarative schemas -----------------------------------------------
+
+    /// Returns JSON `{ default, workspaceOptions, templates, fonts }` describing all
+    /// built-in and workspace custom templates (`templates/*.typ`) with their evaluated
+    /// `#let schema` definitions, workspace-level default options, and loaded font families.
+    pub fn list_templates_json(&self) -> String {
+        self.state.list_templates_json()
+    }
+
+    /// Updates `workspace.toml`'s default `template` and/or `[template-options.<tpl>]`.
+    pub fn update_workspace_template(
+        &self,
+        template: Option<String>,
+        clear_template: bool,
+        options_json: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .update_workspace_template(template, clear_template, options_json)
+    }
+
+    /// Forks a built-in or workspace template `source` into `templates/<newName>.typ`.
+    pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
+        self.state.fork_template(&source, &new_name)
+    }
+
+    /// Reveals `templates/<name>.typ` in the system file manager for external editing.
+    pub async fn open_template_file(this: Instance<Self>, name: String) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let resolved = this.with(|p| p.state.resolve_template_file(&name));
+        let path = match resolved {
+            Ok(p) => p,
+            Err(err) => return err,
+        };
+        match reveal_path(path).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
+    }
+
+    /// Ensures `.xcpc/preamble.typ` exists and reveals it in the system file manager.
+    pub async fn open_preamble_file(this: Instance<Self>) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let ensured = this.with(|p| p.state.ensure_preamble_file());
+        let path = match ensured {
+            Ok(p) => p,
+            Err(err) => return err,
+        };
+        match reveal_path(path).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
+    }
+
     // ---- Cmd+K fuzzy jump, Frecency & preferences --------------------------------------
 
     /// Fuzzy-searches problems, contests, and (when `activeContest` is given) the active

@@ -1,10 +1,9 @@
-// The publishing drawer on the right of the studio: it slides over the preview with a
-// `translateX` (never squeezing the editor) and writes where the context says: a lone
-// problem's `problem.toml`, or the contest's metadata and the current problem's
-// overrides. An overridden field has a thin bar on its left and a button to restore the
-// library's value; setting the library's value back drops the override. A frozen
-// contest's drawer renders each control in its own read-only state (never dimming the
-// whole section) with 重新编辑 in the status card.
+// The publishing drawer on the right of the studio: slides over the preview with a
+// `translateX` (never squeezing the editor) and splits into two tabs (`信息` | `版式`):
+// - `信息`: freeze status, contest/problem metadata, per-problem limits overrides, and assets.
+// - `版式`: template selection, shared publishing switches, and dynamic controls rendered
+//   from the active template's `#let schema = (...)` (with override bars & one-click restore),
+//   plus lightweight bridges to fork a custom template or open external style files.
 
 import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
 import { Input, Switch } from "nsh/base";
@@ -14,9 +13,19 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
 import { colorTransition, panelTransition } from "../motion";
-import { errorOf, info, preview, refresh, revision, unfreezeFor, type UiError } from "../store";
+import { errorOf, goSettings, info, preview, refresh, revision, unfreezeFor, type UiError } from "../store";
+import {
+  encodeSingleOptionPatch,
+  loadTemplatesCatalog,
+  parseOptionsByTemplate,
+  type TemplateOptionMap,
+  type TemplateOptionValue,
+  type TemplatesCatalog,
+} from "../templates";
+import { ForkTemplateModal, TemplateOptionsEditor, TemplatePicker } from "../TemplateOptionsEditor";
 
-export const INSPECTOR_WIDTH = 300;
+export const INSPECTOR_WIDTH = 332;
+type InspectorTab = "info" | "layout";
 
 export function Inspector(props: {
   open: boolean;
@@ -34,8 +43,10 @@ export function Inspector(props: {
   // Defer mounting the form fields until the drawer is opened at least once so opening
   // Studio with the drawer closed skips mounting 10+ Input controls on frame 0.
   const everOpened = computed<boolean>((prev) => Boolean(prev) || props.open);
+  const activeTab = signal<InspectorTab>("info");
   const error = signal<UiError | undefined>(undefined);
   const assetCount = signal(0);
+  const forkModal = signal<{ sourceId: string; sourceName: string } | undefined>(undefined);
   let assetCountSeq = 0;
 
   effect(() => {
@@ -45,6 +56,14 @@ export function Inspector(props: {
   });
 
   const showAssets = () => props.target === "problem" || (props.target === "contest" && !!props.item);
+
+  const catalog = computed<TemplatesCatalog>(() => {
+    void revision();
+    if (!everOpened()) {
+      return { default: "olymp-classic", workspaceOptions: {}, templates: [], fonts: [] };
+    }
+    return loadTemplatesCatalog();
+  });
 
   effect(() => {
     if (!showAssets()) {
@@ -72,6 +91,7 @@ export function Inspector(props: {
     refresh();
     props.onChanged();
   };
+
   return (
     <View
       testID="inspector"
@@ -89,43 +109,89 @@ export function Inspector(props: {
       }}
       class="border-border bg-background"
     >
-      <View style={{ height: 42, flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 8, borderBottomWidth: 1 }} class="border-border">
-        <Text style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>属性</Text>
+      <View
+        style={{
+          height: 42,
+          flexDirection: "row",
+          alignItems: "center",
+          paddingLeft: 12,
+          paddingRight: 8,
+          gap: 8,
+          borderBottomWidth: 1,
+        }}
+        class="border-border"
+      >
+        <Segmented
+          items={[
+            { value: "info" as InspectorTab, label: "信息" },
+            { value: "layout" as InspectorTab, label: "版式" },
+          ]}
+          itemWidth={58}
+          value={activeTab()}
+          onChange={(v) => activeTab.set(v)}
+        />
+        <View style={{ flex: 1 }} />
         <IconBtn icon="x" tooltip={tip("关闭", "mod+i")} onPress={props.onClose} />
       </View>
+
       <If when={everOpened()}>
         <Scroll style={{ flex: 1 }}>
-          <If when={props.target === "contest" && props.contest}>
-            <ContestFields contest={props.contest!} item={props.item} freeze={props.freeze} done={done} onFinding={props.onFinding} hasFollowingSection={showAssets()} />
-          </If>
-          <If when={props.target === "problem"}>
-            <ProblemFields id={props.id} done={done} hasFollowingSection={showAssets()} />
-          </If>
-          <If when={showAssets()}>
-            <View style={{ padding: 14 }}>
-              <View
-                testID="inspector-assets-btn"
-                onPress={() => props.onOpenAssets?.()}
-                class="border border-border bg-card hover:bg-muted active:bg-accent"
-                style={{
-                  height: 34,
-                  paddingLeft: 10,
-                  paddingRight: 8,
-                  borderRadius: 7,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                  ...colorTransition(140),
-                }}
-              >
-                <Icon name="image" size={15} tone="secondary-foreground" />
-                <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                  {`素材 ${assetCount()} 个`}
-                </Text>
-                <Icon name="chevronRight" size={14} tone="muted-foreground" />
+          <If when={activeTab() === "info"}>
+            <If when={props.target === "contest" && props.contest}>
+              <ContestInfoTab
+                contest={props.contest!}
+                item={props.item}
+                freeze={props.freeze}
+                done={done}
+                onFinding={props.onFinding}
+                hasFollowingSection={showAssets()}
+              />
+            </If>
+            <If when={props.target === "problem"}>
+              <ProblemInfoTab id={props.id} done={done} hasFollowingSection={showAssets()} />
+            </If>
+            <If when={showAssets()}>
+              <View style={{ padding: 14 }}>
+                <View
+                  testID="inspector-assets-btn"
+                  onPress={() => props.onOpenAssets?.()}
+                  class="border border-border bg-card hover:bg-muted active:bg-accent"
+                  style={{
+                    height: 34,
+                    paddingLeft: 10,
+                    paddingRight: 8,
+                    borderRadius: 7,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    ...colorTransition(140),
+                  }}
+                >
+                  <Icon name="image" size={15} tone="secondary-foreground" />
+                  <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                    {`素材 ${assetCount()} 个`}
+                  </Text>
+                  <Icon name="chevronRight" size={14} tone="muted-foreground" />
+                </View>
               </View>
-            </View>
+            </If>
           </If>
+
+          <If when={activeTab() === "layout"}>
+            <If when={props.target === "contest" && props.contest}>
+              <ContestLayoutTab
+                contest={props.contest!}
+                item={props.item}
+                catalog={catalog()}
+                done={done}
+                onRequestFork={(sourceId, sourceName) => forkModal.set({ sourceId, sourceName })}
+              />
+            </If>
+            <If when={props.target === "problem"}>
+              <ProblemLayoutTab id={props.id} catalog={catalog()} done={done} />
+            </If>
+          </If>
+
           <If when={error()}>
             <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14 }}>
               <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
@@ -133,6 +199,21 @@ export function Inspector(props: {
           </If>
         </Scroll>
       </If>
+
+      <ForkTemplateModal
+        open={!!forkModal()}
+        sourceId={forkModal()?.sourceId ?? "olymp-classic"}
+        sourceName={forkModal()?.sourceName ?? "XCPC 经典"}
+        onCreated={(newId) => {
+          if (props.target === "contest" && props.contest && !props.contest.frozen && !info().readOnly) {
+            done(preview.updateContestMeta(props.contest.id, { template: newId }));
+          } else {
+            refresh();
+            props.onChanged();
+          }
+        }}
+        onClose={() => forkModal.set(undefined)}
+      />
     </View>
   );
 }
@@ -141,7 +222,7 @@ function Section(props: { title?: string; children?: JSX.Element; last?: boolean
   return (
     <View style={{ padding: 14, gap: 10, borderBottomWidth: props.last ? 0 : 1 }} class="border-border">
       {props.title && (
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, fontWeight: 600, lineHeight: 17 }} class="text-foreground">
           {props.title}
         </Text>
       )}
@@ -289,7 +370,9 @@ function Toggle(props: { label: string; checked: boolean; readOnly?: boolean; ov
 
 const nul = (v: string) => (v === "" ? null : v);
 
-function ProblemFields(props: {
+// ── 信息 Tab ─────────────────────────────────────────────────────────────────
+
+function ProblemInfoTab(props: {
   id: string;
   done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
   hasFollowingSection?: boolean;
@@ -360,7 +443,7 @@ function ProblemFields(props: {
   );
 }
 
-function ContestFields(props: {
+function ContestInfoTab(props: {
   contest: ContestDetailJs;
   item?: ContestItemDetailJs;
   freeze: Freeze;
@@ -375,7 +458,6 @@ function ContestFields(props: {
   const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
   const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
   const f = props.freeze;
-  const cover = () => (c().cover == null ? "auto" : c().cover ? "on" : "off");
   const contestOwner = () => `contest:${c().id}`;
 
   return (
@@ -436,7 +518,8 @@ function ContestFields(props: {
           }
         />
       </Section>
-      <Section title="比赛信息" last={!props.item}>
+
+      <Section title="比赛信息" last={!props.item && !props.hasFollowingSection}>
         <Field
           ownerKey={contestOwner()}
           label="比赛名称"
@@ -456,40 +539,8 @@ function ContestFields(props: {
           </View>
         </View>
         <Field ownerKey={contestOwner()} label="署名" readOnly={locked()} value={c().author ?? ""} onCommit={(v) => meta({ author: nul(v) })} />
-        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
-          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
-            语言
-          </Text>
-          <Segmented
-            disabled={locked()}
-            items={[
-              { value: "chinese", label: "中文" },
-              { value: "english", label: "English" },
-            ]}
-            itemWidth={62}
-            value={c().language === "english" ? "english" : "chinese"}
-            onChange={(v) => !locked() && meta({ language: v })}
-          />
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
-          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
-            封面
-          </Text>
-          <Segmented
-            disabled={locked()}
-            items={[
-              { value: "auto", label: "自动" },
-              { value: "on", label: "开" },
-              { value: "off", label: "关" },
-            ]}
-            itemWidth={42}
-            value={cover()}
-            onChange={(v) => !locked() && meta({ cover: v === "auto" ? null : v === "on" })}
-          />
-        </View>
-        <Toggle label="显示时间和内存限制" readOnly={locked()} checked={c().showMetadata} onChange={(v) => meta({ showMetadata: v })} />
-        <Toggle label="补空白页，方便双面打印" readOnly={locked()} checked={c().blankPages} onChange={(v) => meta({ blankPages: v })} />
       </Section>
+
       <If when={props.item}>
         {(item) => {
           const itemOwner = () => `contest:${c().id}:item:${item().label}:${item().id}`;
@@ -568,6 +619,220 @@ function ContestFields(props: {
             </Section>
           );
         }}
+      </If>
+    </View>
+  );
+}
+
+// ── 版式 Tab ─────────────────────────────────────────────────────────────────
+
+function ContestLayoutTab(props: {
+  contest: ContestDetailJs;
+  item?: ContestItemDetailJs;
+  catalog: TemplatesCatalog;
+  done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
+  onRequestFork: (sourceId: string, sourceName: string) => void;
+}) {
+  const c = () => props.contest;
+  const frozen = () => c().frozen;
+  const wsReadOnly = () => info().readOnly;
+  const locked = () => frozen() || wsReadOnly();
+  const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
+  const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
+
+  const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
+  const tplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
+  const cover = () => (c().cover == null ? "auto" : c().cover ? "on" : "off");
+  const templateOverridden = () => !!c().template && c().template !== props.catalog.default;
+
+  const wsBookOpts = computed<TemplateOptionMap>(() => props.catalog.workspaceOptions[effTemplateId()] ?? {});
+  const contestBookOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(c().templateOptionsJson)[effTemplateId()] ?? {});
+
+  const bookContext = computed<Record<string, TemplateOptionValue>>(() => ({
+    cover: c().hasCover,
+    language: c().language,
+    "show-metadata": c().showMetadata,
+    "blank-pages": c().blankPages,
+  }));
+
+  const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
+  const hasProblemFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "problem"));
+
+  return (
+    <View>
+      <Section title="模板与出版">
+        <TemplatePicker
+          templates={props.catalog.templates}
+          value={effTemplateId()}
+          overridden={templateOverridden()}
+          readOnly={locked()}
+          onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
+          onRestore={() => meta({ template: null })}
+        />
+        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
+          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
+            语言
+          </Text>
+          <Segmented
+            disabled={locked()}
+            items={[
+              { value: "chinese", label: "中文" },
+              { value: "english", label: "English" },
+            ]}
+            itemWidth={62}
+            value={c().language === "english" ? "english" : "chinese"}
+            onChange={(v) => !locked() && meta({ language: v })}
+          />
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
+          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
+            封面
+          </Text>
+          <Segmented
+            disabled={locked()}
+            items={[
+              { value: "auto", label: "自动" },
+              { value: "on", label: "开" },
+              { value: "off", label: "关" },
+            ]}
+            itemWidth={42}
+            value={cover()}
+            onChange={(v) => !locked() && meta({ cover: v === "auto" ? null : v === "on" })}
+          />
+        </View>
+        <Toggle label="显示时间和内存限制" readOnly={locked()} checked={c().showMetadata} onChange={(v) => meta({ showMetadata: v })} />
+        <Toggle label="补空白页，方便双面打印" readOnly={locked()} checked={c().blankPages} onChange={(v) => meta({ blankPages: v })} />
+      </Section>
+
+      <If when={hasBookFields()}>
+        <TemplateOptionsEditor
+          ownerKey={`contest:${c().id}`}
+          template={tplInfo()}
+          scope="book"
+          baseValues={wsBookOpts()}
+          overrideValues={contestBookOpts()}
+          context={bookContext()}
+          fonts={props.catalog.fonts}
+          readOnly={locked()}
+          restoreTooltip="还原为工作区默认值"
+          sectioned
+          lastSection={!props.item || !hasProblemFields() ? locked() : false}
+          onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(effTemplateId(), key, value) })}
+        />
+      </If>
+
+      <If when={hasProblemFields() ? props.item : undefined}>
+        {(item) => {
+          const origOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().originalOptionsJson)[effTemplateId()] ?? {});
+          const overOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().overrideOptionsJson)[effTemplateId()] ?? {});
+          return (
+            <Section title={`${item().label} 题版式设置`} last={locked()}>
+              <TemplateOptionsEditor
+                ownerKey={`contest:${c().id}:item:${item().label}:${item().id}`}
+                template={tplInfo()}
+                scope="problem"
+                baseValues={origOpts()}
+                overrideValues={overOpts()}
+                context={bookContext()}
+                fonts={props.catalog.fonts}
+                readOnly={locked()}
+                restoreTooltip="还原为题库的值"
+                hideGroupLabels
+                onChange={(key, value) => over({ optionsJson: encodeSingleOptionPatch(effTemplateId(), key, value) })}
+              />
+            </Section>
+          );
+        }}
+      </If>
+
+      <If when={!locked()}>
+        <Section title="进阶定制" last>
+          <View style={{ gap: 6 }}>
+            <Btn
+              label="基于当前模板新建副本"
+              icon="copy"
+              onPress={() => props.onRequestFork(effTemplateId(), tplInfo()?.name ?? effTemplateId())}
+            />
+            <If when={!!tplInfo() && !tplInfo()!.builtin}>
+              <Btn
+                label="在外部编辑器中打开模板"
+                icon="filePenLine"
+                onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
+              />
+            </If>
+            <Btn
+              label="自定义样式代码"
+              icon="code"
+              onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
+            />
+          </View>
+        </Section>
+      </If>
+    </View>
+  );
+}
+
+function ProblemLayoutTab(props: {
+  id: string;
+  catalog: TemplatesCatalog;
+  done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
+}) {
+  const d = computed(() => {
+    void revision();
+    return preview.problemDetail(props.id);
+  });
+  const wsReadOnly = () => info().readOnly;
+  const tplId = () => props.catalog.default || "olymp-classic";
+  const tplInfo = computed(() => props.catalog.templates.find((t) => t.id === tplId()));
+  const probOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(d().templateOptionsJson)[tplId()] ?? {});
+  const hasProblemFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "problem"));
+
+  const write = (patch: Parameters<typeof preview.updateProblemMeta>[1]) => !wsReadOnly() && props.done(preview.updateProblemMeta(props.id, patch));
+
+  return (
+    <View>
+      <Section title="当前模板" last={!hasProblemFields() && wsReadOnly()}>
+        <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Icon name="fileText" size={14} tone="secondary-foreground" />
+            <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
+              {tplInfo()?.name ?? tplId()}
+            </Text>
+          </View>
+          <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+            单题预览沿用工作区默认模板与版式参数。
+          </Text>
+          <View style={{ flexDirection: "row", paddingTop: 2 }}>
+            <Btn label="调整工作区默认版式" icon="settings" onPress={() => goSettings("layout")} />
+          </View>
+        </View>
+      </Section>
+
+      <If when={hasProblemFields()}>
+        <Section title="本题版式设置" last={wsReadOnly()}>
+          <TemplateOptionsEditor
+            ownerKey={`problem:${props.id}`}
+            template={tplInfo()}
+            scope="problem"
+            baseValues={{}}
+            overrideValues={probOpts()}
+            fonts={props.catalog.fonts}
+            readOnly={wsReadOnly()}
+            restoreTooltip="恢复模板默认值"
+            hideGroupLabels
+            onChange={(key, value) => write({ templateOptionsJson: encodeSingleOptionPatch(tplId(), key, value) })}
+          />
+        </Section>
+      </If>
+
+      <If when={!wsReadOnly()}>
+        <Section title="进阶定制" last>
+          <Btn
+            label="自定义样式代码"
+            icon="code"
+            onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
+          />
+        </Section>
       </If>
     </View>
   );

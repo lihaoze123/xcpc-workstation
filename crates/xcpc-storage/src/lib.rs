@@ -11,7 +11,7 @@
 //!
 //! Errors carry a stable [`Error::code`] for `--json` and MCP.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::Write;
@@ -22,7 +22,7 @@ use std::sync::mpsc;
 use sha2::{Digest, Sha256};
 use xcpc_domain::{
     ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, Problem, ProblemMeta, Sample,
-    SampleInventory, Statement, TextFile, check_id,
+    SampleInventory, Statement, TemplateOptionValue, TemplateOptionsMap, TextFile, check_id,
 };
 
 pub mod assets;
@@ -298,6 +298,35 @@ pub fn init_workspace_with_template(
     Workspace::open(dir, false)
 }
 
+/// Archived template configuration stored inside `contests/<id>/snapshot/template.toml`
+/// when a contest is frozen, guaranteeing reproducible re-rendering even if the workspace's
+/// default template, custom templates, or `.xcpc/preamble.typ` later change.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SnapshotTemplateMeta {
+    pub template: String,
+    #[serde(default)]
+    pub has_custom_template: bool,
+    #[serde(default)]
+    pub has_preamble: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, TemplateOptionValue>,
+}
+
+/// Complete template archive payload passed to [`Workspace::freeze_commit_with_template`].
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotTemplateArchive {
+    pub meta: SnapshotTemplateMeta,
+    pub custom_template_bytes: Option<Vec<u8>>,
+    pub preamble_bytes: Option<Vec<u8>>,
+}
+
+/// Starter content written when creating `.xcpc/preamble.typ` for the first time.
+const DEFAULT_PREAMBLE_STARTER: &str = "\
+// XCPC Workstation 工作区级 Typst 样式注入（.xcpc/preamble.typ）\n\
+// 此文件在模板 #show: contest.with(...) 之后自动注入，可在此定义自定义宏、导入包或微调样式。\n\
+// 保存后桌面端预览会自动热刷新。\n\n";
+
 /// A contest as loaded from `contests/<id>/contest.toml`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contest {
@@ -364,10 +393,37 @@ impl Workspace {
             .map(str::to_owned)
     }
 
+    /// Reads `[template-options.<template>]` defaults from `workspace.toml`.
+    pub fn workspace_template_options(&self) -> TemplateOptionsMap {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(rename_all = "kebab-case")]
+        struct WsOpts {
+            #[serde(default)]
+            template_options: TemplateOptionsMap,
+        }
+        let Ok(raw) = fs::read_to_string(self.root.join(WORKSPACE_FILE)) else {
+            return BTreeMap::new();
+        };
+        toml::from_str::<WsOpts>(&raw)
+            .map(|w| w.template_options)
+            .unwrap_or_default()
+    }
+
     /// Reads `.xcpc/preamble.typ` from the workspace if present and non-empty.
     pub fn load_preamble(&self) -> Option<String> {
         let text = fs::read_to_string(self.root.join(".xcpc/preamble.typ")).ok()?;
         (!text.trim().is_empty()).then_some(text)
+    }
+
+    /// Ensures `.xcpc/preamble.typ` exists (creating it with a starter comment if absent)
+    /// and returns its resolved path on disk.
+    pub fn ensure_preamble(&self) -> Result<PathBuf> {
+        let rel = ".xcpc/preamble.typ";
+        let path = self.resolve(rel)?;
+        if !path.is_file() {
+            self.write(rel, DEFAULT_PREAMBLE_STARTER.as_bytes())?;
+        }
+        self.resolve(rel)
     }
 
     /// Returns `true` when `templates/<name>.typ` exists inside the workspace.
@@ -378,6 +434,51 @@ impl Workspace {
                 .join("templates")
                 .join(format!("{name}.typ"))
                 .is_file()
+    }
+
+    /// Returns the resolved disk path of `templates/<name>.typ` if it exists.
+    pub fn template_file_path(&self, name: &str) -> Result<Option<PathBuf>> {
+        check_id(name)?;
+        let rel = format!("templates/{name}.typ");
+        let path = self.resolve(&rel)?;
+        Ok(path.is_file().then_some(path))
+    }
+
+    /// Creates a new custom template `templates/<new_name>.typ` from `source_bytes`.
+    /// Refuses to overwrite an existing template file.
+    pub fn fork_template(&self, new_name: &str, source_bytes: &[u8]) -> Result<String> {
+        check_id(new_name)?;
+        let rel = format!("templates/{new_name}.typ");
+        self.check_writable(&rel)?;
+        let path = self.resolve(&rel)?;
+        if path.exists() {
+            let actual = fs::read(&path)
+                .map(|b| content_hash(&b))
+                .unwrap_or_default();
+            return Err(Error::Conflict {
+                path: rel,
+                expected: String::new(),
+                actual,
+            });
+        }
+        self.write(&rel, source_bytes)?;
+        Ok(rel)
+    }
+
+    /// Reads archived template metadata from `contests/<id>/snapshot/template.toml` if present.
+    pub fn load_snapshot_template(&self, contest_id: &str) -> Option<SnapshotTemplateMeta> {
+        check_id(contest_id).ok()?;
+        let rel = format!("contests/{contest_id}/snapshot/template.toml");
+        let raw = self.read_text(&rel).ok()?;
+        toml::from_str(&raw).ok()
+    }
+
+    /// Reads archived preamble from `contests/<id>/snapshot/preamble.typ` if present and non-empty.
+    pub fn load_snapshot_preamble(&self, contest_id: &str) -> Option<String> {
+        check_id(contest_id).ok()?;
+        let rel = format!("contests/{contest_id}/snapshot/preamble.typ");
+        let text = self.read_text(&rel).ok()?;
+        (!text.trim().is_empty()).then_some(text)
     }
 
     /// Lists available template names: built-in templates plus workspace `templates/*.typ`.

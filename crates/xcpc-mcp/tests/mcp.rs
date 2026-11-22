@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 12);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -184,6 +184,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
     for read_tool in [
         "compile_and_diagnose",
         "render_page_png",
+        "list_templates",
         "search_problems",
         "get_problem",
         "get_contest",
@@ -199,6 +200,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "write_problem",
         "compose_contest",
         "set_override",
+        "set_template_options",
         "freeze_contest",
     ] {
         assert_eq!(
