@@ -63,9 +63,18 @@ export function ContestsView(props: { active: boolean }) {
     archivedExpanded() ? [...activeContests(), ...archivedContests()] : activeContests(),
   );
   const readOnly = () => info().readOnly;
+  const listError = signal<UiError | undefined>(undefined);
   let listScroll: ScrollRef | undefined;
   let listHeight = 0;
   let listScrollY = 0;
+  let archivedScroll: ScrollRef | undefined;
+  let archivedHeight = 0;
+  let archivedScrollY = 0;
+
+  effect(() => {
+    void workspaceVersion();
+    listError.set(undefined);
+  });
 
   effect(() => {
     const all = contests();
@@ -79,8 +88,8 @@ export function ContestsView(props: { active: boolean }) {
     }
   });
 
-  function ensureVisible(index: number) {
-    if (!listScroll || listHeight <= 0) return;
+  function ensureActiveVisible(index: number) {
+    if (!listScroll || listHeight <= 0 || index < 0) return;
     const rowTop = 8 + index * ROW_STRIDE;
     const rowBottom = rowTop + 52;
     if (rowTop < listScrollY + 8) {
@@ -90,13 +99,46 @@ export function ContestsView(props: { active: boolean }) {
     }
   }
 
+  function ensureArchivedVisible(index: number) {
+    if (!archivedScroll || archivedHeight <= 0 || index < 0) return;
+    const rowTop = 4 + index * ROW_STRIDE;
+    const rowBottom = rowTop + 52;
+    if (rowTop < archivedScrollY + 4) {
+      archivedScroll.scrollTo({ y: Math.max(0, rowTop - 4), animated: false });
+    } else if (rowBottom > archivedScrollY + archivedHeight - 4) {
+      archivedScroll.scrollTo({ y: Math.max(0, rowBottom - archivedHeight + 4), animated: false });
+    }
+  }
+
+  effect(() => {
+    const id = selectedContest();
+    if (!id) return;
+    const activeIdx = activeContests().findIndex((c) => c.id === id);
+    if (activeIdx >= 0) {
+      ensureActiveVisible(activeIdx);
+      return;
+    }
+    if (archivedExpanded()) {
+      const archIdx = archivedContests().findIndex((c) => c.id === id);
+      if (archIdx >= 0) {
+        requestAnimationFrame(() => ensureArchivedVisible(archIdx));
+      }
+    }
+  });
+
   function move(delta: number) {
     const list = visibleContests();
     if (list.length === 0) return;
     const cur = list.findIndex((c) => c.id === selectedContest());
     const i = cur < 0 ? 0 : Math.min(list.length - 1, Math.max(0, cur + delta));
-    selectedContest.set(list[i].id);
-    ensureVisible(i);
+    const target = list[i];
+    selectedContest.set(target.id);
+    if (target.archived) {
+      const archIdx = archivedContests().findIndex((c) => c.id === target.id);
+      ensureArchivedVisible(archIdx);
+    } else {
+      ensureActiveVisible(i);
+    }
   }
 
   function openSelected() {
@@ -138,7 +180,7 @@ export function ContestsView(props: { active: boolean }) {
               {
                 label: cur.archived ? "取消归档" : "归档比赛",
                 disabled: ro,
-                onSelect: () => toggleContestArchive(cur.id, !cur.archived),
+                onSelect: () => toggleContestArchive(cur.id, !cur.archived, (err) => listError.set(err)),
               },
               { label: "在文件夹中显示", onSelect: () => void preview.revealInFolder(`contests/${cur.id}`) },
             ],
@@ -213,55 +255,65 @@ export function ContestsView(props: { active: boolean }) {
             <Each of={activeContests()} key={(c) => c.id}>
               {(c) => renderContestRow(c, false)}
             </Each>
-
-            <If when={archivedContests().length > 0}>
-              <View style={{ marginTop: activeContests().length > 0 ? 10 : 0, gap: 2 }}>
-                <View
-                  testID="archived-contests-toggle"
-                  onPress={() => archivedExpanded.set(!archivedExpanded())}
-                  class="hover:bg-muted active:bg-accent"
-                  style={{
-                    height: 30,
-                    paddingLeft: 8,
-                    paddingRight: 8,
-                    borderRadius: 6,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6,
-                    transitionProperty: "colors",
-                    transitionDuration: ms(120),
-                    transitionTimingFunction: EASE_STANDARD,
-                  }}
-                >
-                  <Icon
-                    name="chevronDown"
-                    size={13}
-                    tone="muted-foreground"
-                    style={{
-                      transform: archivedExpanded() ? "rotate(0deg)" : "rotate(-90deg)",
-                      transitionProperty: "transform",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
-                    }}
-                  />
-                  <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-muted-foreground">
-                    已归档
-                  </Text>
-                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                    {String(archivedContests().length)}
-                  </Text>
-                </View>
-                <If when={archivedExpanded()}>
-                  <View style={{ gap: 2 }}>
-                    <Each of={archivedContests()} key={(c) => c.id}>
-                      {(c) => renderContestRow(c, true)}
-                    </Each>
-                  </View>
-                </If>
-              </View>
-            </If>
           </View>
         </Scroll>
+        <If when={listError()}>
+          <View style={{ padding: 8, borderTopWidth: 1 }} class="border-border">
+            <ErrorDisplay error={listError()} onDismiss={() => listError.set(undefined)} />
+          </View>
+        </If>
+        <If when={archivedContests().length > 0}>
+          <View style={{ borderTopWidth: 1, flexShrink: 0 }} class="border-border bg-background">
+            <View
+              testID="archived-contests-toggle"
+              onPress={() => archivedExpanded.set(!archivedExpanded())}
+              class="hover:bg-muted active:bg-accent"
+              style={{
+                height: 36,
+                paddingLeft: 12,
+                paddingRight: 12,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                transitionProperty: "colors",
+                transitionDuration: ms(120),
+                transitionTimingFunction: EASE_STANDARD,
+              }}
+            >
+              <Icon
+                name="chevronDown"
+                size={13}
+                tone="muted-foreground"
+                style={{
+                  transform: archivedExpanded() ? "rotate(0deg)" : "rotate(-90deg)",
+                  transitionProperty: "transform",
+                  transitionDuration: ms(120),
+                  transitionTimingFunction: EASE_STANDARD,
+                }}
+              />
+              <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-muted-foreground">
+                已归档
+              </Text>
+              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                {String(archivedContests().length)}
+              </Text>
+            </View>
+            <If when={archivedExpanded()}>
+              <Scroll
+                ref={(r) => (archivedScroll = r)}
+                style={{ maxHeight: 220 }}
+                onLayout={(e) => (archivedHeight = e.bounds.size.height)}
+                onScroll={(e) => (archivedScrollY = e.offset.y)}
+              >
+                <View style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 8, gap: 2 }}>
+                  <Each of={archivedContests()} key={(c) => c.id}>
+                    {(c) => renderContestRow(c, true)}
+                  </Each>
+                </View>
+              </Scroll>
+            </If>
+          </View>
+        </If>
       </View>
       <If
         when={contests().length > 0}
@@ -331,18 +383,18 @@ function ContestPanel(props: { id: string }) {
         title={detail().name}
         badge={
           detail().frozen || detail().archived ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <If when={detail().frozen}>
-                <View style={{ height: 22, paddingLeft: 7, paddingRight: 8, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4 }} class="bg-muted">
+                <View style={{ height: 22, paddingLeft: 6, paddingRight: 7, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4 }} class="bg-muted">
                   <Icon name="lock" size={12} />
-                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
                     已定稿
                   </Text>
                 </View>
               </If>
               <If when={detail().archived}>
-                <View style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 6, flexDirection: "row", alignItems: "center" }} class="bg-muted">
-                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                <View style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 6, flexDirection: "row", alignItems: "center" }} class="bg-muted">
+                  <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
                     已归档
                   </Text>
                 </View>

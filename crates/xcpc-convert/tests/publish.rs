@@ -1516,3 +1516,46 @@ fn freeze_contest_rejects_archived_before_compiling_or_frozen_check() {
     let err_both = publish::freeze_contest(&ws, &mut engine, "c1").unwrap_err();
     assert_eq!(err_both.code(), "contest_archived");
 }
+
+#[test]
+fn minimal_preset_compiles_cjk_math_and_code_blocks_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace_with_template(dir.path(), Some("minimal")).unwrap();
+    ws.create_problem("math-code", "公式与代码测试").unwrap();
+    ws.write(
+        "problems/math-code/statement.md",
+        "给定正整数 $n$ 与序列 $a_1, a_2, \\ldots, a_n$，计算：\n\n\
+         $$\\sum_{i=1}^{n} a_i^2 \\bmod 998244353$$\n\n\
+         行内代码 `int ans = 0;` 与代码块：\n\n\
+         ```cpp\nint main() { return 0; }\n```\n\n\
+         ## 输入格式\n\n第一行一个整数 $n$。\n\n## 输出格式\n\n输出一个整数。\n"
+            .as_bytes(),
+    )
+    .unwrap();
+    ws.write("problems/math-code/samples/01.in", b"3\n1 2 3\n")
+        .unwrap();
+    ws.write("problems/math-code/samples/01.ans", b"14\n")
+        .unwrap();
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    let (compiled, _doc, report) = publish::check(
+        &ws,
+        &mut engine,
+        &Target::Problem("math-code".into()),
+        Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        report.ok,
+        "minimal preset failed with diagnostics: {:#?}",
+        report.diagnostics
+    );
+    assert!(
+        non_fallback_diagnostics(&report.diagnostics).is_empty(),
+        "unexpected non-fallback warnings: {:#?}",
+        report.diagnostics
+    );
+    assert!(compiled.unwrap().page_count() >= 1);
+}

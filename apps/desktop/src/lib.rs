@@ -950,7 +950,8 @@ impl Preview {
         self.state.remove_contest_template(&contest_id)
     }
 
-    /// Reveals `templates/<name>.typ` in the system file manager for external editing.
+    /// Opens `templates/<name>.typ` with the system's default external editor (falling
+    /// back to revealing it in the file manager if spawning fails).
     pub async fn open_template_file(this: Instance<Self>, name: String) -> ActionResult {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
@@ -960,13 +961,14 @@ impl Preview {
             Ok(p) => p,
             Err(err) => return err,
         };
-        match reveal_path(path).await {
+        match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }
     }
 
-    /// Reveals `contests/<contestId>/template.typ` in the system file manager for editing.
+    /// Opens `contests/<contestId>/template.typ` with the system's default external editor
+    /// (falling back to revealing it in the file manager if spawning fails).
     pub async fn open_contest_template_file(
         this: Instance<Self>,
         contest_id: String,
@@ -979,7 +981,7 @@ impl Preview {
             Ok(p) => p,
             Err(err) => return err,
         };
-        match reveal_path(path).await {
+        match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }
@@ -1032,7 +1034,7 @@ impl Preview {
             Ok(p) => p,
             Err(err) => return err,
         };
-        match reveal_path(path).await {
+        match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }
@@ -1210,6 +1212,43 @@ fn scan_ui_fonts_dir(
             fallback.push(path);
         }
     }
+}
+
+async fn open_in_external_editor(path: PathBuf) -> Result<(), String> {
+    let spawned = {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", ""])
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        }
+    };
+    if spawned.is_ok() {
+        return Ok(());
+    }
+    reveal_path(path).await
 }
 
 #[cfg(test)]

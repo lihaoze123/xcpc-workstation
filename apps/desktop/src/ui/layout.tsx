@@ -46,13 +46,13 @@ export function DetailHeader(props: { title: string; badge?: JSX.Element; second
           : { height: TOOLBAR, justifyContent: "center", paddingLeft: GUTTER, paddingRight: GUTTER }
       }
     >
-      <View style={{ height: 28, flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: lg ? 19 : 17, lineHeight: 26, fontWeight: 600 }}>
+      <View style={{ height: 28, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" }}>
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: lg ? 19 : 17, lineHeight: 26, fontWeight: 600 }}>
           {props.title}
         </Text>
-        {props.badge}
+        {props.badge && <View style={{ flexShrink: 0 }}>{props.badge}</View>}
         <View style={{ flex: 1 }} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>{props.actions}</View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.actions}</View>
       </View>
       <If when={hasSecond()}>
         <View style={{ minHeight: 22, flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 4, rowGap: 4 }}>{props.second}</View>

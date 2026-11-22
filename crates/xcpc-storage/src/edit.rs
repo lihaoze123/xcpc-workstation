@@ -968,6 +968,83 @@ impl Workspace {
         Ok(meta)
     }
 
+    /// Copies effective book-level and problem-level options from `source_tpl` into the
+    /// `"local"` namespace in `contests/<contest_id>/contest.toml` when `"local"` is empty,
+    /// so detaching a contest template preserves existing layout customizations.
+    pub(crate) fn copy_contest_options_to_local(
+        &self,
+        contest_id: &str,
+        source_tpl: &str,
+    ) -> Result<()> {
+        let rel = format!("contests/{contest_id}/contest.toml");
+        let contest = self.load_contest(contest_id)?;
+        let ws_opts = self
+            .workspace_template_options()
+            .remove(source_tpl)
+            .unwrap_or_default();
+
+        // Merge workspace defaults + contest overrides for `source_tpl` into `local` if `local` is empty.
+        let mut book_local = BTreeMap::new();
+        if contest
+            .meta
+            .template_options
+            .get("local")
+            .is_none_or(BTreeMap::is_empty)
+        {
+            for (k, v) in ws_opts {
+                book_local.insert(k, Patch::Set(v));
+            }
+            if let Some(c_opts) = contest.meta.template_options.get(source_tpl) {
+                for (k, v) in c_opts {
+                    book_local.insert(k.clone(), Patch::Set(v.clone()));
+                }
+            }
+        }
+
+        // Collect per-problem option copies for `[[problem]]` entries whose `local` is empty.
+        let mut prob_copies: HashMap<String, TemplateOptionsPatch> = HashMap::new();
+        for item in &contest.meta.problems {
+            if item.options.get("local").is_none_or(BTreeMap::is_empty)
+                && let Some(src_opts) = item.options.get(source_tpl)
+                && !src_opts.is_empty()
+            {
+                let patch: TemplateOptionsPatch = src_opts
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Patch::Set(v.clone())))
+                    .collect();
+                prob_copies.insert(item.label.clone(), patch);
+            }
+        }
+
+        if book_local.is_empty() && prob_copies.is_empty() {
+            return Ok(());
+        }
+
+        let raw = self.read_text(&rel)?;
+        let mut doc = parse_doc(&rel, &raw)?;
+        if !book_local.is_empty() {
+            let mut ns = BTreeMap::new();
+            ns.insert("local".to_owned(), book_local);
+            apply_template_options_patch(doc.as_table_mut(), "template-options", &ns, None)?;
+        }
+        if !prob_copies.is_empty()
+            && let Some(aot) = doc.get_mut("problem").and_then(Item::as_array_of_tables_mut)
+        {
+            for tbl in aot.iter_mut() {
+                if let Some(label) = tbl.get("label").and_then(Item::as_str)
+                    && let Some(patch) = prob_copies.remove(label)
+                {
+                    let mut ns = BTreeMap::new();
+                    ns.insert("local".to_owned(), patch);
+                    apply_template_options_patch(tbl, "options", &ns, None)?;
+                }
+            }
+        }
+        let rendered = doc.to_string();
+        let _: ContestMeta = parse_toml(&rel, &rendered)?;
+        self.write(&rel, rendered.as_bytes())
+    }
+
     /// Collects the snapshot-scoped files (`problem.toml`, `statement*.md`, `editorial.md`,
     /// `samples/**`, `assets/**`) from `dir` as relative path -> exact bytes.
     fn collect_snapshot_files(&self, dir: &str) -> Result<BTreeMap<String, Vec<u8>>> {

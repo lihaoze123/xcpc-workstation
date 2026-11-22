@@ -342,6 +342,9 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
     case "too_many_problems":
       return { message: "一场比赛最多 26 道题", rule };
     case "conflict":
+      if (raw && /already exists|已存在|expected\s+""/i.test(raw)) {
+        return { message: "同名文件或标识已存在", next: "请更换名称后重试", rule };
+      }
       return { message: "文件已在别处被修改", rule };
     case "not_found":
       return { message: "文件或目录不存在", rule };

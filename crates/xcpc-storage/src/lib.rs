@@ -198,6 +198,16 @@ fn format_not_found_message(what: &str) -> String {
     if let Some(id) = parse_quoted_after(what, "contest ") {
         return format!("找不到比赛「{id}」。请检查比赛 ID 是否存在。");
     }
+    if let Some(id) = parse_quoted_after(what, "preset ") {
+        return format!(
+            "找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal。"
+        );
+    }
+    if let Some(id) = parse_quoted_after(what, "template ") {
+        return format!(
+            "找不到模板「{id}」。可运行 xcpc template list 查看已有模板，或用 xcpc template add 安装预设。"
+        );
+    }
     if let Some(rest) = what.strip_prefix("label ")
         && let Some((label_part, contest_part)) = rest.split_once(" in contest ")
         && let (Some(label), Some(contest_id)) = (
@@ -554,6 +564,7 @@ impl Workspace {
             other => other,
         })?;
         self.write(&rel, &bytes)?;
+        self.copy_contest_options_to_local(contest_id, &tpl_name)?;
         Ok(rel)
     }
 

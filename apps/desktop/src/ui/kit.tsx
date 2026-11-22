@@ -214,7 +214,7 @@ export function RatingBadge(props: { rating: number | null | undefined }) {
 }
 
 /** A tag chip. */
-export function Chip(props: { label: string; active?: boolean; onPress?: () => void; maxWidth?: ViewStyle["maxWidth"] }) {
+export function Chip(props: { label: string; active?: boolean; onPress?: () => void; maxWidth?: ViewStyle["maxWidth"]; tooltip?: JSX.Element }) {
   const interactive = !!props.onPress;
   const cls = props.active
     ? interactive
@@ -226,6 +226,7 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
   return (
     <View
       onPress={props.onPress ? () => props.onPress!() : undefined}
+      tooltip={props.tooltip}
       class={cls}
       style={{
         height: 20,

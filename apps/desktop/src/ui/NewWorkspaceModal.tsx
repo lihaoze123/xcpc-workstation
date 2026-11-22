@@ -78,7 +78,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
               默认模板
             </Text>
             <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-              支持按比赛切换或自定义 templates/*.typ
+              支持按比赛独立切换或自由定制模板
             </Text>
           </View>
           <View

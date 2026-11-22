@@ -7,6 +7,7 @@ import {
   togglePickProblem,
   validId,
 } from "./logic";
+import { nextEnabledIndex } from "./PickProblemsModal";
 
 describe("Duplicate problem ID suggestion", () => {
   test("appends -copy and increments -copy-2, -copy-3 on collision", () => {
@@ -67,6 +68,29 @@ describe("PickProblemsModal selection rules", () => {
     picked = togglePickProblem(picked, "n1", existing, 26);
     picked = togglePickProblem(picked, "n3", existing, 26);
     expect(picked).toEqual(["n2", "n3"]);
+  });
+
+  test("nextEnabledIndex skips disabled rows in both directions and stays on current at bounds", () => {
+    const rows = [
+      { id: "a", off: true },
+      { id: "b", off: false },
+      { id: "c", off: true },
+      { id: "d", off: true },
+      { id: "e", off: false },
+      { id: "f", off: true },
+    ];
+    const isOff = (r: { off: boolean }) => r.off;
+
+    // From b (1) moving down skips c, d and lands on e (4).
+    expect(nextEnabledIndex(rows, 1, 1, isOff)).toBe(4);
+    // From e (4) moving down skips f (disabled) and stays on e (4).
+    expect(nextEnabledIndex(rows, 4, 1, isOff)).toBe(4);
+    // From e (4) moving up skips d, c and lands on b (1).
+    expect(nextEnabledIndex(rows, 4, -1, isOff)).toBe(1);
+    // From b (1) moving up skips a (disabled) and stays on b (1).
+    expect(nextEnabledIndex(rows, 1, -1, isOff)).toBe(1);
+    // When all rows are disabled, returns -1.
+    expect(nextEnabledIndex(rows, 0, 1, () => true)).toBe(-1);
   });
 });
 

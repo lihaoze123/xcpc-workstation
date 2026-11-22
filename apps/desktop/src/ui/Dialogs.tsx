@@ -176,15 +176,16 @@ function NewProblem(props: { addTo?: string }) {
   );
 }
 
-function DuplicateProblem(props: { problemId: string }) {
+function DuplicateProblem(props: { open: boolean; problemId: string }) {
   const id = signal("");
   const title = signal("");
   const error = signal<UiError | undefined>(undefined);
   let idInput: InputRef | undefined;
 
   effect(() => {
+    const isOpen = props.open;
     const sourceId = props.problemId;
-    if (!sourceId) return;
+    if (!isOpen || !sourceId) return;
     untracked(() => {
       const ws = info();
       const source = ws.problems.find((p) => p.id === sourceId);
@@ -590,7 +591,7 @@ export function Dialogs(props: { onJumpContest?: (contestId: string) => void } =
         <NewProblem addTo={lastAddTo()} />
       </Modal>
       <Modal open={d()?.kind === "duplicateProblem"} onClose={close} testID="dialog-duplicate-problem">
-        <DuplicateProblem problemId={lastDuplicateProblemId()} />
+        <DuplicateProblem open={d()?.kind === "duplicateProblem"} problemId={lastDuplicateProblemId()} />
       </Modal>
       <Modal open={d()?.kind === "newContest"} onClose={close} testID="dialog-new-contest">
         <NewContest withProblem={lastWithProblem()} />

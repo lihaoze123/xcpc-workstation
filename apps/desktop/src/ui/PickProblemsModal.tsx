@@ -2,7 +2,20 @@
 // live search, tag/rating/source filters, cross-filter selection persistence, 26-problem
 // capacity enforcement, and keyboard navigation.
 
-import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent } from "nsh";
+import {
+  batch,
+  cleanup,
+  computed,
+  effect,
+  Scroll,
+  signal,
+  Text,
+  untracked,
+  View,
+  type InputRef,
+  type KeyEvent,
+  type ScrollRef,
+} from "nsh";
 import { Input } from "nsh/base";
 import { Btn, Chip, Chevron, RatingBadge, tip } from "./kit";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -13,6 +26,27 @@ import { AppMenu, type MenuEntry } from "./Menu";
 import { DialogHeader } from "./Modal";
 import { EASE_STANDARD, MONO, ms } from "./theme";
 import { dialog, errorOf, info, preview, refresh, revision, type UiError } from "./store";
+
+const PICK_ROW_HEIGHT = 38;
+const PICK_ROW_GAP = 2;
+const PICK_ROW_STRIDE = PICK_ROW_HEIGHT + PICK_ROW_GAP;
+const PICK_LIST_HEIGHT = 340;
+
+/** Find the next enabled row index moving by `delta` (+1 or -1), skipping disabled rows. */
+export function nextEnabledIndex<T>(
+  rows: readonly T[],
+  current: number,
+  delta: 1 | -1,
+  isDisabled: (row: T) => boolean,
+): number {
+  if (rows.length === 0) return -1;
+  let i = current + delta;
+  while (i >= 0 && i < rows.length) {
+    if (!isDisabled(rows[i])) return i;
+    i += delta;
+  }
+  return current >= 0 && current < rows.length && !isDisabled(rows[current]) ? current : -1;
+}
 
 function PickerFilterMenu(props: {
   label: string;
@@ -38,7 +72,7 @@ function PickerFilterMenu(props: {
             flexDirection: "row",
             alignItems: "center",
             gap: 5,
-            maxWidth: 140,
+            maxWidth: 112,
             minWidth: 0,
             overflow: "hidden",
             transitionProperty: "colors",
@@ -69,6 +103,9 @@ export function PickProblemsBody(props: { contestId: string }) {
   const highlighted = signal(0);
   const error = signal<UiError | undefined>(undefined);
   let searchInput: InputRef | undefined;
+  let listScroll: ScrollRef | undefined;
+  let listHeight = PICK_LIST_HEIGHT;
+  let listScrollY = 0;
   let searchFocused = false;
   let debounceTimer: number | undefined;
 
@@ -123,10 +160,35 @@ export function PickProblemsBody(props: { contestId: string }) {
     });
   });
 
+  const isRowDisabled = (id: string) => {
+    if (existingIds().has(id)) return true;
+    const sel = picked();
+    return !sel.includes(id) && sel.length >= remaining();
+  };
+
+  function ensureVisible(index: number) {
+    if (!listScroll || listHeight <= 0 || index < 0) return;
+    const rowTop = 6 + index * PICK_ROW_STRIDE;
+    const rowBottom = rowTop + PICK_ROW_HEIGHT;
+    if (rowTop < listScrollY + 6) {
+      listScroll.scrollTo({ y: Math.max(0, rowTop - 6), animated: false });
+    } else if (rowBottom > listScrollY + listHeight - 6) {
+      listScroll.scrollTo({ y: Math.max(0, rowBottom - listHeight + 6), animated: false });
+    }
+  }
+
   effect(() => {
-    const len = rows().length;
-    if (len === 0) highlighted.set(0);
-    else if (highlighted() >= len) highlighted.set(len - 1);
+    const list = rows();
+    if (list.length === 0) {
+      highlighted.set(-1);
+      return;
+    }
+    const cur = untracked(highlighted);
+    if (cur < 0 || cur >= list.length || isRowDisabled(list[cur].id)) {
+      const firstEnabled = list.findIndex((p) => !isRowDisabled(p.id));
+      highlighted.set(firstEnabled);
+      if (firstEnabled >= 0) ensureVisible(firstEnabled);
+    }
   });
 
   const filtered = () => inputText().trim() !== "" || tags().length > 0 || tier() !== undefined || platform() !== undefined;
@@ -177,12 +239,23 @@ export function PickProblemsBody(props: { contestId: string }) {
     const list = rows();
     if (list.length === 0) return;
     if (e.key === "ArrowDown") {
-      highlighted.set(Math.min(list.length - 1, highlighted() + 1));
+      const next = nextEnabledIndex(list, highlighted(), 1, (p) => isRowDisabled(p.id));
+      if (next >= 0) {
+        highlighted.set(next);
+        ensureVisible(next);
+      }
     } else if (e.key === "ArrowUp") {
-      highlighted.set(Math.max(0, highlighted() - 1));
-    } else if (e.key === " " && !searchFocused) {
+      const next = nextEnabledIndex(list, highlighted(), -1, (p) => isRowDisabled(p.id));
+      if (next >= 0) {
+        highlighted.set(next);
+        ensureVisible(next);
+      }
+    } else if (e.key === "Enter") {
       const target = list[highlighted()];
-      if (target) toggle(target.id);
+      if (target && !isRowDisabled(target.id)) toggle(target.id);
+    } else if (e.key === " " && (!searchFocused || inputText().length === 0)) {
+      const target = list[highlighted()];
+      if (target && !isRowDisabled(target.id)) toggle(target.id);
     }
   };
 
@@ -205,7 +278,7 @@ export function PickProblemsBody(props: { contestId: string }) {
   return (
     <View
       testID="pick-problems-body"
-      captureKeys={["up", "down", "escape"]}
+      captureKeys={["up", "down", "escape", "enter"]}
       onKeyDown={onKeyDown}
       style={{ maxHeight: 560 }}
     >
@@ -219,7 +292,7 @@ export function PickProblemsBody(props: { contestId: string }) {
 
         {/* Filter bar (hidden when library is completely empty) */}
         <If when={totalProblems() > 0}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
             <View
               class="border border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring"
               style={{
@@ -287,7 +360,7 @@ export function PickProblemsBody(props: { contestId: string }) {
         </If>
       </View>
 
-      {/* Problem list */}
+      {/* Problem list (fixed height when library non-empty to prevent modal vertical jitter) */}
       <If
         when={totalProblems() > 0}
         else={
@@ -311,7 +384,7 @@ export function PickProblemsBody(props: { contestId: string }) {
         <If
           when={rows().length > 0}
           else={
-            <View style={{ height: 220 }}>
+            <View style={{ height: PICK_LIST_HEIGHT }}>
               <EmptyState
                 icon="searchX"
                 title="没有符合条件的题目"
@@ -321,8 +394,13 @@ export function PickProblemsBody(props: { contestId: string }) {
             </View>
           }
         >
-          <Scroll style={{ maxHeight: 340 }}>
-            <View style={{ padding: 6, gap: 2 }}>
+          <Scroll
+            ref={(r) => (listScroll = r)}
+            style={{ height: PICK_LIST_HEIGHT }}
+            onLayout={(e) => (listHeight = e.bounds.size.height)}
+            onScroll={(e) => (listScrollY = e.offset.y)}
+          >
+            <View style={{ padding: 6, gap: PICK_ROW_GAP }}>
               <Each of={rows()} key={(p) => p.id}>
                 {(p, idx) => {
                   const inContest = () => existingIds().has(p().id);
@@ -330,6 +408,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                   const capReached = () => !checked() && picked().length >= remaining();
                   const disabled = () => inContest() || capReached();
                   const focused = () => !disabled() && highlighted() === idx();
+                  const visibleTags = () => p().tags.slice(0, 2);
                   return (
                     <View
                       testID={`pick-row-${p().id}`}
@@ -351,14 +430,14 @@ export function PickProblemsBody(props: { contestId: string }) {
                             : "hover:bg-muted active:bg-accent"
                       }
                       style={{
-                        height: 38,
+                        height: PICK_ROW_HEIGHT,
                         paddingLeft: 10,
                         paddingRight: 10,
                         borderRadius: 6,
                         flexDirection: "row",
                         alignItems: "center",
                         gap: 10,
-                        opacity: disabled() ? 0.48 : 1,
+                        opacity: disabled() ? 0.58 : 1,
                         transitionProperty: "colors",
                         transitionDuration: ms(100),
                         transitionTimingFunction: EASE_STANDARD,
@@ -400,11 +479,17 @@ export function PickProblemsBody(props: { contestId: string }) {
                       >
                         {p().title}
                       </Text>
-                      {/* Compact tags (up to 2) */}
-                      <If when={p().tags.length > 0}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 132, overflow: "hidden", flexShrink: 0 }}>
-                          <Each of={p().tags.slice(0, 2)} key={(t) => t}>
-                            {(t) => <Chip label={t()} maxWidth={64} />}
+                      {/* Compact tags (up to 2, single tag uses full 132pt without artificial 64pt clipping) */}
+                      <If when={visibleTags().length > 0}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 136, overflow: "hidden", flexShrink: 0 }}>
+                          <Each of={visibleTags()} key={(t) => t}>
+                            {(t) => (
+                              <Chip
+                                label={t()}
+                                maxWidth={visibleTags().length === 1 ? 132 : 96}
+                                tooltip={tip(t())}
+                              />
+                            )}
                           </Each>
                         </View>
                       </If>
@@ -450,7 +535,7 @@ export function PickProblemsBody(props: { contestId: string }) {
           when={picked().length > 0}
           else={
             <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {`还可加入 ${remaining()} 题`}
+              {remaining() === 0 ? "已达 26 题上限" : `还可加入 ${remaining()} 题`}
             </Text>
           }
         >
@@ -459,7 +544,7 @@ export function PickProblemsBody(props: { contestId: string }) {
               {`已选 ${picked().length} 题`}
             </Text>
             <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {`剩余名额 ${remainingAfterPick()}`}
+              {remainingAfterPick() === 0 ? "已达 26 题上限" : `剩余名额 ${remainingAfterPick()}`}
             </Text>
             <Btn label="清空已选" variant="ghost" onPress={() => picked.set([])} />
           </View>

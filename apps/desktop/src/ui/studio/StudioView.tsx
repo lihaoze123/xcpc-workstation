@@ -865,6 +865,17 @@ export function StudioView(props: { active: boolean }) {
             <If when={target()?.target === "contest" && frozen()}>
               <Lock closed size={13} />
             </If>
+            <If when={target()?.target === "contest" && archived()}>
+              <View
+                testID="studio-archived-badge"
+                class="bg-muted"
+                style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 5, justifyContent: "center", flexShrink: 0 }}
+              >
+                <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                  已归档
+                </Text>
+              </View>
+            </If>
           </View>
         }
         trailing={
@@ -962,74 +973,75 @@ export function StudioView(props: { active: boolean }) {
                   class="border-border"
                 >
                   <Segmented items={TABS} value={tab()} onChange={setTab} itemWidth={52} underline />
-                  <If when={tab() !== "samples" && !!file()}>
-                    <If
-                      when={!readOnly()}
-                      else={
-                        <View
-                          class="bg-muted"
-                          style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
-                        >
-                          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                            只读
-                          </Text>
-                        </View>
-                      }
-                    >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-                        <If when={vimMode()}>
-                          {(m) => (
-                            <View
-                              testID="vim-mode-badge"
-                              class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
-                              style={{
-                                height: 20,
-                                paddingLeft: 6,
-                                paddingRight: 6,
-                                marginRight: 4,
-                                borderRadius: 4,
-                                justifyContent: "center",
-                              }}
-                            >
-                              <Text
-                                style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
-                                class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
+                  <If
+                    when={readOnly()}
+                    else={
+                      <If when={tab() !== "samples" && !!file()}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+                          <If when={vimMode()}>
+                            {(m) => (
+                              <View
+                                testID="vim-mode-badge"
+                                class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
+                                style={{
+                                  height: 20,
+                                  paddingLeft: 6,
+                                  paddingRight: 6,
+                                  marginRight: 4,
+                                  borderRadius: 4,
+                                  justifyContent: "center",
+                                }}
                               >
-                                {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
-                              </Text>
-                            </View>
-                          )}
-                        </If>
-                        <IconBtn
-                          icon="sigma"
-                          size={26}
-                          iconSize={14.5}
-                          tooltip={tip("行内公式", "mod+m")}
-                          onPress={() => editorActions?.inlineMath()}
-                        />
-                        <IconBtn
-                          icon="squareCode"
-                          size={26}
-                          iconSize={14.5}
-                          tooltip={tip("公式块", "mod+shift+m")}
-                          onPress={() => editorActions?.displayMath()}
-                        />
-                        <IconBtn
-                          icon="table"
-                          size={26}
-                          iconSize={14.5}
-                          tooltip={tip("表格")}
-                          onPress={() => editorActions?.table()}
-                        />
-                        <IconBtn
-                          icon="image"
-                          size={26}
-                          iconSize={14.5}
-                          tooltip={tip("插入图片")}
-                          onPress={openAssets}
-                        />
-                      </View>
-                    </If>
+                                <Text
+                                  style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
+                                  class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
+                                >
+                                  {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
+                                </Text>
+                              </View>
+                            )}
+                          </If>
+                          <IconBtn
+                            icon="sigma"
+                            size={26}
+                            iconSize={14.5}
+                            tooltip={tip("行内公式", "mod+m")}
+                            onPress={() => editorActions?.inlineMath()}
+                          />
+                          <IconBtn
+                            icon="squareCode"
+                            size={26}
+                            iconSize={14.5}
+                            tooltip={tip("公式块", "mod+shift+m")}
+                            onPress={() => editorActions?.displayMath()}
+                          />
+                          <IconBtn
+                            icon="table"
+                            size={26}
+                            iconSize={14.5}
+                            tooltip={tip("表格")}
+                            onPress={() => editorActions?.table()}
+                          />
+                          <IconBtn
+                            icon="image"
+                            size={26}
+                            iconSize={14.5}
+                            tooltip={tip("插入图片")}
+                            onPress={openAssets}
+                          />
+                        </View>
+                      </If>
+                    }
+                  >
+                    <View
+                      testID="studio-readonly-badge"
+                      class="bg-muted"
+                      style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+                    >
+                      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                        {archived() ? "已归档" : frozen() ? "已定稿" : "只读工作区"}
+                      </Text>
+                    </View>
                   </If>
                 </View>
 

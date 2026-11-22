@@ -205,14 +205,32 @@ export function LibraryView(props: { active: boolean }) {
     return id ? rows().findIndex((r) => r.id === id) : -1;
   });
 
+  let lastSelectedId: string | undefined = selectedProblem();
   effect(() => {
     const list = rows();
     const id = selectedProblem();
+    const selectionChanged = id !== lastSelectedId;
+    lastSelectedId = id;
     if (list.length === 0) {
-      if (id !== undefined) queueMicrotask(() => selectedProblem.set(undefined));
+      if (id !== undefined) {
+        if (selectionChanged && filtered() && info().problems.some((p) => p.id === id)) {
+          queueMicrotask(clear);
+          return;
+        }
+        queueMicrotask(() => selectedProblem.set(undefined));
+      }
     } else if (id === undefined || !list.some((r) => r.id === id)) {
+      if (selectionChanged && id !== undefined && filtered() && info().problems.some((p) => p.id === id)) {
+        queueMicrotask(clear);
+        return;
+      }
       queueMicrotask(() => selectedProblem.set(list[0].id));
     }
+  });
+
+  effect(() => {
+    const row = selectedRow();
+    if (row >= 0) table?.scrollToRow(row, false);
   });
 
   function move(delta: number) {
@@ -705,7 +723,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
               <AppMenu
                 align="end"
                 entries={[
-                  { id: "copyMd", label: "复制带样例的 Markdown", icon: "copy" },
+                  { id: "copyMd", label: "复制带样例的 Markdown", icon: "fileText" },
                   { id: "duplicate", label: "复制题目…", icon: "copy", disabled: readOnly() },
                   { id: "add", label: "加入比赛…", icon: "listPlus", disabled: readOnly() },
                   { id: "reveal", label: "在文件夹中显示", icon: "folderOpen" },

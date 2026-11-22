@@ -480,7 +480,7 @@ function LayoutPane() {
     <View style={{ gap: 24 }}>
       <Section
         title="工作区默认模板"
-        description="新建比赛与单题预览默认使用这里的模板；单场比赛可在出版工作室「版式」中独立切换。"
+        description="新建比赛与单题预览默认使用这里的模板；单场比赛可在比赛的「版式」属性中独立切换。"
       >
         <View style={{ padding: 14, gap: 12 }}>
           <TemplatePicker
@@ -499,16 +499,28 @@ function LayoutPane() {
                 </Text>
               </View>
               <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
-                {`工作区中缺少 templates/${tplId()}.typ。可从预设重新安装，或在上方切换其他模板。`}
+                工作区中缺少该模板文件。可从预设重新安装，或在上方切换其他模板。
               </Text>
-              <If when={!wsReadOnly() && canInstallMissingPreset()}>
-                <View style={{ flexDirection: "row", paddingTop: 2 }}>
-                  <Btn
-                    variant="primary"
-                    label="从预设安装"
-                    icon="plus"
-                    onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), "从预设安装模板")}
-                  />
+              <If when={!wsReadOnly()}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+                  <If
+                    when={canInstallMissingPreset()}
+                    else={
+                      <Btn
+                        variant="primary"
+                        label="从预设添加模板"
+                        icon="plus"
+                        onPress={() => presetOpen.set(true)}
+                      />
+                    }
+                  >
+                    <Btn
+                      variant="primary"
+                      label="从预设安装"
+                      icon="plus"
+                      onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), "从预设安装模板")}
+                    />
+                  </If>
                 </View>
               </If>
             </View>
@@ -520,13 +532,20 @@ function LayoutPane() {
                 <Btn
                   label="编辑模板"
                   icon="filePenLine"
+                  tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
                   onPress={() => void preview.openTemplateFile(tplId()).then((res) => !res.ok && err.set(errorOf(res, "打开模板文件")))}
                 />
-                <Btn label="新建副本" icon="copy" onPress={() => forkOpen.set(true)} />
+                <Btn
+                  label="新建副本"
+                  icon="copy"
+                  tooltip={tip("基于当前模板创建一份新的工作区共享模板")}
+                  onPress={() => forkOpen.set(true)}
+                />
               </If>
               <Btn
                 label="自定义样式代码"
                 icon="code"
+                tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
                 onPress={() => void preview.openPreambleFile().then((res) => !res.ok && err.set(errorOf(res, "打开样式代码")))}
               />
             </View>
@@ -537,7 +556,7 @@ function LayoutPane() {
       <If when={hasBookFields()}>
         <Section
           title="默认版式参数"
-          description="对当前模板生效的工作区级默认值；每场比赛可在工作室中单独覆写。"
+          description="对当前模板生效的工作区级默认值；每场比赛可在比赛的「版式」属性中单独覆写。"
           trailing={
             <If when={!wsReadOnly() && hasCustomOpts()}>
               <Btn label="恢复默认" icon="rotateCcw" variant="ghost" onPress={resetAllOpts} />
@@ -573,6 +592,7 @@ function LayoutPane() {
         open={forkOpen()}
         sourceId={tplId()}
         sourceName={tplInfo()?.name ?? tplId()}
+        existingIds={catalog().templates.map((t) => t.id)}
         onCreated={(newId) => apply(preview.updateWorkspaceTemplate(newId, false, null), "切换默认模板")}
         onClose={() => forkOpen.set(false)}
       />
@@ -581,6 +601,7 @@ function LayoutPane() {
         open={presetOpen()}
         presets={catalog().presets}
         existingIds={catalog().templates.map((t) => t.id)}
+        initialTargetName={!tplInfo() ? tplId() : undefined}
         onInstalled={(installedId) => apply(preview.updateWorkspaceTemplate(installedId, false, null), "切换默认模板")}
         onClose={() => presetOpen.set(false)}
       />
@@ -856,15 +877,18 @@ export function AboutPane() {
     }
   };
 
+  const releaseOpenErr = signal<string | undefined>(undefined);
+
   const handleDownload = async (update: AppUpdate) => {
+    releaseOpenErr.set(undefined);
     if (!update.canInstall) {
       try {
         const res = await openUrl(resolveReleasePageUrl(update));
         if (!res.opened) {
-          updateState.set({ kind: "error", message: "无法打开发布页面，请稍后重试" });
+          releaseOpenErr.set("无法打开发布页面，请稍后重试");
         }
       } catch {
-        updateState.set({ kind: "error", message: "无法打开发布页面，请稍后重试" });
+        releaseOpenErr.set("无法打开发布页面，请稍后重试");
       }
       return;
     }
@@ -1023,6 +1047,15 @@ export function AboutPane() {
                 class="text-secondary-foreground"
               >
                 {updateSummary() ?? ""}
+              </Text>
+            </If>
+            <If when={Boolean(releaseOpenErr())}>
+              <Text
+                testID="release-open-error"
+                style={{ fontSize: 12, lineHeight: 16 }}
+                class="text-destructive"
+              >
+                {releaseOpenErr() ?? ""}
               </Text>
             </If>
           </View>

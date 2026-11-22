@@ -7,7 +7,7 @@ import { computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { ContestDetailJs, PreviewStart } from "xcpc-workstation/native";
 import { ContestStats } from "../Contest";
 import { Icon } from "../Icon";
-import { Btn, tip } from "../kit";
+import { tip } from "../kit";
 import { labels, moveItem } from "../logic";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
@@ -116,14 +116,28 @@ export function Outline(props: {
         </View>
       </Scroll>
       <If when={!locked() && !!props.onPickProblems}>
-        <View style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 6, paddingBottom: 8 }}>
-          <Btn
-            label="从题库挑题"
-            icon="listPlus"
-            size="sm"
-            onPress={() => props.onPickProblems?.()}
+        <View style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 6, paddingBottom: 8 }}>
+          <View
             testID="outline-pick-problems"
-          />
+            onPress={() => props.onPickProblems?.()}
+            class="border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            style={{
+              height: 30,
+              borderRadius: 6,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              transitionProperty: "colors",
+              transitionDuration: ms(120),
+              transitionTimingFunction: EASE_STANDARD,
+            }}
+          >
+            <Icon name="listPlus" size={14} tone="secondary-foreground" />
+            <Text style={{ fontSize: 12.5 }} class="text-foreground">
+              从题库挑题
+            </Text>
+          </View>
         </View>
       </If>
       <If when={props.detail.items.length > 0}>

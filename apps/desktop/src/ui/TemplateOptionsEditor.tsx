@@ -11,7 +11,7 @@ import { Input, Switch } from "nsh/base";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
 import { Btn, Chevron, IconBtn, Segmented, tip } from "./kit";
-import { pathBase } from "./logic";
+import { pathBase, validId } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { Modal } from "./Modal";
 import { colorTransition } from "./motion";
@@ -760,7 +760,8 @@ function ImageOptionField(props: {
       const rel = await preview.pickAndImportTemplateImage(props.contestId ?? null);
       if (rel) props.onCommit(rel);
     } catch (e) {
-      err.set({ context: "导入图片", error: String(e ?? "无法导入图片") });
+      const raw = String(e ?? "无法导入图片").replace(/^Error:\s*/i, "").trim();
+      err.set({ context: "导入图片", error: raw || "无法导入图片，请检查文件权限后重试。" });
     }
   };
 
@@ -829,32 +830,57 @@ function ImageOptionField(props: {
   );
 }
 
-/** Lightweight modal to fork an existing workspace template into `templates/<newName>.typ`. */
+/** Lightweight modal to fork an existing workspace template into a new editable template. */
 export function ForkTemplateModal(props: {
   open: boolean;
   sourceId: string;
   sourceName: string;
+  existingIds?: string[];
   onCreated: (newId: string) => void;
   onClose: () => void;
 }) {
   const slug = signal("");
+  const submitted = signal(false);
   const err = signal<UiError | undefined>(undefined);
+
+  const suggestForkSlug = (base: string): string => {
+    const existing = new Set(props.existingIds ?? []);
+    const first = `${base}-custom`;
+    if (!existing.has(first)) return first;
+    for (let i = 2; i < 100; i++) {
+      const candidate = `${base}-custom-${i}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    return first;
+  };
 
   effect(() => {
     if (props.open) {
       untracked(() => {
-        slug.set(`${props.sourceId}-custom`);
+        slug.set(suggestForkSlug(props.sourceId));
+        submitted.set(false);
         err.set(undefined);
       });
     }
   });
 
-  const submit = () => {
+  const validationError = computed(() => {
     const id = slug().trim();
-    if (!id) {
-      err.set({ error: "请输入新模板的英文标识（如 my-icpc）" });
-      return;
-    }
+    if (!id) return submitted() ? "请输入新模板标识（如 my-icpc）" : undefined;
+    if (!validId(id)) return "标识只能包含小写字母、数字、- 和 _，并以字母或数字开头";
+    if ((props.existingIds ?? []).includes(id)) return "该模板标识已存在，请更换名称";
+    return undefined;
+  });
+
+  const canSubmit = () => {
+    const id = slug().trim();
+    return !!id && validId(id) && !(props.existingIds ?? []).includes(id);
+  };
+
+  const submit = () => {
+    submitted.set(true);
+    if (!canSubmit()) return;
+    const id = slug().trim();
     const res = preview.forkTemplate(props.sourceId, id);
     if (!res.ok) {
       err.set(errorOf(res, "新建模板副本"));
@@ -876,13 +902,13 @@ export function ForkTemplateModal(props: {
               新建自定义模板
             </Text>
             <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-              {`基于「${props.sourceName}」创建一份可自由编辑的副本`}
+              {`基于「${props.sourceName}」创建一份工作区共享副本`}
             </Text>
           </View>
         </View>
         <View style={{ gap: 5 }}>
           <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-            模板标识（小写字母、数字、- 或 _）
+            模板标识
           </Text>
           <Input
             value={slug()}
@@ -895,30 +921,45 @@ export function ForkTemplateModal(props: {
               if (err()) err.set(undefined);
             }}
             onSubmit={submit}
-            class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+            class={
+              validationError()
+                ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] focus:border-destructive transition-colors"
+                : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+            }
             style={{ fontFamily: MONO }}
           />
+          <Text
+            style={{ fontSize: 11.5, lineHeight: 16 }}
+            class={validationError() ? "text-destructive" : "text-muted-foreground"}
+          >
+            {validationError() ?? "小写字母、数字、- 或 _，最多 64 字符"}
+          </Text>
         </View>
-        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+        <If when={err()}>
+          <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+        </If>
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Btn label="取消" onPress={props.onClose} />
-          <Btn label="创建" variant="primary" onPress={submit} />
+          <Btn label="创建" variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>
       </View>
     </Modal>
   );
 }
 
-/** Modal for installing a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into `templates/*.typ`. */
+/** Modal for installing a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into the workspace. */
 export function InstallPresetModal(props: {
   open: boolean;
   presets: PresetInfo[];
   existingIds: string[];
+  initialTargetName?: string;
   onInstalled: (installedId: string) => void;
   onClose: () => void;
 }) {
   const selectedPreset = signal("");
   const targetName = signal("");
+  const submitted = signal(false);
+  const userEditedName = signal(false);
   const err = signal<UiError | undefined>(undefined);
 
   const suggestTarget = (presetId: string): string => {
@@ -938,7 +979,15 @@ export function InstallPresetModal(props: {
         const firstMissing = props.presets.find((p) => !existing.has(p.id));
         const initial = (firstMissing ?? props.presets[0])?.id ?? "olymp-classic";
         selectedPreset.set(initial);
-        targetName.set(suggestTarget(initial));
+        const preferred = props.initialTargetName?.trim();
+        if (preferred && validId(preferred) && !existing.has(preferred)) {
+          targetName.set(preferred);
+          userEditedName.set(true);
+        } else {
+          targetName.set(suggestTarget(initial));
+          userEditedName.set(false);
+        }
+        submitted.set(false);
         err.set(undefined);
       });
     }
@@ -946,18 +995,30 @@ export function InstallPresetModal(props: {
 
   const choosePreset = (id: string) => {
     selectedPreset.set(id);
-    targetName.set(suggestTarget(id));
+    if (!userEditedName()) {
+      targetName.set(suggestTarget(id));
+    }
     if (err()) err.set(undefined);
   };
 
+  const validationError = computed(() => {
+    const name = targetName().trim();
+    if (!name) return submitted() ? "请输入模板标识（如 olymp-classic）" : undefined;
+    if (!validId(name)) return "标识只能包含小写字母、数字、- 和 _，并以字母或数字开头";
+    if (props.existingIds.includes(name)) return "该模板标识已存在，请更换名称";
+    return undefined;
+  });
+
+  const canSubmit = () => {
+    const name = targetName().trim();
+    return !!selectedPreset() && !!name && validId(name) && !props.existingIds.includes(name);
+  };
+
   const submit = () => {
+    submitted.set(true);
+    if (!canSubmit()) return;
     const preset = selectedPreset();
     const name = targetName().trim();
-    if (!preset) return;
-    if (!name) {
-      err.set({ error: "请输入模板文件名标识（如 olymp-classic）" });
-      return;
-    }
     const res = preview.installPresetTemplate(preset, name);
     if (!res.ok) {
       err.set(errorOf(res, "从预设安装模板"));
@@ -979,7 +1040,7 @@ export function InstallPresetModal(props: {
               从预设添加模板
             </Text>
             <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-              将预置模板复制到工作区 templates/ 目录，安装后可自由修改
+              将预置模板复制到当前工作区，安装后可自由修改
             </Text>
           </View>
         </View>
@@ -1021,7 +1082,7 @@ export function InstallPresetModal(props: {
 
         <View style={{ gap: 5 }}>
           <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-            保存为模板标识（templates/&lt;标识&gt;.typ）
+            保存为模板标识
           </Text>
           <Input
             value={targetName()}
@@ -1031,19 +1092,32 @@ export function InstallPresetModal(props: {
             submitBehavior="blurAndSubmit"
             onChange={(e) => {
               targetName.set(e.value);
+              userEditedName.set(true);
               if (err()) err.set(undefined);
             }}
             onSubmit={submit}
-            class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+            class={
+              validationError()
+                ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] focus:border-destructive transition-colors"
+                : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+            }
             style={{ fontFamily: MONO }}
           />
+          <Text
+            style={{ fontSize: 11.5, lineHeight: 16 }}
+            class={validationError() ? "text-destructive" : "text-muted-foreground"}
+          >
+            {validationError() ?? "小写字母、数字、- 或 _，安装后供整个工作区选用"}
+          </Text>
         </View>
 
-        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+        <If when={err()}>
+          <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+        </If>
 
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Btn label="取消" onPress={props.onClose} />
-          <Btn label="添加" variant="primary" onPress={submit} />
+          <Btn label="添加" variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>
       </View>
     </Modal>

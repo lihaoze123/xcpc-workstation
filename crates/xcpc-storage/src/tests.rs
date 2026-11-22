@@ -1701,3 +1701,79 @@ fn set_contest_archived_is_idempotent_orthogonal_to_frozen_and_blocks_writes() {
         "not_found"
     );
 }
+
+#[test]
+fn detach_contest_template_copies_options_to_local_and_not_found_messages_guide_presets() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.create_problem("p1", "P1").unwrap();
+    ws.compose_contest("r1", &["p1".into()], None).unwrap();
+
+    // Workspace default option + contest override + per-problem option on `olymp-classic`.
+    let mut ws_patch = BTreeMap::new();
+    ws_patch.insert(
+        "margin-x".to_owned(),
+        Patch::Set(TemplateOptionValue::String("20mm".into())),
+    );
+    ws.update_workspace_template(
+        &Patch::Keep,
+        &BTreeMap::from([("olymp-classic".to_owned(), ws_patch)]),
+    )
+    .unwrap();
+
+    let mut book_patch = BTreeMap::new();
+    book_patch.insert(
+        "logo".to_owned(),
+        Patch::Set(TemplateOptionValue::String("assets/logo.png".into())),
+    );
+    ws.update_contest_meta(
+        "r1",
+        &ContestMetaPatch {
+            template_options: BTreeMap::from([("olymp-classic".to_owned(), book_patch)]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let mut prob_patch = BTreeMap::new();
+    prob_patch.insert(
+        "sample-layout".to_owned(),
+        Patch::Set(TemplateOptionValue::String("wide".into())),
+    );
+    ws.set_override(
+        "r1",
+        "A",
+        &OverridePatch {
+            options: BTreeMap::from([("olymp-classic".to_owned(), prob_patch)]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Detaching copies both merged book options and per-problem options into `local`.
+    ws.detach_contest_template("r1").unwrap();
+    let c = ws.load_contest("r1").unwrap();
+    let local_book = c.meta.template_options.get("local").unwrap();
+    assert_eq!(
+        local_book.get("margin-x"),
+        Some(&TemplateOptionValue::String("20mm".into()))
+    );
+    assert_eq!(
+        local_book.get("logo"),
+        Some(&TemplateOptionValue::String("assets/logo.png".into()))
+    );
+    let local_prob = c.meta.problems[0].options.get("local").unwrap();
+    assert_eq!(
+        local_prob.get("sample-layout"),
+        Some(&TemplateOptionValue::String("wide".into()))
+    );
+
+    // Typed Chinese messages for missing preset and missing template.
+    let preset_msg = Error::NotFound("preset \"foo\"".into()).human_message();
+    assert!(preset_msg.contains("找不到预设模板「foo」"));
+    assert!(preset_msg.contains("olymp-classic"));
+    assert!(preset_msg.contains("minimal"));
+    let tpl_msg = Error::NotFound("template \"bar\"".into()).human_message();
+    assert!(tpl_msg.contains("找不到模板「bar」"));
+    assert!(tpl_msg.contains("xcpc template list"));
+}

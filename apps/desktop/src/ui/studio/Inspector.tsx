@@ -6,7 +6,7 @@
 //   plus lightweight bridges to fork a custom template or open external style files.
 
 import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
-import { Input, Switch } from "nsh/base";
+import { Input } from "nsh/base";
 import type { ContestDetailJs, ContestItemDetailJs, PreviewDiagnostic } from "xcpc-workstation/native";
 import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
@@ -209,8 +209,9 @@ export function Inspector(props: {
         open={!!forkModal()}
         sourceId={forkModal()?.sourceId ?? "olymp-classic"}
         sourceName={forkModal()?.sourceName ?? "XCPC 经典"}
+        existingIds={catalog().templates.map((t) => t.id)}
         onCreated={(newId) => {
-          if (props.target === "contest" && props.contest && !props.contest.frozen && !info().readOnly) {
+          if (props.target === "contest" && props.contest && !props.contest.frozen && !props.contest.archived && !info().readOnly) {
             done(preview.updateContestMeta(props.contest.id, { template: newId }));
           } else {
             refresh();
@@ -224,8 +225,16 @@ export function Inspector(props: {
         open={presetModalOpen()}
         presets={catalog().presets}
         existingIds={catalog().templates.map((t) => t.id)}
+        initialTargetName={
+          props.target === "contest" && props.contest && !props.contest.hasContestTemplate
+            ? (() => {
+                const eff = props.contest.effectiveTemplate || catalog().default || "olymp-classic";
+                return catalog().templates.some((t) => t.id === eff) ? undefined : eff;
+              })()
+            : undefined
+        }
         onInstalled={(installedId) => {
-          if (props.target === "contest" && props.contest && !props.contest.frozen && !info().readOnly) {
+          if (props.target === "contest" && props.contest && !props.contest.frozen && !props.contest.archived && !info().readOnly) {
             done(preview.updateContestMeta(props.contest.id, { template: installedId === catalog().default ? null : installedId }));
           } else {
             refresh();
@@ -363,31 +372,6 @@ function Field(props: {
   );
 }
 
-function Toggle(props: { label: string; checked: boolean; readOnly?: boolean; overridden?: boolean; onChange: (v: boolean) => void; onRestore?: () => void }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", height: 24, gap: 6 }}>
-      <View style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} class="bg-primary" />
-      <Text style={{ flex: 1, fontSize: 13 }} class={props.readOnly ? "text-secondary-foreground" : "text-foreground"}>
-        {props.label}
-      </Text>
-      <If when={props.overridden && !props.readOnly}>
-        <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip("还原为比赛的默认值")} onPress={() => props.onRestore?.()} />
-      </If>
-      <Switch
-        checked={props.checked}
-        disabled={props.readOnly}
-        onChange={(e) => !props.readOnly && props.onChange(e.checked)}
-        trackClass={
-          props.readOnly
-            ? "w-8 h-[18px] rounded-full bg-input checked:bg-primary opacity-50"
-            : "w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
-        }
-        thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
-      />
-    </View>
-  );
-}
-
 const nul = (v: string) => (v === "" ? null : v);
 
 // ── 信息 Tab ─────────────────────────────────────────────────────────────────
@@ -488,7 +472,7 @@ function ContestInfoTab(props: {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name={archived() ? "folder" : frozen() ? "lock" : "stamp"} size={14} tone={archived() || frozen() ? "secondary-foreground" : "foreground"} />
             <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }}>
-              {archived() ? (frozen() ? "已归档 · 已定稿" : "已归档") : frozen() ? "已定稿" : "未定稿"}
+              {archived() ? (frozen() ? "已归档  已定稿" : "已归档") : frozen() ? "已定稿" : "未定稿"}
             </Text>
             <If
               when={archived()}
@@ -662,14 +646,6 @@ function ContestInfoTab(props: {
                   />
                 </View>
               </View>
-              <Toggle
-                label="显示时间和内存限制"
-                readOnly={locked()}
-                checked={item().showMetadata}
-                overridden={item().overriddenShowMetadata}
-                onChange={(v) => over({ showMetadata: v })}
-                onRestore={() => over({ showMetadata: null })}
-              />
             </Section>
           );
         }}
@@ -700,6 +676,10 @@ function ContestLayoutTab(props: {
 
   const hasLocal = () => c().hasContestTemplate;
   const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
+  const wsDefaultName = computed(() => {
+    const defId = props.catalog.default || "olymp-classic";
+    return props.catalog.templates.find((t) => t.id === defId)?.name ?? defId;
+  });
   const localTplInfo = computed(() => (hasLocal() ? parseContestTemplateInfo(c().contestTemplateJson) : undefined));
   const wsTplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
   const tplInfo = computed(() => (hasLocal() ? localTplInfo() : wsTplInfo()));
@@ -733,6 +713,7 @@ function ContestLayoutTab(props: {
                   <TemplatePicker
                     templates={props.catalog.templates}
                     value={effTemplateId()}
+                    inheritedLabel={`还原为工作区默认（${wsDefaultName()}）`}
                     overridden={templateOverridden()}
                     readOnly={locked()}
                     onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
@@ -744,11 +725,13 @@ function ContestLayoutTab(props: {
                       <Btn
                         label="编辑模板"
                         icon="filePenLine"
+                        tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
                         onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
                       />
                       <Btn
                         label="独立为本场模板"
                         icon="copy"
+                        tooltip={tip("复制一份仅对本场比赛生效的模板，修改不影响其他比赛")}
                         onPress={() => props.done(preview.detachContestTemplate(c().id))}
                       />
                     </View>
@@ -765,7 +748,7 @@ function ContestLayoutTab(props: {
                     </Text>
                   </View>
                   <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
-                    {`工作区中缺少 templates/${effTemplateId()}.typ，无法排版预览。`}
+                    工作区中缺少该模板文件，无法排版预览。
                   </Text>
                   <If when={!locked()}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
@@ -777,7 +760,12 @@ function ContestLayoutTab(props: {
                           onPress={() => props.done(preview.installPresetTemplate(effTemplateId(), effTemplateId()))}
                         />
                       </If>
-                      <Btn label="从预设添加模板…" icon="plus" onPress={props.onRequestPreset} />
+                      <Btn
+                        variant={canInstallMissingPreset() ? undefined : "primary"}
+                        label="从预设添加模板…"
+                        icon="plus"
+                        onPress={props.onRequestPreset}
+                      />
                     </View>
                   </If>
                 </View>
@@ -785,6 +773,7 @@ function ContestLayoutTab(props: {
                   <TemplatePicker
                     templates={props.catalog.templates}
                     value={effTemplateId()}
+                    inheritedLabel={`还原为工作区默认（${wsDefaultName()}）`}
                     overridden={templateOverridden()}
                     readOnly={locked()}
                     onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
@@ -805,14 +794,15 @@ function ContestLayoutTab(props: {
             </View>
             <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
               {localTplInfo()?.name
-                ? `当前使用本场比赛独立模板「${localTplInfo()!.name}」，修改不会影响其他比赛。`
-                : "当前使用本场比赛独立模板，修改不会影响其他比赛。"}
+                ? `当前使用本场比赛独立模板「${localTplInfo()!.name}」，修改不影响其他比赛；在外部编辑器保存后预览会自动刷新。`
+                : "当前使用本场比赛独立模板，修改不影响其他比赛；在外部编辑器保存后预览会自动刷新。"}
             </Text>
             <If when={!locked()}>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                 <Btn
                   label="编辑本场模板"
                   icon="filePenLine"
+                  tooltip={tip("用外部编辑器修改保存后预览会自动刷新")}
                   onPress={() => void preview.openContestTemplateFile(c().id).then((res) => !res.ok && props.done(res))}
                 />
                 <Btn
@@ -876,12 +866,14 @@ function ContestLayoutTab(props: {
               <Btn
                 label="基于当前模板新建副本"
                 icon="copy"
+                tooltip={tip("创建一份新的工作区共享模板，可供其他比赛选用")}
                 onPress={() => props.onRequestFork(effTemplateId(), tplInfo()?.name ?? effTemplateId())}
               />
             </If>
             <Btn
               label="自定义样式代码"
               icon="code"
+              tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
               onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
             />
           </View>
@@ -899,7 +891,7 @@ function ContestLayoutTab(props: {
                 恢复引用工作区模板？
               </Text>
               <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-muted-foreground">
-                将删除本场的专属模板文件（template.typ），改用工作区 templates/ 下的模板。
+                将永久删除本场的专属模板文件（不可撤销），并恢复使用工作区模板。如需保留，请先手动备份。
               </Text>
             </View>
           </View>
@@ -951,7 +943,7 @@ function ProblemLayoutTab(props: {
           <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
             {tplInfo()
               ? "单题预览沿用工作区默认模板与版式参数。"
-              : `工作区中缺少 templates/${tplId()}.typ，可从预设安装或在设置中切换模板。`}
+              : "工作区中缺少该模板文件，可从预设安装或在设置中切换模板。"}
           </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
             <If when={!wsReadOnly() && canInstallPreset()}>
@@ -989,6 +981,7 @@ function ProblemLayoutTab(props: {
           <Btn
             label="自定义样式代码"
             icon="code"
+            tooltip={tip("在外部编辑器中配置对整个工作区生效的全局样式与宏")}
             onPress={() => void preview.openPreambleFile().then((res) => !res.ok && props.done(res))}
           />
         </Section>
