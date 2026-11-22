@@ -5,7 +5,8 @@
   "build": 2,
   "rust": ".",
   "updater": {
-    "github": "lihaoze123/xcpc-workstation"
+    "github": "lihaoze123/xcpc-workstation",
+    "publicKey": "pwNYzmuxVIlJQUm37UN13Bl14aXIFbYnEx/WmZ8zXME="
   },
   "window": {
     "titleBar": {
