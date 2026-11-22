@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   NSH_VERSION: "0.6.0"
 
 jobs:
@@ -33,6 +35,11 @@ jobs:
     name: Desktop (nsh check & test)
     runs-on: ubuntu-24.04
     steps:
+      - name: Free disk space on runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
