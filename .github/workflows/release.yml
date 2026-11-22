@@ -302,6 +302,20 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python3 scripts/extract-changelog.py "$VERSION" --changelog CHANGELOG.md --output release-notes.md
+          if [[ -s release-notes.md ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Extracted release notes for ${VERSION} ($(wc -l < release-notes.md) lines)."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changelog section found for ${VERSION}; falling back to generated release notes."
+          fi
+
       - name: Generate signed latest.json for nsh/updater
         env:
           NSH_UPDATER_SECRET_KEY: ${{ secrets.NSH_UPDATER_SECRET_KEY }}
@@ -320,10 +334,15 @@ jobs:
           trap 'rm -f "$KEY_FILE"' EXIT
           printf '%s\n' "$NSH_UPDATER_SECRET_KEY" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
+          NOTES_ARGS=()
+          if [[ -s release-notes.md ]]; then
+            NOTES_ARGS=(--notes release-notes.md)
+          fi
           nsh update-manifest \
             --entry apps/desktop \
             --key "$KEY_FILE" \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
+            "${NOTES_ARGS[@]}" \
             -o dist \
             dist/xcpc-workstation-*-linux-x86_64.tar.gz \
             dist/xcpc-workstation-*-windows-x86_64.zip
@@ -341,5 +360,6 @@ jobs:
           name: "XCPC Workstation ${{ needs.prepare.outputs.tag }}"
           draft: true
           prerelease: ${{ needs.prepare.outputs.prerelease }}
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.found == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.found != 'true' }}
           files: dist/*

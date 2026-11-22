@@ -75,6 +75,15 @@ import {
   ms,
   type AppearanceMode,
 } from "./theme";
+import {
+  formatUpdateSummary,
+  parseUpdateNotes,
+  resolveReleasePageUrl,
+  updateAvailableActionLabel,
+  visibleUpdateNotes,
+  type InlineSpan,
+  type UpdateState,
+} from "./updateNotes";
 
 const NAV_ITEMS: readonly { id: SettingsSection; label: string; icon: IconName }[] = [
   { id: "workspace", label: "工作区", icon: "folder" },
@@ -700,17 +709,81 @@ function AppearancePane() {
   );
 }
 
-type UpdateState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "upToDate" }
-  | { kind: "available"; update: AppUpdate }
-  | { kind: "downloading"; update: AppUpdate; progress: UpdateProgress }
-  | { kind: "ready"; update: AppUpdate }
-  | { kind: "scheduled"; update: AppUpdate }
-  | { kind: "error"; message: string };
+function renderInlineSpans(spans: readonly InlineSpan[]): JSX.Element {
+  return spans.map((span) => {
+    if (span.kind === "bold") {
+      return (
+        <Text style={{ fontWeight: 600 }} class="text-foreground">
+          {span.text}
+        </Text>
+      );
+    }
+    if (span.kind === "code") {
+      return (
+        <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-foreground">
+          {span.text}
+        </Text>
+      );
+    }
+    return span.text;
+  });
+}
 
-function AboutPane() {
+function UpdateNotesView(props: { notes: string }) {
+  const blocks = computed(() => parseUpdateNotes(props.notes));
+  return (
+    <View testID="update-notes-panel" style={{ borderTopWidth: 1 }} class="border-border bg-muted/40">
+      <Scroll style={{ maxHeight: 240 }}>
+        <View style={{ paddingLeft: 14, paddingRight: 14, paddingTop: 10, paddingBottom: 12, gap: 6 }}>
+          <Each
+            of={blocks()}
+            key={(b, i) => `${i}:${b.kind}:${b.kind === "heading" ? b.text : b.spans.map((s) => s.text).join("")}`}
+          >
+            {(block, index) => {
+              const b = block();
+              if (b.kind === "heading") {
+                return (
+                  <Text
+                    style={{
+                      fontSize: 12.5,
+                      lineHeight: 18,
+                      fontWeight: 600,
+                      marginTop: index() > 0 ? 4 : 0,
+                    }}
+                    class="text-foreground"
+                  >
+                    {b.text}
+                  </Text>
+                );
+              }
+              if (b.kind === "bullet") {
+                const indent = b.level === 1 ? 14 : 0;
+                const marker = b.level === 1 ? "◦" : "•";
+                return (
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, paddingLeft: indent }}>
+                    <Text style={{ fontSize: 12, lineHeight: 18, width: 8 }} class="text-muted-foreground">
+                      {marker}
+                    </Text>
+                    <Text style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+                      {renderInlineSpans(b.spans)}
+                    </Text>
+                  </View>
+                );
+              }
+              return (
+                <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+                  {renderInlineSpans(b.spans)}
+                </Text>
+              );
+            }}
+          </Each>
+        </View>
+      </Scroll>
+    </View>
+  );
+}
+
+export function AboutPane() {
   const about = readAboutInfo();
   const devShell = isDevShell();
   const copiedDiag = signal(false);
@@ -752,9 +825,12 @@ function AboutPane() {
   const handleDownload = async (update: AppUpdate) => {
     if (!update.canInstall) {
       try {
-        await openUrl(update.url);
+        const res = await openUrl(resolveReleasePageUrl(update));
+        if (!res.opened) {
+          updateState.set({ kind: "error", message: "无法打开发布页面，请稍后重试" });
+        }
       } catch {
-        updateState.set({ kind: "error", message: "无法打开下载链接，请稍后重试" });
+        updateState.set({ kind: "error", message: "无法打开发布页面，请稍后重试" });
       }
       return;
     }
@@ -797,34 +873,8 @@ function AboutPane() {
     }
   };
 
-  const updateSummary = (): string | undefined => {
-    if (devShell) return "开发构建不提供自动更新";
-    const st = updateState();
-    switch (st.kind) {
-      case "idle":
-        return undefined;
-      case "checking":
-        return "正在检查更新…";
-      case "upToDate":
-        return "已是最新版本";
-      case "available":
-        return `发现新版本 ${formatVersion(st.update.version)}`;
-      case "downloading": {
-        const { received, total } = st.progress;
-        if (total && total > 0) {
-          const pct = Math.min(100, Math.round((received / total) * 100));
-          return `正在下载 ${formatVersion(st.update.version)}（${pct}%，${formatBytes(received)} / ${formatBytes(total)}）`;
-        }
-        return `正在下载 ${formatVersion(st.update.version)}（已接收 ${formatBytes(received)}）`;
-      }
-      case "ready":
-        return `${formatVersion(st.update.version)} 已下载完成，可以安装`;
-      case "scheduled":
-        return `${formatVersion(st.update.version)} 已就绪，将在退出应用时安装`;
-      case "error":
-        return st.message;
-    }
-  };
+  const updateSummary = (): string | undefined =>
+    formatUpdateSummary(updateState(), devShell, formatVersion, formatBytes);
 
   const downloadPercent = () => {
     const st = updateState();
@@ -838,6 +888,8 @@ function AboutPane() {
     const st = updateState();
     return st.kind === "downloading" && (!st.progress.total || st.progress.total <= 0);
   };
+
+  const activeUpdateNotes = (): string => visibleUpdateNotes(updateState());
 
   return (
     <View style={{ gap: 24 }}>
@@ -891,8 +943,9 @@ function AboutPane() {
                 </If>
                 <If when={updateState().kind === "available"}>
                   <Btn
+                    testID="update-action-btn"
                     variant="primary"
-                    label={(updateState() as { kind: "available"; update: AppUpdate }).update.canInstall ? "下载更新" : "前往下载"}
+                    label={updateAvailableActionLabel((updateState() as { kind: "available"; update: AppUpdate }).update)}
                     onPress={() => {
                       const st = updateState();
                       if (st.kind === "available") void handleDownload(st.update);
@@ -903,6 +956,7 @@ function AboutPane() {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                     <If when={updateState().kind === "ready"}>
                       <Btn
+                        testID="update-install-on-quit-btn"
                         label="退出时安装"
                         disabled={installing()}
                         onPress={() => {
@@ -912,6 +966,7 @@ function AboutPane() {
                       />
                     </If>
                     <Btn
+                      testID="update-install-now-btn"
                       variant="primary"
                       label="立即重启安装"
                       disabled={installing()}
@@ -928,7 +983,11 @@ function AboutPane() {
               检查更新
             </Text>
             <If when={Boolean(updateSummary())}>
-              <Text style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+              <Text
+                testID="update-summary"
+                style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }}
+                class="text-secondary-foreground"
+              >
                 {updateSummary() ?? ""}
               </Text>
             </If>
@@ -946,12 +1005,8 @@ function AboutPane() {
           </View>
         </If>
 
-        <If when={updateState().kind === "available" && Boolean((updateState() as { kind: "available"; update: AppUpdate }).update.notes)}>
-          <View style={{ paddingLeft: 14, paddingRight: 14, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1 }} class="border-border bg-muted/40">
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-              {(updateState() as { kind: "available"; update: AppUpdate }).update.notes ?? ""}
-            </Text>
-          </View>
+        <If when={activeUpdateNotes().length > 0}>
+          <UpdateNotesView notes={activeUpdateNotes()} />
         </If>
 
         <SectionRow
