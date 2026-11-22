@@ -13,6 +13,7 @@
 //! `AtomicU64` generation counter.
 
 mod cache;
+mod linux_chrome;
 mod page_image;
 mod prefs;
 mod snapshot;
@@ -86,6 +87,7 @@ impl Preview {
     /// directory, else the most recent workspace recorded in `<dataDir>/prefs.json` (or
     /// legacy `last-workspace`). Pass `process.dataDir` for persistence; `null` disables it.
     pub fn new(data_dir: Option<String>) -> Self {
+        linux_chrome::strip_titlebar_icon_once();
         let data_dir = data_dir.map(PathBuf::from);
         Preview {
             state: Arc::new(State::new(data_dir)),
