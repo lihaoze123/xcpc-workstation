@@ -354,6 +354,8 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
       return { message: "定稿前的检查没有通过", rule };
     case "no_workspace":
       return { message: "没有打开的工作区", rule };
+    case "missing_template":
+      return { message: "找不到当前使用的模板文件", next: "可在「版式」中从预设重新安装或切换其他模板", rule };
     default:
       break;
   }

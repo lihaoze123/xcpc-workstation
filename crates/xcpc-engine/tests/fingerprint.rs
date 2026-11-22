@@ -15,7 +15,10 @@ fn fingerprints(engine: &mut Engine, source: &str) -> Vec<u128> {
 
 #[test]
 fn late_edit_keeps_earlier_pages() {
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     let before = fingerprints(&mut engine, SAMPLE);
     assert!(before.len() >= 3, "the sample spans several pages");
 

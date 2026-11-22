@@ -156,6 +156,7 @@ fn parse_field(dict: &Dict) -> Option<TemplateField> {
         Some("length") => TemplateFieldType::Length,
         Some("color") => TemplateFieldType::Color,
         Some("font") => TemplateFieldType::Font,
+        Some("image") => TemplateFieldType::Image,
         _ => TemplateFieldType::String,
     };
     let scope = match get_str(dict, "scope").as_deref() {
@@ -268,7 +269,8 @@ fn default_for_type(ty: TemplateFieldType) -> TemplateOptionValue {
         | TemplateFieldType::String
         | TemplateFieldType::Length
         | TemplateFieldType::Color
-        | TemplateFieldType::Font => TemplateOptionValue::String(String::new()),
+        | TemplateFieldType::Font
+        | TemplateFieldType::Image => TemplateOptionValue::String(String::new()),
     }
 }
 

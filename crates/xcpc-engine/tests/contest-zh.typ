@@ -1,5 +1,5 @@
 // `xcpc build contest contest-zh --emit-typst` of tests/fixtures/olymp-ref/contest-zh/workspace.
-#import "/xcpc/olymp-classic.typ": *
+#import "/templates/olymp-classic.typ": *
 #import "/xcpc/markdown.typ": m, dm
 
 #show: contest.with(name: "第一届 XCPC 工作站测试赛", location: "上海", date: "2026 年 11 月 20 日", author: "出题人", language: "chinese", show-cover: true, blank-pages: false)

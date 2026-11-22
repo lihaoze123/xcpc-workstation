@@ -245,18 +245,27 @@ pub fn init_workspace_with_template(
 ) -> Result<Workspace> {
     let dir = dir.as_ref();
     fs::create_dir_all(dir).map_err(|e| io(dir.display(), e))?;
-    for sub in ["problems", "contests"] {
+    for sub in ["problems", "contests", "templates"] {
         let p = dir.join(sub);
         fs::create_dir_all(&p).map_err(|e| io(p.display(), e))?;
     }
 
+    let selected_tpl = template.map(str::trim).filter(|s| !s.is_empty());
     let ws_file = dir.join(WORKSPACE_FILE);
     if fs::symlink_metadata(&ws_file).is_err() {
-        let content = match template.map(str::trim).filter(|s| !s.is_empty()) {
+        let content = match selected_tpl {
             Some(name) => format!("template = \"{name}\"\n"),
             None => String::new(),
         };
         write_atomic(&ws_file, content.as_bytes()).map_err(|e| io(ws_file.display(), e))?;
+    }
+
+    let seed_id = selected_tpl.unwrap_or("olymp-classic");
+    if let Some(src) = xcpc_engine::preset_source(seed_id) {
+        let tpl_file = dir.join("templates").join(format!("{seed_id}.typ"));
+        if fs::symlink_metadata(&tpl_file).is_err() {
+            write_atomic(&tpl_file, src.as_bytes()).map_err(|e| io(tpl_file.display(), e))?;
+        }
     }
 
     let gitignore = dir.join(".gitignore");
@@ -319,6 +328,8 @@ pub struct SnapshotTemplateArchive {
     pub meta: SnapshotTemplateMeta,
     pub custom_template_bytes: Option<Vec<u8>>,
     pub preamble_bytes: Option<Vec<u8>>,
+    /// Archived template `image` option assets copied into `snapshot/assets/<filename>`.
+    pub assets: BTreeMap<String, Vec<u8>>,
 }
 
 /// Starter content written when creating `.xcpc/preamble.typ` for the first time.
@@ -465,6 +476,147 @@ impl Workspace {
         Ok(rel)
     }
 
+    /// Installs a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into
+    /// `templates/<target>.typ` (defaulting `target` to `preset_id`).
+    /// Refuses to overwrite an existing template file.
+    pub fn install_preset_template(
+        &self,
+        preset_id: &str,
+        target_name: Option<&str>,
+    ) -> Result<String> {
+        let Some(src) = xcpc_engine::preset_source(preset_id) else {
+            return Err(Error::NotFound(format!("preset {preset_id:?}")));
+        };
+        let target = target_name
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(preset_id);
+        self.fork_template(target, src.as_bytes())
+    }
+
+    /// Returns `true` when `contests/<contest_id>/template.typ` exists inside the workspace.
+    pub fn has_contest_template(&self, contest_id: &str) -> bool {
+        check_id(contest_id).is_ok()
+            && self
+                .root
+                .join("contests")
+                .join(contest_id)
+                .join("template.typ")
+                .is_file()
+    }
+
+    /// Returns the resolved disk path of `contests/<contest_id>/template.typ` if it exists.
+    pub fn contest_template_path(&self, contest_id: &str) -> Result<Option<PathBuf>> {
+        check_id(contest_id)?;
+        let rel = format!("contests/{contest_id}/template.typ");
+        let path = self.resolve(&rel)?;
+        Ok(path.is_file().then_some(path))
+    }
+
+    /// Copies the contest's currently effective workspace template (`templates/<name>.typ`)
+    /// into `contests/<contest_id>/template.typ` so this contest can be customized independently.
+    /// Refuses to overwrite an existing contest-local template.
+    pub fn detach_contest_template(&self, contest_id: &str) -> Result<String> {
+        check_id(contest_id)?;
+        let rel = format!("contests/{contest_id}/template.typ");
+        self.check_writable(&rel)?;
+        let contest = self.load_contest(contest_id)?;
+        let dest = self.resolve(&rel)?;
+        if dest.exists() {
+            let actual = fs::read(&dest)
+                .map(|b| content_hash(&b))
+                .unwrap_or_default();
+            return Err(Error::Conflict {
+                path: rel,
+                expected: String::new(),
+                actual,
+            });
+        }
+        let tpl_name = contest
+            .meta
+            .template
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .or_else(|| self.default_template())
+            .unwrap_or_else(|| "olymp-classic".into());
+        check_id(&tpl_name)?;
+        let src_rel = format!("templates/{tpl_name}.typ");
+        let bytes = self.read_bytes(&src_rel).map_err(|e| match e {
+            Error::NotFound(_) => Error::NotFound(format!("template {tpl_name:?}")),
+            other => other,
+        })?;
+        self.write(&rel, &bytes)?;
+        Ok(rel)
+    }
+
+    /// Removes `contests/<contest_id>/template.typ`, restoring the contest to use workspace templates.
+    pub fn remove_contest_template(&self, contest_id: &str) -> Result<()> {
+        check_id(contest_id)?;
+        let rel = format!("contests/{contest_id}/template.typ");
+        self.check_writable(&rel)?;
+        let abs = self.resolve(&rel)?;
+        let meta = fs::symlink_metadata(&abs).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::NotFound(rel.clone()),
+            _ => io(&rel, e),
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::PathEscape(rel));
+        }
+        if !meta.is_file() {
+            return Err(Error::NotFound(rel));
+        }
+        if let Some(tracker) = &self.self_writes {
+            tracker.record(&rel, watcher::SELF_DELETE_SENTINEL);
+        }
+        if let Err(e) = fs::remove_file(&abs) {
+            if let Some(tracker) = &self.self_writes {
+                tracker.unrecord(&rel);
+            }
+            return Err(io(&rel, e));
+        }
+        Ok(())
+    }
+
+    /// Atomically imports an image file from `src_path` into `contests/<id>/assets/` (when
+    /// `contest_id` is `Some`) or workspace `assets/` (when `None`), avoiding filename
+    /// collisions by appending `-2`, `-3`, etc. Returns the workspace-relative path.
+    pub fn import_template_image(
+        &self,
+        contest_id: Option<&str>,
+        src_path: &Path,
+    ) -> Result<String> {
+        let dir_rel = match contest_id {
+            Some(cid) => {
+                check_id(cid)?;
+                format!("contests/{cid}/assets")
+            }
+            None => "assets".to_owned(),
+        };
+        self.check_writable(&format!("{dir_rel}/_probe"))?;
+        let bytes = fs::read(src_path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::NotFound(src_path.display().to_string()),
+            _ => io(src_path.display(), e),
+        })?;
+
+        let raw_name = src_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("image.png");
+        let (stem, ext) = sanitize_template_image_name(raw_name);
+        let mut candidate = format!("{stem}{ext}");
+        let mut rel = format!("{dir_rel}/{candidate}");
+        let mut suffix = 2u32;
+        while self.resolve(&rel)?.exists() {
+            candidate = format!("{stem}-{suffix}{ext}");
+            rel = format!("{dir_rel}/{candidate}");
+            suffix += 1;
+        }
+        self.write(&rel, &bytes)?;
+        Ok(rel)
+    }
+
     /// Reads archived template metadata from `contests/<id>/snapshot/template.toml` if present.
     pub fn load_snapshot_template(&self, contest_id: &str) -> Option<SnapshotTemplateMeta> {
         check_id(contest_id).ok()?;
@@ -481,11 +633,10 @@ impl Workspace {
         (!text.trim().is_empty()).then_some(text)
     }
 
-    /// Lists available template names: built-in templates plus workspace `templates/*.typ`.
+    /// Lists available workspace template names by scanning `templates/*.typ` on disk.
     pub fn list_templates(&self) -> Vec<String> {
-        let mut names = vec!["olymp-classic".to_owned(), "cnoi-classic".to_owned()];
+        let mut names = Vec::new();
         if let Ok(entries) = fs::read_dir(self.root.join("templates")) {
-            let mut custom = Vec::new();
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file()
@@ -493,15 +644,11 @@ impl Workspace {
                     && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
                     && check_id(stem).is_ok()
                 {
-                    custom.push(stem.to_owned());
+                    names.push(stem.to_owned());
                 }
             }
-            custom.sort();
-            for name in custom {
-                if !names.contains(&name) {
-                    names.push(name);
-                }
-            }
+            names.sort();
+            names.dedup();
         }
         names
     }
@@ -967,6 +1114,43 @@ impl Workspace {
             .collect();
         ids.sort();
         Ok(ids)
+    }
+}
+
+fn sanitize_template_image_name(raw_name: &str) -> (String, String) {
+    let p = Path::new(raw_name);
+    let ext_raw = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    let ext = match ext_raw {
+        Some(e) => format!(".{e}"),
+        None => String::new(),
+    };
+    let stem_raw = p.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    let mut stem: String = stem_raw
+        .trim()
+        .chars()
+        .map(|c| {
+            if matches!(
+                c,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'
+            ) || c.is_control()
+                || c.is_whitespace()
+            {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    stem = stem.trim_matches(['.', '-']).to_owned();
+    let candidate = format!("{stem}{ext}");
+    if stem.is_empty() || !is_safe_asset_name(&candidate) {
+        ("image".to_owned(), if ext.is_empty() { ".png".to_owned() } else { ext })
+    } else {
+        (stem, ext)
     }
 }
 

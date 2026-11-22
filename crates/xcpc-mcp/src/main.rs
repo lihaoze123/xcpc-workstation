@@ -132,16 +132,23 @@ enum Command {
 
 #[derive(Subcommand)]
 enum TemplateCommand {
-    /// List available templates (built-in and workspace templates/*.typ).
+    /// List workspace templates (`templates/*.typ`) and available preset seeds.
     List,
-    /// Show the parsed declarative `#let schema` of one template.
+    /// Show the parsed declarative `#let schema` of one workspace template.
     Schema {
-        /// Template ID (e.g. olymp-classic, cnoi-classic, or custom template name).
+        /// Template ID under `templates/<name>.typ`.
         name: String,
     },
-    /// Fork an existing template into `templates/<new_name>.typ`.
+    /// Install a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into `templates/`.
+    Add {
+        /// Preset seed ID (`olymp-classic`, `cnoi-classic`, or `minimal`).
+        preset: String,
+        /// Target template ID under `templates/<name>.typ` (defaults to preset ID).
+        name: Option<String>,
+    },
+    /// Fork an existing workspace template into `templates/<new_name>.typ`.
     Fork {
-        /// Source template ID (built-in or workspace custom template).
+        /// Source workspace template ID.
         source: String,
         /// New template ID (slug under templates/).
         new_name: String,
@@ -682,29 +689,39 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
         TemplateCommand::List => {
             let engine = publish::engine(&ws, &fonts(cli));
             let templates = publish::list_templates(&ws, &engine);
+            let presets = xcpc_engine::list_presets();
             let default_tpl = ws
                 .default_template()
                 .unwrap_or_else(|| "olymp-classic".into());
+            let workspace_options = ws.workspace_template_options();
             if cli.json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&json!({
                         "ok": true,
                         "default": default_tpl,
+                        "workspace_options": workspace_options,
                         "templates": templates,
+                        "presets": presets,
                     }))
                     .expect("serializable")
                 );
             } else {
                 for tpl in &templates {
-                    let kind = if tpl.builtin { "builtin" } else { "custom" };
                     let mark = if tpl.id == default_tpl { "*" } else { " " };
                     println!(
-                        "{mark}\t{}\t{kind}\t{}\t{} field(s)",
+                        "{mark}\t{}\t{}\t{}\t{} field(s)",
                         tpl.id,
+                        tpl.path,
                         tpl.name,
                         tpl.schema.fields.len()
                     );
+                }
+                if !presets.is_empty() {
+                    println!("\npresets:");
+                    for p in &presets {
+                        println!("  {}\t{}\t{}", p.id, p.name, p.description);
+                    }
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -734,6 +751,29 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                         f.key, f.scope, f.field_type, f.label
                     );
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TemplateCommand::Add { preset, name } => {
+            let rel = ws.install_preset_template(preset, name.as_deref())?;
+            let id = name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(preset.as_str());
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "preset": preset,
+                        "id": id,
+                        "path": rel,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("installed preset {preset} -> {rel}");
             }
             Ok(ExitCode::SUCCESS)
         }

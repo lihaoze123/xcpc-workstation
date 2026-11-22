@@ -73,6 +73,7 @@ pub enum TemplateFieldType {
     Length,
     Color,
     Font,
+    Image,
 }
 
 /// Which level a template schema field applies to.
@@ -157,11 +158,23 @@ impl TemplateSchema {
     }
 }
 
-/// Metadata and declarative schema for one available template (built-in or custom).
+/// Metadata for one bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`).
+///
+/// Presets have no runtime privilege or implicit fallback; they are only used when
+/// initializing a workspace or installing a new editable template into `templates/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// Metadata and declarative schema for one template file on disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemplateInfo {
     pub id: String,
-    pub builtin: bool,
+    /// Workspace-relative path (e.g. `"templates/olymp-classic.typ"` or `"contests/c1/template.typ"`).
+    pub path: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

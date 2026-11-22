@@ -134,7 +134,10 @@ fn substr_range(src: &str, needle: &str) -> Range<usize> {
 
 #[test]
 fn contest_zh_paragraphs_lists_formulas_and_margins() {
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(CONTEST_ZH);
     let compiled = engine.compile().expect("contest-zh compiles");
     assert_eq!(compiled.page_count(), 5);
@@ -338,13 +341,16 @@ fn continuation_page_header_never_leaks_into_first_body_line() {
         ));
     }
     let src = format!(
-        r#"#import "/xcpc/olymp-classic.typ": *
+        r#"#import "/templates/olymp-classic.typ": *
 #show: contest.with(name: "延续页页眉测试", date: "2026", language: "chinese", show-cover: false, blank-pages: false)
 #problem(label: "A", title: "长题面", time-limit: "1 秒", memory-limit: "256 MB")[
 {body}]
 "#
     );
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(&src);
     let compiled = engine.compile().expect("long statement compiles");
     assert!(compiled.page_count() >= 2, "expected at least 2 pages");
@@ -391,7 +397,7 @@ fn continuation_page_header_never_leaks_into_first_body_line() {
 
 #[test]
 fn proximity_prefers_same_row_and_rejects_far_whitespace() {
-    let src = r#"#import "/xcpc/olymp-classic.typ": *
+    let src = r#"#import "/templates/olymp-classic.typ": *
 #show: contest.with(name: "近邻测试", language: "chinese", show-cover: false, blank-pages: false)
 #problem(label: "A", title: "近邻", time-limit: "1 秒", memory-limit: "256 MB")[
 第一行非常长用于延伸到右侧很远的地方，以便验证第二行右侧边缘的点击优先命中第二行。
@@ -401,7 +407,10 @@ fn proximity_prefers_same_row_and_rejects_far_whitespace() {
 第三行正文。
 ]
 "#;
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(src);
     let compiled = engine.compile().expect("compiles");
 
@@ -438,10 +447,16 @@ fn proximity_prefers_same_row_and_rejects_far_whitespace() {
 #[test]
 fn images_shapes_tables_editorial_and_transforms() {
     let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("templates")).expect("templates dir");
+    std::fs::write(
+        dir.path().join("templates/olymp-classic.typ"),
+        xcpc_engine::preset_source("olymp-classic").expect("olymp-classic preset"),
+    )
+    .expect("write olymp-classic");
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="black"/></svg>"#;
     std::fs::write(dir.path().join("fig.svg"), svg).expect("write svg");
 
-    let src = r#"#import "/xcpc/olymp-classic.typ": *
+    let src = r#"#import "/templates/olymp-classic.typ": *
 #import "/xcpc/markdown.typ": m, dm
 
 #show: contest.with(name: "元素测试", language: "chinese", show-cover: false, blank-pages: false, book: "editorial")

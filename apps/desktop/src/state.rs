@@ -1302,6 +1302,15 @@ impl State {
                 .or_else(|| ws.default_template())
                 .unwrap_or_else(|| "olymp-classic".into())
         };
+        let has_contest_template = ws.has_contest_template(id);
+        let contest_template_json = if has_contest_template {
+            let mut engine = self.math_engine.lock().unwrap();
+            engine.set_root(Some(ws.root().to_path_buf()));
+            publish::inspect_contest_template(&ws, &engine, id)
+                .and_then(|info| serde_json::to_string(&info).ok())
+        } else {
+            None
+        };
         let template_options_json =
             serde_json::to_string(&meta.template_options).unwrap_or_else(|_| "{}".into());
 
@@ -1434,6 +1443,8 @@ impl State {
             language: meta.language.name().to_owned(),
             template: meta.template.clone(),
             effective_template,
+            has_contest_template,
+            contest_template_json,
             template_options_json,
             show_metadata: meta.show_metadata,
             cover: meta.cover,
@@ -1693,10 +1704,17 @@ impl State {
     // ---- Templates & declarative schemas -----------------------------------------------
 
     pub(crate) fn list_templates_json(&self) -> String {
+        let presets = xcpc_engine::list_presets();
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
-            return r#"{"default":"olymp-classic","workspaceOptions":{},"templates":[],"fonts":[]}"#
-                .into();
+            return serde_json::to_string(&serde_json::json!({
+                "default": "olymp-classic",
+                "workspaceOptions": {},
+                "templates": [],
+                "presets": presets,
+                "fonts": [],
+            }))
+            .unwrap_or_else(|_| "{}".into());
         };
         let (templates, fonts) = {
             let mut engine = self.math_engine.lock().unwrap();
@@ -1719,6 +1737,7 @@ impl State {
             "default": default_tpl,
             "workspaceOptions": workspace_options,
             "templates": templates,
+            "presets": presets,
             "fonts": fonts,
         }))
         .unwrap_or_else(|_| "{}".into())
@@ -1768,6 +1787,88 @@ impl State {
         }
     }
 
+    pub(crate) fn install_preset_template(
+        &self,
+        preset_id: &str,
+        target_name: Option<&str>,
+    ) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.install_preset_template(preset_id, target_name) {
+            Ok(_) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn detach_contest_template(&self, contest_id: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.detach_contest_template(contest_id) {
+            Ok(_) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn remove_contest_template(&self, contest_id: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.remove_contest_template(contest_id) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn validate_template_image_target(
+        &self,
+        contest_id: Option<&str>,
+    ) -> Result<(), String> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err("没有打开的工作区".into());
+        };
+        if ws.is_read_only() {
+            return Err("工作区以只读方式打开".into());
+        }
+        if let Some(cid) = contest_id {
+            let contest = ws.load_contest(cid).map_err(|e| e.human_message())?;
+            if contest.meta.frozen {
+                return Err("比赛已定稿，内容只读".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn import_template_image(
+        &self,
+        contest_id: Option<&str>,
+        src_path: &Path,
+    ) -> Result<String, String> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err("没有打开的工作区".into());
+        };
+        let rel = ws
+            .import_template_image(contest_id, src_path)
+            .map_err(|e| e.human_message())?;
+        self.invalidate_cache();
+        Ok(rel)
+    }
+
     pub(crate) fn resolve_template_file(&self, name: &str) -> Result<PathBuf, ActionResult> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
@@ -1777,7 +1878,25 @@ impl State {
             Ok(Some(path)) => Ok(path),
             Ok(None) => Err(ActionResult::err(
                 "not_found",
-                format!("模板「{name}」是内置模板，请先新建自定义模板副本再编辑"),
+                format!("模板文件 templates/{name}.typ 不存在"),
+            )),
+            Err(e) => Err(ActionResult::from_storage_err(e)),
+        }
+    }
+
+    pub(crate) fn resolve_contest_template_file(
+        &self,
+        contest_id: &str,
+    ) -> Result<PathBuf, ActionResult> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err(ActionResult::err("no_workspace", "no workspace open"));
+        };
+        match ws.contest_template_path(contest_id) {
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => Err(ActionResult::err(
+                "not_found",
+                format!("比赛「{contest_id}」没有专属模板"),
             )),
             Err(e) => Err(ActionResult::from_storage_err(e)),
         }

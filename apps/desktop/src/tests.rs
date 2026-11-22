@@ -155,7 +155,7 @@ fn pixel_cache_protects_active_and_evicts_tiles_before_base() {
 #[test]
 fn compiled_cache_hits_and_invalidates_on_save_and_switch() {
     let dir = TempDir::new("cache-hit");
-    std::fs::write(dir.0.join("workspace.toml"), "").unwrap();
+    xcpc_storage::init_workspace(&dir.0).unwrap();
     let pdir = dir.0.join("problems/p1");
     std::fs::create_dir_all(&pdir).unwrap();
     std::fs::write(
@@ -2294,4 +2294,55 @@ fn math_preview_renders_formula_and_reports_syntax_errors() {
         .render_math_preview("\\frac{a", false, false, 2.0);
     assert!(bad.error.is_some());
     assert!(bad.key.is_empty());
+}
+
+#[test]
+fn template_presets_contest_local_and_image_bridge() {
+    let (dir, preview) = init_temp_preview("tpl-bridge");
+
+    // list_templates_json returns materialized templates and all bundled presets.
+    let raw = preview.list_templates_json();
+    let catalog: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let presets = catalog["presets"].as_array().unwrap();
+    assert!(presets.iter().any(|p| p["id"] == "olymp-classic"));
+    assert!(presets.iter().any(|p| p["id"] == "cnoi-classic"));
+    assert!(presets.iter().any(|p| p["id"] == "minimal"));
+    let templates = catalog["templates"].as_array().unwrap();
+    assert!(templates.iter().any(|t| t["id"] == "olymp-classic" && t["path"].is_string()));
+
+    // Installing a preset materializes templates/<target>.typ.
+    let res = preview.install_preset_template("minimal".into(), Some("clean".into()));
+    assert!(res.ok, "install_preset_template failed: {:?}", res.error);
+    assert!(dir.0.join("templates/clean.typ").is_file());
+
+    // Create contest, detach local template, inspect contest_detail, then remove it.
+    assert!(preview.create_contest("round1".into(), "Round 1".into()).ok);
+    let before = preview.contest_detail("round1".into());
+    assert!(!before.has_contest_template);
+    assert!(before.contest_template_json.is_none());
+
+    let detached = preview.detach_contest_template("round1".into());
+    assert!(detached.ok, "detach failed: {:?}", detached.error);
+    assert!(dir.0.join("contests/round1/template.typ").is_file());
+
+    let after = preview.contest_detail("round1".into());
+    assert!(after.has_contest_template);
+    let local_json = after.contest_template_json.as_deref().unwrap();
+    let local_info: serde_json::Value = serde_json::from_str(local_json).unwrap();
+    assert!(local_info["schema"]["fields"].is_array());
+
+    // Importing a template image copies into contests/round1/assets/.
+    let src_img = dir.0.join("sample-logo.svg");
+    std::fs::write(&src_img, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>").unwrap();
+    let rel = preview
+        .state
+        .import_template_image(Some("round1"), &src_img)
+        .unwrap();
+    assert!(rel.starts_with("contests/round1/assets/"));
+    assert!(dir.0.join(&rel).is_file());
+
+    let removed = preview.remove_contest_template("round1".into());
+    assert!(removed.ok, "remove failed: {:?}", removed.error);
+    assert!(!dir.0.join("contests/round1/template.typ").exists());
+    assert!(!preview.contest_detail("round1".into()).has_contest_template);
 }

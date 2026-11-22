@@ -35,13 +35,34 @@
   ),
   fields: (
     (
+      key: "cover",
+      label: "封面与考试说明",
+      type: "enum",
+      scope: "book",
+      group: "cover",
+      default: "auto",
+      choices: (
+        (value: "auto", label: "自动（多题时显示）"),
+        (value: "on", label: "总是显示"),
+        (value: "off", label: "不显示"),
+      ),
+    ),
+    (
+      key: "logo",
+      label: "封面徽标",
+      description: "显示在封面顶部，留空则不显示",
+      type: "image",
+      scope: "book",
+      group: "cover",
+      default: "",
+    ),
+    (
       key: "compile-opts",
       label: "编译选项",
       type: "string",
       scope: "book",
       group: "cover",
       default: "-O2 -std=c++14 -static",
-      when: (cover: true),
     ),
     (
       key: "show-submit-table",
@@ -50,7 +71,6 @@
       scope: "book",
       group: "cover",
       default: true,
-      when: (cover: true),
     ),
     (
       key: "show-compile-table",
@@ -59,7 +79,6 @@
       scope: "book",
       group: "cover",
       default: true,
-      when: (cover: true),
     ),
     (
       key: "notices",
@@ -69,7 +88,22 @@
       scope: "book",
       group: "cover",
       default: default-notices,
-      when: (cover: true),
+    ),
+    (
+      key: "show-metadata",
+      label: "无封面时显示题头限值行",
+      type: "bool",
+      scope: "book",
+      group: "samples",
+      default: true,
+    ),
+    (
+      key: "blank-pages",
+      label: "奇数页起题（留白）",
+      type: "bool",
+      scope: "book",
+      group: "samples",
+      default: false,
     ),
     (
       key: "sample-border-color",
@@ -132,6 +166,14 @@
       group: "layout",
       default: "",
       placeholder: "默认（黑体）",
+    ),
+    (
+      key: "show-metadata",
+      label: "无封面时显示题头限值行",
+      type: "bool",
+      scope: "problem",
+      group: "problem",
+      default: true,
     ),
     (
       key: "prob-type",
@@ -470,8 +512,15 @@
   let show-submit-table = options.at("show-submit-table", default: true)
   let show-compile-table = options.at("show-compile-table", default: true)
   let notices = options.at("notices", default: default-notices)
+  let logo = options.at("logo", default: "")
   set par(first-line-indent: 0pt)
-  v(14pt)
+  if type(logo) == str and logo.trim() != "" {
+    v(8pt)
+    align(center, image("/" + logo.trim(), height: 2cm))
+    v(8pt)
+  } else {
+    v(14pt)
+  }
   align(center)[
     #context text(font: hei-font-state.get(), weight: "regular", size: size-er)[#name]
     #if location != none and location != "" {
@@ -558,9 +607,15 @@
   pagebreak(weak: true)
 }
 
-#let editorial-cover(name, location, date, author) = {
+#let editorial-cover(name, location, date, author, logo: "") = {
   set par(first-line-indent: 0pt)
-  v(42pt)
+  if type(logo) == str and logo.trim() != "" {
+    v(24pt)
+    align(center, image("/" + logo.trim(), height: 2cm))
+    v(12pt)
+  } else {
+    v(42pt)
+  }
   align(center)[
     #text(font: hei-font, weight: "regular", size: size-er)[#name]
     #v(10pt)
@@ -791,11 +846,75 @@
 
   if show-cover {
     if book == "editorial" {
-      editorial-cover(name, location, date, author)
+      editorial-cover(name, location, date, author, logo: options.at("logo", default: ""))
     } else {
       cover(name, location, date, author, options: options)
     }
   }
 
   body
+}
+
+// ---- Single-entry render contract -----------------------------------------------------
+
+#let render(doc) = {
+  let opts = doc.at("options", default: (:))
+  let book-kind = doc.at("book", default: "statements")
+  let editorial = book-kind == "editorial"
+  let single = doc.at("single", default: false)
+  let problems = doc.at("problems", default: ())
+
+  let cover-opt = opts.at("cover", default: "auto")
+  let show-cover = if single {
+    false
+  } else if cover-opt == "on" or cover-opt == true {
+    true
+  } else if cover-opt == "off" or cover-opt == false {
+    false
+  } else {
+    problems.len() >= 2
+  }
+  let blank-pages = if editorial { false } else { opts.at("blank-pages", default: false) == true }
+  let book-show-meta = opts.at("show-metadata", default: true) != false
+
+  contest(
+    name: doc.at("name", default: ""),
+    location: doc.at("location", default: none),
+    date: doc.at("date", default: none),
+    author: doc.at("author", default: none),
+    language: doc.at("language", default: "chinese"),
+    show-cover: show-cover,
+    blank-pages: blank-pages,
+    book: book-kind,
+    pdf-title: doc.at("pdf-title", default: none),
+    pdf-author: doc.at("pdf-author", default: none),
+    options: opts,
+    {
+      for p in problems {
+        if editorial {
+          let lbl = if single { none } else { p.at("label", default: none) }
+          tutorial(
+            label: lbl,
+            title: p.at("title", default: none),
+            meta: p.at("meta", default: ()),
+            p.at("body", default: []),
+          )
+        } else {
+          let p-opts = p.at("options", default: (:))
+          let show-meta = p-opts.at("show-metadata", default: book-show-meta) != false
+          problem(
+            label: p.at("label", default: none),
+            title: p.at("title", default: ""),
+            input: p.at("input", default: none),
+            output: p.at("output", default: none),
+            time-limit: p.at("time-limit", default: none),
+            memory-limit: p.at("memory-limit", default: none),
+            show-metadata: show-meta,
+            options: p-opts,
+            p.at("body", default: []),
+          )
+        }
+      }
+    },
+  )
 }

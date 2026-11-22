@@ -28,27 +28,65 @@ mod schema;
 
 pub use typst_render::render as render_page_raw;
 
-/// Returns the bundled Typst source for a built-in template ID (`"olymp-classic"` or
-/// `"cnoi-classic"`), used when forking a built-in template into `templates/<name>.typ`.
-pub fn builtin_template_source(name: &str) -> Option<&'static str> {
-    let target = format!("/xcpc/{name}.typ");
-    TEMPLATES
-        .iter()
-        .find(|(path, _)| *path == target)
-        .map(|(_, src)| *src)
+/// One bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`).
+///
+/// Presets have no runtime privilege or implicit fallback; they are only materialized
+/// into a workspace's `templates/` directory during initialization or explicit install.
+#[derive(Debug, Clone, Copy)]
+pub struct PresetSeed {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub source: &'static str,
 }
 
-/// The bundled templates, addressable from Typst as `/xcpc/<name>`: `olymp-classic`,
-/// what the Markdown converter emits calls (`markdown.typ`), MiTeX's scope for it, and
-/// the editorial's code theme (`mono.tmTheme`).
+/// All bundled template seeds shipped with XCPC Workstation.
+pub const PRESETS: &[PresetSeed] = &[
+    PresetSeed {
+        id: "olymp-classic",
+        name: "XCPC 经典",
+        description: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
+        source: include_str!("../templates/olymp-classic.typ"),
+    },
+    PresetSeed {
+        id: "cnoi-classic",
+        name: "OI 风格",
+        description: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
+        source: include_str!("../templates/cnoi-classic.typ"),
+    },
+    PresetSeed {
+        id: "minimal",
+        name: "极简空白",
+        description: "极简空白起点模板，方便从零编写自定义比赛模板",
+        source: include_str!("../templates/minimal.typ"),
+    },
+];
+
+/// Returns metadata for all bundled preset template seeds.
+pub fn list_presets() -> Vec<xcpc_domain::PresetInfo> {
+    PRESETS
+        .iter()
+        .map(|p| xcpc_domain::PresetInfo {
+            id: p.id.to_owned(),
+            name: p.name.to_owned(),
+            description: p.description.to_owned(),
+        })
+        .collect()
+}
+
+/// Returns the bundled Typst seed source for a preset ID (`"olymp-classic"`,
+/// `"cnoi-classic"`, or `"minimal"`).
+pub fn preset_source(id: &str) -> Option<&'static str> {
+    PRESETS.iter().find(|p| p.id == id).map(|p| p.source)
+}
+
+/// The bundled runtime modules, addressable from Typst as `/xcpc/<name>`: default
+/// statement/editorial hooks (`defaults.typ`), what the Markdown converter emits calls
+/// (`markdown.typ`), MiTeX's scope for it, and the editorial's code theme (`mono.tmTheme`).
 const TEMPLATES: &[(&str, &str)] = &[
     (
-        "/xcpc/olymp-classic.typ",
-        include_str!("../templates/olymp-classic.typ"),
-    ),
-    (
-        "/xcpc/cnoi-classic.typ",
-        include_str!("../templates/cnoi-classic.typ"),
+        "/xcpc/defaults.typ",
+        include_str!("../templates/defaults.typ"),
     ),
     (
         "/xcpc/markdown.typ",
@@ -784,9 +822,20 @@ mod tests {
         assert!(src.contains(r#"#let cjk-song = "FZShuSong-Z01""#));
     }
 
+    fn seeded_presets_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let tpl_dir = dir.path().join("templates");
+        std::fs::create_dir_all(&tpl_dir).unwrap();
+        for p in PRESETS {
+            std::fs::write(tpl_dir.join(format!("{}.typ", p.id)), p.source).unwrap();
+        }
+        dir
+    }
+
     #[test]
     fn fallback_warning_only_emits_when_olymp_fonts_are_imported() {
-        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        let dir = seeded_presets_dir();
+        let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
         engine.font_fallback_warning =
             Some("FounderType CJK font(s) missing; using fallback: FZShuSong-Z01 -> SimSun".into());
         engine.set_main("#set page(width: 100pt, height: 100pt)\nHello");
@@ -801,9 +850,17 @@ mod tests {
         );
 
         engine.set_main(
-            r#"#import "/xcpc/olymp-classic.typ": contest, problem
-#show: contest.with(name: "Test", show-cover: false)
-#problem(label: "A", title: "Title")[测试]
+            r#"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/olymp-classic.typ" as __xcpc_tpl
+#import "/templates/olymp-classic.typ": *
+#__xcpc_tpl.render((
+  name: "Test",
+  language: "chinese",
+  book: "statements",
+  single: true,
+  options: (:),
+  problems: ((id: "a", label: "A", title: "Title", body: [测试]),),
+))
 "#,
         );
         let with_template = engine.compile().unwrap();
@@ -827,12 +884,21 @@ mod tests {
 
     #[test]
     fn olymp_classic_compiles_with_env_fonts_without_fallback_warning() {
-        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        let dir = seeded_presets_dir();
+        let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
         let has_foundertype = engine.font_fallback_warning.is_none();
         engine.set_main(
-            r#"#import "/xcpc/olymp-classic.typ": contest, problem
-#show: contest.with(name: "Test", show-cover: false)
-#problem(label: "A", title: "Title")[中文 *加粗* _斜体_ `代码`]
+            r#"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/olymp-classic.typ" as __xcpc_tpl
+#import "/templates/olymp-classic.typ": *
+#__xcpc_tpl.render((
+  name: "Test",
+  language: "chinese",
+  book: "statements",
+  single: true,
+  options: (:),
+  problems: ((id: "a", label: "A", title: "Title", body: [中文 *加粗* _斜体_ `代码`]),),
+))
 "#,
         );
         let compiled = engine.compile().unwrap();
@@ -857,15 +923,23 @@ mod tests {
 
     #[test]
     fn bundled_preview_packages_compile_offline() {
-        let mut engine = Engine::new(&FontOptions::from_env(), None);
+        let dir = seeded_presets_dir();
+        let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
         let has_foundertype = engine.font_fallback_warning.is_none();
         engine.set_main(
-            r#"#import "/xcpc/olymp-classic.typ": contest, problem
+            r#"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/olymp-classic.typ" as __xcpc_tpl
+#import "/templates/olymp-classic.typ": *
 #import "@preview/cetz:0.5.3"
 #import "@preview/pinit:0.2.2": *
 #import "@preview/mannot:0.4.0": annot, markul
-#show: contest.with(name: "Package Test", show-cover: false)
-#problem(label: "A", title: "Demo")[
+#__xcpc_tpl.render((
+  name: "Package Test",
+  language: "chinese",
+  book: "statements",
+  single: true,
+  options: (:),
+  problems: ((id: "a", label: "A", title: "Demo", body: [
 #cetz.canvas({
   import cetz.draw: *
   circle((0, 0), radius: 0.6, stroke: blue)
@@ -876,7 +950,8 @@ $ #pin(1) a_i #pin(2) + k $
 #pinit-highlight(1, 2)
 
 $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
-]
+]),),
+))
 "#,
         );
         let compiled = engine.compile().unwrap();
@@ -891,10 +966,11 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
     }
 
     #[test]
-    fn builtin_templates_export_declarative_schemas_and_compile_with_options() {
-        let mut engine = Engine::new(&FontOptions::from_env(), None);
+    fn preset_templates_export_declarative_schemas_and_render_single_entry() {
+        let dir = seeded_presets_dir();
+        let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
 
-        let olymp = engine.inspect_template_schema("/xcpc/olymp-classic.typ");
+        let olymp = engine.inspect_template_schema("/templates/olymp-classic.typ");
         assert_eq!(olymp.name.as_deref(), Some("XCPC 经典"));
         assert_eq!(
             olymp.description.as_deref(),
@@ -902,49 +978,119 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         );
         assert!(olymp.has_book_options());
         assert!(olymp.has_problem_options());
+        assert!(olymp.fields.iter().any(|f| f.key == "cover"));
+        assert!(olymp.fields.iter().any(|f| {
+            f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
+        }));
+        assert!(olymp.fields.iter().any(|f| f.key == "blank-pages"));
         assert!(olymp.fields.iter().any(|f| f.key == "sample-layout"));
 
-        let cnoi = engine.inspect_template_schema("/xcpc/cnoi-classic.typ");
+        let cnoi = engine.inspect_template_schema("/templates/cnoi-classic.typ");
         assert_eq!(cnoi.name.as_deref(), Some("OI 风格"));
         assert!(cnoi.has_book_options());
         assert!(cnoi.has_problem_options());
+        assert!(cnoi.fields.iter().any(|f| f.key == "cover"));
+        assert!(cnoi.fields.iter().any(|f| {
+            f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
+        }));
         assert!(cnoi.fields.iter().any(|f| f.key == "compile-opts"));
         assert!(cnoi.fields.iter().any(|f| f.key == "notices"));
         assert!(cnoi.fields.iter().any(|f| f.key == "prob-type"));
 
-        // Verify olymp-classic wide sample layout + cnoi-classic options compile cleanly.
+        let minimal = engine.inspect_template_schema("/templates/minimal.typ");
+        assert_eq!(minimal.name.as_deref(), Some("极简空白"));
+        assert!(minimal.has_book_options());
+        assert!(minimal.fields.iter().any(|f| f.key == "show-cover"));
+
+        // Verify olymp-classic wide sample layout compiles cleanly via render(doc).
         engine.set_main(
-            r#"#import "/xcpc/olymp-classic.typ": *
-#show: contest.with(name: "Test", show-cover: false, options: ("body-size": "11pt", "margin-x": "20mm"))
-#problem(label: "A", title: "Wide", options: ("sample-layout": "wide"))[
-  正文内容。
-  #samples(("1 2\n", "3\n"),)
-]
+            r#"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/olymp-classic.typ" as __xcpc_tpl
+#import "/templates/olymp-classic.typ": *
+#__xcpc_tpl.render((
+  name: "Test",
+  language: "chinese",
+  book: "statements",
+  single: true,
+  options: ("body-size": "11pt", "margin-x": "20mm"),
+  problems: ((
+    id: "a",
+    label: "A",
+    title: "Wide",
+    options: ("sample-layout": "wide"),
+    body: [
+      正文内容。
+      #samples(("1 2\n", "3\n"),)
+    ],
+  ),),
+))
 "#,
         );
         let compiled = engine.compile().unwrap();
         assert_eq!(compiled.page_count(), 1);
 
+        // Verify cnoi-classic options compile cleanly via render(doc).
         engine.set_main(
-            r##"#import "/xcpc/cnoi-classic.typ": *
-#show: contest.with(
+            r##"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/cnoi-classic.typ" as __xcpc_tpl
+#import "/templates/cnoi-classic.typ": *
+#__xcpc_tpl.render((
   name: "NOI 模拟赛",
-  show-cover: true,
+  language: "chinese",
+  book: "statements",
+  single: false,
   options: (
+    "cover": "on",
     "compile-opts": "-O2 -std=c++20 -static",
     "sample-border-color": "#1166aa",
     "sample-line-numbers": false,
     "dotted-emphasis": false,
     "notices": ("测试说明 1", "测试说明 2"),
   ),
-)
-#problem(label: "A", title: "交互题", options: ("prob-type": "交互型", "source-file": "inter"))[
-  给定 *重点* 内容。
-  #samples(("1\n", "2\n"),)
-]
+  problems: ((
+    id: "a",
+    label: "A",
+    title: "交互题",
+    options: ("prob-type": "交互型", "source-file": "inter"),
+    body: [
+      给定 *重点* 内容。
+      #samples(("1\n", "2\n"),)
+    ],
+  ),),
+))
 "##,
         );
         let compiled_cnoi = engine.compile().unwrap();
         assert!(compiled_cnoi.page_count() >= 2);
+
+        // Verify minimal template uses /xcpc/defaults.typ hooks cleanly.
+        engine.set_main(
+            r#"#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/templates/minimal.typ" as __xcpc_tpl
+#import "/templates/minimal.typ": *
+#__xcpc_tpl.render((
+  name: "Minimal Round",
+  date: "2026-11-22",
+  language: "chinese",
+  book: "statements",
+  single: false,
+  pdf-title: "Minimal Round",
+  pdf-author: none,
+  options: ("show-cover": true),
+  problems: ((
+    id: "a",
+    label: "A",
+    title: "Hello",
+    body: [
+      #section("input")
+      输入两个整数。
+      #samples(("1 2\n", "3\n"),)
+    ],
+  ),),
+))
+"#,
+        );
+        let compiled_min = engine.compile().unwrap();
+        assert_eq!(compiled_min.page_count(), 2);
     }
 }

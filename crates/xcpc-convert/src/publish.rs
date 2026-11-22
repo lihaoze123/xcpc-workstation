@@ -9,15 +9,20 @@
 //! [`freeze_contest`] validates, builds PDFs and atomically archives a contest snapshot.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::Serialize;
 use xcpc_domain::{
-    Language, Statement, TemplateInfo, TemplateOptionValue, TemplateOptionsMap, TextFile, check_id,
+    ContestMeta, Language, Statement, TemplateFieldScope, TemplateFieldType, TemplateInfo,
+    TemplateOptionValue, TemplateOptionsMap, TextFile, check_id,
 };
 use xcpc_engine::{Compiled, Engine};
 use xcpc_storage::{Error, SnapshotTemplateArchive, SnapshotTemplateMeta, Workspace};
 
 use crate::{Book, Document, Entry};
+
+/// Diagnostic code emitted when the resolved `.typ` template file does not exist on disk.
+pub const MISSING_TEMPLATE: &str = "missing_template";
 
 /// What to publish.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -128,58 +133,41 @@ pub fn document_with(
         }
         merged
     };
-    let resolve_book = |book: &mut Book,
-                        contest_template: Option<&str>,
-                        contest_opts: Option<&TemplateOptionsMap>|
+    let resolve_workspace_template = |book: &mut Book,
+                                      contest_meta: Option<&ContestMeta>,
+                                      diag_file: String|
      -> Option<crate::Diagnostic> {
         book.preamble = ws.load_preamble();
-        let wanted = contest_template
+        let contest_template = contest_meta
+            .and_then(|m| m.template.as_deref())
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty());
+        let name = contest_template
             .map(str::to_owned)
-            .or_else(|| ws.default_template());
-        let Some(name) = wanted else {
-            book.template_name = "olymp-classic".into();
-            book.template_options = merge_book_options("olymp-classic", contest_opts);
-            return None;
-        };
+            .or_else(|| ws.default_template())
+            .unwrap_or_else(|| "olymp-classic".into());
         if check_id(&name).is_ok() && ws.has_custom_template(&name) {
             book.template_name = name.clone();
             book.template_import = Some(format!("/templates/{name}.typ"));
-            book.template_options = merge_book_options(&name, contest_opts);
-            return None;
-        }
-        match name.as_str() {
-            "olymp-classic" => {
-                book.template_name = "olymp-classic".into();
-                book.template_import = Some("/xcpc/olymp-classic.typ".into());
-                book.template_options = merge_book_options("olymp-classic", contest_opts);
-                None
+            let mut opts = merge_book_options(&name, contest_meta.map(|m| &m.template_options));
+            if let Some(meta) = contest_meta {
+                fold_legacy_contest_options(meta, &mut opts);
             }
-            "cnoi-classic" => {
-                book.template_name = "cnoi-classic".into();
-                book.template_import = Some("/xcpc/cnoi-classic.typ".into());
-                book.template_options = merge_book_options("cnoi-classic", contest_opts);
-                None
-            }
-            _ => {
-                book.template_name = "olymp-classic".into();
-                book.template_options = merge_book_options("olymp-classic", contest_opts);
-                Some(crate::Diagnostic {
-                    error: false,
-                    code: Some("unknown_template".into()),
-                    message: format!(
-                        "未找到模板「{name}」（已回退到 olymp-classic）；请在 templates/{name}.typ 中提供该模板"
-                    ),
-                    file: if contest_template.is_some() {
-                        format!("contests/{}/contest.toml", target.id())
-                    } else {
-                        "workspace.toml".into()
-                    },
-                    line: 1,
-                    column: 1,
-                })
-            }
+            book.template_options = opts;
+            None
+        } else {
+            book.template_name = name.clone();
+            book.template_import = None;
+            Some(crate::Diagnostic {
+                error: true,
+                code: Some(MISSING_TEMPLATE.into()),
+                message: format!(
+                    "未找到模板「{name}」（templates/{name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
+                ),
+                file: diag_file,
+                line: 1,
+                column: 1,
+            })
         }
     };
     match target {
@@ -187,14 +175,14 @@ pub fn document_with(
             let mut problem = ws.load_problem(id)?;
             overlay(&mut problem);
             let mut book = Book::single(language.unwrap_or_else(|| problem.default_language()));
-            let warn = resolve_book(&mut book, None, None);
+            let err = resolve_workspace_template(&mut book, None, "workspace.toml".into());
             let entries = [Entry::single(&problem)];
             let mut doc = match kind {
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
             };
-            if let Some(w) = warn {
-                doc.diagnostics.push(w);
+            if let Some(d) = err {
+                doc.diagnostics.push(d);
             }
             Ok(doc)
         }
@@ -208,37 +196,60 @@ pub fn document_with(
             if let Some(language) = language {
                 book.language = language;
             }
-            let warn = if contest.meta.frozen
-                && let Some(snap) = ws.load_snapshot_template(id)
-            {
-                book.template_name = snap.template.clone();
-                book.template_options = snap.options;
-                book.preamble = if snap.has_preamble {
-                    ws.load_snapshot_preamble(id)
-                } else {
+            let err = if contest.meta.frozen {
+                let snap_tpl_rel = format!("contests/{id}/snapshot/template.typ");
+                let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
+                if has_snap_tpl {
+                    let snap = ws.load_snapshot_template(id);
+                    book.template_name = snap
+                        .as_ref()
+                        .map(|s| s.template.clone())
+                        .unwrap_or_else(|| "local".into());
+                    book.template_options = snap
+                        .as_ref()
+                        .map(|s| s.options.clone())
+                        .unwrap_or_default();
+                    book.preamble = ws.load_snapshot_preamble(id);
+                    book.template_import = Some(format!("/{snap_tpl_rel}"));
                     None
-                };
-                if snap.has_custom_template {
-                    book.template_import = Some(format!("/contests/{id}/snapshot/template.typ"));
-                    None
                 } else {
-                    match snap.template.as_str() {
-                        "cnoi-classic" => {
-                            book.template_import = Some("/xcpc/cnoi-classic.typ".into());
-                            None
-                        }
-                        _ => {
-                            book.template_import = Some("/xcpc/olymp-classic.typ".into());
-                            None
-                        }
-                    }
+                    book.template_import = None;
+                    Some(crate::Diagnostic {
+                        error: true,
+                        code: Some(MISSING_TEMPLATE.into()),
+                        message: format!(
+                            "定稿比赛「{id}」缺少快照模板文件 {snap_tpl_rel}，无法复现排版"
+                        ),
+                        file: format!("contests/{id}/contest.toml"),
+                        line: 1,
+                        column: 1,
+                    })
                 }
+            } else if ws.has_contest_template(id) {
+                book.template_name = "local".into();
+                book.template_import = Some(format!("/contests/{id}/template.typ"));
+                let mut opts = contest
+                    .meta
+                    .template_options
+                    .get("local")
+                    .cloned()
+                    .unwrap_or_default();
+                fold_legacy_contest_options(&contest.meta, &mut opts);
+                book.template_options = opts;
+                book.preamble = ws.load_preamble();
+                None
             } else {
-                resolve_book(
-                    &mut book,
-                    contest.meta.template.as_deref(),
-                    Some(&contest.meta.template_options),
-                )
+                let diag_file = if contest
+                    .meta
+                    .template
+                    .as_deref()
+                    .is_some_and(|s| !s.trim().is_empty())
+                {
+                    format!("contests/{id}/contest.toml")
+                } else {
+                    "workspace.toml".into()
+                };
+                resolve_workspace_template(&mut book, Some(&contest.meta), diag_file)
             };
             let entries: Vec<Entry> = problems
                 .iter()
@@ -251,11 +262,29 @@ pub fn document_with(
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
             };
-            if let Some(w) = warn {
-                doc.diagnostics.push(w);
+            if let Some(d) = err {
+                doc.diagnostics.push(d);
             }
             Ok(doc)
         }
+    }
+}
+
+fn fold_legacy_contest_options(
+    meta: &ContestMeta,
+    opts: &mut BTreeMap<String, TemplateOptionValue>,
+) {
+    if let Some(cover) = meta.cover {
+        opts.entry("cover".into())
+            .or_insert_with(|| TemplateOptionValue::String(if cover { "on" } else { "off" }.into()));
+    }
+    if meta.blank_pages {
+        opts.entry("blank-pages".into())
+            .or_insert(TemplateOptionValue::Bool(true));
+    }
+    if !meta.show_metadata {
+        opts.entry("show-metadata".into())
+            .or_insert(TemplateOptionValue::Bool(false));
     }
 }
 
@@ -343,7 +372,6 @@ pub struct FreezeOutcome {
 
 /// Typesets `doc` with `engine` (rooted at the workspace).
 pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report) {
-    engine.set_main(&doc.source);
     let mut diagnostics: Vec<Diagnostic> = doc
         .diagnostics
         .iter()
@@ -358,6 +386,22 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
             hints: Vec::new(),
         })
         .collect();
+    if diagnostics
+        .iter()
+        .any(|d| d.is_error() && d.code.as_deref() == Some(MISSING_TEMPLATE))
+    {
+        return (
+            None,
+            Report {
+                ok: false,
+                pages: None,
+                problems: Vec::new(),
+                diagnostics,
+                compile_ms: 0,
+            },
+        );
+    }
+    engine.set_main(&doc.source);
     let map = |d: &xcpc_engine::Diagnostic| {
         let mut out = Diagnostic {
             severity: if d.error { "error" } else { "warning" },
@@ -607,40 +651,95 @@ pub fn freeze_contest(
     };
 
     // Build the template archive so frozen snapshots reproduce even if workspace
-    // defaults, custom templates, or `.xcpc/preamble.typ` later change.
-    let eff_template = contest
-        .meta
-        .template
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .or_else(|| ws.default_template())
-        .unwrap_or_else(|| "olymp-classic".into());
-    let custom_template_bytes = if ws.has_custom_template(&eff_template) {
-        ws.read_bytes(&format!("templates/{eff_template}.typ")).ok()
-    } else {
-        None
-    };
-    let preamble_bytes = ws.load_preamble().map(String::into_bytes);
-    let mut merged_opts = ws
-        .workspace_template_options()
-        .remove(&eff_template)
-        .unwrap_or_default();
-    if let Some(c_opts) = contest.meta.template_options.get(&eff_template) {
-        for (k, v) in c_opts {
-            merged_opts.insert(k.clone(), v.clone());
+    // defaults, templates, assets, or `.xcpc/preamble.typ` later change.
+    let (eff_template, tpl_import_path, template_bytes, mut merged_opts) =
+        if ws.has_contest_template(contest_id) {
+            let rel = format!("contests/{contest_id}/template.typ");
+            let bytes = ws.read_bytes(&rel)?;
+            let opts = contest
+                .meta
+                .template_options
+                .get("local")
+                .cloned()
+                .unwrap_or_default();
+            ("local".to_owned(), format!("/{rel}"), bytes, opts)
+        } else {
+            let eff = contest
+                .meta
+                .template
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .or_else(|| ws.default_template())
+                .unwrap_or_else(|| "olymp-classic".into());
+            let rel = format!("templates/{eff}.typ");
+            let bytes = ws.read_bytes(&rel)?;
+            let mut opts = ws
+                .workspace_template_options()
+                .remove(&eff)
+                .unwrap_or_default();
+            if let Some(c_opts) = contest.meta.template_options.get(&eff) {
+                for (k, v) in c_opts {
+                    opts.insert(k.clone(), v.clone());
+                }
+            }
+            (eff, format!("/{rel}"), bytes, opts)
+        };
+    fold_legacy_contest_options(&contest.meta, &mut merged_opts);
+
+    // Archive any `image`-typed book options into `snapshot/assets/` and rewrite paths.
+    let mut snapshot_assets: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let schema = engine.inspect_template_schema(&tpl_import_path);
+    for field in &schema.fields {
+        if field.scope == TemplateFieldScope::Book
+            && field.field_type == TemplateFieldType::Image
+            && let Some(TemplateOptionValue::String(rel_path)) = merged_opts.get(&field.key)
+        {
+            let trimmed = rel_path.trim().trim_start_matches('/');
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(img_bytes) = ws.read_bytes(trimmed) {
+                let raw_name = Path::new(trimmed)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("asset.bin");
+                let mut filename = raw_name.to_owned();
+                let mut idx = 2u32;
+                while snapshot_assets.contains_key(&filename) {
+                    let p = Path::new(raw_name);
+                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
+                    let ext = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| format!(".{e}"))
+                        .unwrap_or_default();
+                    filename = format!("{stem}-{idx}{ext}");
+                    idx += 1;
+                }
+                snapshot_assets.insert(filename.clone(), img_bytes);
+                merged_opts.insert(
+                    field.key.clone(),
+                    TemplateOptionValue::String(format!(
+                        "contests/{contest_id}/snapshot/assets/{filename}"
+                    )),
+                );
+            }
         }
     }
+
+    let preamble_bytes = ws.load_preamble().map(String::into_bytes);
     let archive = SnapshotTemplateArchive {
         meta: SnapshotTemplateMeta {
             template: eff_template,
-            has_custom_template: custom_template_bytes.is_some(),
+            has_custom_template: true,
             has_preamble: preamble_bytes.is_some(),
             options: merged_opts,
         },
-        custom_template_bytes,
+        custom_template_bytes: Some(template_bytes),
         preamble_bytes,
+        assets: snapshot_assets,
     };
 
     ws.freeze_commit_with_template(
@@ -795,33 +894,54 @@ pub fn engine(ws: &Workspace, fonts: &xcpc_engine::FontOptions) -> Engine {
     Engine::new(fonts, Some(ws.root().to_path_buf()))
 }
 
-/// Inspects a single template (`"olymp-classic"`, `"cnoi-classic"`, or a workspace
-/// `templates/<name>.typ`) and returns its metadata and declarative `#let schema`.
+/// Inspects a single workspace template (`templates/<name>.typ`) and returns its metadata
+/// and declarative `#let schema`. Returns `None` if `templates/<name>.typ` does not exist.
 pub fn inspect_template(ws: &Workspace, engine: &Engine, name: &str) -> Option<TemplateInfo> {
-    let custom = ws.has_custom_template(name);
-    let builtin = matches!(name, "olymp-classic" | "cnoi-classic");
-    if !custom && !builtin {
+    if !ws.has_custom_template(name) {
         return None;
     }
-    let import_path = if custom {
-        format!("/templates/{name}.typ")
-    } else {
-        format!("/xcpc/{name}.typ")
-    };
+    let rel_path = format!("templates/{name}.typ");
+    let import_path = format!("/{rel_path}");
     let schema = engine.inspect_template_schema(&import_path);
     let display_name = schema.name.clone().unwrap_or_else(|| name.to_owned());
     let description = schema.description.clone();
     Some(TemplateInfo {
         id: name.to_owned(),
-        builtin: builtin && !custom,
+        path: rel_path,
         name: display_name,
         description,
         schema,
     })
 }
 
-/// Lists all available templates in `ws` (built-in + `templates/*.typ`) with their
-/// evaluated declarative schemas.
+/// Inspects a contest-local template (`contests/<contest_id>/template.typ`) and returns
+/// its metadata and declarative `#let schema` under ID `"local"`.
+pub fn inspect_contest_template(
+    ws: &Workspace,
+    engine: &Engine,
+    contest_id: &str,
+) -> Option<TemplateInfo> {
+    if !ws.has_contest_template(contest_id) {
+        return None;
+    }
+    let rel_path = format!("contests/{contest_id}/template.typ");
+    let import_path = format!("/{rel_path}");
+    let schema = engine.inspect_template_schema(&import_path);
+    let display_name = schema
+        .name
+        .clone()
+        .unwrap_or_else(|| "本场专属模板".to_owned());
+    let description = schema.description.clone();
+    Some(TemplateInfo {
+        id: "local".to_owned(),
+        path: rel_path,
+        name: display_name,
+        description,
+        schema,
+    })
+}
+
+/// Lists all workspace templates (`templates/*.typ`) with their evaluated declarative schemas.
 pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
     ws.list_templates()
         .into_iter()
@@ -829,18 +949,15 @@ pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
         .collect()
 }
 
-/// Forks an existing built-in or workspace template `source_name` into a new custom
+/// Forks an existing workspace template `templates/<source_name>.typ` into a new
 /// workspace template `templates/<new_name>.typ`, returning the relative path.
 pub fn fork_template(ws: &Workspace, source_name: &str, new_name: &str) -> Result<String, Error> {
     check_id(source_name)?;
     check_id(new_name)?;
-    let bytes = if ws.has_custom_template(source_name) {
-        ws.read_bytes(&format!("templates/{source_name}.typ"))?
-    } else if let Some(src) = xcpc_engine::builtin_template_source(source_name) {
-        src.as_bytes().to_vec()
-    } else {
+    if !ws.has_custom_template(source_name) {
         return Err(Error::NotFound(format!("template {source_name:?}")));
-    };
+    }
+    let bytes = ws.read_bytes(&format!("templates/{source_name}.typ"))?;
     ws.fork_template(new_name, &bytes)
 }
 

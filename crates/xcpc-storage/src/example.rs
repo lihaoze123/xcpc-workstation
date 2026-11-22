@@ -1147,6 +1147,17 @@ pub fn init_example_workspace_with_template(
     template: Option<&str>,
 ) -> Result<Workspace> {
     let ws = init_workspace_with_template(dir, template)?;
+    // Example contests reference both `olymp-classic` and `cnoi-classic`: materialize
+    // both presets into `templates/` if not already present.
+    for preset_id in ["olymp-classic", "cnoi-classic"] {
+        let rel = format!("templates/{preset_id}.typ");
+        let abs = ws.resolve(&rel)?;
+        if fs::symlink_metadata(&abs).is_err()
+            && let Some(src) = xcpc_engine::preset_source(preset_id)
+        {
+            ws.write(&rel, src.as_bytes())?;
+        }
+    }
     for &(rel, content) in EXAMPLE_FILES {
         let abs = ws.resolve(rel)?;
         if fs::symlink_metadata(&abs).is_err() {

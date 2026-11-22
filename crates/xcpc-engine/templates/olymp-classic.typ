@@ -13,10 +13,49 @@
   name: "XCPC 经典",
   description: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
   groups: (
+    (id: "publishing", label: "出版与封面"),
     (id: "layout", label: "页面与字体"),
     (id: "problem", label: "单题排版"),
   ),
   fields: (
+    (
+      key: "cover",
+      label: "封面与目录",
+      type: "enum",
+      scope: "book",
+      group: "publishing",
+      default: "auto",
+      choices: (
+        (value: "auto", label: "自动（多题时显示）"),
+        (value: "on", label: "总是显示"),
+        (value: "off", label: "不显示"),
+      ),
+    ),
+    (
+      key: "logo",
+      label: "封面徽标",
+      description: "显示在封面顶部，留空则不显示",
+      type: "image",
+      scope: "book",
+      group: "publishing",
+      default: "",
+    ),
+    (
+      key: "show-metadata",
+      label: "显示题头限值表",
+      type: "bool",
+      scope: "book",
+      group: "publishing",
+      default: true,
+    ),
+    (
+      key: "blank-pages",
+      label: "奇数页起题（故意留白）",
+      type: "bool",
+      scope: "book",
+      group: "publishing",
+      default: false,
+    ),
     (
       key: "body-size",
       label: "正文字号",
@@ -64,6 +103,14 @@
       group: "layout",
       default: "",
       placeholder: "默认（方正黑体）",
+    ),
+    (
+      key: "show-metadata",
+      label: "显示题头限值表",
+      type: "bool",
+      scope: "problem",
+      group: "problem",
+      default: true,
     ),
     (
       key: "sample-layout",
@@ -254,10 +301,17 @@
 
 // \maketitle (title \LARGE, author and date \large) and the problem list floating at the
 // bottom. polygon-chinese-template writes the cover in Chinese whatever the language.
-#let cover(name, author, date) = {
+#let cover(name, author, date, logo: "") = {
   [#metadata(none) <xcpc-cover>]
+  let has-logo = type(logo) == str and logo.trim() != ""
   // \null, \vskip 2em, center's \topsep, then the title's own \vspace{4cm}.
-  v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  if has-logo {
+    v(1.57 * sizes.normal + 1em + 1.5cm)
+    align(center, image("/" + logo.trim(), height: 2.2cm))
+    v(1.2em)
+  } else {
+    v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  }
   align(center, {
     text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
     v(1.5em)
@@ -299,9 +353,16 @@
 // The title page: the cover's title, author and date, with "Editorial" for "Problem
 // Set", and at the bottom the contents (label, title, page), as the cover has its
 // problem list, set in the list's columns (1cm, 6cm) without its rules.
-#let title-page(name, author, date) = {
+#let title-page(name, author, date, logo: "") = {
   [#metadata(none) <xcpc-cover>]
-  v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  let has-logo = type(logo) == str and logo.trim() != ""
+  if has-logo {
+    v(1.57 * sizes.normal + 1em + 1.5cm)
+    align(center, image("/" + logo.trim(), height: 2.2cm))
+    v(1.2em)
+  } else {
+    v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
+  }
   align(center, {
     text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
     v(1.5em)
@@ -503,10 +564,11 @@
     },
   )
 
+  let opt-logo = options.at("logo", default: "")
   show: if editorial { editorial-style } else { it => it }
   if show-cover {
     counter(page).update(0)
-    if editorial { title-page(name, author, date) } else { cover(name, author, date) }
+    if editorial { title-page(name, author, date, logo: opt-logo) } else { cover(name, author, date, logo: opt-logo) }
   }
   // Where the text may go, for the engine's overflow check.
   [#metadata((left: eff-left, top: eff-top, width: eff-text-width, height: eff-text-height)) <xcpc-text-area>]
@@ -520,4 +582,68 @@
       blank-page(last: true)
     }
   }
+}
+
+// ---- Single-entry render contract -----------------------------------------------------
+
+#let render(doc) = {
+  let opts = doc.at("options", default: (:))
+  let book-kind = doc.at("book", default: "statements")
+  let editorial = book-kind == "editorial"
+  let single = doc.at("single", default: false)
+  let problems = doc.at("problems", default: ())
+
+  let cover-opt = opts.at("cover", default: "auto")
+  let show-cover = if single {
+    false
+  } else if cover-opt == "on" or cover-opt == true {
+    true
+  } else if cover-opt == "off" or cover-opt == false {
+    false
+  } else {
+    problems.len() >= 2
+  }
+  let blank-pages = if editorial { false } else { opts.at("blank-pages", default: false) == true }
+  let book-show-meta = opts.at("show-metadata", default: true) != false
+
+  contest(
+    name: doc.at("name", default: none),
+    location: doc.at("location", default: none),
+    date: doc.at("date", default: none),
+    author: doc.at("author", default: none),
+    language: doc.at("language", default: "chinese"),
+    show-cover: show-cover,
+    blank-pages: blank-pages,
+    book: book-kind,
+    pdf-title: doc.at("pdf-title", default: none),
+    pdf-author: doc.at("pdf-author", default: none),
+    options: opts,
+    {
+      for p in problems {
+        if editorial {
+          let lbl = if single { none } else { p.at("label", default: none) }
+          tutorial(
+            label: lbl,
+            title: p.at("title", default: none),
+            meta: p.at("meta", default: ()),
+            p.at("body", default: []),
+          )
+        } else {
+          let p-opts = p.at("options", default: (:))
+          let show-meta = p-opts.at("show-metadata", default: book-show-meta) != false
+          problem(
+            label: p.at("label", default: none),
+            title: p.at("title", default: none),
+            input: p.at("input", default: none),
+            output: p.at("output", default: none),
+            time-limit: p.at("time-limit", default: none),
+            memory-limit: p.at("memory-limit", default: none),
+            show-metadata: show-meta,
+            options: p-opts,
+            p.at("body", default: []),
+          )
+        }
+      }
+    },
+  )
 }

@@ -12,17 +12,20 @@ import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { Modal } from "../Modal";
 import { colorTransition, panelTransition } from "../motion";
 import { errorOf, goSettings, info, preview, refresh, revision, unfreezeFor, type UiError } from "../store";
 import {
   encodeSingleOptionPatch,
   loadTemplatesCatalog,
+  LOCAL_TEMPLATE_NAMESPACE,
+  parseContestTemplateInfo,
   parseOptionsByTemplate,
   type TemplateOptionMap,
   type TemplateOptionValue,
   type TemplatesCatalog,
 } from "../templates";
-import { ForkTemplateModal, TemplateOptionsEditor, TemplatePicker } from "../TemplateOptionsEditor";
+import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "../TemplateOptionsEditor";
 
 export const INSPECTOR_WIDTH = 332;
 type InspectorTab = "info" | "layout";
@@ -47,6 +50,7 @@ export function Inspector(props: {
   const error = signal<UiError | undefined>(undefined);
   const assetCount = signal(0);
   const forkModal = signal<{ sourceId: string; sourceName: string } | undefined>(undefined);
+  const presetModalOpen = signal(false);
   let assetCountSeq = 0;
 
   effect(() => {
@@ -60,7 +64,7 @@ export function Inspector(props: {
   const catalog = computed<TemplatesCatalog>(() => {
     void revision();
     if (!everOpened()) {
-      return { default: "olymp-classic", workspaceOptions: {}, templates: [], fonts: [] };
+      return { default: "olymp-classic", workspaceOptions: {}, templates: [], presets: [], fonts: [] };
     }
     return loadTemplatesCatalog();
   });
@@ -185,6 +189,7 @@ export function Inspector(props: {
                 catalog={catalog()}
                 done={done}
                 onRequestFork={(sourceId, sourceName) => forkModal.set({ sourceId, sourceName })}
+                onRequestPreset={() => presetModalOpen.set(true)}
               />
             </If>
             <If when={props.target === "problem"}>
@@ -213,6 +218,21 @@ export function Inspector(props: {
           }
         }}
         onClose={() => forkModal.set(undefined)}
+      />
+
+      <InstallPresetModal
+        open={presetModalOpen()}
+        presets={catalog().presets}
+        existingIds={catalog().templates.map((t) => t.id)}
+        onInstalled={(installedId) => {
+          if (props.target === "contest" && props.contest && !props.contest.frozen && !info().readOnly) {
+            done(preview.updateContestMeta(props.contest.id, { template: installedId === catalog().default ? null : installedId }));
+          } else {
+            refresh();
+            props.onChanged();
+          }
+        }}
+        onClose={() => presetModalOpen.set(false)}
       />
     </View>
   );
@@ -539,6 +559,21 @@ function ContestInfoTab(props: {
           </View>
         </View>
         <Field ownerKey={contestOwner()} label="署名" readOnly={locked()} value={c().author ?? ""} onCommit={(v) => meta({ author: nul(v) })} />
+        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
+          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
+            语言
+          </Text>
+          <Segmented
+            disabled={locked()}
+            items={[
+              { value: "chinese", label: "中文" },
+              { value: "english", label: "English" },
+            ]}
+            itemWidth={62}
+            value={c().language === "english" ? "english" : "chinese"}
+            onChange={(v) => !locked() && meta({ language: v })}
+          />
+        </View>
       </Section>
 
       <If when={props.item}>
@@ -632,6 +667,7 @@ function ContestLayoutTab(props: {
   catalog: TemplatesCatalog;
   done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
   onRequestFork: (sourceId: string, sourceName: string) => void;
+  onRequestPreset: () => void;
 }) {
   const c = () => props.contest;
   const frozen = () => c().frozen;
@@ -640,19 +676,25 @@ function ContestLayoutTab(props: {
   const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
   const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
 
-  const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
-  const tplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
-  const cover = () => (c().cover == null ? "auto" : c().cover ? "on" : "off");
-  const templateOverridden = () => !!c().template && c().template !== props.catalog.default;
+  const confirmRestoreOpen = signal(false);
 
-  const wsBookOpts = computed<TemplateOptionMap>(() => props.catalog.workspaceOptions[effTemplateId()] ?? {});
-  const contestBookOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(c().templateOptionsJson)[effTemplateId()] ?? {});
+  const hasLocal = () => c().hasContestTemplate;
+  const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
+  const localTplInfo = computed(() => (hasLocal() ? parseContestTemplateInfo(c().contestTemplateJson) : undefined));
+  const wsTplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
+  const tplInfo = computed(() => (hasLocal() ? localTplInfo() : wsTplInfo()));
+  const isMissingTemplate = () => !hasLocal() && !wsTplInfo();
+  const canInstallMissingPreset = () => isMissingTemplate() && props.catalog.presets.some((p) => p.id === effTemplateId());
+  const templateOverridden = () => !hasLocal() && !!c().template && c().template !== props.catalog.default;
+
+  const optsNs = () => (hasLocal() ? LOCAL_TEMPLATE_NAMESPACE : effTemplateId());
+  const wsBookOpts = computed<TemplateOptionMap>(() =>
+    hasLocal() ? {} : (props.catalog.workspaceOptions[effTemplateId()] ?? {}),
+  );
+  const contestBookOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(c().templateOptionsJson)[optsNs()] ?? {});
 
   const bookContext = computed<Record<string, TemplateOptionValue>>(() => ({
-    cover: c().hasCover,
     language: c().language,
-    "show-metadata": c().showMetadata,
-    "blank-pages": c().blankPages,
   }));
 
   const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
@@ -660,85 +702,147 @@ function ContestLayoutTab(props: {
 
   return (
     <View>
-      <Section title="模板与出版">
-        <TemplatePicker
-          templates={props.catalog.templates}
-          value={effTemplateId()}
-          overridden={templateOverridden()}
-          readOnly={locked()}
-          onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
-          onRestore={() => meta({ template: null })}
-        />
-        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
-          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
-            语言
-          </Text>
-          <Segmented
-            disabled={locked()}
-            items={[
-              { value: "chinese", label: "中文" },
-              { value: "english", label: "English" },
-            ]}
-            itemWidth={62}
-            value={c().language === "english" ? "english" : "chinese"}
-            onChange={(v) => !locked() && meta({ language: v })}
-          />
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
-          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
-            封面
-          </Text>
-          <Segmented
-            disabled={locked()}
-            items={[
-              { value: "auto", label: "自动" },
-              { value: "on", label: "开" },
-              { value: "off", label: "关" },
-            ]}
-            itemWidth={42}
-            value={cover()}
-            onChange={(v) => !locked() && meta({ cover: v === "auto" ? null : v === "on" })}
-          />
-        </View>
-        <Toggle label="显示时间和内存限制" readOnly={locked()} checked={c().showMetadata} onChange={(v) => meta({ showMetadata: v })} />
-        <Toggle label="补空白页，方便双面打印" readOnly={locked()} checked={c().blankPages} onChange={(v) => meta({ blankPages: v })} />
+      <Section title="模板">
+        <If
+          when={hasLocal()}
+          else={
+            <If
+              when={isMissingTemplate()}
+              else={
+                <View style={{ gap: 8 }}>
+                  <TemplatePicker
+                    templates={props.catalog.templates}
+                    value={effTemplateId()}
+                    overridden={templateOverridden()}
+                    readOnly={locked()}
+                    onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
+                    onRestore={() => meta({ template: null })}
+                    onAddFromPreset={!locked() ? props.onRequestPreset : undefined}
+                  />
+                  <If when={!locked()}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      <Btn
+                        label="编辑模板"
+                        icon="filePenLine"
+                        onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
+                      />
+                      <Btn
+                        label="独立为本场模板"
+                        icon="copy"
+                        onPress={() => props.done(preview.detachContestTemplate(c().id))}
+                      />
+                    </View>
+                  </If>
+                </View>
+              }
+            >
+              <View style={{ gap: 8 }}>
+                <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Icon name="triangleAlert" size={14} tone="destructive" />
+                    <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                      {`模板「${effTemplateId()}」不存在`}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+                    {`工作区中缺少 templates/${effTemplateId()}.typ，无法排版预览。`}
+                  </Text>
+                  <If when={!locked()}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+                      <If when={canInstallMissingPreset()}>
+                        <Btn
+                          variant="primary"
+                          label="从预设安装"
+                          icon="plus"
+                          onPress={() => props.done(preview.installPresetTemplate(effTemplateId(), effTemplateId()))}
+                        />
+                      </If>
+                      <Btn label="从预设添加模板…" icon="plus" onPress={props.onRequestPreset} />
+                    </View>
+                  </If>
+                </View>
+                <If when={props.catalog.templates.length > 0}>
+                  <TemplatePicker
+                    templates={props.catalog.templates}
+                    value={effTemplateId()}
+                    overridden={templateOverridden()}
+                    readOnly={locked()}
+                    onChange={(tplId) => meta({ template: tplId === props.catalog.default ? null : tplId })}
+                    onRestore={() => meta({ template: null })}
+                    onAddFromPreset={!locked() ? props.onRequestPreset : undefined}
+                  />
+                </If>
+              </View>
+            </If>
+          }
+        >
+          <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Icon name="fileText" size={14} tone="primary" />
+              <Text style={{ flex: 1, fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                本场专属模板
+              </Text>
+            </View>
+            <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+              {localTplInfo()?.name
+                ? `当前使用本场比赛独立模板「${localTplInfo()!.name}」，修改不会影响其他比赛。`
+                : "当前使用本场比赛独立模板，修改不会影响其他比赛。"}
+            </Text>
+            <If when={!locked()}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                <Btn
+                  label="编辑本场模板"
+                  icon="filePenLine"
+                  onPress={() => void preview.openContestTemplateFile(c().id).then((res) => !res.ok && props.done(res))}
+                />
+                <Btn
+                  label="恢复引用工作区模板"
+                  icon="rotateCcw"
+                  onPress={() => confirmRestoreOpen.set(true)}
+                />
+              </View>
+            </If>
+          </View>
+        </If>
       </Section>
 
       <If when={hasBookFields()}>
         <TemplateOptionsEditor
-          ownerKey={`contest:${c().id}`}
+          ownerKey={`contest:${c().id}:${optsNs()}`}
           template={tplInfo()}
           scope="book"
           baseValues={wsBookOpts()}
           overrideValues={contestBookOpts()}
           context={bookContext()}
           fonts={props.catalog.fonts}
+          contestId={c().id}
           readOnly={locked()}
-          restoreTooltip="还原为工作区默认值"
+          restoreTooltip={hasLocal() ? "恢复模板默认值" : "还原为工作区默认值"}
           sectioned
           lastSection={!props.item || !hasProblemFields() ? locked() : false}
-          onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(effTemplateId(), key, value) })}
+          onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(optsNs(), key, value) })}
         />
       </If>
 
       <If when={hasProblemFields() ? props.item : undefined}>
         {(item) => {
-          const origOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().originalOptionsJson)[effTemplateId()] ?? {});
-          const overOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().overrideOptionsJson)[effTemplateId()] ?? {});
+          const origOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().originalOptionsJson)[optsNs()] ?? {});
+          const overOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(item().overrideOptionsJson)[optsNs()] ?? {});
           return (
             <Section title={`${item().label} 题版式设置`} last={locked()}>
               <TemplateOptionsEditor
-                ownerKey={`contest:${c().id}:item:${item().label}:${item().id}`}
+                ownerKey={`contest:${c().id}:item:${item().label}:${item().id}:${optsNs()}`}
                 template={tplInfo()}
                 scope="problem"
                 baseValues={origOpts()}
                 overrideValues={overOpts()}
                 context={bookContext()}
                 fonts={props.catalog.fonts}
+                contestId={c().id}
                 readOnly={locked()}
                 restoreTooltip="还原为题库的值"
                 hideGroupLabels
-                onChange={(key, value) => over({ optionsJson: encodeSingleOptionPatch(effTemplateId(), key, value) })}
+                onChange={(key, value) => over({ optionsJson: encodeSingleOptionPatch(optsNs(), key, value) })}
               />
             </Section>
           );
@@ -748,16 +852,11 @@ function ContestLayoutTab(props: {
       <If when={!locked()}>
         <Section title="进阶定制" last>
           <View style={{ gap: 6 }}>
-            <Btn
-              label="基于当前模板新建副本"
-              icon="copy"
-              onPress={() => props.onRequestFork(effTemplateId(), tplInfo()?.name ?? effTemplateId())}
-            />
-            <If when={!!tplInfo() && !tplInfo()!.builtin}>
+            <If when={!hasLocal() && !!tplInfo()}>
               <Btn
-                label="在外部编辑器中打开模板"
-                icon="filePenLine"
-                onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
+                label="基于当前模板新建副本"
+                icon="copy"
+                onPress={() => props.onRequestFork(effTemplateId(), tplInfo()?.name ?? effTemplateId())}
               />
             </If>
             <Btn
@@ -768,6 +867,35 @@ function ContestLayoutTab(props: {
           </View>
         </Section>
       </If>
+
+      <Modal open={confirmRestoreOpen()} onClose={() => confirmRestoreOpen.set(false)} width={380}>
+        <View style={{ padding: 18, gap: 14 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <View class="bg-muted border border-border" style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}>
+              <Icon name="rotateCcw" size={15} tone="foreground" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+                恢复引用工作区模板？
+              </Text>
+              <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-muted-foreground">
+                将删除本场的专属模板文件（template.typ），改用工作区 templates/ 下的模板。
+              </Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+            <Btn label="取消" onPress={() => confirmRestoreOpen.set(false)} />
+            <Btn
+              label="恢复引用"
+              variant="danger"
+              onPress={() => {
+                confirmRestoreOpen.set(false);
+                props.done(preview.removeContestTemplate(c().id));
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -784,6 +912,7 @@ function ProblemLayoutTab(props: {
   const wsReadOnly = () => info().readOnly;
   const tplId = () => props.catalog.default || "olymp-classic";
   const tplInfo = computed(() => props.catalog.templates.find((t) => t.id === tplId()));
+  const canInstallPreset = () => !tplInfo() && props.catalog.presets.some((p) => p.id === tplId());
   const probOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(d().templateOptionsJson)[tplId()] ?? {});
   const hasProblemFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "problem"));
 
@@ -794,15 +923,25 @@ function ProblemLayoutTab(props: {
       <Section title="当前模板" last={!hasProblemFields() && wsReadOnly()}>
         <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Icon name="fileText" size={14} tone="secondary-foreground" />
+            <Icon name={tplInfo() ? "fileText" : "triangleAlert"} size={14} tone={tplInfo() ? "secondary-foreground" : "destructive"} />
             <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
-              {tplInfo()?.name ?? tplId()}
+              {tplInfo()?.name ?? `${tplId()}（缺失）`}
             </Text>
           </View>
           <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
-            单题预览沿用工作区默认模板与版式参数。
+            {tplInfo()
+              ? "单题预览沿用工作区默认模板与版式参数。"
+              : `工作区中缺少 templates/${tplId()}.typ，可从预设安装或在设置中切换模板。`}
           </Text>
-          <View style={{ flexDirection: "row", paddingTop: 2 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+            <If when={!wsReadOnly() && canInstallPreset()}>
+              <Btn
+                variant="primary"
+                label="从预设安装"
+                icon="plus"
+                onPress={() => props.done(preview.installPresetTemplate(tplId(), tplId()))}
+              />
+            </If>
             <Btn label="调整工作区默认版式" icon="settings" onPress={() => goSettings("layout")} />
           </View>
         </View>

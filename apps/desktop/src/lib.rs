@@ -887,9 +887,10 @@ impl Preview {
 
     // ---- Templates & declarative schemas -----------------------------------------------
 
-    /// Returns JSON `{ default, workspaceOptions, templates, fonts }` describing all
-    /// built-in and workspace custom templates (`templates/*.typ`) with their evaluated
-    /// `#let schema` definitions, workspace-level default options, and loaded font families.
+    /// Returns JSON `{ default, workspaceOptions, templates, presets, fonts }` describing
+    /// all workspace templates (`templates/*.typ`) with their evaluated `#let schema`
+    /// definitions, installable preset seeds, workspace-level default options, and loaded
+    /// font families.
     pub fn list_templates_json(&self) -> String {
         self.state.list_templates_json()
     }
@@ -905,9 +906,31 @@ impl Preview {
             .update_workspace_template(template, clear_template, options_json)
     }
 
-    /// Forks a built-in or workspace template `source` into `templates/<newName>.typ`.
+    /// Forks a workspace template `source` into `templates/<newName>.typ`.
     pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
         self.state.fork_template(&source, &new_name)
+    }
+
+    /// Installs a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into
+    /// `templates/<targetName>.typ` (defaulting to `<presetId>`).
+    pub fn install_preset_template(
+        &self,
+        preset_id: String,
+        target_name: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .install_preset_template(&preset_id, target_name.as_deref())
+    }
+
+    /// Copies the contest's currently effective template to `contests/<contestId>/template.typ`
+    /// so it can be edited independently for this contest.
+    pub fn detach_contest_template(&self, contest_id: String) -> ActionResult {
+        self.state.detach_contest_template(&contest_id)
+    }
+
+    /// Removes `contests/<contestId>/template.typ`, restoring reference to workspace templates.
+    pub fn remove_contest_template(&self, contest_id: String) -> ActionResult {
+        self.state.remove_contest_template(&contest_id)
     }
 
     /// Reveals `templates/<name>.typ` in the system file manager for external editing.
@@ -924,6 +947,62 @@ impl Preview {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }
+    }
+
+    /// Reveals `contests/<contestId>/template.typ` in the system file manager for editing.
+    pub async fn open_contest_template_file(
+        this: Instance<Self>,
+        contest_id: String,
+    ) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let resolved = this.with(|p| p.state.resolve_contest_template_file(&contest_id));
+        let path = match resolved {
+            Ok(p) => p,
+            Err(err) => return err,
+        };
+        match reveal_path(path).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
+    }
+
+    /// Opens the system image picker and atomically copies the chosen file into
+    /// `contests/<contestId>/assets/` (when `contestId` is given) or workspace `assets/`
+    /// (for workspace-level defaults), returning its workspace-relative path or `null`
+    /// when cancelled.
+    pub async fn pick_and_import_template_image(
+        this: Instance<Self>,
+        contest_id: Option<String>,
+    ) -> Result<Option<String>, JsError> {
+        if this.is_disposed() {
+            return Err(JsError::Error("preview disposed".into()));
+        }
+        let check = this.with(|p| p.state.validate_template_image_target(contest_id.as_deref()));
+        if let Err(err) = check {
+            return Err(JsError::Error(err));
+        }
+        let dialog = OpenDialog::files()
+            .title("选择模板图片")
+            .button_label("选择")
+            .filter(FileFilter::new(
+                "图片文件",
+                ["png", "jpg", "jpeg", "svg", "webp", "pdf"],
+            ));
+        let picked = pick_paths(dialog).await.map_err(JsError::Error)?;
+        let Some(src_path) = picked.and_then(|paths| paths.into_iter().next()) else {
+            return Ok(None);
+        };
+        if this.is_disposed() {
+            return Err(JsError::Error("preview disposed".into()));
+        }
+        let state = this.with(|p| p.state.clone());
+        let rel = blocking(move || state.import_template_image(contest_id.as_deref(), &src_path))
+            .await
+            .map_err(|e| JsError::Error(format!("template image import failed: {e}")))?
+            .map_err(JsError::Error)?;
+        Ok(Some(rel))
     }
 
     /// Ensures `.xcpc/preamble.typ` exists and reveals it in the system file manager.

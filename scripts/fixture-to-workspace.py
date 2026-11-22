@@ -51,6 +51,12 @@ contest, items, _ = front_matter((case / "contest.md").read_text())
 out = case / "workspace"
 shutil.rmtree(out, ignore_errors=True)
 (out / "contests" / name).mkdir(parents=True)
+(out / "templates").mkdir(parents=True)
+repo_root = Path(__file__).resolve().parent.parent
+shutil.copyfile(
+    repo_root / "crates/xcpc-engine/templates/olymp-classic.typ",
+    out / "templates/olymp-classic.typ",
+)
 (out / "workspace.toml").write_text("")
 toml = [f"name = {toml_str(contest['name'])}"]
 for k in ("location", "date", "author", "language"):

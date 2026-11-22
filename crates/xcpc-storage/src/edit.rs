@@ -689,6 +689,14 @@ impl Workspace {
                     write_atomic(&stage_dir.join("preamble.typ"), pre_bytes)
                         .map_err(|e| io(&snapshot_rel, e))?;
                 }
+                if !archive.assets.is_empty() {
+                    let assets_dir = stage_dir.join("assets");
+                    fs::create_dir_all(&assets_dir).map_err(|e| io(&snapshot_rel, e))?;
+                    for (filename, bytes) in &archive.assets {
+                        write_atomic(&assets_dir.join(filename), bytes)
+                            .map_err(|e| io(&snapshot_rel, e))?;
+                    }
+                }
             }
             Ok(())
         })();

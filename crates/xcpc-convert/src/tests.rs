@@ -42,12 +42,9 @@ fn body(statement: &str, samples: &[(&str, &str)]) -> Document {
 
 /// The generated problem body, without the head.
 fn inner(doc: &Document) -> &str {
-    let start = doc.source.find(")[\n").unwrap() + 3;
-    doc.source[start..]
-        .trim_end()
-        .strip_suffix(']')
-        .unwrap()
-        .trim()
+    let start = doc.source.find("body: [\n").unwrap() + "body: [\n".len();
+    let end = doc.source[start..].find("\n],\n").unwrap();
+    doc.source[start..start + end].trim()
 }
 
 #[test]
@@ -61,10 +58,8 @@ fn sections_and_samples_after_input_and_output() {
         "给定 #m(\"n\");。\n\n#section(\"input\")\n\n一行。\n\n#section(\"output\")\n\n一个数。\n\n\
          #samples((\"1 2\\n\", \"3\\n\"),)\n\n#section(\"note\")\n\n无。"
     );
-    assert!(
-        doc.source
-            .contains("time-limit: \"2 秒\", memory-limit: \"256 MB\"")
-    );
+    assert!(doc.source.contains("time-limit: \"2 秒\""));
+    assert!(doc.source.contains("memory-limit: \"256 MB\""));
     assert!(doc.source.contains("title: \"Two \\\"Sum\\\"\""));
 }
 
@@ -266,22 +261,20 @@ fn contest_overrides_and_editorials() {
         },
     ];
     let doc = statements(&Book::contest(&meta), &entries);
-    assert!(
-        doc.source
-            .contains("#problem(label: \"B\", title: \"新名\"")
-    );
-    assert!(doc.source.contains("show-metadata: false)"));
-    assert!(doc.source.contains("show-cover: true"));
+    assert!(doc.source.contains("label: \"B\",\ntitle: \"新名\","));
+    assert!(doc.source.contains("\"show-metadata\": false"));
+    assert!(doc.source.contains("book: \"statements\","));
     let doc = editorials(&Book::contest(&meta), &entries);
     // Author, tags and sources, not the rating; `##` a subsection, `###` run in.
-    assert!(doc.source.contains(
-        "#tutorial(label: \"A\", title: \"新名\", meta: (\"作者 某人\",\"greedy\",\"Codeforces 1A\",))[\n\
-         #subsection[做法]\n\n贪心。\n\n#runin[引理 1];成立。\n]"
-    ), "{}", doc.source);
     assert!(
+        doc.source.contains(
+            "meta: (\"作者 某人\", \"greedy\", \"Codeforces 1A\",),\nbody: [\n\
+             #subsection[做法]\n\n贪心。\n\n#runin[引理 1];成立。\n],"
+        ),
+        "{}",
         doc.source
-            .contains("show-cover: true, blank-pages: false, book: \"editorial\"")
     );
+    assert!(doc.source.contains("book: \"editorial\","));
     assert!(!doc.source.contains("label: \"B\""));
     assert_eq!(doc.diagnostics.len(), 1);
 }
@@ -295,14 +288,15 @@ fn a_single_problems_editorial_has_no_label_nor_name() {
     });
     let doc = editorials(&Book::single(Language::Chinese), &[Entry::single(&p)]);
     assert!(
-        doc.source.contains("contest.with(name: \"\""),
+        doc.source.contains("#__xcpc_tpl.render((\nname: \"\","),
         "{}",
         doc.source
     );
-    assert!(doc.source.contains("show-cover: false"));
+    assert!(doc.source.contains("single: true,"));
     assert!(
-        doc.source
-            .contains("#tutorial(label: none, title: \"Two \\\"Sum\\\"\", meta: ())[\n做法。\n]"),
+        doc.source.contains(
+            "label: none,\ntitle: \"Two \\\"Sum\\\"\",\n"
+        ) && doc.source.contains("meta: (),\nbody: [\n做法。\n],"),
         "{}",
         doc.source
     );

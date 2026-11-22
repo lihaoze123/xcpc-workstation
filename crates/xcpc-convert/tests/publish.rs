@@ -32,12 +32,22 @@ fn build(ws: &Workspace, target: Target, kind: Kind) -> (Option<xcpc_engine::Com
     publish::compile(&mut engine, &doc)
 }
 
+fn seed_olymp(root: &Path) {
+    fs::create_dir_all(root.join("templates")).unwrap();
+    fs::write(
+        root.join("templates/olymp-classic.typ"),
+        xcpc_engine::preset_source("olymp-classic").unwrap(),
+    )
+    .unwrap();
+}
+
 /// A scratch workspace with one problem.
 fn scratch(statement: &str) -> (tempfile::TempDir, Workspace) {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("problems/p");
     fs::create_dir_all(p.join("samples")).unwrap();
     fs::write(dir.path().join("workspace.toml"), "").unwrap();
+    seed_olymp(dir.path());
     fs::write(
         p.join("problem.toml"),
         "title = \"P\"\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n",
@@ -279,6 +289,7 @@ fn write_problem(
 fn empty_ws() -> (tempfile::TempDir, Workspace) {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("workspace.toml"), "").unwrap();
+    seed_olymp(dir.path());
     let ws = Workspace::open(dir.path(), false).unwrap();
     (dir, ws)
 }
@@ -1044,6 +1055,7 @@ fn freeze_contest_succeeds_with_warnings_outputs_pdfs_excludes_package_files_and
 fn pdf_metadata_sets_title_author_creator_and_preserves_producer() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("workspace.toml"), "").unwrap();
+    seed_olymp(dir.path());
 
     let p = dir.path().join("problems/alpha");
     fs::create_dir_all(&p).unwrap();
@@ -1195,6 +1207,7 @@ fn default_output_uses_sanitized_titles_with_id_fallback() {
 fn raw_typst_block_passthrough_and_image_width_attribute() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("workspace.toml"), "").unwrap();
+    seed_olymp(dir.path());
 
     let p = dir.path().join("problems/diagram");
     fs::create_dir_all(p.join("assets")).unwrap();
@@ -1321,14 +1334,14 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     assert!(report.ok, "cnoi-classic failed: {:#?}", report.diagnostics);
     assert!(compiled.is_some());
     let doc = doc.unwrap();
-    assert!(doc.source.contains("\"/xcpc/cnoi-classic.typ\""));
+    assert!(doc.source.contains("\"/templates/cnoi-classic.typ\""));
     assert!(doc.source.contains("xcpc-custom-badge"));
 
     // 3. Custom workspace `templates/my-oi.typ` takes precedence when selected.
     fs::create_dir_all(dir.path().join("templates")).unwrap();
     fs::write(
         dir.path().join("templates/my-oi.typ"),
-        "#import \"/xcpc/cnoi-classic.typ\": *\n",
+        "#import \"/templates/cnoi-classic.typ\": *\n",
     )
     .unwrap();
     fs::write(dir.path().join("workspace.toml"), "template = \"my-oi\"\n").unwrap();
@@ -1348,4 +1361,123 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
         report.diagnostics
     );
     assert!(doc.unwrap().source.contains("\"/templates/my-oi.typ\""));
+}
+
+#[test]
+fn missing_template_errors_without_fallback_and_local_template_freezes_with_logo_asset() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("p1", "第一题").unwrap();
+    ws.write(
+        "problems/p1/statement.md",
+        "给定正整数 $n$。\n\n## 输入格式\n\n一行一个整数。\n\n## 输出格式\n\n输出答案。\n".as_bytes(),
+    )
+    .unwrap();
+    ws.write("problems/p1/samples/01.in", b"1\n").unwrap();
+    ws.write("problems/p1/samples/01.ans", b"1\n").unwrap();
+    ws.compose_contest("cup", &["p1".into()], None).unwrap();
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+
+    // 1. Removing templates/olymp-classic.typ causes `missing_template` error (no fallback).
+    fs::remove_file(dir.path().join("templates/olymp-classic.typ")).unwrap();
+    let (compiled, _doc, report) = publish::check(
+        &ws,
+        &mut engine,
+        &Target::Contest("cup".into()),
+        Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(compiled.is_none());
+    assert!(!report.ok);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.is_error() && d.code.as_deref() == Some(publish::MISSING_TEMPLATE)),
+        "expected missing_template error: {:#?}",
+        report.diagnostics
+    );
+
+    // 2. Re-install olymp-classic preset, detach to contest-local template, and import a logo SVG.
+    ws.install_preset_template("olymp-classic", None).unwrap();
+    ws.detach_contest_template("cup").unwrap();
+    let local_info = publish::inspect_contest_template(&ws, &engine, "cup").unwrap();
+    assert_eq!(local_info.id, "local");
+    assert_eq!(local_info.path, "contests/cup/template.typ");
+
+    let svg_src_dir = tempfile::tempdir().unwrap();
+    let svg_src = svg_src_dir.path().join("badge.svg");
+    fs::write(
+        &svg_src,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="28" fill="#0B6989"/></svg>"##,
+    )
+    .unwrap();
+    let logo_rel = ws.import_template_image(Some("cup"), &svg_src).unwrap();
+    assert_eq!(logo_rel, "contests/cup/assets/badge.svg");
+
+    let mut local_opts = std::collections::BTreeMap::new();
+    let mut inner = std::collections::BTreeMap::new();
+    inner.insert(
+        "cover".to_owned(),
+        xcpc_domain::Patch::Set(xcpc_domain::TemplateOptionValue::String("on".into())),
+    );
+    inner.insert(
+        "logo".to_owned(),
+        xcpc_domain::Patch::Set(xcpc_domain::TemplateOptionValue::String(logo_rel.clone())),
+    );
+    local_opts.insert("local".to_owned(), inner);
+    ws.update_contest_meta(
+        "cup",
+        &xcpc_domain::ContestMetaPatch {
+            template_options: local_opts,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // 3. Freeze contest: snapshot archives template.typ, template.toml, and snapshot/assets/badge.svg!
+    let outcome = publish::freeze_contest(&ws, &mut engine, "cup").unwrap();
+    assert!(
+        outcome.frozen,
+        "freeze failed: {:#?}",
+        outcome.report.diagnostics
+    );
+    assert!(dir.path().join("contests/cup/snapshot/template.typ").is_file());
+    assert!(dir.path().join("contests/cup/snapshot/template.toml").is_file());
+    assert!(
+        dir.path()
+            .join("contests/cup/snapshot/assets/badge.svg")
+            .is_file()
+    );
+    let snap_meta = ws.load_snapshot_template("cup").unwrap();
+    assert_eq!(snap_meta.template, "local");
+    assert_eq!(
+        snap_meta.options.get("logo"),
+        Some(&xcpc_domain::TemplateOptionValue::String(
+            "contests/cup/snapshot/assets/badge.svg".into()
+        ))
+    );
+
+    // 4. Delete original template & logo outside snapshot: frozen contest still compiles cleanly!
+    fs::remove_file(dir.path().join("templates/olymp-classic.typ")).unwrap();
+    fs::remove_file(dir.path().join("contests/cup/template.typ")).unwrap();
+    fs::remove_file(dir.path().join(&logo_rel)).unwrap();
+    let (recompiled, _doc, re_report) = publish::check(
+        &ws,
+        &mut engine,
+        &Target::Contest("cup".into()),
+        Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        re_report.ok && recompiled.is_some(),
+        "frozen snapshot failed after deleting external files: {:#?}",
+        re_report.diagnostics
+    );
+    assert_eq!(recompiled.unwrap().page_count(), 2); // cover with logo + 1 problem
 }

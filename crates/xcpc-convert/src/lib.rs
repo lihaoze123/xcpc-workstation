@@ -197,39 +197,41 @@ impl<'a> Entry<'a> {
 pub fn statements(book: &Book, entries: &[Entry]) -> Document {
     let mut out = Out::new();
     let (pdf_title, pdf_author) = pdf_metadata(book, entries, false);
-    head(
+    let mut book_opts = book.template_options.clone();
+    if !book.single && !book_opts.contains_key("cover") && book.cover != (entries.len() >= 2) {
+        book_opts.insert(
+            "cover".into(),
+            TemplateOptionValue::String(if book.cover { "on" } else { "off" }.into()),
+        );
+    }
+    if book.blank_pages && !book_opts.contains_key("blank-pages") {
+        book_opts.insert("blank-pages".into(), TemplateOptionValue::Bool(true));
+    }
+    if !book.show_metadata && !book_opts.contains_key("show-metadata") {
+        book_opts.insert("show-metadata".into(), TemplateOptionValue::Bool(false));
+    }
+    render_head(
         &mut out,
         book,
         "statements",
-        book.cover,
-        book.blank_pages,
         pdf_title.as_deref(),
         pdf_author.as_deref(),
+        &book_opts,
     );
     let mut diagnostics = Vec::new();
     for entry in entries {
         let meta = entry.item.apply(&entry.problem.meta);
-        let show = entry.item.show_metadata.unwrap_or(book.show_metadata);
         let (time, memory) = limits(&meta.limits, book.language);
-        let file = |name: &Option<String>| match name.as_deref() {
-            None | Some("") => "none".to_owned(),
-            Some(f) => string(f),
-        };
-        let problem_opts_arg = meta
+        let mut prob_opts = meta
             .template_options
             .get(&book.template_name)
-            .filter(|m| !m.is_empty())
-            .map(|m| format!(", options: {}", typst_options_dict(m)))
+            .cloned()
             .unwrap_or_default();
-        out.raw(&format!(
-            "#problem(label: {}, title: {}, input: {}, output: {}, time-limit: {}, memory-limit: {}, show-metadata: {show}{problem_opts_arg})[\n",
-            string(&entry.item.label),
-            string(&meta.title),
-            file(&meta.limits.input),
-            file(&meta.limits.output),
-            time.as_deref().map_or("none".into(), string),
-            memory.as_deref().map_or("none".into(), string),
-        ));
+        if let Some(show) = entry.item.show_metadata {
+            prob_opts
+                .entry("show-metadata".into())
+                .or_insert(TemplateOptionValue::Bool(show));
+        }
         let samples = (!entry.problem.samples.is_empty()).then(|| {
             let pairs: Vec<String> = entry
                 .problem
@@ -239,6 +241,17 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
                 .collect();
             format!("#samples({},)", pairs.join(", "))
         });
+        write_problem_entry_head(
+            &mut out,
+            &entry.problem.id,
+            Some(&entry.item.label),
+            &meta,
+            time.as_deref(),
+            memory.as_deref(),
+            &entry.problem.samples,
+            &prob_opts,
+            &about(&meta, book.language),
+        );
         match entry.problem.statement(book.language) {
             Some(statement) => {
                 let file = out.file(&statement.file.path, &statement.file.text);
@@ -271,8 +284,9 @@ pub fn statements(book: &Book, entries: &[Entry]) -> Document {
         }
         out.trim_end();
         out.unmark();
-        out.raw("\n]\n\n");
+        out.raw("\n],\n),\n");
     }
+    out.raw("),\n))\n");
     let set = entries
         .iter()
         .map(|e| (e.item.label.clone(), e.problem.id.clone()))
@@ -295,14 +309,20 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
         },
         ..book.clone()
     };
-    head(
+    let mut book_opts = book.template_options.clone();
+    if !book.single && !book_opts.contains_key("cover") && book.cover != (entries.len() >= 2) {
+        book_opts.insert(
+            "cover".into(),
+            TemplateOptionValue::String(if book.cover { "on" } else { "off" }.into()),
+        );
+    }
+    render_head(
         &mut out,
         book,
         "editorial",
-        book.cover && !book.single,
-        false,
         pdf_title.as_deref(),
         pdf_author.as_deref(),
+        &book_opts,
     );
     let mut diagnostics = Vec::new();
     let mut set = Vec::new();
@@ -323,20 +343,24 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
             continue;
         };
         set.push((entry.item.label.clone(), entry.problem.id.clone()));
-        let label = if book.single {
-            "none".into()
-        } else {
-            string(&entry.item.label)
-        };
-        let about: Vec<String> = about(&meta, book.language)
-            .iter()
-            .map(|m| string(m))
-            .collect();
-        out.raw(&format!(
-            "#tutorial(label: {label}, title: {}, meta: ({}))[\n",
-            string(&meta.title),
-            about.iter().map(|m| format!("{m},")).collect::<String>(),
-        ));
+        let (time, memory) = limits(&meta.limits, book.language);
+        let prob_opts = meta
+            .template_options
+            .get(&book.template_name)
+            .cloned()
+            .unwrap_or_default();
+        let label = (!book.single).then_some(entry.item.label.as_str());
+        write_problem_entry_head(
+            &mut out,
+            &entry.problem.id,
+            label,
+            &meta,
+            time.as_deref(),
+            memory.as_deref(),
+            &entry.problem.samples,
+            &prob_opts,
+            &about(&meta, book.language),
+        );
         let file = out.file(&editorial.path, &editorial.text);
         markdown::convert(
             markdown::Body {
@@ -352,8 +376,9 @@ pub fn editorials(book: &Book, entries: &[Entry]) -> Document {
         );
         out.trim_end();
         out.unmark();
-        out.raw("\n]\n\n");
+        out.raw("\n],\n),\n");
     }
+    out.raw("),\n))\n");
     out.finish(set, diagnostics)
 }
 
@@ -441,41 +466,27 @@ fn pdf_metadata(
     }
 }
 
-fn head(
+fn render_head(
     out: &mut Out,
     book: &Book,
     kind: &str,
-    cover: bool,
-    blank_pages: bool,
     pdf_title: Option<&str>,
     pdf_author: Option<&str>,
+    book_options: &BTreeMap<String, TemplateOptionValue>,
 ) {
     let opt = |v: &Option<String>| v.as_deref().map_or("none".into(), string);
     let opt_str = |v: Option<&str>| v.map_or("none".into(), string);
     let template = book
         .template_import
         .as_deref()
-        .unwrap_or("/xcpc/olymp-classic.typ");
-    let options_arg = if book.template_options.is_empty() {
-        String::new()
-    } else {
-        format!(", options: {}", typst_options_dict(&book.template_options))
-    };
+        .unwrap_or("/templates/olymp-classic.typ");
+    let tpl_str = string(template);
     out.raw(&format!(
         "// Generated by xcpc from the workspace: edit the workspace, not this.\n\
-         #import {}: *\n\
-         #import \"/xcpc/markdown.typ\": m, dm\n\n\
-         #show: contest.with(name: {}, location: {}, date: {}, author: {}, language: {}, show-cover: {cover}, blank-pages: {}, book: {}, pdf-title: {}, pdf-author: {}{options_arg})\n\n",
-        string(template),
-        string(&book.name),
-        opt(&book.location),
-        opt(&book.date),
-        opt(&book.author),
-        string(book.language.name()),
-        blank_pages,
-        string(kind),
-        opt_str(pdf_title),
-        opt_str(pdf_author),
+         #import \"/xcpc/defaults.typ\": section, samples, subsection, runin\n\
+         #import {tpl_str} as __xcpc_tpl\n\
+         #import {tpl_str}: *\n\
+         #import \"/xcpc/markdown.typ\": m, dm\n\n"
     ));
     if let Some(preamble) = book.preamble.as_deref().filter(|s| !s.trim().is_empty()) {
         let file = out.file(".xcpc/preamble.typ", preamble);
@@ -490,6 +501,118 @@ fn head(
         }
         out.unmark();
         out.raw("\n");
+    }
+    out.raw(&format!(
+        "#__xcpc_tpl.render((\n\
+         name: {},\n\
+         location: {},\n\
+         date: {},\n\
+         author: {},\n\
+         language: {},\n\
+         book: {},\n\
+         single: {},\n\
+         pdf-title: {},\n\
+         pdf-author: {},\n\
+         options: {},\n\
+         problems: (\n",
+        string(&book.name),
+        opt(&book.location),
+        opt(&book.date),
+        opt(&book.author),
+        string(book.language.name()),
+        string(kind),
+        book.single,
+        opt_str(pdf_title),
+        opt_str(pdf_author),
+        typst_options_dict(book_options),
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_problem_entry_head(
+    out: &mut Out,
+    id: &str,
+    label: Option<&str>,
+    meta: &ProblemMeta,
+    time_limit: Option<&str>,
+    memory_limit: Option<&str>,
+    samples: &[xcpc_domain::Sample],
+    options: &BTreeMap<String, TemplateOptionValue>,
+    about_items: &[String],
+) {
+    let opt_file = |name: &Option<String>| match name.as_deref() {
+        None | Some("") => "none".to_owned(),
+        Some(f) => string(f),
+    };
+    let opt_str = |v: Option<&str>| v.map_or("none".into(), string);
+    let tags = typst_string_array(&meta.tags);
+    let sources = if meta.sources.is_empty() {
+        "()".to_owned()
+    } else {
+        let items: Vec<String> = meta
+            .sources
+            .iter()
+            .map(|s| {
+                format!(
+                    "(platform: {}, id: {}, url: {})",
+                    string(&s.platform),
+                    string(&s.id),
+                    s.url.as_deref().map_or("none".into(), string),
+                )
+            })
+            .collect();
+        format!("({},)", items.join(", "))
+    };
+    let samples_lit = if samples.is_empty() {
+        "()".to_owned()
+    } else {
+        let pairs: Vec<String> = samples
+            .iter()
+            .map(|s| format!("({}, {})", string(&s.input), string(&s.output)))
+            .collect();
+        format!("({},)", pairs.join(", "))
+    };
+    let meta_lit = typst_string_array(about_items);
+    let rating_lit = meta.rating.map_or("none".to_owned(), |r| r.to_string());
+    let author_lit = meta
+        .author
+        .as_deref()
+        .filter(|a| !a.trim().is_empty())
+        .map_or("none".to_owned(), string);
+    out.raw(&format!(
+        "(\n\
+         id: {},\n\
+         label: {},\n\
+         title: {},\n\
+         author: {author_lit},\n\
+         rating: {rating_lit},\n\
+         tags: {tags},\n\
+         sources: {sources},\n\
+         input: {},\n\
+         output: {},\n\
+         time-limit: {},\n\
+         memory-limit: {},\n\
+         samples: {samples_lit},\n\
+         options: {},\n\
+         meta: {meta_lit},\n\
+         body: [\n",
+        string(id),
+        opt_str(label),
+        string(&meta.title),
+        opt_file(&meta.limits.input),
+        opt_file(&meta.limits.output),
+        opt_str(time_limit),
+        opt_str(memory_limit),
+        typst_options_dict(options),
+    ));
+}
+
+fn typst_string_array(items: &[String]) -> String {
+    if items.is_empty() {
+        "()".into()
+    } else {
+        let quoted: Vec<String> = items.iter().map(|s| string(s)).collect();
+        format!("({},)", quoted.join(", "))
     }
 }
 

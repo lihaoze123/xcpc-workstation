@@ -30,7 +30,10 @@ fn main() {
     let at = SAMPLE.find("#problem(").unwrap();
     let source = format!("{}{}", &SAMPLE[..at], SAMPLE[at..].repeat(copies));
 
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(&source);
     let t = Instant::now();
     let compiled = engine.compile().unwrap();

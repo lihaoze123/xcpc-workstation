@@ -1,15 +1,17 @@
 // Reusable declarative template UI components:
-// - `TemplatePicker`: selects built-in or workspace custom `templates/*.typ` with optional inherit/restore.
-// - `TemplateOptionsEditor`: dynamically renders all 8 schema field types (`bool`, `enum`, `string`,
-//   `lines`, `number`, `length`, `color`, `font`), grouped with `when` conditional visibility,
+// - `TemplatePicker`: selects workspace `templates/*.typ` with optional inherit/restore and "add from preset".
+// - `TemplateOptionsEditor`: dynamically renders all 9 schema field types (`bool`, `enum`, `string`,
+//   `lines`, `number`, `length`, `color`, `font`, `image`), grouped with `when` conditional visibility,
 //   override indicator bars, and one-click restore.
 // - `ForkTemplateModal`: forks an existing template into `templates/<newName>.typ`.
+// - `InstallPresetModal`: installs a bundled preset seed into `templates/<targetName>.typ`.
 
 import { cleanup, computed, effect, signal, Text, untracked, View } from "nsh";
 import { Input, Switch } from "nsh/base";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
 import { Btn, Chevron, IconBtn, Segmented, tip } from "./kit";
+import { pathBase } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { Modal } from "./Modal";
 import { colorTransition } from "./motion";
@@ -17,6 +19,7 @@ import { errorOf, preview, type UiError } from "./store";
 import {
   isFieldVisible,
   optionValuesEqual,
+  type PresetInfo,
   type TemplateField,
   type TemplateFieldScope,
   type TemplateInfo,
@@ -25,7 +28,9 @@ import {
 } from "./templates";
 import { MONO } from "./theme";
 
-/** Dropdown selector for choosing a template (`olymp-classic`, `cnoi-classic`, or custom `templates/*.typ`). */
+const ADD_PRESET_ID = "__add_preset__";
+
+/** Dropdown selector for choosing a workspace template (`templates/*.typ`). */
 export function TemplatePicker(props: {
   templates: TemplateInfo[];
   value: string;
@@ -34,25 +39,22 @@ export function TemplatePicker(props: {
   readOnly?: boolean;
   onChange: (templateId: string) => void;
   onRestore?: () => void;
+  onAddFromPreset?: () => void;
 }) {
   const current = computed(() => props.templates.find((t) => t.id === props.value));
   const entries = computed<MenuEntry[]>(() => {
-    const builtins = props.templates.filter((t) => t.builtin);
-    const customs = props.templates.filter((t) => !t.builtin);
-    const list: MenuEntry[] = builtins.map((t) => ({
+    const list: MenuEntry[] = props.templates.map((t) => ({
       id: t.id,
       label: t.name,
       checked: t.id === props.value,
     }));
-    if (customs.length > 0) {
-      if (list.length > 0) list.push({ separator: true, id: "sep-custom" });
-      for (const t of customs) {
-        list.push({
-          id: t.id,
-          label: `${t.name}（自定义）`,
-          checked: t.id === props.value,
-        });
-      }
+    if (props.onAddFromPreset) {
+      if (list.length > 0) list.push({ separator: true, id: "sep-add-preset" });
+      list.push({
+        id: ADD_PRESET_ID,
+        label: "从预设添加模板…",
+        icon: "plus",
+      });
     }
     return list;
   });
@@ -97,7 +99,11 @@ export function TemplatePicker(props: {
             <AppMenu
               entries={entries()}
               onSelect={(id) => {
-                if (id !== props.value) props.onChange(id);
+                if (id === ADD_PRESET_ID) {
+                  props.onAddFromPreset?.();
+                } else if (id !== props.value) {
+                  props.onChange(id);
+                }
               }}
               minWidth={220}
               trigger={
@@ -147,6 +153,8 @@ export function TemplateOptionsEditor(props: {
   context?: Record<string, TemplateOptionValue>;
   /** Engine-loaded font families for `font` fields. */
   fonts: string[];
+  /** Optional contest ID when editing contest-level options (for importing `image` fields into `contests/<id>/assets/`). */
+  contestId?: string;
   readOnly?: boolean;
   restoreTooltip?: string;
   /** When true, each schema group renders as its own full-width bordered section (for Inspector). */
@@ -255,6 +263,7 @@ export function TemplateOptionsEditor(props: {
                     readOnly={props.readOnly}
                     restoreTooltip={props.restoreTooltip ?? "恢复默认值"}
                     fonts={props.fonts}
+                    contestId={props.contestId}
                     onCommit={(v) => commitValue(field(), v)}
                     onRestore={() => props.onChange(field().key, null)}
                   />
@@ -276,6 +285,7 @@ function SchemaFieldRow(props: {
   readOnly?: boolean;
   restoreTooltip: string;
   fonts: string[];
+  contestId?: string;
   onCommit: (v: TemplateOptionValue) => void;
   onRestore: () => void;
 }) {
@@ -456,6 +466,23 @@ function SchemaFieldRow(props: {
         readOnly={props.readOnly}
         restoreTooltip={props.restoreTooltip}
         onCommit={(lines) => props.onCommit(lines)}
+        onRestore={props.onRestore}
+      />
+    );
+  }
+
+  if (ty() === "image") {
+    return (
+      <ImageOptionField
+        label={f().label}
+        description={f().description}
+        placeholder={f().placeholder}
+        value={String(props.value ?? "")}
+        contestId={props.contestId}
+        overridden={props.overridden}
+        readOnly={props.readOnly}
+        restoreTooltip={props.restoreTooltip}
+        onCommit={(rel) => props.onCommit(rel)}
         onRestore={props.onRestore}
       />
     );
@@ -710,7 +737,99 @@ function LinesField(props: {
   );
 }
 
-/** Lightweight modal to fork an existing built-in or custom template into `templates/<newName>.typ`. */
+function ImageOptionField(props: {
+  label: string;
+  description?: string;
+  placeholder?: string;
+  value: string;
+  contestId?: string;
+  overridden: boolean;
+  readOnly?: boolean;
+  restoreTooltip: string;
+  onCommit: (relPath: string) => void;
+  onRestore: () => void;
+}) {
+  const err = signal<UiError | undefined>(undefined);
+  const currentPath = () => props.value.trim();
+  const displayName = () => (currentPath() ? pathBase(currentPath()) : "");
+
+  const pickImage = async () => {
+    if (props.readOnly) return;
+    err.set(undefined);
+    try {
+      const rel = await preview.pickAndImportTemplateImage(props.contestId ?? null);
+      if (rel) props.onCommit(rel);
+    } catch (e) {
+      err.set({ context: "导入图片", error: String(e ?? "无法导入图片") });
+    }
+  };
+
+  return (
+    <View style={{ gap: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
+        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+          {props.label}
+        </Text>
+        <If when={props.overridden && !props.readOnly}>
+          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+        </If>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View
+          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+          class="bg-primary"
+        />
+        <View
+          tooltip={currentPath() ? tip(currentPath()) : undefined}
+          class={props.readOnly ? "border border-border bg-muted/50" : "border border-border bg-card"}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: 32,
+            borderRadius: 6,
+            paddingLeft: 8,
+            paddingRight: 8,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            overflow: "hidden",
+          }}
+        >
+          <Icon name="image" size={13} tone={displayName() ? "foreground" : "muted-foreground"} />
+          <Text
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 12.5,
+              numberOfLines: 1,
+              textOverflow: "ellipsis",
+              ...(displayName() ? { fontFamily: MONO } : undefined),
+            }}
+            class={displayName() ? "text-foreground" : "text-muted-foreground"}
+          >
+            {displayName() || (props.placeholder ?? "未选择图片")}
+          </Text>
+        </View>
+        <If when={!props.readOnly}>
+          <Btn label="选择图片" onPress={() => void pickImage()} />
+          <If when={!!currentPath()}>
+            <IconBtn icon="x" size={28} iconSize={13} tooltip={tip("清除图片")} onPress={() => props.onCommit("")} />
+          </If>
+        </If>
+      </View>
+      <If when={!!props.description}>
+        <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+          {props.description}
+        </Text>
+      </If>
+      <If when={err()}>
+        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+      </If>
+    </View>
+  );
+}
+
+/** Lightweight modal to fork an existing workspace template into `templates/<newName>.typ`. */
 export function ForkTemplateModal(props: {
   open: boolean;
   sourceId: string;
@@ -784,6 +903,147 @@ export function ForkTemplateModal(props: {
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Btn label="取消" onPress={props.onClose} />
           <Btn label="创建" variant="primary" onPress={submit} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Modal for installing a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into `templates/*.typ`. */
+export function InstallPresetModal(props: {
+  open: boolean;
+  presets: PresetInfo[];
+  existingIds: string[];
+  onInstalled: (installedId: string) => void;
+  onClose: () => void;
+}) {
+  const selectedPreset = signal("");
+  const targetName = signal("");
+  const err = signal<UiError | undefined>(undefined);
+
+  const suggestTarget = (presetId: string): string => {
+    const existing = new Set(props.existingIds);
+    if (!existing.has(presetId)) return presetId;
+    for (let i = 2; i < 100; i++) {
+      const candidate = `${presetId}-${i}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    return `${presetId}-copy`;
+  };
+
+  effect(() => {
+    if (props.open) {
+      untracked(() => {
+        const existing = new Set(props.existingIds);
+        const firstMissing = props.presets.find((p) => !existing.has(p.id));
+        const initial = (firstMissing ?? props.presets[0])?.id ?? "olymp-classic";
+        selectedPreset.set(initial);
+        targetName.set(suggestTarget(initial));
+        err.set(undefined);
+      });
+    }
+  });
+
+  const choosePreset = (id: string) => {
+    selectedPreset.set(id);
+    targetName.set(suggestTarget(id));
+    if (err()) err.set(undefined);
+  };
+
+  const submit = () => {
+    const preset = selectedPreset();
+    const name = targetName().trim();
+    if (!preset) return;
+    if (!name) {
+      err.set({ error: "请输入模板文件名标识（如 olymp-classic）" });
+      return;
+    }
+    const res = preview.installPresetTemplate(preset, name);
+    if (!res.ok) {
+      err.set(errorOf(res, "从预设安装模板"));
+      return;
+    }
+    props.onInstalled(name);
+    props.onClose();
+  };
+
+  return (
+    <Modal open={props.open} onClose={props.onClose} width={420}>
+      <View style={{ padding: 18, gap: 14 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View class="bg-muted border border-border" style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}>
+            <Icon name="plus" size={15} tone="foreground" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+              从预设添加模板
+            </Text>
+            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+              将预置模板复制到工作区 templates/ 目录，安装后可自由修改
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ gap: 6 }}>
+          <Each of={props.presets} key={(p) => p.id}>
+            {(preset) => {
+              const active = () => selectedPreset() === preset().id;
+              return (
+                <View
+                  onPress={() => choosePreset(preset().id)}
+                  class={active() ? "border border-primary bg-accent/60" : "border border-border bg-card hover:bg-muted/60"}
+                  style={{
+                    borderRadius: 8,
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 9,
+                    paddingBottom: 9,
+                    gap: 2,
+                    ...colorTransition(120),
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                      {preset().name}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-muted-foreground">
+                      {preset().id}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
+                    {preset().description}
+                  </Text>
+                </View>
+              );
+            }}
+          </Each>
+        </View>
+
+        <View style={{ gap: 5 }}>
+          <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            保存为模板标识（templates/&lt;标识&gt;.typ）
+          </Text>
+          <Input
+            value={targetName()}
+            placeholder="olymp-classic"
+            autoCapitalize="none"
+            autoCorrect={false}
+            submitBehavior="blurAndSubmit"
+            onChange={(e) => {
+              targetName.set(e.value);
+              if (err()) err.set(undefined);
+            }}
+            onSubmit={submit}
+            class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+            style={{ fontFamily: MONO }}
+          />
+        </View>
+
+        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
+
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <Btn label="取消" onPress={props.onClose} />
+          <Btn label="添加" variant="primary" onPress={submit} />
         </View>
       </View>
     </Modal>

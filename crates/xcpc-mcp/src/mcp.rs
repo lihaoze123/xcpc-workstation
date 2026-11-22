@@ -139,6 +139,7 @@ impl Server {
             "render_page_png" => self.tool_render_page_png(obj),
             "export_pdf" => self.tool_export_pdf(obj),
             "list_templates" => self.tool_list_templates(obj),
+            "add_template" => self.tool_add_template(obj),
             "search_problems" => self.tool_search_problems(obj),
             "get_problem" => self.tool_get_problem(obj),
             "get_contest" => self.tool_get_contest(obj),
@@ -487,6 +488,7 @@ impl Server {
             .map_err(|m| fail("invalid_arguments", m))?;
         self.engine.reset_files();
         let templates = publish::list_templates(&self.ws, &self.engine);
+        let presets = xcpc_engine::list_presets();
         let default_tpl = self
             .ws
             .default_template()
@@ -497,6 +499,31 @@ impl Server {
             "default": default_tpl,
             "workspace_options": workspace_options,
             "templates": templates,
+            "presets": presets,
+        })))
+    }
+
+    fn tool_add_template(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(args, &["preset", "name"], "add_template")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let preset = req_str(args, "preset").map_err(|m| fail("invalid_arguments", m))?;
+        let name = opt_str(args, "name").map_err(|m| fail("invalid_arguments", m))?;
+        let rel = self
+            .ws
+            .install_preset_template(&preset, name.as_deref())
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let id = name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(preset.as_str())
+            .to_owned();
+        self.engine.reset_files();
+        Ok(structured(json!({
+            "ok": true,
+            "preset": preset,
+            "id": id,
+            "path": rel,
         })))
     }
 
@@ -596,6 +623,7 @@ fn is_known_tool(name: &str) -> bool {
             | "render_page_png"
             | "export_pdf"
             | "list_templates"
+            | "add_template"
             | "search_problems"
             | "get_problem"
             | "get_contest"
@@ -868,13 +896,28 @@ fn tools() -> Value {
         {
             "name": "list_templates",
             "title": "List templates and schemas",
-            "description": "List all built-in and workspace custom Typst templates (templates/*.typ) together with their declarative `#let schema` fields, groups, defaults, and current workspace defaults.",
+            "description": "List all workspace Typst templates (`templates/*.typ`) together with their declarative `#let schema` fields, groups, defaults, current workspace defaults, and installable preset seeds.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "add_template",
+            "title": "Install preset template",
+            "description": "Install a bundled preset seed (`olymp-classic`, `cnoi-classic`, or `minimal`) as an editable template file under `templates/<name>.typ`. Refuses to overwrite an existing file.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "preset": { "type": "string", "description": "Preset seed ID (`olymp-classic`, `cnoi-classic`, or `minimal`)." },
+                    "name": { "type": "string", "description": "Optional target template slug under `templates/<name>.typ` (defaults to `preset`)." },
+                },
+                "required": ["preset"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
         },
         {
             "name": "search_problems",
@@ -1018,7 +1061,7 @@ fn tools() -> Value {
         {
             "name": "set_template_options",
             "title": "Set template and template options",
-            "description": "Update template selection and namespaced template schema options at workspace, contest, or problem scope. Pass null for an option key to clear it and inherit from the parent scope.",
+            "description": "Update template selection and namespaced template schema options at workspace, contest, or problem scope. Use namespace \"local\" when a contest has its own `contests/<id>/template.typ`. Pass null for an option key to clear it and inherit from the parent scope.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1060,7 +1103,7 @@ mod tests {
 
     fn sample_workspace(read_only: bool) -> (tempfile::TempDir, Server) {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("workspace.toml"), "").unwrap();
+        xcpc_storage::init_workspace(dir.path()).unwrap();
         let prob = dir.path().join("problems/a-plus-b");
         fs::create_dir_all(prob.join("samples")).unwrap();
         fs::write(
@@ -1101,6 +1144,7 @@ mod tests {
                 "render_page_png",
                 "export_pdf",
                 "list_templates",
+                "add_template",
                 "search_problems",
                 "get_problem",
                 "get_contest",

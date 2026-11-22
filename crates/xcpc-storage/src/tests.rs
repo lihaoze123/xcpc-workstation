@@ -1393,3 +1393,81 @@ fn human_messages_use_reedit_terminology_and_typed_not_found() {
     let id_msg = Error::InvalidId(xcpc_domain::InvalidId("Bad".into())).human_message();
     assert!(id_msg.contains("64"));
 }
+
+#[test]
+fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace_with_template(dir.path(), Some("cnoi-classic")).unwrap();
+
+    // Only the chosen preset is materialized into templates/ (no implicit built-in list).
+    assert_eq!(ws.list_templates(), vec!["cnoi-classic".to_owned()]);
+    assert!(dir.path().join("templates/cnoi-classic.typ").is_file());
+    assert!(!dir.path().join("templates/olymp-classic.typ").exists());
+
+    // install_preset_template installs to default or custom name and refuses overwrite.
+    let installed = ws.install_preset_template("minimal", Some("my-min")).unwrap();
+    assert_eq!(installed, "templates/my-min.typ");
+    assert_eq!(
+        ws.list_templates(),
+        vec!["cnoi-classic".to_owned(), "my-min".to_owned()]
+    );
+    let conflict = ws
+        .install_preset_template("minimal", Some("my-min"))
+        .unwrap_err();
+    assert_eq!(conflict.code(), "conflict");
+    let unknown = ws.install_preset_template("no-such-preset", None).unwrap_err();
+    assert_eq!(unknown.code(), "not_found");
+
+    // Deleting files in templates/ updates list immediately (no built-in fallback).
+    fs::remove_file(dir.path().join("templates/my-min.typ")).unwrap();
+    assert_eq!(ws.list_templates(), vec!["cnoi-classic".to_owned()]);
+
+    // Contest-local template detach & remove.
+    ws.create_problem("p1", "P1").unwrap();
+    ws.compose_contest("r1", &["p1".into()], None).unwrap();
+    assert!(!ws.has_contest_template("r1"));
+    let detached = ws.detach_contest_template("r1").unwrap();
+    assert_eq!(detached, "contests/r1/template.typ");
+    assert!(ws.has_contest_template("r1"));
+    assert!(ws.contest_template_path("r1").unwrap().is_some());
+    assert_eq!(
+        ws.detach_contest_template("r1").unwrap_err().code(),
+        "conflict"
+    );
+    ws.remove_contest_template("r1").unwrap();
+    assert!(!ws.has_contest_template("r1"));
+    assert_eq!(
+        ws.remove_contest_template("r1").unwrap_err().code(),
+        "not_found"
+    );
+
+    // Template image import with collision avoidance.
+    let src_dir = tempfile::tempdir().unwrap();
+    let logo_src = src_dir.path().join("school logo.png");
+    fs::write(&logo_src, b"fake-png-1").unwrap();
+    let rel1 = ws.import_template_image(Some("r1"), &logo_src).unwrap();
+    assert_eq!(rel1, "contests/r1/assets/school-logo.png");
+    let rel2 = ws.import_template_image(Some("r1"), &logo_src).unwrap();
+    assert_eq!(rel2, "contests/r1/assets/school-logo-2.png");
+    let ws_rel = ws.import_template_image(None, &logo_src).unwrap();
+    assert_eq!(ws_rel, "assets/school-logo.png");
+
+    // Read-only workspace blocks all template mutations.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    assert_eq!(
+        ro.install_preset_template("olymp-classic", None)
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+    assert_eq!(
+        ro.detach_contest_template("r1").unwrap_err().code(),
+        "read_only"
+    );
+    assert_eq!(
+        ro.import_template_image(None, &logo_src)
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+}

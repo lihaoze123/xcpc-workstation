@@ -509,6 +509,11 @@ pub struct ContestDetailJs {
     pub template: Option<String>,
     /// Effective resolved template ID (contest override -> workspace default -> `"olymp-classic"`).
     pub effective_template: String,
+    /// True when `contests/<id>/template.typ` exists and takes precedence over `templates/*.typ`.
+    pub has_contest_template: bool,
+    /// JSON-serialized `TemplateInfo` evaluated from `contests/<id>/template.typ` when present.
+    #[prop(skip_none)]
+    pub contest_template_json: Option<String>,
     /// JSON-serialized `[template-options.<tpl>]` map from `contest.toml`.
     pub template_options_json: String,
     pub show_metadata: bool,

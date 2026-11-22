@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 12);
+    assert_eq!(tools.len(), 13);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -197,6 +197,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
     }
     for write_tool in [
         "export_pdf",
+        "add_template",
         "write_problem",
         "compose_contest",
         "set_override",
@@ -765,4 +766,61 @@ fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
 
     let w5 = client.call_tool("freeze_contest", json!({ "id": "c1" }));
     assert_eq!(err_code(&w5), "read_only");
+
+    let w6 = client.call_tool("add_template", json!({ "preset": "minimal" }));
+    assert_eq!(err_code(&w6), "read_only");
+}
+
+#[test]
+fn template_tools_list_presets_install_and_set_local_options() {
+    let dir = setup_workspace();
+    let mut client = McpClient::spawn(dir.path(), false);
+    client.request("initialize", json!({ "protocolVersion": "2025-11-25" }));
+
+    let listed = client.call_tool("list_templates", json!({}));
+    assert_ne!(listed["isError"], true);
+    assert_eq!(
+        listed["structuredContent"]["presets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+
+    let added = client.call_tool(
+        "add_template",
+        json!({ "preset": "minimal", "name": "custom-min" }),
+    );
+    assert_ne!(added["isError"], true);
+    assert_eq!(
+        added["structuredContent"]["path"],
+        "templates/custom-min.typ"
+    );
+    assert!(dir.path().join("templates/custom-min.typ").is_file());
+
+    // Duplicate add_template returns conflict.
+    let dup = client.call_tool(
+        "add_template",
+        json!({ "preset": "minimal", "name": "custom-min" }),
+    );
+    assert_eq!(err_code(&dup), "conflict");
+
+    // set_template_options supports writing to `"local"` namespace on a contest.
+    let _ = client.call_tool(
+        "compose_contest",
+        json!({ "id": "c-local", "problems": ["alpha"], "name": "Local Round" }),
+    );
+    let set_local = client.call_tool(
+        "set_template_options",
+        json!({
+            "scope": "contest",
+            "id": "c-local",
+            "options": { "local": { "cover": "on" } }
+        }),
+    );
+    assert_ne!(set_local["isError"], true);
+    assert_eq!(
+        set_local["structuredContent"]["meta"]["template-options"]["local"]["cover"],
+        "on"
+    );
 }

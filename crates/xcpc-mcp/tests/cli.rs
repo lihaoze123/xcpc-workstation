@@ -724,4 +724,32 @@ fn init_example_and_output_override_and_human_error_messages() {
     let ej = parse_json_stdout(&err_json);
     assert_eq!(ej["ok"], false);
     assert_eq!(ej["error"]["code"], "not_found");
+
+    // 4. `xcpc template list`, `xcpc template add`, `xcpc template schema`
+    let tpl_list = run_xcpc(Some(&target), &["--json", "template", "list"], None);
+    assert_eq!(tpl_list.status.code(), Some(0));
+    let tlj = parse_json_stdout(&tpl_list);
+    assert_eq!(tlj["presets"].as_array().unwrap().len(), 3);
+    assert_eq!(tlj["templates"].as_array().unwrap().len(), 2);
+
+    let tpl_add = run_xcpc(
+        Some(&target),
+        &["--json", "template", "add", "minimal", "my-min"],
+        None,
+    );
+    assert_eq!(tpl_add.status.code(), Some(0));
+    let taj = parse_json_stdout(&tpl_add);
+    assert_eq!(taj["ok"], true);
+    assert_eq!(taj["path"], "templates/my-min.typ");
+    assert!(target.join("templates/my-min.typ").is_file());
+
+    let tpl_schema = run_xcpc(
+        Some(&target),
+        &["--json", "template", "schema", "my-min"],
+        None,
+    );
+    assert_eq!(tpl_schema.status.code(), Some(0));
+    let tsj = parse_json_stdout(&tpl_schema);
+    assert_eq!(tsj["template"]["id"], "my-min");
+    assert_eq!(tsj["template"]["path"], "templates/my-min.typ");
 }

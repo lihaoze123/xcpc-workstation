@@ -6,7 +6,10 @@ const SAMPLE: &str = include_str!("contest-zh.typ");
 
 #[test]
 fn region_matches_whole_page() {
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(SAMPLE);
     let compiled = engine.compile().unwrap();
     let scale = 2.5;
@@ -59,7 +62,10 @@ fn all_tiles(compiled: &xcpc_engine::Compiled, scale: f32) -> Vec<(usize, [u32; 
 #[test]
 fn equal_region_fingerprints_render_equal_pixels() {
     let scale = 2.5;
-    let mut engine = Engine::new(&FontOptions::from_env(), None);
+    let mut engine = Engine::new(
+        &FontOptions::from_env(),
+        Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     engine.set_main(SAMPLE);
     let before = engine.compile().unwrap();
     let tiles = all_tiles(&before, scale);

@@ -59,7 +59,7 @@ import {
   type UiError,
 } from "./store";
 import { encodeSingleOptionPatch, loadTemplatesCatalog, type TemplateOptionMap } from "./templates";
-import { ForkTemplateModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
+import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
 import {
   appearanceMode,
   cardShadow,
@@ -444,6 +444,7 @@ function WorkspacePane() {
 function LayoutPane() {
   const err = signal<UiError | undefined>(undefined);
   const forkOpen = signal(false);
+  const presetOpen = signal(false);
 
   const catalog = computed(() => {
     void revision();
@@ -454,6 +455,7 @@ function LayoutPane() {
   const wsReadOnly = () => info().readOnly;
   const tplId = () => catalog().default || "olymp-classic";
   const tplInfo = computed(() => catalog().templates.find((t) => t.id === tplId()));
+  const canInstallMissingPreset = () => !tplInfo() && catalog().presets.some((p) => p.id === tplId());
   const wsOpts = computed<TemplateOptionMap>(() => catalog().workspaceOptions[tplId()] ?? {});
   const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
   const hasCustomOpts = computed(() => Object.keys(wsOpts()).length > 0);
@@ -486,16 +488,41 @@ function LayoutPane() {
             value={tplId()}
             readOnly={wsReadOnly()}
             onChange={(nextId) => apply(preview.updateWorkspaceTemplate(nextId, false, null), "切换默认模板")}
+            onAddFromPreset={!wsReadOnly() ? () => presetOpen.set(true) : undefined}
           />
+          <If when={!tplInfo()}>
+            <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Icon name="triangleAlert" size={14} tone="destructive" />
+                <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                  {`默认模板「${tplId()}」不存在`}
+                </Text>
+              </View>
+              <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+                {`工作区中缺少 templates/${tplId()}.typ。可从预设重新安装，或在上方切换其他模板。`}
+              </Text>
+              <If when={!wsReadOnly() && canInstallMissingPreset()}>
+                <View style={{ flexDirection: "row", paddingTop: 2 }}>
+                  <Btn
+                    variant="primary"
+                    label="从预设安装"
+                    icon="plus"
+                    onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), "从预设安装模板")}
+                  />
+                </View>
+              </If>
+            </View>
+          </If>
           <If when={!wsReadOnly()}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingTop: 2 }}>
-              <Btn label="基于当前模板新建副本" icon="copy" onPress={() => forkOpen.set(true)} />
-              <If when={!!tplInfo() && !tplInfo()!.builtin}>
+              <Btn label="从预设添加模板" icon="plus" onPress={() => presetOpen.set(true)} />
+              <If when={!!tplInfo()}>
                 <Btn
-                  label="在外部编辑器中打开模板"
+                  label="编辑模板"
                   icon="filePenLine"
                   onPress={() => void preview.openTemplateFile(tplId()).then((res) => !res.ok && err.set(errorOf(res, "打开模板文件")))}
                 />
+                <Btn label="新建副本" icon="copy" onPress={() => forkOpen.set(true)} />
               </If>
               <Btn
                 label="自定义样式代码"
@@ -519,12 +546,11 @@ function LayoutPane() {
         >
           <View style={{ padding: 14 }}>
             <TemplateOptionsEditor
-              ownerKey={`workspace:${info().root}`}
+              ownerKey={`workspace:${info().root}:${tplId()}`}
               template={tplInfo()}
               scope="book"
               baseValues={{}}
               overrideValues={wsOpts()}
-              context={{ cover: true }}
               fonts={catalog().fonts}
               readOnly={wsReadOnly()}
               restoreTooltip="恢复模板默认值"
@@ -549,6 +575,14 @@ function LayoutPane() {
         sourceName={tplInfo()?.name ?? tplId()}
         onCreated={(newId) => apply(preview.updateWorkspaceTemplate(newId, false, null), "切换默认模板")}
         onClose={() => forkOpen.set(false)}
+      />
+
+      <InstallPresetModal
+        open={presetOpen()}
+        presets={catalog().presets}
+        existingIds={catalog().templates.map((t) => t.id)}
+        onInstalled={(installedId) => apply(preview.updateWorkspaceTemplate(installedId, false, null), "切换默认模板")}
+        onClose={() => presetOpen.set(false)}
       />
     </View>
   );
