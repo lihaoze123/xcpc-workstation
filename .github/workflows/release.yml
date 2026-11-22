@@ -154,12 +154,13 @@ jobs:
           if-no-files-found: error
 
       - name: Upload staged payload for Arch package
+        run: tar -C stage -cf stage/arch-payload.tar linux-app-dir linux-cli/xcpc
+
+      - name: Upload Arch payload tarball
         uses: actions/upload-artifact@v4
         with:
           name: arch-payload
-          path: |
-            stage/linux-app-dir
-            stage/linux-cli/xcpc
+          path: stage/arch-payload.tar
           if-no-files-found: error
 
   package-arch:
@@ -181,12 +182,12 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          tar -xf stage/arch-payload.tar -C stage
           useradd -m builder
           mkdir -p /tmp/arch-build dist
           PKGVER="${VERSION//-/}"
           sed "s/@PKGVER@/${PKGVER}/g" packaging/linux/arch/PKGBUILD.in > /tmp/arch-build/PKGBUILD
           chmod -R a+rX stage
-          chmod +x stage/linux-cli/xcpc
           chown -R builder:builder /tmp/arch-build
           su - builder -c "cd /tmp/arch-build && \
             XCPC_PAYLOAD_DIR='$PWD/stage/linux-app-dir' \

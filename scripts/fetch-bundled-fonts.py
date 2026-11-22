@@ -42,8 +42,8 @@ REQUIRED_FONTS = {
 
 ARCHIVES = [
     (
-        "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.006otf.zip",
         "https://mirrors.ctan.org/fonts/lm.zip",
+        "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.006otf.zip",
     ),
     (
         "https://mirrors.ctan.org/fonts/lm-math.zip",

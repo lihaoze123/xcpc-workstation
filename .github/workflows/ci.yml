@@ -23,10 +23,10 @@ jobs:
         with:
           components: clippy
 
-      - name: Install CJK fallback fonts
+      - name: Install CJK & Latin Modern fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk lmodern
 
       - name: Cache bundled fonts
         uses: actions/cache@v4
@@ -37,7 +37,7 @@ jobs:
       - name: Fetch bundled fonts
         run: |
           python3 scripts/fetch-bundled-fonts.py "$HOME/.cache/xcpc-bundled-fonts"
-          echo "XCPC_FONT_DIRS=$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
+          echo "XCPC_FONT_DIRS=/usr/share/texmf/fonts/opentype/public/lm:$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -69,7 +69,8 @@ jobs:
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             pkg-config \
-            fonts-noto-cjk
+            fonts-noto-cjk \
+            lmodern
 
       - name: Cache bundled fonts
         uses: actions/cache@v4
@@ -80,7 +81,7 @@ jobs:
       - name: Fetch bundled fonts
         run: |
           python3 scripts/fetch-bundled-fonts.py "$HOME/.cache/xcpc-bundled-fonts"
-          echo "XCPC_FONT_DIRS=$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
+          echo "XCPC_FONT_DIRS=/usr/share/texmf/fonts/opentype/public/lm:$HOME/.cache/xcpc-bundled-fonts:/usr/share/fonts/opentype/noto" >> "$GITHUB_ENV"
 
       - name: Cache NSH CLI
         id: cache-nsh

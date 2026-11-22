@@ -17,6 +17,15 @@ fn fixture(name: &str) -> Workspace {
     Workspace::open(root, true).unwrap()
 }
 
+fn non_fallback_diagnostics(
+    diagnostics: &[xcpc_convert::publish::Diagnostic],
+) -> Vec<&xcpc_convert::publish::Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|d| !d.message.starts_with("FounderType CJK font(s) missing;"))
+        .collect()
+}
+
 fn build(ws: &Workspace, target: Target, kind: Kind) -> (Option<xcpc_engine::Compiled>, Report) {
     let doc = publish::document(ws, &target, kind, None).unwrap();
     let mut engine = publish::engine(ws, &FontOptions::from_env());
@@ -98,7 +107,8 @@ fn overflows_are_warnings_with_their_page() {
     // The fixtures fit.
     let ws = fixture("contest-en");
     let (_, report) = build(&ws, Target::Contest("contest-en".into()), Kind::Statements);
-    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let diags = non_fallback_diagnostics(&report.diagnostics);
+    assert!(diags.is_empty(), "{diags:?}");
 }
 
 #[test]
@@ -132,8 +142,9 @@ fn the_editorial_book() {
     // A contest whose problems have none: warnings, and an empty book still compiles.
     let ws = fixture("contest-zh");
     let (_, report) = build(&ws, Target::Contest("contest-zh".into()), Kind::Editorial);
-    assert_eq!(report.diagnostics.len(), 3);
-    assert!(report.diagnostics.iter().all(|d| !d.is_error()));
+    let diags = non_fallback_diagnostics(&report.diagnostics);
+    assert_eq!(diags.len(), 3, "{diags:?}");
+    assert!(diags.iter().all(|d| !d.is_error()));
 }
 
 #[test]
@@ -191,11 +202,8 @@ fn samples_taller_than_a_page_break_across_pages() {
     assert!(report.ok, "{:?}", report.diagnostics);
     let pages = compiled.unwrap().page_count();
     assert!(pages >= 3, "{pages}");
-    assert!(
-        report.diagnostics.is_empty(),
-        "nothing runs off a page: {:?}",
-        report.diagnostics
-    );
+    let diags = non_fallback_diagnostics(&report.diagnostics);
+    assert!(diags.is_empty(), "nothing runs off a page: {diags:?}");
 }
 
 /// A contest's editorial book: a title page with the contents, each editorial from a
@@ -236,12 +244,8 @@ fn a_contests_editorial_book_has_a_title_page_and_a_page_per_problem() {
         .map(|p| (p.label.as_str(), p.first))
         .collect();
     assert_eq!(pages, [("A", 2), ("C", 3)]);
-    assert_eq!(
-        report.diagnostics.len(),
-        1,
-        "B has none: {:?}",
-        report.diagnostics
-    );
+    let diags = non_fallback_diagnostics(&report.diagnostics);
+    assert_eq!(diags.len(), 1, "B has none: {diags:?}");
 }
 
 // ---- Phase 2 Wave 2A: lint + check + locate_point + freeze_contest ---------------------
@@ -1272,10 +1276,10 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         let (compiled, _, report) =
             publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
         assert!(compiled.is_some());
+        let diags = non_fallback_diagnostics(&report.diagnostics);
         assert!(
-            report.ok && report.diagnostics.is_empty(),
-            "example workspace check had diagnostics for {target:?} {kind:?}: {:#?}",
-            report.diagnostics
+            report.ok && diags.is_empty(),
+            "example workspace check had diagnostics for {target:?} {kind:?}: {diags:#?}"
         );
     }
 }
