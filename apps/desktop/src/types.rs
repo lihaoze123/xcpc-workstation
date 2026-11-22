@@ -774,7 +774,12 @@ export interface ProblemMetaPatchJs {{\n  \
         write_patch_field(host, obj, "input", &self.input)?;
         write_patch_field(host, obj, "output", &self.output)?;
         write_opt_field(host, obj, "sources", &self.sources)?;
-        write_opt_field(host, obj, "templateOptionsJson", &self.template_options_json)?;
+        write_opt_field(
+            host,
+            obj,
+            "templateOptionsJson",
+            &self.template_options_json,
+        )?;
         Ok(owned)
     }
 }
@@ -880,7 +885,12 @@ export interface ContestMetaPatchJs {\n  \
         write_patch_field(host, obj, "cover", &self.cover)?;
         write_opt_field(host, obj, "blankPages", &self.blank_pages)?;
         write_patch_field(host, obj, "template", &self.template)?;
-        write_opt_field(host, obj, "templateOptionsJson", &self.template_options_json)?;
+        write_opt_field(
+            host,
+            obj,
+            "templateOptionsJson",
+            &self.template_options_json,
+        )?;
         Ok(owned)
     }
 }

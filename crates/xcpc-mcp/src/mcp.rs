@@ -423,7 +423,13 @@ impl Server {
             })?;
         reject_unknown_keys(
             fields,
-            &["title", "limits", "show-metadata", "show_metadata", "options"],
+            &[
+                "title",
+                "limits",
+                "show-metadata",
+                "show_metadata",
+                "options",
+            ],
             "fields",
         )
         .map_err(|m| fail("invalid_arguments", m))?;
@@ -455,8 +461,9 @@ impl Server {
         };
         let options = match fields.get("options") {
             None | Some(Value::Null) => BTreeMap::new(),
-            Some(Value::Object(outer)) => parse_namespaced_options_patch(outer)
-                .map_err(|m| fail("invalid_arguments", m))?,
+            Some(Value::Object(outer)) => {
+                parse_namespaced_options_patch(outer).map_err(|m| fail("invalid_arguments", m))?
+            }
             Some(_) => {
                 return Err(fail(
                     "invalid_arguments",
@@ -542,8 +549,9 @@ impl Server {
             patch_str(args, "template").map_err(|m| fail("invalid_arguments", m))?;
         let options_patch = match args.get("options") {
             None | Some(Value::Null) => BTreeMap::new(),
-            Some(Value::Object(outer)) => parse_namespaced_options_patch(outer)
-                .map_err(|m| fail("invalid_arguments", m))?,
+            Some(Value::Object(outer)) => {
+                parse_namespaced_options_patch(outer).map_err(|m| fail("invalid_arguments", m))?
+            }
             Some(_) => {
                 return Err(fail(
                     "invalid_arguments",
@@ -601,7 +609,9 @@ impl Server {
             }
             other => Err(fail(
                 "invalid_arguments",
-                format!("unknown scope {other:?}: expected \"workspace\", \"contest\", or \"problem\""),
+                format!(
+                    "unknown scope {other:?}: expected \"workspace\", \"contest\", or \"problem\""
+                ),
             )),
         }
     }
@@ -708,14 +718,17 @@ fn parse_option_value(v: &Value) -> Result<TemplateOptionValue, String> {
         Value::Array(arr) => {
             let mut lines = Vec::with_capacity(arr.len());
             for item in arr {
-                let s = item
-                    .as_str()
-                    .ok_or_else(|| "array template option values must contain strings".to_owned())?;
+                let s = item.as_str().ok_or_else(|| {
+                    "array template option values must contain strings".to_owned()
+                })?;
                 lines.push(s.to_owned());
             }
             Ok(TemplateOptionValue::Lines(lines))
         }
-        _ => Err("template option value must be a boolean, number, string, array of strings, or null".into()),
+        _ => Err(
+            "template option value must be a boolean, number, string, array of strings, or null"
+                .into(),
+        ),
     }
 }
 

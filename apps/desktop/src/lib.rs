@@ -998,7 +998,10 @@ impl Preview {
         if this.is_disposed() {
             return Err(JsError::Error("preview disposed".into()));
         }
-        let check = this.with(|p| p.state.validate_template_image_target(contest_id.as_deref()));
+        let check = this.with(|p| {
+            p.state
+                .validate_template_image_target(contest_id.as_deref())
+        });
         if let Err(err) = check {
             return Err(JsError::Error(err));
         }

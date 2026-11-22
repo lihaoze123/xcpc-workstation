@@ -122,10 +122,8 @@ pub fn document_with(
     };
     let ws_template_opts = ws.workspace_template_options();
     let merge_book_options = |tpl_name: &str, contest_opts: Option<&TemplateOptionsMap>| {
-        let mut merged: BTreeMap<String, TemplateOptionValue> = ws_template_opts
-            .get(tpl_name)
-            .cloned()
-            .unwrap_or_default();
+        let mut merged: BTreeMap<String, TemplateOptionValue> =
+            ws_template_opts.get(tpl_name).cloned().unwrap_or_default();
         if let Some(c_opts) = contest_opts.and_then(|m| m.get(tpl_name)) {
             for (k, v) in c_opts {
                 merged.insert(k.clone(), v.clone());
@@ -205,10 +203,8 @@ pub fn document_with(
                         .as_ref()
                         .map(|s| s.template.clone())
                         .unwrap_or_else(|| "local".into());
-                    book.template_options = snap
-                        .as_ref()
-                        .map(|s| s.options.clone())
-                        .unwrap_or_default();
+                    book.template_options =
+                        snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
                     book.preamble = ws.load_snapshot_preamble(id);
                     book.template_import = Some(format!("/{snap_tpl_rel}"));
                     None
@@ -275,8 +271,9 @@ fn fold_legacy_contest_options(
     opts: &mut BTreeMap<String, TemplateOptionValue>,
 ) {
     if let Some(cover) = meta.cover {
-        opts.entry("cover".into())
-            .or_insert_with(|| TemplateOptionValue::String(if cover { "on" } else { "off" }.into()));
+        opts.entry("cover".into()).or_insert_with(|| {
+            TemplateOptionValue::String(if cover { "on" } else { "off" }.into())
+        });
     }
     if meta.blank_pages {
         opts.entry("blank-pages".into())

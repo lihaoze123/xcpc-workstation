@@ -7,7 +7,9 @@
 use std::collections::BTreeMap;
 
 use typst::diag::FileResult;
-use typst::foundations::{Bytes, Datetime, Dict, Duration as TypstDuration, Label, Selector, Value};
+use typst::foundations::{
+    Bytes, Datetime, Dict, Duration as TypstDuration, Label, Selector, Value,
+};
 use typst::introspection::Introspector;
 use typst::syntax::{FileId, Source};
 use typst::text::{Font, FontBook};
@@ -85,7 +87,11 @@ pub(crate) fn inspect(engine: &Engine, import_path: &str) -> TemplateSchema {
         return TemplateSchema::default();
     };
     let introspector = doc.introspector();
-    let Some(elem) = introspector.query(&Selector::Label(label)).into_iter().next() else {
+    let Some(elem) = introspector
+        .query(&Selector::Label(label))
+        .into_iter()
+        .next()
+    else {
         return TemplateSchema::default();
     };
     let Ok(value) = elem.get_by_name("value") else {

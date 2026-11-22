@@ -1028,7 +1028,9 @@ impl Workspace {
             apply_template_options_patch(doc.as_table_mut(), "template-options", &ns, None)?;
         }
         if !prob_copies.is_empty()
-            && let Some(aot) = doc.get_mut("problem").and_then(Item::as_array_of_tables_mut)
+            && let Some(aot) = doc
+                .get_mut("problem")
+                .and_then(Item::as_array_of_tables_mut)
         {
             for tbl in aot.iter_mut() {
                 if let Some(label) = tbl.get("label").and_then(Item::as_str)

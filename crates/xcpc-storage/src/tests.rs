@@ -1405,7 +1405,9 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
     assert!(!dir.path().join("templates/olymp-classic.typ").exists());
 
     // install_preset_template installs to default or custom name and refuses overwrite.
-    let installed = ws.install_preset_template("minimal", Some("my-min")).unwrap();
+    let installed = ws
+        .install_preset_template("minimal", Some("my-min"))
+        .unwrap();
     assert_eq!(installed, "templates/my-min.typ");
     assert_eq!(
         ws.list_templates(),
@@ -1415,7 +1417,9 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
         .install_preset_template("minimal", Some("my-min"))
         .unwrap_err();
     assert_eq!(conflict.code(), "conflict");
-    let unknown = ws.install_preset_template("no-such-preset", None).unwrap_err();
+    let unknown = ws
+        .install_preset_template("no-such-preset", None)
+        .unwrap_err();
     assert_eq!(unknown.code(), "not_found");
 
     // Deleting files in templates/ updates list immediately (no built-in fallback).
@@ -1576,8 +1580,11 @@ sample-layout = \"wide\"
         let outside = tempfile::tempdir().unwrap();
         let secret = outside.path().join("secret.txt");
         fs::write(&secret, b"top-secret").unwrap();
-        std::os::unix::fs::symlink(&secret, dir.path().join("problems/src-prob/assets/leak.txt"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            &secret,
+            dir.path().join("problems/src-prob/assets/leak.txt"),
+        )
+        .unwrap();
         let err = ws
             .duplicate_problem("src-prob", "symlink-copy", None)
             .unwrap_err();
@@ -1588,7 +1595,10 @@ sample-layout = \"wide\"
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with(".dup.tmp-"))
             .collect();
-        assert!(leftover_tmp.is_empty(), "leftover temp dir: {leftover_tmp:?}");
+        assert!(
+            leftover_tmp.is_empty(),
+            "leftover temp dir: {leftover_tmp:?}"
+        );
     }
 }
 

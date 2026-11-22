@@ -1310,9 +1310,7 @@ impl State {
         let frozen = meta.frozen;
         let default_show = meta.show_metadata;
         let mut error = None;
-        let effective_template = if frozen
-            && let Some(snap) = ws.load_snapshot_template(id)
-        {
+        let effective_template = if frozen && let Some(snap) = ws.load_snapshot_template(id) {
             snap.template
         } else {
             meta.template

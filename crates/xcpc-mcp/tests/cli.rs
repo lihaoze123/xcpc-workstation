@@ -857,13 +857,7 @@ fn problem_duplicate_and_contest_archive_cli_and_read_only() {
     // Archived contest refuses compose (`contest_archived`).
     let blocked = run_xcpc(
         Some(&target),
-        &[
-            "--json",
-            "contest",
-            "compose",
-            "welcome-round",
-            "crc-check",
-        ],
+        &["--json", "contest", "compose", "welcome-round", "crc-check"],
         None,
     );
     assert_eq!(blocked.status.code(), Some(2));
@@ -885,10 +879,7 @@ fn problem_duplicate_and_contest_archive_cli_and_read_only() {
         None,
     );
     assert_eq!(ro_unarch.status.code(), Some(2));
-    assert_eq!(
-        parse_json_stdout(&ro_unarch)["error"]["code"],
-        "read_only"
-    );
+    assert_eq!(parse_json_stdout(&ro_unarch)["error"]["code"], "read_only");
 
     // 3. `xcpc contest unarchive welcome-round --json`
     let unarch = run_xcpc(

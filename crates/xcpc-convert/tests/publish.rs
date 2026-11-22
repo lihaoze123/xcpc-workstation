@@ -1370,7 +1370,8 @@ fn missing_template_errors_without_fallback_and_local_template_freezes_with_logo
     ws.create_problem("p1", "第一题").unwrap();
     ws.write(
         "problems/p1/statement.md",
-        "给定正整数 $n$。\n\n## 输入格式\n\n一行一个整数。\n\n## 输出格式\n\n输出答案。\n".as_bytes(),
+        "给定正整数 $n$。\n\n## 输入格式\n\n一行一个整数。\n\n## 输出格式\n\n输出答案。\n"
+            .as_bytes(),
     )
     .unwrap();
     ws.write("problems/p1/samples/01.in", b"1\n").unwrap();
@@ -1445,8 +1446,16 @@ fn missing_template_errors_without_fallback_and_local_template_freezes_with_logo
         "freeze failed: {:#?}",
         outcome.report.diagnostics
     );
-    assert!(dir.path().join("contests/cup/snapshot/template.typ").is_file());
-    assert!(dir.path().join("contests/cup/snapshot/template.toml").is_file());
+    assert!(
+        dir.path()
+            .join("contests/cup/snapshot/template.typ")
+            .is_file()
+    );
+    assert!(
+        dir.path()
+            .join("contests/cup/snapshot/template.toml")
+            .is_file()
+    );
     assert!(
         dir.path()
             .join("contests/cup/snapshot/assets/badge.svg")

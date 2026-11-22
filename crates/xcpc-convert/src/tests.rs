@@ -294,9 +294,9 @@ fn a_single_problems_editorial_has_no_label_nor_name() {
     );
     assert!(doc.source.contains("single: true,"));
     assert!(
-        doc.source.contains(
-            "label: none,\ntitle: \"Two \\\"Sum\\\"\",\n"
-        ) && doc.source.contains("meta: (),\nbody: [\n做法。\n],"),
+        doc.source
+            .contains("label: none,\ntitle: \"Two \\\"Sum\\\"\",\n")
+            && doc.source.contains("meta: (),\nbody: [\n做法。\n],"),
         "{}",
         doc.source
     );

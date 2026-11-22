@@ -199,9 +199,7 @@ fn format_not_found_message(what: &str) -> String {
         return format!("找不到比赛「{id}」。请检查比赛 ID 是否存在。");
     }
     if let Some(id) = parse_quoted_after(what, "preset ") {
-        return format!(
-            "找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal。"
-        );
+        return format!("找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal。");
     }
     if let Some(id) = parse_quoted_after(what, "template ") {
         return format!(
@@ -1170,7 +1168,14 @@ fn sanitize_template_image_name(raw_name: &str) -> (String, String) {
     stem = stem.trim_matches(['.', '-']).to_owned();
     let candidate = format!("{stem}{ext}");
     if stem.is_empty() || !is_safe_asset_name(&candidate) {
-        ("image".to_owned(), if ext.is_empty() { ".png".to_owned() } else { ext })
+        (
+            "image".to_owned(),
+            if ext.is_empty() {
+                ".png".to_owned()
+            } else {
+                ext
+            },
+        )
     } else {
         (stem, ext)
     }

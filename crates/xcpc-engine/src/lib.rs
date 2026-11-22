@@ -979,9 +979,11 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         assert!(olymp.has_book_options());
         assert!(olymp.has_problem_options());
         assert!(olymp.fields.iter().any(|f| f.key == "cover"));
-        assert!(olymp.fields.iter().any(|f| {
-            f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
-        }));
+        assert!(
+            olymp.fields.iter().any(|f| {
+                f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
+            })
+        );
         assert!(olymp.fields.iter().any(|f| f.key == "blank-pages"));
         assert!(olymp.fields.iter().any(|f| f.key == "sample-layout"));
 
@@ -990,9 +992,11 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
         assert!(cnoi.has_book_options());
         assert!(cnoi.has_problem_options());
         assert!(cnoi.fields.iter().any(|f| f.key == "cover"));
-        assert!(cnoi.fields.iter().any(|f| {
-            f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
-        }));
+        assert!(
+            cnoi.fields.iter().any(|f| {
+                f.key == "logo" && f.field_type == xcpc_domain::TemplateFieldType::Image
+            })
+        );
         assert!(cnoi.fields.iter().any(|f| f.key == "compile-opts"));
         assert!(cnoi.fields.iter().any(|f| f.key == "notices"));
         assert!(cnoi.fields.iter().any(|f| f.key == "prob-type"));
