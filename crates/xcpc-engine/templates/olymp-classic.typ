@@ -319,6 +319,14 @@
   // Displays: TeX picks long (12pt) or short (0–6.5pt) skips from the length of the line
   // before; one medium skip looks right for both.
   show math.equation.where(block: true): set block(above: tex(6), below: tex(6))
+  // Clean academic three-line table defaults for body Markdown tables (samples/cover pass explicit stroke & inset).
+  set table(
+    stroke: (_, y) => (
+      top: if y == 0 { 0.85pt + black } else if y == 1 { 0.45pt + black } else { none },
+      bottom: 0.85pt + black,
+    ),
+    inset: (x: 10pt, y: 4.5pt),
+  )
 
   let is-cover() = query(<xcpc-cover>).any(c => c.location().page() == here().page())
   set page(

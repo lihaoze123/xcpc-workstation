@@ -150,5 +150,5 @@ scripts/package.sh --target linux
 ## 致谢与许可证
 
 - 题面默认版式致谢 [`olymp.sty`](https://github.com/GassaFM/olymp.sty/)，预置 CNOI 模板灵感致谢 [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement)。
-- 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)；内置离线回退包包含 [CeTZ](https://github.com/cetz-package/cetz)（LGPL-3.0）、[oxifmt](https://github.com/PgBiel/typst-oxifmt) 与 [Pinit](https://github.com/OrangeX4/typst-pinit)。
+- 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)；内置离线回退包包含 [CeTZ](https://github.com/cetz-package/cetz)（LGPL-3.0）、[oxifmt](https://github.com/PgBiel/typst-oxifmt)、[Pinit](https://github.com/OrangeX4/typst-pinit)、[Mannot](https://github.com/y-nakagami/mannot) 与 [Tiptoe](https://github.com/Mc-Zen/tiptoe)。
 - 本项目采用 [Apache License 2.0](./LICENSE) 开源许可。

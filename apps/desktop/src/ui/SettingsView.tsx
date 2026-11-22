@@ -880,7 +880,7 @@ function AboutPane() {
               开源致谢
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-              olymp.sty（GassaFM/olymp.sty）、fuzzy-cnoi-statement（Wallbreaker5th）、Typst、NSH、MiTeX、CeTZ（LGPL-3.0）、oxifmt、Pinit
+              olymp.sty（GassaFM/olymp.sty）、fuzzy-cnoi-statement（Wallbreaker5th）、Typst、NSH、MiTeX、CeTZ（LGPL-3.0）、oxifmt、Pinit、Mannot、Tiptoe
             </Text>
           </View>
         </SectionRow>

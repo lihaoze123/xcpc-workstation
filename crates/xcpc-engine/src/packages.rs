@@ -60,6 +60,24 @@ const BUNDLED_PACKAGES: &[BundledPackage] = &[
         },
         tar_gz: include_bytes!("../packages/preview/pinit-0.2.2.tar.gz"),
     },
+    BundledPackage {
+        name: "mannot",
+        version: PackageVersion {
+            major: 0,
+            minor: 4,
+            patch: 0,
+        },
+        tar_gz: include_bytes!("../packages/preview/mannot-0.4.0.tar.gz"),
+    },
+    BundledPackage {
+        name: "tiptoe",
+        version: PackageVersion {
+            major: 0,
+            minor: 4,
+            patch: 0,
+        },
+        tar_gz: include_bytes!("../packages/preview/tiptoe-0.4.0.tar.gz"),
+    },
 ];
 
 /// Lazy-unpacked contents of bundled `@preview` packages keyed by `(name, version)`.

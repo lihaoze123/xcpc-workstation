@@ -1262,7 +1262,7 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
     let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["lantern-walk", "typst-showcase"]
+        vec!["crc-check", "tree-beacon", "typst-showcase"]
     );
     assert_eq!(
         ws.list_contests().unwrap(),
@@ -1275,7 +1275,8 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         (Target::Contest("welcome-round".into()), Kind::Editorial),
         (Target::Contest("oi-mock".into()), Kind::Statements),
         (Target::Contest("oi-mock".into()), Kind::Editorial),
-        (Target::Problem("lantern-walk".into()), Kind::Statements),
+        (Target::Problem("crc-check".into()), Kind::Statements),
+        (Target::Problem("tree-beacon".into()), Kind::Statements),
         (Target::Problem("typst-showcase".into()), Kind::Statements),
     ] {
         let (compiled, _, report) =
@@ -1334,7 +1335,7 @@ fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     let (compiled, doc, report) = publish::check(
         &ws,
         &mut engine,
-        &Target::Problem("lantern-walk".into()),
+        &Target::Problem("crc-check".into()),
         Kind::Statements,
         None,
         None,

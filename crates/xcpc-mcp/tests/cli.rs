@@ -659,7 +659,7 @@ fn init_example_and_output_override_and_human_error_messages() {
     let j = parse_json_stdout(&out);
     assert_eq!(j["ok"], true);
     assert_eq!(j["example"], true);
-    assert!(target.join("problems/lantern-walk/statement.md").is_file());
+    assert!(target.join("problems/crc-check/statement.md").is_file());
     assert!(target.join("contests/welcome-round/contest.toml").is_file());
 
     // 1b. `xcpc init --example <non-empty-dir>` refuses to mix files into an existing directory.

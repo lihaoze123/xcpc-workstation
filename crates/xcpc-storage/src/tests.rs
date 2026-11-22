@@ -1207,7 +1207,7 @@ fn init_example_workspace_seeds_files_and_is_idempotent() {
     let ws = init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["lantern-walk", "typst-showcase"]
+        vec!["crc-check", "tree-beacon", "typst-showcase"]
     );
     assert_eq!(
         ws.list_contests().unwrap(),
@@ -1216,11 +1216,11 @@ fn init_example_workspace_seeds_files_and_is_idempotent() {
 
     // User edits must not be overwritten on a second init_example_workspace call.
     let custom = "自定义题面\n";
-    ws.write("problems/lantern-walk/statement.md", custom.as_bytes())
+    ws.write("problems/crc-check/statement.md", custom.as_bytes())
         .unwrap();
     let ws2 = init_example_workspace(dir.path()).unwrap();
     assert_eq!(
-        ws2.read_text("problems/lantern-walk/statement.md").unwrap(),
+        ws2.read_text("problems/crc-check/statement.md").unwrap(),
         custom
     );
 }

@@ -2119,12 +2119,12 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
         "init example failed: {:?}",
         info.error
     );
-    assert_eq!(info.problems.len(), 2);
+    assert_eq!(info.problems.len(), 3);
     assert_eq!(info.contests.len(), 2);
 
     let req = PreviewRequest {
         target: "problem".into(),
-        id: "lantern-walk".into(),
+        id: "crc-check".into(),
         book: "statements".into(),
         path: String::new(),
         text: String::new(),
@@ -2142,7 +2142,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
     assert!(res.error.is_none(), "compile error: {:?}", res.error);
 
     let meta_json = format!(
-        r#"{{"workspace":{:?},"target":"problem","id":"lantern-walk","book":"statements","zoom":1.25,"scrollY":42.5}}"#,
+        r#"{{"workspace":{:?},"target":"problem","id":"crc-check","book":"statements","zoom":1.25,"scrollY":42.5}}"#,
         info.root
     );
     // When compiler lock is held, save_cold_start_snapshot skips immediately without blocking.
@@ -2176,7 +2176,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
         .load_cold_start_snapshot()
         .expect("expected valid cold-start snapshot");
     assert_eq!(loaded.target, "problem");
-    assert_eq!(loaded.id, "lantern-walk");
+    assert_eq!(loaded.id, "crc-check");
     assert_eq!(loaded.book, "statements");
     assert_eq!(loaded.zoom, 1.25);
     assert_eq!(loaded.scroll_y, 42.5);
@@ -2184,7 +2184,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
     assert!(!loaded.pages[0].layers.is_empty());
 
     // Mutate assets/ -> content hash changes -> snapshot is automatically ignored.
-    let assets_dir = ws_dir.0.join("problems/lantern-walk/assets");
+    let assets_dir = ws_dir.0.join("problems/crc-check/assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
     std::fs::write(assets_dir.join("new.png"), b"img-bytes").unwrap();
     assert!(
@@ -2202,7 +2202,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
     assert!(
         preview
             .save(
-                "problems/lantern-walk/statement.md".into(),
+                "problems/crc-check/statement.md".into(),
                 "修改后的内容。\n\n## 输入格式\n\n无。\n\n## 输出格式\n\n无。\n".into(),
                 None,
             )
