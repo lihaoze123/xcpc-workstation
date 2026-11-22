@@ -24,7 +24,7 @@
 ## 核心特性
 
 - **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内嵌严格对齐 `olymp.sty` 中文版的 `olymp-classic` 模板与高度还原 CCF CSP/NOI 官方版式的 `cnoi-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册。
-- **完整 Typst 生态与可编程排版**：原生支持 `@preview/*`（按需自动拉取并复用系统 Typst 缓存）与 `@local/*` 外部库，并内置 `cetz`（矢量绘图）与 `pinit`（公式高亮标注）离线回退包；配合 `.xcpc/preamble.typ` 自定义宏与 Typst 脚本编程能力，在 Markdown 题面中直接绘制图论/几何矢量图、标注递推公式或程序化生成表格。
+- **完整 Typst 生态与可编程排版**：原生支持 `@preview/*`（按需自动拉取并复用系统 Typst 缓存）与 `@local/*` 外部库，并内置 `cetz`（矢量绘图）、`pinit`（公式高亮与字段标注）与 `mannot`（公式下划线注解）等离线回退包；配合 `.xcpc/preamble.typ` 自定义宏与 Typst 脚本编程能力，在 Markdown 题面中直接绘制图论/几何矢量图、标注递推公式或程序化生成表格。
 - **开放目录 + 活引用组卷与冻结**：全部数据以纯文本 Markdown + TOML 存储在本地目录中，天然适配 Git；比赛以活引用组织题目并仅覆写元数据，冻结后将源文件与两本 PDF 写入 `snapshot/` 永久只读复现。
 - **AI Agent / MCP 一等公民**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core。提供搜索、读写题面、组卷、编译诊断、页面渲染与导出 PDF 等完整 MCP 工具，支持 `--read-only` 只读守卫与外部修改无闪白实时同步。
 - **为出题人打磨的写作与定制体验**：`/` 斜杠命令菜单（公式、矩阵、分段函数、子任务表、原始 Typst 块等）、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、在 `templates/*.typ` 扩展自定义模板，以及用 `theme.toml`（全局 / 工作区两级）自定义配色与编辑器字体。
@@ -66,12 +66,12 @@
 # 初始化一个带内置示例的工作区
 xcpc init --example ./my-xcpc
 
-# 构建整本试题册与题解册 PDF（输出至 my-xcpc/build/）
-xcpc -w ./my-xcpc build contest spring-training
-xcpc -w ./my-xcpc build contest spring-training --editorial
+# 构建整本试题册与题解册 PDF（输出至 my-xcpc/build/；也可用 oi-mock 体验 CNOI/OI 模板）
+xcpc -w ./my-xcpc build contest welcome-round
+xcpc -w ./my-xcpc build contest welcome-round --editorial
 
 # 编译与规范检查（适合 CI 或脚本集成）
-xcpc -w ./my-xcpc check contest spring-training --json
+xcpc -w ./my-xcpc check contest welcome-round --json
 ```
 
 ---
@@ -105,7 +105,7 @@ xcpc -w ./my-xcpc check contest spring-training --json
 
 ## 路线图与当前状态
 
-当前处于 **`v0.2.0-beta.1`（Public Beta）**：
+当前处于 **`v0.2.0-beta.2`（Public Beta）**：
 
 - **Phase 1–2.5（已完成）**：开放目录题库、活引用组卷与冻结、`olymp-classic` / `cnoi-classic` 排版引擎、出版工作室、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制三件套、CLI 与 MCP 服务。
 - **Phase 3（规划中）**：本地 Polygon —— 基于 Wasmtime + fuel 计量的跨平台可复现题目包构建、数据生成与对拍、Polygon 导入。

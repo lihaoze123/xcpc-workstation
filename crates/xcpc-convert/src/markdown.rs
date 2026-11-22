@@ -141,11 +141,11 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
                         })
                         .collect();
                     out.block_start(&format!(
-                        "#align(center, block(above: 6pt, below: 6pt, table(columns: {}, align: ({},), ",
+                        "#align(center, block(above: 8pt, below: 8pt, table(columns: {}, align: ({},), ",
                         aligns.len(),
                         aligns.join(", ")
                     ));
-                    stack.push(Open::Close(")))"));
+                    stack.push(Open::Close("table.hline(stroke: 0.9pt + black))))"));
                 }
                 Tag::TableHead => {
                     out.raw("table.header(");

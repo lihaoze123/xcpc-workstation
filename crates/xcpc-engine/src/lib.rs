@@ -472,7 +472,10 @@ impl Engine {
                 // call in the main source instead: that is the user's code.
                 let main = self.main.id();
                 let span = if d.span.id().is_some_and(|id| {
-                    id != main && (id == self.fonts_source.id() || template(id).is_some())
+                    id != main
+                        && (id == self.fonts_source.id()
+                            || template(id).is_some()
+                            || matches!(id.root(), VirtualRoot::Package(_)))
                 }) {
                     d.trace
                         .iter()
@@ -506,7 +509,12 @@ impl Engine {
             hints: Vec::new(),
         };
         if let Some(id) = span.id() {
-            out.file = Some(id.vpath().get_with_slash().to_string());
+            out.file = Some(match id.root() {
+                VirtualRoot::Project => id.vpath().get_with_slash().to_string(),
+                VirtualRoot::Package(spec) => {
+                    format!("{spec}{}", id.vpath().get_with_slash())
+                }
+            });
             if let (Some(range), Ok(source)) = (self.range(span), self.source(id)) {
                 let lines = source.lines();
                 out.offset = Some(range.start);
@@ -838,6 +846,7 @@ mod tests {
             r#"#import "/xcpc/olymp-classic.typ": contest, problem
 #import "@preview/cetz:0.5.3"
 #import "@preview/pinit:0.2.2": *
+#import "@preview/mannot:0.4.0": annot, markul
 #show: contest.with(name: "Package Test", show-cover: false)
 #problem(label: "A", title: "Demo")[
 #cetz.canvas({
@@ -848,6 +857,8 @@ mod tests {
 
 $ #pin(1) a_i #pin(2) + k $
 #pinit-highlight(1, 2)
+
+$ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
 ]
 "#,
         );

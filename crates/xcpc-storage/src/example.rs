@@ -27,6 +27,7 @@ const EXAMPLE_FILES: &[(&str, &str)] = &[
 #let insight(title: "关键观察", body) = pad(
   left: 1pt,
   block(
+    breakable: false,
     width: 100%,
     inset: (left: 10pt, right: 10pt, y: 7pt),
     stroke: (left: 2pt + rgb("#0B6989")),
@@ -49,7 +50,7 @@ const EXAMPLE_FILES: &[(&str, &str)] = &[
   {
     set par(first-line-indent: 0pt)
     text(size: 9.5pt)[
-      *复杂度总结*：时间复杂度 #time，空间复杂度 #space。
+      #text(weight: "bold")[复杂度总结]：时间复杂度 #time，空间复杂度 #space。
     ]
   },
 )
@@ -424,7 +425,7 @@ memory = "256MB"
 #import "@preview/mannot:0.4.0": annot, markul
 #block(breakable: false, width: 100%, inset: (y: 4pt), {
   set par(first-line-indent: 0pt)
-  $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1.5em, annot-text-props: (size: 0.85em))[生成串的长度减 1] $
+  $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1.8em, annot-text-props: (size: 0.85em))[#h(0.35em)生成串的长度减 1] $
 })
 ```
 
@@ -498,37 +499,30 @@ $Q$ 去掉前导 `0`（全为 `0` 时输出一个 `0`）；$R$ 恰好输出 $r$ 
 ]
 ```
 
-### 参考代码
+## 参考代码
 
 ```cpp
 #include <iostream>
 #include <string>
-
 int main() {
-    std::ios::sync_with_stdio(false);
-    std::cin.tie(nullptr);
-
+    std::ios::sync_with_stdio(false); std::cin.tie(nullptr);
     int T;
     if (!(std::cin >> T)) return 0;
     while (T--) {
         std::string m, g;
         std::cin >> m >> g;
-        int n = static_cast<int>(m.size());
-        int r = static_cast<int>(g.size()) - 1;
-        std::string x = m + std::string(r, '0');
-        std::string q(n, '0');
-
+        int n = m.size(), r = g.size() - 1;
+        std::string x = m + std::string(r, '0'), q(n, '0');
         for (int i = 0; i < n; ++i) {
             if (x[i] == '1') {
                 q[i] = '1';
-                for (int j = 0; j <= r; ++j) {
+                for (int j = 0; j <= r; ++j)
                     x[i + j] = (x[i + j] == g[j]) ? '0' : '1';
-                }
             }
         }
-        auto pos = q.find('1');
-        std::string q_out = (pos == std::string::npos) ? "0" : q.substr(pos);
-        std::cout << q_out << ' ' << x.substr(n) << '\n';
+        auto p = q.find('1');
+        auto ans = (p == q.npos) ? "0" : q.substr(p);
+        std::cout << ans << ' ' << x.substr(n) << '\n';
     }
     return 0;
 }
@@ -562,90 +556,93 @@ memory = "512MB"
 ```typst
 #import "@preview/cetz:0.5.3"
 
-#align(center, block(breakable: false, inset: (y: 4pt), cetz.canvas(length: 0.92cm, {
-  import cetz.draw: *
+#align(center, block(breakable: false, inset: (y: 4pt), {
+  set text(size: 9pt)
+  cetz.canvas(length: 0.9cm, {
+    import cetz.draw: *
 
-  // 子树 T_2 柔和背景区域
-  merge-path(
-    fill: rgb("#0B6989").transparentize(92%),
-    stroke: (paint: rgb("#0B6989").transparentize(55%), thickness: 0.7pt, dash: "dashed"),
-    close: true,
-    {
-      bezier((2.1, 2.75), (-0.15, -0.35), (0.6, 2.4), (-0.25, 0.9))
-      bezier((-0.15, -0.35), (3.85, -0.35), (0.5, -0.85), (3.1, -0.85))
-      bezier((3.85, -0.35), (2.1, 2.75), (4.1, 0.9), (3.3, 2.3))
-    },
-  )
-  content((0.35, 2.55), text(size: 8pt, fill: rgb("#0B6989"), weight: "bold")[子树 $T_2$])
-
-  let pos = (
-    "1": (4.0, 3.6),
-    "2": (2.1, 2.2),
-    "3": (5.9, 2.2),
-    "4": (0.8, 0.8),
-    "5": (2.9, 0.8),
-    "6": (5.1, 0.8),
-    "7": (6.8, 0.8),
-    "8": (2.9, -0.45),
-  )
-  let weights = (
-    "1": "4", "2": "6", "3": "5", "4": "3",
-    "5": "7", "6": "2", "7": "8", "8": "4",
-  )
-  let heavy = (("1", "2"), ("2", "5"), ("5", "8"))
-  let light = (("1", "3"), ("2", "4"), ("3", "6"), ("3", "7"))
-  let chosen = ("2", "7", "8")
-
-  // 轻边（虚线）
-  for (u, v) in light {
-    line(pos.at(u), pos.at(v), stroke: (paint: rgb("#94A3B8"), thickness: 0.9pt, dash: "densely-dashed"))
-  }
-  // 重边（加粗青蓝）
-  for (u, v) in heavy {
-    line(pos.at(u), pos.at(v), stroke: (paint: rgb("#0B6989"), thickness: 1.8pt))
-  }
-
-  // 节点与点权标注（使用 anchor 精确外置，与节点圆圈保持清晰间距）
-  let w-spec = (
-    "1": ((0.48, 0.0), "west"),
-    "2": ((-0.48, 0.0), "east"),
-    "3": ((0.48, 0.0), "west"),
-    "4": ((-0.48, 0.0), "east"),
-    "5": ((-0.48, 0.0), "east"),
-    "6": ((0.0, -0.52), "north"),
-    "7": ((0.48, 0.0), "west"),
-    "8": ((0.48, 0.0), "west"),
-  )
-  for (id, p) in pos {
-    let lit = id in chosen
-    circle(
-      p,
-      radius: 0.34,
-      fill: if lit { rgb("#0B6989") } else { white },
-      stroke: if lit { 1.3pt + rgb("#09546D") } else { 0.9pt + rgb("#64748B") },
+    // 子树 T_2 柔和背景区域（留足内边距避免虚线穿过点权标签）
+    merge-path(
+      fill: rgb("#0B6989").transparentize(92%),
+      stroke: (paint: rgb("#0B6989").transparentize(55%), thickness: 0.7pt, dash: "dashed"),
+      close: true,
+      {
+        bezier((2.0, 3.35), (-0.65, -0.25), (-0.05, 3.0), (-0.75, 1.1))
+        bezier((-0.65, -0.25), (4.05, -0.55), (0.35, -1.05), (3.15, -1.05))
+        bezier((4.05, -0.55), (2.0, 3.35), (4.3, 0.9), (3.55, 2.9))
+      },
     )
-    content(
-      p,
-      text(size: 9pt, weight: "bold", fill: if lit { white } else { rgb("#1E293B") }, id),
-    )
-    let (off, anc) = w-spec.at(id)
-    content(
-      (p.at(0) + off.at(0), p.at(1) + off.at(1)),
-      anchor: anc,
-      text(size: 7.8pt, fill: rgb("#475569"))[$w=#weights.at(id)$],
-    )
-  }
+    content((0.0, 2.65), text(size: 8pt, fill: rgb("#0B6989"), weight: "bold")[子树 $T_2$])
 
-  // 右下紧凑图例（统一左对齐）
-  let lx = 5.2
-  let ly = -0.05
-  line((lx, ly), (lx + 0.55, ly), stroke: 1.8pt + rgb("#0B6989"))
-  content((lx + 0.72, ly), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[重链路径])
-  line((lx, ly - 0.42), (lx + 0.55, ly - 0.42), stroke: (paint: rgb("#94A3B8"), thickness: 0.9pt, dash: "densely-dashed"))
-  content((lx + 0.72, ly - 0.42), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[普通轻边])
-  circle((lx + 0.28, ly - 0.84), radius: 0.14, fill: rgb("#0B6989"), stroke: none)
-  content((lx + 0.72, ly - 0.84), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[点亮信标])
-})))
+    let pos = (
+      "1": (4.3, 3.65),
+      "2": (2.1, 2.2),
+      "3": (6.3, 2.2),
+      "4": (0.75, 0.8),
+      "5": (3.0, 0.8),
+      "6": (5.4, 0.8),
+      "7": (7.2, 0.8),
+      "8": (3.0, -0.45),
+    )
+    let weights = (
+      "1": "4", "2": "6", "3": "5", "4": "3",
+      "5": "7", "6": "2", "7": "8", "8": "4",
+    )
+    let heavy = (("1", "2"), ("2", "5"), ("5", "8"))
+    let light = (("1", "3"), ("2", "4"), ("3", "6"), ("3", "7"))
+    let chosen = ("2", "7", "8")
+
+    // 轻边（虚线）
+    for (u, v) in light {
+      line(pos.at(u), pos.at(v), stroke: (paint: rgb("#94A3B8"), thickness: 0.9pt, dash: "densely-dashed"))
+    }
+    // 重边（加粗青蓝）
+    for (u, v) in heavy {
+      line(pos.at(u), pos.at(v), stroke: (paint: rgb("#0B6989"), thickness: 1.8pt))
+    }
+
+    // 节点与点权标注（全部位于安全空白处，零重叠零压线）
+    let w-spec = (
+      "1": ((0.48, 0.0), "west"),
+      "2": ((-0.08, 0.45), "south"),
+      "3": ((0.48, 0.0), "west"),
+      "4": ((0.0, -0.46), "north"),
+      "5": ((-0.48, 0.0), "east"),
+      "6": ((-0.25, 0.40), "south-east"),
+      "7": ((0.48, 0.0), "west"),
+      "8": ((-0.48, 0.0), "east"),
+    )
+    for (id, p) in pos {
+      let lit = id in chosen
+      circle(
+        p,
+        radius: 0.34,
+        fill: if lit { rgb("#0B6989") } else { white },
+        stroke: if lit { 1.3pt + rgb("#09546D") } else { 0.9pt + rgb("#64748B") },
+      )
+      content(
+        p,
+        text(size: 9pt, weight: "bold", fill: if lit { white } else { rgb("#1E293B") }, id),
+      )
+      let (off, anc) = w-spec.at(id)
+      content(
+        (p.at(0) + off.at(0), p.at(1) + off.at(1)),
+        anchor: anc,
+        text(size: 7.8pt, fill: rgb("#475569"))[$w=#weights.at(id)$],
+      )
+    }
+
+    // 右下紧凑图例（统一左对齐，与上方节点留足垂直间距）
+    let lx = 5.45
+    let ly = -0.35
+    line((lx, ly), (lx + 0.55, ly), stroke: 1.8pt + rgb("#0B6989"))
+    content((lx + 0.72, ly), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[重链路径])
+    line((lx, ly - 0.42), (lx + 0.55, ly - 0.42), stroke: (paint: rgb("#94A3B8"), thickness: 0.9pt, dash: "densely-dashed"))
+    content((lx + 0.72, ly - 0.42), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[普通轻边])
+    circle((lx + 0.28, ly - 0.84), radius: 0.14, fill: rgb("#0B6989"), stroke: none)
+    content((lx + 0.72, ly - 0.84), anchor: "west", text(size: 7.8pt, fill: rgb("#334155"))[点亮信标])
+  })
+}))
 ```
 
 请你求出在满足**互不相邻约束**的前提下，所有被点亮信标的能量之和的最大值。
@@ -699,7 +696,7 @@ memory = "512MB"
 ]
 ```
 
-### 状态转移方程
+## 状态转移方程
 
 ```typst
 #import "@preview/pinit:0.2.2": *
@@ -729,7 +726,7 @@ memory = "512MB"
 })
 ```
 
-### 参考代码
+## 参考代码
 
 ```cpp
 #include <algorithm>
@@ -810,12 +807,14 @@ memory = "512MB"
 ```typst
 #import "@preview/cetz:0.5.3"
 
-#align(center, block(breakable: false, inset: (y: 4pt), grid(
+#align(center, block(breakable: false, inset: (y: 4pt), {
+  set text(size: 8.5pt)
+  grid(
   columns: (auto, auto),
   column-gutter: 18pt,
   align: center + horizon,
   // 左图：带权有向图与最短路高亮
-  cetz.canvas(length: 0.92cm, {
+  cetz.canvas(length: 0.9cm, {
     import cetz.draw: *
     set-style(
       stroke: (thickness: 0.75pt, paint: rgb("#71717A")),
@@ -892,23 +891,30 @@ memory = "512MB"
     content((4.9, -0.25), text(size: 8pt, fill: rgb("#52525B"))[$x$])
     content((-0.28, 3.55), text(size: 8pt, fill: rgb("#52525B"))[$y$])
 
-    let hull = ((0.6, 0.8), (2.4, 0.4), (4.1, 1.5), (3.4, 2.9), (1.3, 2.7))
+    let hull = ((0.8, 0.9), (2.4, 0.65), (4.1, 1.55), (3.4, 2.9), (1.35, 2.7))
     line(..hull, close: true, fill: rgb("#0B6989").transparentize(86%), stroke: 1.2pt + rgb("#0B6989"))
 
-    for pt in ((1.8, 1.6), (2.7, 1.4), (2.2, 2.1)) {
+    for pt in ((1.85, 1.65), (2.75, 1.5), (2.25, 2.15)) {
       circle(pt, radius: 0.08, fill: rgb("#A1A1AA"), stroke: none)
     }
     let labels = ($P_1$, $P_2$, $P_3$, $P_4$, $P_5$)
-    let offsets = ((-0.32, -0.22), (0.05, -0.32), (0.35, -0.05), (0.28, 0.24), (-0.28, 0.24))
+    let label-specs = (
+      ((-0.18, -0.05), "east"),
+      ((0.0, 0.18), "south"),
+      ((0.18, 0.0), "west"),
+      ((0.15, 0.16), "south-west"),
+      ((-0.15, 0.16), "south-east"),
+    )
     for (idx, pt) in hull.enumerate() {
       circle(pt, radius: 0.1, fill: rgb("#0B6989"), stroke: white + 0.7pt)
-      let off = offsets.at(idx)
+      let (off, anc) = label-specs.at(idx)
       content((pt.at(0) + off.at(0), pt.at(1) + off.at(1)),
+        anchor: anc,
         text(size: 8pt, fill: rgb("#09546D"), labels.at(idx)))
     }
     content((2.3, -0.7), text(size: 8.5pt, fill: rgb("#52525B"))[平面点集凸包（Andrew 算法）])
   }),
-)))
+)}))
 ```
 
 ### 2. Pinit 公式精准高亮与箭头标注
@@ -1042,6 +1048,8 @@ Typst 内置图灵完备的脚本语言：用几行 `for` 循环与递归/函数
   在题解中同样可以直接 `#import "@preview/cetz:0.5.3"` 绘制状态转移图，或用 `#import "@preview/pinit:0.2.2": *` 对关键递推式做逐步批注。
 ]
 ```
+
+## 参考代码
 
 ```cpp
 #include <iostream>

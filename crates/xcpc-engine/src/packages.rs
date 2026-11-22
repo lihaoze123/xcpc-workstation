@@ -2,8 +2,9 @@
 //!
 //! Loading order for `VirtualRoot::Package(spec)`:
 //! 1. Built-in offline fallback bundles (`@preview/cetz:0.5.3`, `@preview/oxifmt:1.0.0`,
-//!    `@preview/pinit:0.2.2`) so the example workspace and common drawing/annotation
-//!    packages compile instantaneously and deterministically even without internet access.
+//!    `@preview/pinit:0.2.2`, `@preview/mannot:0.4.0`, `@preview/tiptoe:0.4.0`) so the
+//!    example workspace and common drawing/annotation packages compile instantaneously
+//!    and deterministically even without internet access.
 //! 2. Standard Typst package directories (`TYPST_PACKAGE_PATH` / `$XDG_DATA_HOME/typst/packages`
 //!    for `@local`, `TYPST_PACKAGE_CACHE_PATH` / `$XDG_CACHE_HOME/typst/packages` for cached
 //!    `@preview` packages).
@@ -143,10 +144,12 @@ impl ConfigurableDownloader {
     }
 
     fn is_offline() -> bool {
-        matches!(
-            std::env::var("XCPC_OFFLINE").ok().as_deref(),
-            Some("1" | "true" | "TRUE" | "yes")
-        )
+        std::env::var("XCPC_OFFLINE").ok().is_some_and(|v| {
+            let trimmed = v.trim();
+            trimmed == "1"
+                || trimmed.eq_ignore_ascii_case("true")
+                || trimmed.eq_ignore_ascii_case("yes")
+        })
     }
 }
 
@@ -195,6 +198,10 @@ pub(crate) fn load_package_file(spec: &PackageSpec, vpath: &VirtualPath) -> File
     root.load(vpath)
 }
 
+fn strip_utf8_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// Loads a Typst [`Source`] from a package.
 ///
 /// Immutable `@preview` sources are cached process-wide so repeated live-preview
@@ -208,13 +215,13 @@ pub(crate) fn load_package_source(id: FileId, spec: &PackageSpec) -> FileResult<
             return Ok(source);
         }
         let bytes = load_package_file(spec, id.vpath())?;
-        let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
+        let text = strip_utf8_bom(std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?);
         let source = Source::new(id, text.into());
         cache.lock().unwrap().insert(id, source.clone());
         return Ok(source);
     }
 
     let bytes = load_package_file(spec, id.vpath())?;
-    let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
+    let text = strip_utf8_bom(std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?);
     Ok(Source::new(id, text.into()))
 }

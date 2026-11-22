@@ -292,7 +292,7 @@
   set par(leading: 0pt, spacing: if chinese { 0pt } else { 0.43em }, justify: true, first-line-indent: (amount: parindent, all: true))
   set text(font: with-cjk("Latin Modern Roman 12", cjk-song), size: sizes.normal)
   show raw.where(block: false): set text(font: mono-font, size: sizes.normal)
-  show raw.where(block: true): set text(font: code-font, size: sizes.normal)
+  show raw.where(block: true): set text(font: code-font, size: sizes.normal, ligatures: false, features: (calt: 0))
   // ctex's founder fontset: CJK bold is FZ Hei, CJK italic FZ Kai.
   show strong: set text(font: with-cjk("Latin Modern Roman 12", cjk-hei))
   show emph: set text(font: with-cjk("Latin Modern Roman 12", cjk-kai))
@@ -322,8 +322,8 @@
   // Clean academic three-line table defaults for body Markdown tables (samples/cover pass explicit stroke & inset).
   set table(
     stroke: (_, y) => (
-      top: if y == 0 { 0.85pt + black } else if y == 1 { 0.45pt + black } else { none },
-      bottom: 0.85pt + black,
+      top: if y == 0 { 0.9pt + black } else if y == 1 { 0.45pt + black } else { none },
+      bottom: none,
     ),
     inset: (x: 10pt, y: 4.5pt),
   )

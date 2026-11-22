@@ -145,8 +145,8 @@
 
 #let section(key, title: none) = {
   let heading-text = if title != none { title } else { word(key) }
-  v(10pt, weak: true)
-  block(breakable: false, sticky: true, below: 6pt)[
+  v(13pt, weak: true)
+  block(breakable: false, sticky: true, below: 8pt)[
     #set par(first-line-indent: 0pt)
     #context if lang-state.get() == "chinese" {
       pad(left: 1.5em, text(font: hei-font, weight: "regular", size: size-xiaosi)[【#heading-text】])
@@ -164,15 +164,15 @@
     rect(
       width: 100%,
       stroke: 0.5pt + rgb("#0000ff"),
-      inset: (x: 6pt, y: 0.55em),
+      inset: (x: 8pt, y: 0.65em),
       {
-        set par(first-line-indent: 0pt, leading: 0.55em, spacing: 0.25em)
+        set par(first-line-indent: 0pt, leading: 0.65em, spacing: 0.3em)
         for (idx, ln) in lines.enumerate() {
-          block(above: 0pt, below: if idx + 1 < lines.len() { 0.25em } else { 0pt }, grid(
+          block(above: 0pt, below: if idx + 1 < lines.len() { 0.3em } else { 0pt }, grid(
             columns: (0em, 1fr),
             align: (right + horizon, left + horizon),
             move(
-              dx: -1.1em,
+              dx: -1.25em,
               text(font: song-font, size: 0.8em, fill: luma(45%), str(idx + 1)),
             ),
             text(font: mono-font, size: size-xiaosi, raw(if ln == "" { " " } else { ln })),
@@ -188,8 +188,8 @@
   for (idx, pair) in list.enumerate() {
     let n = idx + 1
     let (inp, out) = pair
-    v(8pt, weak: true)
-    block(breakable: false, sticky: true, below: 5pt)[
+    v(11pt, weak: true)
+    block(breakable: false, sticky: true, below: 7pt)[
       #set par(first-line-indent: 0pt)
       #context if lang-state.get() == "chinese" {
         pad(left: 1.5em, text(font: hei-font, weight: "regular", size: size-xiaosi)[【样例 #n 输入】])
@@ -198,8 +198,8 @@
       }
     ]
     cnoi-sample-box(inp)
-    v(6pt, weak: true)
-    block(breakable: false, sticky: true, below: 5pt)[
+    v(10pt, weak: true)
+    block(breakable: false, sticky: true, below: 7pt)[
       #set par(first-line-indent: 0pt)
       #context if lang-state.get() == "chinese" {
         pad(left: 1.5em, text(font: hei-font, weight: "regular", size: size-xiaosi)[【样例 #n 输出】])
@@ -208,7 +208,7 @@
       }
     ]
     cnoi-sample-box(out)
-    v(4pt, weak: true)
+    v(6pt, weak: true)
   }
 }
 
@@ -317,7 +317,7 @@
         inset: (x: 6pt, y: 4.5pt),
         stroke: 0.4pt + black,
         align: left + horizon,
-        [#word("for-cpp-left") #h(1fr) #word("for-cpp-right")],
+        [#word("for-cpp-left") #word("for-cpp-right")],
         ..rows.map(r => raw(derive-slug(r.input, r.output, r.label) + ".cpp")),
       )
 
@@ -329,7 +329,7 @@
         inset: (x: 6pt, y: 4.5pt),
         stroke: 0.4pt + black,
         align: (left + horizon, center + horizon),
-        [#word("for-cpp-left") #h(1fr) #word("for-cpp-right")],
+        [#word("for-cpp-left") #word("for-cpp-right")],
         table.cell(colspan: n, raw("-O2 -std=c++14 -static")),
       )
 
@@ -352,11 +352,61 @@
   pagebreak(weak: true)
 }
 
+#let editorial-cover(name, location, date, author) = {
+  set par(first-line-indent: 0pt)
+  v(42pt)
+  align(center)[
+    #text(font: hei-font, weight: "regular", size: size-er)[#name]
+    #v(10pt)
+    #text(font: hei-font, weight: "regular", size: size-xiaoer)[参考题解]
+    #if location != none and location != "" {
+      v(10pt)
+      text(font: kai-font, size: size-xiaosan)[#location]
+    }
+    #if author != none and author != "" {
+      v(6pt)
+      text(font: song-font, size: size-si)[#author]
+    }
+    #if date != none and date != "" {
+      v(8pt)
+      text(font: song-font, size: size-xiaosi, fill: luma(35%))[时间：#date]
+    }
+  ]
+  v(28pt)
+  context {
+    let probs = query(selector(<xcpc-problem>))
+    if probs.len() > 0 {
+      set text(size: size-wu)
+      align(center, table(
+        columns: (4em, 1fr, 5em),
+        inset: (x: 10pt, y: 6pt),
+        stroke: (x, y) => (
+          top: if y == 0 { 1.2pt + black } else if y == 1 { 0.6pt + black } else { none },
+          bottom: none,
+        ),
+        align: (center + horizon, left + horizon, right + horizon),
+        table.header([*题号*], [*题目名称*], [*页码*]),
+        ..probs.map(el => {
+          let pg = el.location().page()
+          let v = el.value
+          (
+            [#v.label],
+            link(el.location(), [#v.title]),
+            link(el.location(), [第 #pg 页]),
+          )
+        }).flatten(),
+        table.hline(stroke: 1.2pt + black),
+      ))
+    }
+  }
+  pagebreak(weak: true)
+}
+
 #let tutorial(label: none, title: none, meta: (), body) = {
   pagebreak(weak: true)
   let heading-display = if label != none and label != "" { [#title（#label）] } else { [#title] }
   current-problem-state.update(heading-display)
-  block(breakable: false, sticky: true, below: 10pt)[
+  block(width: 100%, breakable: false, sticky: true, below: 12pt)[
     #set par(first-line-indent: 0pt)
     #metadata((label: label, title: title, display: heading-display)) <xcpc-problem>
     #align(center)[
@@ -373,15 +423,15 @@
 }
 
 #let subsection(title) = {
-  v(8pt, weak: true)
-  block(breakable: false, sticky: true, below: 4pt)[
+  v(10pt, weak: true)
+  block(width: 100%, breakable: false, sticky: true, below: 5pt)[
     #set par(first-line-indent: 0pt)
-    #pad(left: 1.5em, text(font: hei-font, weight: "regular", size: size-xiaosi)[#title])
+    #text(font: hei-font, weight: "regular", size: size-xiaosi)[#title]
   ]
 }
 
 #let runin(title) = {
-  strong(title)
+  text(font: hei-font, weight: "regular", title)
   h(0.8em)
 }
 
@@ -453,13 +503,13 @@
     spacing: 0.6em,
     first-line-indent: if lang == "chinese" { (amount: 2em, all: true) } else { 0pt },
   )
-  set list(indent: 1.75em, marker: ([•], [◦], [▪]))
-  set enum(indent: 1.75em)
+  set list(indent: 2em, marker: ([•], [◦], [▪]))
+  set enum(indent: 2em)
 
   show emph: set text(font: kai-font)
   show strong: it => {
     set text(font: hei-font, weight: "regular")
-    if lang == "chinese" {
+    if lang == "chinese" and book == "statements" {
       show regex("\p{sc=Hani}+"): s => {
         underline(
           s,
@@ -476,10 +526,18 @@
       it
     }
   }
+  show heading: it => {
+    show underline: u => u.body
+    it
+  }
+  show block.where(sticky: true): it => {
+    show underline: u => u.body
+    it
+  }
   show math.equation: set text(font: "Latin Modern Math", size: size-xiaosi)
   show raw.where(block: false): set text(font: mono-font, size: size-xiaosi)
   show raw.where(block: true): it => {
-    set text(font: code-font, size: 9.5pt)
+    set text(font: code-font, size: 9.5pt, ligatures: false, features: (calt: 0))
     set par(first-line-indent: 0pt, leading: 0.55em)
     block(
       width: 100%,
@@ -501,14 +559,21 @@
     inset: (x: 8pt, y: 4.5pt),
     align: center + horizon,
   )
-  show table: it => align(center, it)
+  show table: it => {
+    show underline: u => u.body
+    pad(y: 4pt, align(center, it))
+  }
 
   lang-state.update(lang)
   blank-state.update(blank-pages)
   cover-state.update(show-cover)
 
   if show-cover {
-    cover(name, location, date, author)
+    if book == "editorial" {
+      editorial-cover(name, location, date, author)
+    } else {
+      cover(name, location, date, author)
+    }
   }
 
   body
