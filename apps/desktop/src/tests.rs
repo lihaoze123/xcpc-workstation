@@ -2346,3 +2346,53 @@ fn template_presets_contest_local_and_image_bridge() {
     assert!(!dir.0.join("contests/round1/template.typ").exists());
     assert!(!preview.contest_detail("round1".into()).has_contest_template);
 }
+
+#[test]
+fn duplicate_problem_and_contest_archive_bridge() {
+    let (_dir, preview) = init_temp_preview("spec3-bridge");
+    assert!(preview.create_problem("two-sum".into(), "两数之和".into()).ok);
+
+    // Duplicate problem with custom title.
+    let dup = preview.duplicate_problem(
+        "two-sum".into(),
+        "two-sum-copy".into(),
+        Some("两数之和（副本）".into()),
+    );
+    assert!(dup.ok, "duplicate_problem failed: {:?}", dup.error);
+    let ws = preview.workspace();
+    assert!(ws.problems.iter().any(|p| p.id == "two-sum-copy" && p.title == "两数之和（副本）"));
+
+    // Conflict on duplicate target ID.
+    let conflict = preview.duplicate_problem("two-sum".into(), "two-sum-copy".into(), None);
+    assert!(!conflict.ok);
+    assert_eq!(conflict.code.as_deref(), Some("conflict"));
+
+    // Create two contests and archive one.
+    assert!(preview.create_contest("alpha".into(), "Alpha Contest".into()).ok);
+    assert!(preview.create_contest("beta".into(), "Beta Contest".into()).ok);
+    assert!(!preview.contest_detail("alpha".into()).archived);
+
+    let arch = preview.set_contest_archived("alpha".into(), true);
+    assert!(arch.ok, "archive failed: {:?}", arch.error);
+    assert!(preview.contest_detail("alpha".into()).archived);
+    assert!(preview.workspace().contests.iter().find(|c| c.id == "alpha").unwrap().archived);
+
+    // Writes to an archived contest return `contest_archived`.
+    let blocked = preview.compose_contest("alpha".into(), vec!["two-sum".into()]);
+    assert!(!blocked.ok);
+    assert_eq!(blocked.code.as_deref(), Some("contest_archived"));
+
+    // Fuzzy jump still finds archived contest, flags it, and ranks active contests higher.
+    let hits = preview.fuzzy_jump("contest".into(), None);
+    let alpha_pos = hits.iter().position(|h| h.kind == "contest" && h.id == "alpha").unwrap();
+    let beta_pos = hits.iter().position(|h| h.kind == "contest" && h.id == "beta").unwrap();
+    assert!(hits[alpha_pos].archived);
+    assert!(!hits[beta_pos].archived);
+    assert!(beta_pos < alpha_pos);
+
+    // Unarchive restores writability.
+    let unarch = preview.set_contest_archived("alpha".into(), false);
+    assert!(unarch.ok);
+    assert!(!preview.contest_detail("alpha".into()).archived);
+    assert!(preview.compose_contest("alpha".into(), vec!["two-sum".into()]).ok);
+}

@@ -582,6 +582,9 @@ pub fn freeze_contest(
         return Err(Error::ReadOnly);
     }
     let contest = ws.load_contest(contest_id)?;
+    if contest.meta.archived {
+        return Err(Error::Archived(contest_id.to_owned()));
+    }
     if contest.meta.frozen {
         return Err(Error::AlreadyFrozen(contest_id.to_owned()));
     }

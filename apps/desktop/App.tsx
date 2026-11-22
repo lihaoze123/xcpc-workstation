@@ -26,6 +26,7 @@ import {
   hasWorkspace,
   hydrateAppearancePrefs,
   info,
+  jumpToContest,
   newWorkspaceModalOpen,
   openError,
   openRecent,
@@ -338,12 +339,7 @@ function App() {
             </View>
           </If>
         </View>
-        <Dialogs
-          onJumpContest={(contestId) => {
-            selectedContest.set(contestId);
-            goSpace("contests");
-          }}
-        />
+        <Dialogs onJumpContest={(contestId) => jumpToContest(contestId)} />
         <UnfreezeDialog />
         <CommandPalette />
       </If>

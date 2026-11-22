@@ -753,3 +753,151 @@ fn init_example_and_output_override_and_human_error_messages() {
     assert_eq!(tsj["template"]["id"], "my-min");
     assert_eq!(tsj["template"]["path"], "templates/my-min.typ");
 }
+
+#[test]
+fn problem_duplicate_and_contest_archive_cli_and_read_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("ws");
+    assert_eq!(
+        run_xcpc(
+            None,
+            &["--json", "init", "--example", target.to_str().unwrap()],
+            None,
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+
+    // 1. `xcpc problem duplicate crc-check crc-copy --title "新标题" --json`
+    let dup = run_xcpc(
+        Some(&target),
+        &[
+            "--json",
+            "problem",
+            "duplicate",
+            "crc-check",
+            "crc-copy",
+            "--title",
+            "新标题",
+        ],
+        None,
+    );
+    assert_eq!(dup.status.code(), Some(0));
+    let dj = parse_json_stdout(&dup);
+    assert_eq!(dj["ok"], true);
+    assert_eq!(dj["source_id"], "crc-check");
+    assert_eq!(dj["id"], "crc-copy");
+    assert_eq!(dj["title"], "新标题");
+    assert_eq!(dj["path"], "problems/crc-copy");
+    assert!(target.join("problems/crc-copy/statement.md").is_file());
+    assert!(target.join("problems/crc-copy/samples/01.in").is_file());
+
+    // Duplicate into same ID -> conflict (exit 2).
+    let dup_conflict = run_xcpc(
+        Some(&target),
+        &["--json", "problem", "duplicate", "crc-check", "crc-copy"],
+        None,
+    );
+    assert_eq!(dup_conflict.status.code(), Some(2));
+    assert_eq!(
+        parse_json_stdout(&dup_conflict)["error"]["code"],
+        "conflict"
+    );
+
+    // Read-only refuses duplicate.
+    let dup_ro = run_xcpc(
+        Some(&target),
+        &[
+            "--read-only",
+            "--json",
+            "problem",
+            "duplicate",
+            "crc-check",
+            "crc-ro",
+        ],
+        None,
+    );
+    assert_eq!(dup_ro.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&dup_ro)["error"]["code"], "read_only");
+
+    // 2. `xcpc contest archive welcome-round --json`
+    let arch = run_xcpc(
+        Some(&target),
+        &["--json", "contest", "archive", "welcome-round"],
+        None,
+    );
+    assert_eq!(arch.status.code(), Some(0));
+    let aj = parse_json_stdout(&arch);
+    assert_eq!(aj["ok"], true);
+    assert_eq!(aj["id"], "welcome-round");
+    assert_eq!(aj["archived"], true);
+    assert_eq!(aj["frozen"], false);
+
+    // `xcpc list --json` and `xcpc show contest welcome-round --json` expose `archived: true`.
+    let listed = run_xcpc(Some(&target), &["--json", "list"], None);
+    assert_eq!(listed.status.code(), Some(0));
+    let lj = parse_json_stdout(&listed);
+    let wr = lj["contests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "welcome-round")
+        .unwrap();
+    assert_eq!(wr["archived"], true);
+
+    let shown = run_xcpc(
+        Some(&target),
+        &["--json", "show", "contest", "welcome-round"],
+        None,
+    );
+    assert_eq!(shown.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&shown)["archived"], true);
+
+    // Archived contest refuses compose (`contest_archived`).
+    let blocked = run_xcpc(
+        Some(&target),
+        &[
+            "--json",
+            "contest",
+            "compose",
+            "welcome-round",
+            "crc-check",
+        ],
+        None,
+    );
+    assert_eq!(blocked.status.code(), Some(2));
+    assert_eq!(
+        parse_json_stdout(&blocked)["error"]["code"],
+        "contest_archived"
+    );
+
+    // Read-only refuses unarchive.
+    let ro_unarch = run_xcpc(
+        Some(&target),
+        &[
+            "--read-only",
+            "--json",
+            "contest",
+            "unarchive",
+            "welcome-round",
+        ],
+        None,
+    );
+    assert_eq!(ro_unarch.status.code(), Some(2));
+    assert_eq!(
+        parse_json_stdout(&ro_unarch)["error"]["code"],
+        "read_only"
+    );
+
+    // 3. `xcpc contest unarchive welcome-round --json`
+    let unarch = run_xcpc(
+        Some(&target),
+        &["--json", "contest", "unarchive", "welcome-round"],
+        None,
+    );
+    assert_eq!(unarch.status.code(), Some(0));
+    let uj = parse_json_stdout(&unarch);
+    assert_eq!(uj["ok"], true);
+    assert_eq!(uj["archived"], false);
+}

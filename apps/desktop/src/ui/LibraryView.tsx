@@ -27,6 +27,7 @@ import {
   dialog,
   goSpace,
   info,
+  jumpToContest,
   openStudio,
   preview,
   revision,
@@ -447,6 +448,7 @@ export function LibraryView(props: { active: boolean }) {
                           }
                         },
                       },
+                      { label: "复制题目…", disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
                       { label: "加入比赛…", disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
                       { label: "在文件夹中显示", onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
                       { type: "separator" },
@@ -600,8 +602,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
   const readOnly = () => info().readOnly;
 
   const jumpContest = (contestId: string) => {
-    selectedContest.set(contestId);
-    goSpace("contests");
+    jumpToContest(contestId);
   };
 
   return (
@@ -705,6 +706,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                 align="end"
                 entries={[
                   { id: "copyMd", label: "复制带样例的 Markdown", icon: "copy" },
+                  { id: "duplicate", label: "复制题目…", icon: "copy", disabled: readOnly() },
                   { id: "add", label: "加入比赛…", icon: "listPlus", disabled: readOnly() },
                   { id: "reveal", label: "在文件夹中显示", icon: "folderOpen" },
                   { separator: true, id: "sep" },
@@ -717,7 +719,8 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                     } catch {
                       // Ignore errors when problem files are unreadable.
                     }
-                  } else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
+                  } else if (id === "duplicate") dialog.set({ kind: "duplicateProblem", problemId: props.id });
+                  else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
                   else if (id === "reveal") void preview.revealInFolder(`problems/${props.id}`);
                   else if (id === "delete") dialog.set({ kind: "deleteProblem", problemId: props.id });
                 }}

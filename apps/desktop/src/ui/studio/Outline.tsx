@@ -7,7 +7,7 @@ import { computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { ContestDetailJs, PreviewStart } from "xcpc-workstation/native";
 import { ContestStats } from "../Contest";
 import { Icon } from "../Icon";
-import { tip } from "../kit";
+import { Btn, tip } from "../kit";
 import { labels, moveItem } from "../logic";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
@@ -20,9 +20,11 @@ export function Outline(props: {
   starts: readonly PreviewStart[];
   current: string | undefined;
   coverActive?: boolean;
+  readOnly?: boolean;
   onSelect: (label: string) => void;
   onCover: () => void;
   onReorder: (ids: string[]) => boolean;
+  onPickProblems?: () => void;
 }) {
   // The order as dropped, until the contest reads back the same.
   const pending = signal<string[] | undefined>(undefined);
@@ -55,7 +57,8 @@ export function Outline(props: {
 
   const startOf = (id: string) => props.starts.find((s) => s.id === id);
   const frozen = () => props.detail.frozen;
-  const canDrag = () => !frozen() && items().length > 1;
+  const locked = () => frozen() || props.detail.archived || !!props.readOnly;
+  const canDrag = () => !locked() && items().length > 1;
 
   return (
     <View
@@ -112,6 +115,17 @@ export function Outline(props: {
           </If>
         </View>
       </Scroll>
+      <If when={!locked() && !!props.onPickProblems}>
+        <View style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 6, paddingBottom: 8 }}>
+          <Btn
+            label="从题库挑题"
+            icon="listPlus"
+            size="sm"
+            onPress={() => props.onPickProblems?.()}
+            testID="outline-pick-problems"
+          />
+        </View>
+      </If>
       <If when={props.detail.items.length > 0}>
         <View style={{ padding: 12, borderTopWidth: 1, overflow: "hidden" }} class="border-border">
           <ContestStats id={props.detail.id} compact />

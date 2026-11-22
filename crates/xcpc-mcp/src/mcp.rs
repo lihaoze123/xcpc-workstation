@@ -144,10 +144,13 @@ impl Server {
             "get_problem" => self.tool_get_problem(obj),
             "get_contest" => self.tool_get_contest(obj),
             "write_problem" => self.tool_write_problem(obj),
+            "duplicate_problem" => self.tool_duplicate_problem(obj),
             "compose_contest" => self.tool_compose_contest(obj),
             "set_override" => self.tool_set_override(obj),
             "set_template_options" => self.tool_set_template_options(obj),
             "freeze_contest" => self.tool_freeze_contest(obj),
+            "archive_contest" => self.tool_set_contest_archived(obj, true),
+            "unarchive_contest" => self.tool_set_contest_archived(obj, false),
             _ => Err(None),
         }
     }
@@ -603,6 +606,57 @@ impl Server {
         }
     }
 
+    fn tool_duplicate_problem(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(args, &["source_id", "new_id", "title"], "duplicate_problem")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let source_id = req_str(args, "source_id").map_err(|m| fail("invalid_arguments", m))?;
+        let new_id = req_str(args, "new_id").map_err(|m| fail("invalid_arguments", m))?;
+        let title = opt_str(args, "title").map_err(|m| fail("invalid_arguments", m))?;
+        let problem = self
+            .ws
+            .duplicate_problem(&source_id, &new_id, title.as_deref())
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let statements: Vec<String> = problem
+            .statements
+            .iter()
+            .map(|s| s.file.path.clone())
+            .collect();
+        Ok(structured(json!({
+            "ok": true,
+            "source_id": source_id,
+            "id": problem.id,
+            "title": problem.meta.title,
+            "path": problem.dir,
+            "statements": statements,
+            "samples": problem.samples.len(),
+            "has_editorial": problem.editorial.is_some(),
+        })))
+    }
+
+    fn tool_set_contest_archived(
+        &mut self,
+        args: &Map<String, Value>,
+        archived: bool,
+    ) -> Result<Value, ToolErr> {
+        let tool_name = if archived {
+            "archive_contest"
+        } else {
+            "unarchive_contest"
+        };
+        reject_unknown_keys(args, &["id"], tool_name).map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let meta = self
+            .ws
+            .set_contest_archived(&id, archived)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(json!({
+            "ok": true,
+            "id": id,
+            "archived": meta.archived,
+            "frozen": meta.frozen,
+        })))
+    }
+
     fn tool_freeze_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
         let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
         let outcome = publish::freeze_contest(&self.ws, &mut self.engine, &id)
@@ -628,10 +682,13 @@ fn is_known_tool(name: &str) -> bool {
             | "get_problem"
             | "get_contest"
             | "write_problem"
+            | "duplicate_problem"
             | "compose_contest"
             | "set_override"
             | "set_template_options"
             | "freeze_contest"
+            | "archive_contest"
+            | "unarchive_contest"
     )
 }
 
@@ -990,6 +1047,22 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
         },
         {
+            "name": "duplicate_problem",
+            "title": "Duplicate problem",
+            "description": "Recursively copy an existing problem directory (`problems/<source_id>/`) into a new problem slug (`problems/<new_id>/`), optionally updating its title while preserving `problem.toml` comments and unknown fields.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_id": { "type": "string", "description": "Existing source problem ID." },
+                    "new_id": { "type": "string", "description": "New problem ID (lowercase slug under problems/)." },
+                    "title": { "type": "string", "description": "Optional new problem title (defaults to source title)." },
+                },
+                "required": ["source_id", "new_id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
+        {
             "name": "compose_contest",
             "title": "Compose contest",
             "description": "Create or update a contest's ordered problem list (max 26, labelled A..Z) and optional metadata. \
@@ -1093,6 +1166,34 @@ fn tools() -> Value {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
         },
+        {
+            "name": "archive_contest",
+            "title": "Archive contest",
+            "description": "Mark a contest as archived (read-only until unarchived; orthogonal to frozen status). Idempotent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID to archive." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "unarchive_contest",
+            "title": "Unarchive contest",
+            "description": "Remove the archived flag from a contest, restoring its previous editable or frozen state. Idempotent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID to unarchive." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
     ])
 }
 
@@ -1149,10 +1250,13 @@ mod tests {
                 "get_problem",
                 "get_contest",
                 "write_problem",
+                "duplicate_problem",
                 "compose_contest",
                 "set_override",
                 "set_template_options",
                 "freeze_contest",
+                "archive_contest",
+                "unarchive_contest",
             ]
         );
         assert!(

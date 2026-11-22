@@ -199,6 +199,7 @@ export function StudioView(props: { active: boolean }) {
   const item = computed(() => contest()?.items.find((i) => i.label === label()));
   const problemId = computed(() => (target()?.target === "problem" ? target()!.id : item()?.id));
   const frozen = computed(() => !!contest()?.frozen);
+  const archived = computed(() => !!contest()?.archived);
   const paths = computed(() => {
     const t = target();
     if (!t) return undefined;
@@ -819,6 +820,7 @@ export function StudioView(props: { active: boolean }) {
         toggleFocusMode,
         focusMode: () => focusMode(),
         frozen: () => frozen(),
+        archived: () => archived(),
         isContest: () => target()?.target === "contest",
       };
       studioActions.set(nextActions);
@@ -840,7 +842,7 @@ export function StudioView(props: { active: boolean }) {
     const it = item();
     return it ? `${it.label}. ${it.title}` : "";
   };
-  const readOnly = () => !!file()?.readOnly || frozen();
+  const readOnly = () => !!file()?.readOnly || frozen() || archived();
   const editorPlaceholder = () =>
     tab() === "editorial"
       ? "输入 / 快速插入内容，支持 Markdown 与 LaTeX 公式…"
@@ -920,12 +922,17 @@ export function StudioView(props: { active: boolean }) {
               starts={starts()}
               current={label()}
               coverActive={coverActive()}
+              readOnly={info().readOnly}
               onSelect={(l) => selectLabel(l)}
               onCover={() => {
                 coverActive.set(true);
                 canvas?.goPage(0);
               }}
               onReorder={compose}
+              onPickProblems={() => {
+                const cid = contest()?.id;
+                if (cid) dialog.set({ kind: "pickProblems", contestId: cid });
+              }}
             />
           </View>
         </If>
@@ -1156,7 +1163,7 @@ export function StudioView(props: { active: boolean }) {
                           maxWidth: previewHidden() ? 760 : undefined,
                         }}
                       >
-                        <Samples problemId={id()} readOnly={frozen() || info().readOnly} onSaved={compileNow} />
+                        <Samples problemId={id()} readOnly={frozen() || archived() || info().readOnly} onSaved={compileNow} />
                       </View>
                     </View>
                   )}
@@ -1234,7 +1241,7 @@ export function StudioView(props: { active: boolean }) {
               target={target()!.target}
               id={target()!.id}
               label={item()?.label}
-              readOnly={info().readOnly || frozen()}
+              readOnly={info().readOnly || frozen() || archived()}
               hasTypstBlock={assetsHasTypstBlock()}
               refreshSeq={assetsRefreshSeq()}
               onClose={() => assetsOpen.set(false)}

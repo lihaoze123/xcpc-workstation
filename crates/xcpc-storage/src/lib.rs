@@ -92,6 +92,8 @@ pub enum Error {
     PathEscape(String),
     #[error("contest {0:?} is frozen: it and its snapshot are read-only")]
     Frozen(String),
+    #[error("contest {0:?} is archived: it is read-only until unarchived")]
+    Archived(String),
     #[error("the workspace is open read-only")]
     ReadOnly,
     #[error("{path}: {message}")]
@@ -128,6 +130,7 @@ impl Error {
             Error::InvalidId(_) => "invalid_id",
             Error::PathEscape(_) => "path_escape",
             Error::Frozen(_) => "contest_frozen",
+            Error::Archived(_) => "contest_archived",
             Error::ReadOnly => "read_only",
             Error::Invalid { .. } => "invalid_file",
             Error::Io { .. } => "io",
@@ -154,6 +157,9 @@ impl Error {
             }
             Error::Frozen(id) => {
                 format!("比赛「{id}」已定稿，当前只读。如需修改，请先「重新编辑」并确认。")
+            }
+            Error::Archived(id) => {
+                format!("比赛「{id}」已归档，当前只读。如需修改，请先「取消归档」。")
             }
             Error::ReadOnly => "工作区以只读模式打开，无法写入。请关闭只读模式后重试。".to_owned(),
             Error::Invalid { path, message } => {
@@ -738,9 +744,14 @@ impl Workspace {
             let id = id.as_os_str().to_string_lossy();
             if inside.is_some_and(|p| p.components().count() > 1)
                 && check_id(&id).is_ok()
-                && self.load_contest(&id).is_ok_and(|c| c.meta.frozen)
+                && let Ok(c) = self.load_contest(&id)
             {
-                return Err(Error::Frozen(id.into_owned()));
+                if c.meta.archived {
+                    return Err(Error::Archived(id.into_owned()));
+                }
+                if c.meta.frozen {
+                    return Err(Error::Frozen(id.into_owned()));
+                }
             }
         }
         Ok(())

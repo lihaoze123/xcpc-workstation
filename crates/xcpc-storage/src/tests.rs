@@ -1471,3 +1471,233 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
         "read_only"
     );
 }
+
+#[test]
+fn duplicate_problem_copies_tree_preserves_toml_and_enforces_guards() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    // Create a rich source problem with comments, unknown fields, [[source]], [template-options],
+    // samples/, assets/, solutions/.
+    let src_toml = "\
+# leading comment
+title = \"原题标题\"
+rating = 1800
+tags = [\"dp\", \"math\"]
+custom_extra = \"keep-me\"
+
+[limits]
+time = \"2s\"
+memory = \"512MB\"
+
+[[source]]
+platform = \"codeforces\"
+id = \"1999A\"
+
+[template-options.olymp-classic]
+sample-layout = \"wide\"
+";
+    ws.write("problems/src-prob/problem.toml", src_toml.as_bytes())
+        .unwrap();
+    ws.write("problems/src-prob/statement.md", b"Original statement.\n")
+        .unwrap();
+    ws.write("problems/src-prob/editorial.md", b"Original editorial.\n")
+        .unwrap();
+    ws.write("problems/src-prob/samples/01.in", b"1 2\n")
+        .unwrap();
+    ws.write("problems/src-prob/samples/01.ans", b"3\n")
+        .unwrap();
+    ws.write("problems/src-prob/assets/fig.svg", b"<svg/>")
+        .unwrap();
+    ws.write("problems/src-prob/solutions/ac.cpp", b"int main(){}\n")
+        .unwrap();
+
+    // 1. Full copy with new_title preserves comments, unknown fields, sources, options, nested files.
+    let dup = ws
+        .duplicate_problem("src-prob", "src-prob-copy", Some("新题标题"))
+        .unwrap();
+    assert_eq!(dup.id, "src-prob-copy");
+    assert_eq!(dup.meta.title, "新题标题");
+    assert_eq!(dup.meta.rating, Some(1800));
+    assert_eq!(dup.meta.sources.len(), 1);
+    assert_eq!(dup.samples.len(), 1);
+    assert!(dup.editorial.is_some());
+    assert_eq!(
+        ws.read_text("problems/src-prob-copy/assets/fig.svg")
+            .unwrap(),
+        "<svg/>"
+    );
+    assert_eq!(
+        ws.read_text("problems/src-prob-copy/solutions/ac.cpp")
+            .unwrap(),
+        "int main(){}\n"
+    );
+    let copied_toml = ws.read_text("problems/src-prob-copy/problem.toml").unwrap();
+    assert!(copied_toml.contains("# leading comment"));
+    assert!(copied_toml.contains("custom_extra = \"keep-me\""));
+    assert!(copied_toml.contains("sample-layout = \"wide\""));
+
+    // 2. Omitting or blank new_title keeps source title.
+    let dup2 = ws
+        .duplicate_problem("src-prob", "src-prob-copy-2", Some("   "))
+        .unwrap();
+    assert_eq!(dup2.meta.title, "原题标题");
+
+    // 3. Conflict, invalid ID, not found, read-only guards.
+    assert_eq!(
+        ws.duplicate_problem("src-prob", "src-prob-copy", None)
+            .unwrap_err()
+            .code(),
+        "conflict"
+    );
+    assert_eq!(
+        ws.duplicate_problem("src-prob", "Bad ID", None)
+            .unwrap_err()
+            .code(),
+        "invalid_id"
+    );
+    assert_eq!(
+        ws.duplicate_problem("missing-src", "ok-id", None)
+            .unwrap_err()
+            .code(),
+        "not_found"
+    );
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    assert_eq!(
+        ro.duplicate_problem("src-prob", "ro-copy", None)
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+
+    // 4. Symlink inside source problem is rejected with PathEscape and leaves no temp/target dir.
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, b"top-secret").unwrap();
+        std::os::unix::fs::symlink(&secret, dir.path().join("problems/src-prob/assets/leak.txt"))
+            .unwrap();
+        let err = ws
+            .duplicate_problem("src-prob", "symlink-copy", None)
+            .unwrap_err();
+        assert_eq!(err.code(), "path_escape");
+        assert!(!dir.path().join("problems/symlink-copy").exists());
+        let leftover_tmp: Vec<_> = fs::read_dir(dir.path().join("problems"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".dup.tmp-"))
+            .collect();
+        assert!(leftover_tmp.is_empty(), "leftover temp dir: {leftover_tmp:?}");
+    }
+}
+
+#[test]
+fn set_contest_archived_is_idempotent_orthogonal_to_frozen_and_blocks_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.create_problem("p1", "P1").unwrap();
+    ws.compose_contest("c1", &["p1".into()], None).unwrap();
+
+    // Add comment & unknown key to contest.toml to verify toml_edit preserves them.
+    let raw = ws.read_text("contests/c1/contest.toml").unwrap();
+    ws.write(
+        "contests/c1/contest.toml",
+        format!("# contest comment\ncustom_flag = 42\n{raw}").as_bytes(),
+    )
+    .unwrap();
+
+    // 1. Archive & idempotent re-archive.
+    let meta = ws.set_contest_archived("c1", true).unwrap();
+    assert!(meta.archived);
+    assert!(!meta.frozen);
+    let meta_again = ws.set_contest_archived("c1", true).unwrap();
+    assert!(meta_again.archived);
+    let archived_msg = Error::Archived("c1".into()).human_message();
+    assert_eq!(
+        archived_msg,
+        "比赛「c1」已归档，当前只读。如需修改，请先「取消归档」。"
+    );
+
+    // 2. Archived contest blocks all write operations with `contest_archived`.
+    assert_eq!(
+        ws.compose_contest("c1", &["p1".into()], None)
+            .unwrap_err()
+            .code(),
+        "contest_archived"
+    );
+    assert_eq!(
+        ws.update_contest_meta(
+            "c1",
+            &ContestMetaPatch {
+                name: Some("Hack".into()),
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .code(),
+        "contest_archived"
+    );
+    assert_eq!(
+        ws.set_override(
+            "c1",
+            "A",
+            &OverridePatch {
+                title: Patch::Set("Hack".into()),
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .code(),
+        "contest_archived"
+    );
+    assert_eq!(
+        ws.freeze_commit("c1", b"%PDF", None).unwrap_err().code(),
+        "contest_archived"
+    );
+    assert_eq!(
+        ws.detach_contest_template("c1").unwrap_err().code(),
+        "contest_archived"
+    );
+    assert_eq!(
+        ws.write("contests/c1/extra.txt", b"x").unwrap_err().code(),
+        "contest_archived"
+    );
+
+    // 3. Unfrozen archived contest still blocks delete_problem.
+    assert_eq!(
+        ws.delete_problem("p1").unwrap_err().code(),
+        "problem_referenced"
+    );
+
+    // 4. Unarchive removes `archived` key cleanly, preserves comments & unknown keys, idempotent.
+    let unarchived = ws.set_contest_archived("c1", false).unwrap();
+    assert!(!unarchived.archived);
+    let text = ws.read_text("contests/c1/contest.toml").unwrap();
+    assert!(!text.contains("archived"));
+    assert!(text.contains("# contest comment"));
+    assert!(text.contains("custom_flag = 42"));
+    assert!(!ws.set_contest_archived("c1", false).unwrap().archived);
+
+    // 5. Orthogonal to `frozen`: freeze -> archive -> unfreeze blocked -> unarchive -> still frozen.
+    ws.freeze_commit("c1", b"%PDF", None).unwrap();
+    let frozen_archived = ws.set_contest_archived("c1", true).unwrap();
+    assert!(frozen_archived.frozen && frozen_archived.archived);
+    assert_eq!(
+        ws.unfreeze_contest("c1").unwrap_err().code(),
+        "contest_archived"
+    );
+    let restored = ws.set_contest_archived("c1", false).unwrap();
+    assert!(restored.frozen && !restored.archived);
+
+    // 6. Read-only & not_found guards.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    assert_eq!(
+        ro.set_contest_archived("c1", true).unwrap_err().code(),
+        "read_only"
+    );
+    assert_eq!(
+        ws.set_contest_archived("no-such", true).unwrap_err().code(),
+        "not_found"
+    );
+}

@@ -12,6 +12,7 @@ import { Modal } from "./Modal";
 import { shortcutsOpen } from "./ShortcutsModal";
 import { MONO } from "./theme";
 import {
+  archivedExpanded,
   dialog,
   goSettings,
   goSpace,
@@ -22,6 +23,7 @@ import {
   pickWorkspace,
   preview,
   requestNewWorkspace,
+  selectedContest,
   selectedProblem,
   studio,
   studioActions,
@@ -36,6 +38,7 @@ function actions(): Action[] {
   const inStudio = !!target && !!s;
   const contest = inStudio && s!.isContest();
   const frozen = contest && s!.frozen();
+  const archived = contest && s!.archived();
   const list: Action[] = [
     { id: "a:export-statements", icon: "fileDown", label: "导出题面册", keywords: ["pdf", "export"], run: () => s!.exportBook("statements"), when: () => inStudio },
     { id: "a:export-editorial", icon: "fileDown", label: "导出题解册", keywords: ["pdf", "export"], run: () => s!.exportBook("editorial"), when: () => inStudio },
@@ -65,8 +68,8 @@ function actions(): Action[] {
     { id: "a:tab-editorial", icon: "filePenLine", label: "切到题解", shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
     { id: "a:inspector", icon: "panelRight", label: "属性", shortcut: "mod+i", run: () => s!.toggleInspector(), when: () => inStudio },
     { id: "a:assets", icon: "image", label: "素材库", keywords: ["assets", "image", "gallery", "pic", "素材", "图片"], run: () => s!.openAssets(), when: () => inStudio && s!.hasAssets() },
-    { id: "a:freeze", icon: "stamp", label: "定稿比赛", keywords: ["freeze"], run: () => s!.freeze(), when: () => contest && !frozen },
-    { id: "a:unfreeze", icon: "lockOpen", label: "重新编辑已定稿的比赛", keywords: ["unfreeze"], run: () => unfreezeFor.set(target!.id), when: () => contest && !!frozen },
+    { id: "a:freeze", icon: "stamp", label: "定稿比赛", keywords: ["freeze"], run: () => s!.freeze(), when: () => contest && !frozen && !archived },
+    { id: "a:unfreeze", icon: "lockOpen", label: "重新编辑已定稿的比赛", keywords: ["unfreeze"], run: () => unfreezeFor.set(target!.id), when: () => contest && !!frozen && !archived },
     {
       id: "a:add-to-contest",
       icon: "listPlus",
@@ -82,7 +85,7 @@ function actions(): Action[] {
       icon: "plus",
       label: "新建题目",
       shortcut: "mod+n",
-      run: () => dialog.set({ kind: "newProblem", addTo: contest && !frozen ? target!.id : undefined }),
+      run: () => dialog.set({ kind: "newProblem", addTo: contest && !frozen && !archived ? target!.id : undefined }),
       when: hasWorkspace,
     },
     { id: "a:new-contest", icon: "plus", label: "新建比赛", shortcut: "mod+shift+n", run: () => dialog.set({ kind: "newContest" }), when: hasWorkspace },
@@ -167,8 +170,11 @@ function PaletteBody() {
     const hit = jumps().find((h) => `j:${h.visitKey}` === id);
     if (!hit) return;
     if (hit.kind === "problem") openStudio({ target: "problem", id: hit.id });
-    else if (hit.kind === "contest") openStudio({ target: "contest", id: hit.id });
-    else if (hit.contestId) openStudio({ target: "contest", id: hit.contestId, label: hit.label ?? undefined });
+    else if (hit.kind === "contest") {
+      if (hit.archived) archivedExpanded.set(true);
+      selectedContest.set(hit.id);
+      openStudio({ target: "contest", id: hit.id });
+    } else if (hit.contestId) openStudio({ target: "contest", id: hit.contestId, label: hit.label ?? undefined });
   }
 
   const hitOf = (id: string) => jumps().find((h) => `j:${h.visitKey}` === id);
@@ -223,6 +229,13 @@ function PaletteBody() {
             <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 11.5, lineHeight: 20, fontFamily: MONO }} class="text-muted-foreground">
               {meta(entry.id)!}
             </Text>
+          )}
+          {hitOf(entry.id)?.archived && (
+            <View style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", flexShrink: 0 }} class="bg-muted">
+              <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                已归档
+              </Text>
+            </View>
           )}
           <View style={{ flex: 1 }} />
           {entry.shortcut && <Kbd keys={entry.shortcut} faint />}

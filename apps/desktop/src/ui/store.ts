@@ -206,6 +206,7 @@ function adopt(next: WorkspaceInfo, failContext: string) {
       studio.set(undefined);
       selectedProblem.set(undefined);
       selectedContest.set(undefined);
+      archivedExpanded.set(false);
       unfreezeFor.set(undefined);
       dialog.set(undefined);
       paletteOpen.set(false);
@@ -389,16 +390,19 @@ export type StudioActions = {
   openAssets(): void;
   hasAssets(): boolean;
   frozen(): boolean;
+  archived(): boolean;
   isContest(): boolean;
 };
 
 export const studioActions = signal<StudioActions | undefined>(undefined);
 
-/** Requests the views answer: a new problem/contest dialog, adding a problem to a contest, deleting one. */
+/** Requests the views answer: a new/duplicate problem, new contest, adding/picking problems, deleting one. */
 export const dialog = signal<
   | { kind: "newProblem"; addTo?: string }
+  | { kind: "duplicateProblem"; problemId: string }
   | { kind: "newContest"; withProblem?: string }
   | { kind: "addToContest"; problemId: string }
+  | { kind: "pickProblems"; contestId: string }
   | { kind: "deleteProblem"; problemId: string }
   | undefined
 >(undefined);
@@ -406,6 +410,16 @@ export const dialog = signal<
 /** The row selected in each space, kept across space switches. */
 export const selectedProblem = signal<string | undefined>(undefined);
 export const selectedContest = signal<string | undefined>(undefined);
+/** Whether the collapsible "已归档" section in the contests sidebar is expanded. */
+export const archivedExpanded = signal(false);
+
+/** Navigates to the contests space, auto-expanding the archived section if the target contest is archived. */
+export function jumpToContest(contestId: string) {
+  const c = info().contests.find((x) => x.id === contestId);
+  if (c?.archived) archivedExpanded.set(true);
+  selectedContest.set(contestId);
+  goSpace("contests");
+}
 
 /** The contest whose unfreeze waits for the user's confirmation (GUI only). */
 export const unfreezeFor = signal<string | undefined>(undefined);

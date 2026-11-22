@@ -112,7 +112,12 @@ enum Command {
     },
     /// Show detailed metadata, content hashes, pages, and statistics for a problem or contest.
     Show { kind: TargetKind, id: String },
-    /// Compose contests, manage metadata overrides, freeze snapshots, and unfreeze.
+    /// Manage problems (e.g. duplicate an existing problem into a new slug).
+    Problem {
+        #[command(subcommand)]
+        action: ProblemCommand,
+    },
+    /// Compose contests, manage metadata overrides, freeze snapshots, unfreeze, and archive.
     Contest {
         #[command(subcommand)]
         action: ContestCommand,
@@ -128,6 +133,20 @@ enum Command {
     Fonts,
     /// Serve MCP on stdin and stdout.
     Mcp,
+}
+
+#[derive(Subcommand)]
+enum ProblemCommand {
+    /// Duplicate an existing problem directory (`problems/<source_id>/`) into `problems/<new_id>/`.
+    Duplicate {
+        /// Source problem ID.
+        source_id: String,
+        /// New problem ID (slug under problems/).
+        new_id: String,
+        /// Optional new title (defaults to source problem's title).
+        #[arg(long)]
+        title: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -247,6 +266,16 @@ enum ContestCommand {
         /// Skip interactive contest ID confirmation.
         #[arg(long)]
         yes: bool,
+    },
+    /// Archive a contest (marks it read-only and moves it to the archived section).
+    Archive {
+        /// Contest ID.
+        id: String,
+    },
+    /// Unarchive a contest, restoring its previous editable/frozen state.
+    Unarchive {
+        /// Contest ID.
+        id: String,
     },
 }
 
@@ -465,7 +494,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         Command::List => {
             let ws = open_workspace(cli)?;
             let problems = ws.list_problems()?;
-            let contests = ws.list_contests()?;
+            let contests = views::list_contests(&ws)?;
             if cli.json {
                 println!(
                     "{}",
@@ -475,8 +504,12 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                 for id in problems {
                     println!("problem\t{id}");
                 }
-                for id in contests {
-                    println!("contest\t{id}");
+                for c in contests {
+                    if c.archived {
+                        println!("contest\t{}\t[archived]", c.id);
+                    } else {
+                        println!("contest\t{}", c.id);
+                    }
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -678,8 +711,41 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Problem { action } => run_problem(cli, action),
         Command::Contest { action } => run_contest(cli, action),
         Command::Template { action } => run_template(cli, action),
+    }
+}
+
+fn run_problem(cli: &Cli, action: &ProblemCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    match action {
+        ProblemCommand::Duplicate {
+            source_id,
+            new_id,
+            title,
+        } => {
+            let problem = ws.duplicate_problem(source_id, new_id, title.as_deref())?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "source_id": source_id,
+                        "id": problem.id,
+                        "title": problem.meta.title,
+                        "path": problem.dir,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "duplicated problem {source_id} -> {} ({})",
+                    problem.id, problem.dir
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -996,6 +1062,42 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        ContestCommand::Archive { id } => {
+            let meta = ws.set_contest_archived(id, true)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "archived": meta.archived,
+                        "frozen": meta.frozen,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("archived contest {id}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        ContestCommand::Unarchive { id } => {
+            let meta = ws.set_contest_archived(id, false)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "archived": meta.archived,
+                        "frozen": meta.frozen,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("unarchived contest {id}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -1132,8 +1234,16 @@ fn print_problem_detail(detail: &views::ProblemDetail) {
 }
 
 fn print_contest_detail(detail: &views::ContestDetail) {
-    let status = if detail.frozen { "frozen" } else { "unfrozen" };
-    println!("contest {}: {} [{}]", detail.id, detail.name, status);
+    let mut badges = vec![if detail.frozen { "frozen" } else { "unfrozen" }];
+    if detail.archived {
+        badges.push("archived");
+    }
+    println!(
+        "contest {}: {} [{}]",
+        detail.id,
+        detail.name,
+        badges.join(", ")
+    );
     if let Some(loc) = &detail.location {
         println!("  location: {loc}");
     }

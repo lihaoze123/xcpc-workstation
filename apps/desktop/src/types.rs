@@ -204,6 +204,7 @@ pub struct WorkspaceContest {
     pub id: String,
     pub name: String,
     pub frozen: bool,
+    pub archived: bool,
     pub items: Vec<WorkspaceItem>,
 }
 
@@ -524,6 +525,7 @@ pub struct ContestDetailJs {
     pub has_cover: bool,
     pub blank_pages: bool,
     pub frozen: bool,
+    pub archived: bool,
     pub items: Vec<ContestItemDetailJs>,
     #[prop(skip_none)]
     pub error: Option<String>,
@@ -614,6 +616,8 @@ pub struct FuzzyHitJs {
     /// Stable visit key to pass to `recordVisit(key)` (`"problem:<id>"`, `"contest:<id>"`,
     /// or `"contest_item:<contestId>:<label>"`).
     pub visit_key: String,
+    /// True when `kind === "contest"` and the contest is archived.
+    pub archived: bool,
     pub score: f64,
 }
 

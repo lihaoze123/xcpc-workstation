@@ -412,6 +412,7 @@ impl State {
                 id,
                 name: contest.meta.name,
                 frozen: contest.meta.frozen,
+                archived: contest.meta.archived,
                 items,
             });
         }
@@ -1212,6 +1213,26 @@ impl State {
         }
     }
 
+    pub(crate) fn duplicate_problem(
+        &self,
+        source_id: &str,
+        new_id: &str,
+        title: Option<&str>,
+    ) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.duplicate_problem(source_id, new_id, title) {
+            Ok(_) => {
+                let _ = self.core.lock().unwrap().index.refresh_problem(&ws, new_id);
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
     pub(crate) fn update_problem_meta(&self, id: &str, patch: ProblemMetaPatchJs) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
@@ -1451,6 +1472,7 @@ impl State {
             has_cover: meta.has_cover(),
             blank_pages: meta.blank_pages,
             frozen,
+            archived: meta.archived,
             items,
             error,
         }
@@ -1562,6 +1584,21 @@ impl State {
             Err(msg) => return ActionResult::err("invalid_argument", msg),
         };
         match ws.update_contest_meta(id, &core_patch) {
+            Ok(_) => {
+                let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn set_contest_archived(&self, id: &str, archived: bool) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.set_contest_archived(id, archived) {
             Ok(_) => {
                 let _ = self.core.lock().unwrap().index.refresh_contest(&ws, id);
                 self.invalidate_cache();
@@ -1933,8 +1970,15 @@ impl State {
                 FuzzyMatchKind::Problem => "problem",
                 FuzzyMatchKind::Contest => "contest",
             };
+            let archived = matches!(hit.kind, FuzzyMatchKind::Contest)
+                && core.index.contest(&hit.id).is_some_and(|c| c.archived);
             let visit_key = format!("{kind}:{}", hit.id);
             let boost = core.prefs.frecency_boost(&visit_key, now_secs);
+            let score = if archived {
+                (hit.score + boost) * 0.5 - 100.0
+            } else {
+                hit.score + boost
+            };
             hits.push(FuzzyHitJs {
                 kind: kind.to_owned(),
                 id: hit.id,
@@ -1942,7 +1986,8 @@ impl State {
                 contest_id: None,
                 label: None,
                 visit_key,
-                score: hit.score + boost,
+                archived,
+                score,
             });
         }
 
@@ -1972,6 +2017,7 @@ impl State {
                     contest_id: Some(cid.to_owned()),
                     label: Some(item.label.clone()),
                     visit_key,
+                    archived: false,
                     score: base_score + boost,
                 });
             }

@@ -284,6 +284,9 @@ pub struct ContestMeta {
     /// Archived: the contest renders from `snapshot/` and nothing in it may be written.
     #[serde(default)]
     pub frozen: bool,
+    /// Archived (hidden in the archived section): read-only until unarchived; orthogonal to `frozen`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub archived: bool,
     /// The problems, in order.
     #[serde(default, rename = "problem")]
     pub problems: Vec<ContestItem>,
@@ -291,6 +294,10 @@ pub struct ContestMeta {
 
 fn yes() -> bool {
     true
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl ContestMeta {

@@ -1481,3 +1481,38 @@ fn missing_template_errors_without_fallback_and_local_template_freezes_with_logo
     );
     assert_eq!(recompiled.unwrap().page_count(), 2); // cover with logo + 1 problem
 }
+
+#[test]
+fn freeze_contest_rejects_archived_before_compiling_or_frozen_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("p1", "Broken").unwrap();
+    // Missing image lint error inside p1.
+    ws.write(
+        "problems/p1/statement.md",
+        b"![missing](assets/nope.png)\n\n## Input\n\nx\n\n## Output\n\ny\n",
+    )
+    .unwrap();
+    ws.compose_contest("c1", &["p1".into()], None).unwrap();
+    ws.set_contest_archived("c1", true).unwrap();
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+
+    // 1. Archived contest with lint errors returns Err(Error::Archived), not Ok(frozen: false).
+    let err = publish::freeze_contest(&ws, &mut engine, "c1").unwrap_err();
+    assert_eq!(err.code(), "contest_archived");
+
+    // 2. Unarchive, fix image, freeze, then archive -> freeze_contest returns Archived (not AlreadyFrozen).
+    ws.set_contest_archived("c1", false).unwrap();
+    ws.write(
+        "problems/p1/statement.md",
+        b"Clean.\n\n## Input\n\nx\n\n## Output\n\ny\n",
+    )
+    .unwrap();
+    let frozen = publish::freeze_contest(&ws, &mut engine, "c1").unwrap();
+    assert!(frozen.frozen);
+    ws.set_contest_archived("c1", true).unwrap();
+
+    let err_both = publish::freeze_contest(&ws, &mut engine, "c1").unwrap_err();
+    assert_eq!(err_both.code(), "contest_archived");
+}

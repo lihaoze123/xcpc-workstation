@@ -473,8 +473,9 @@ function ContestInfoTab(props: {
 }) {
   const c = () => props.contest;
   const frozen = () => c().frozen;
+  const archived = () => c().archived;
   const wsReadOnly = () => info().readOnly;
-  const locked = () => frozen() || wsReadOnly();
+  const locked = () => frozen() || archived() || wsReadOnly();
   const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
   const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
   const f = props.freeze;
@@ -485,42 +486,60 @@ function ContestInfoTab(props: {
       <Section>
         <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Icon name={frozen() ? "lock" : "stamp"} size={14} tone={frozen() ? "secondary-foreground" : "foreground"} />
+            <Icon name={archived() ? "folder" : frozen() ? "lock" : "stamp"} size={14} tone={archived() || frozen() ? "secondary-foreground" : "foreground"} />
             <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }}>
-              {frozen() ? "已定稿" : "未定稿"}
+              {archived() ? (frozen() ? "已归档 · 已定稿" : "已归档") : frozen() ? "已定稿" : "未定稿"}
             </Text>
             <If
-              when={frozen()}
+              when={archived()}
               else={
-                <Btn
-                  disabled={f.busy() || wsReadOnly() || c().items.length === 0}
-                  tooltip={wsReadOnly() ? tip("只读工作区无法定稿") : undefined}
-                  onPress={() => void f.freeze(c().id).then(() => props.done({ ok: true }))}
-                  style={{ minWidth: 74 }}
+                <If
+                  when={frozen()}
+                  else={
+                    <Btn
+                      disabled={f.busy() || wsReadOnly() || c().items.length === 0}
+                      tooltip={wsReadOnly() ? tip("只读工作区无法定稿") : undefined}
+                      onPress={() => void f.freeze(c().id).then(() => props.done({ ok: true }))}
+                      style={{ minWidth: 74 }}
+                    >
+                      <View style={{ width: 15, height: 15, alignItems: "center", justifyContent: "center" }}>
+                        <If when={f.busyVisible()} else={<Icon name="stamp" size={15} tone="foreground" />}>
+                          <DelayedSpinner active={f.busy()} size={13} />
+                        </If>
+                      </View>
+                      <Text class="text-foreground" style={{ fontSize: 13 }}>
+                        定稿
+                      </Text>
+                    </Btn>
+                  }
                 >
-                  <View style={{ width: 15, height: 15, alignItems: "center", justifyContent: "center" }}>
-                    <If when={f.busyVisible()} else={<Icon name="stamp" size={15} tone="foreground" />}>
-                      <DelayedSpinner active={f.busy()} size={13} />
-                    </If>
-                  </View>
-                  <Text class="text-foreground" style={{ fontSize: 13 }}>
-                    定稿
-                  </Text>
-                </Btn>
+                  <Btn
+                    label="重新编辑"
+                    icon="lockOpen"
+                    disabled={wsReadOnly()}
+                    tooltip={wsReadOnly() ? tip("只读工作区无法重新编辑") : undefined}
+                    onPress={() => unfreezeFor.set(c().id)}
+                    testID="inspector-unfreeze"
+                  />
+                </If>
               }
             >
               <Btn
-                label="重新编辑"
-                icon="lockOpen"
+                label="取消归档"
+                icon="rotateCcw"
                 disabled={wsReadOnly()}
-                tooltip={wsReadOnly() ? tip("只读工作区无法重新编辑") : undefined}
-                onPress={() => unfreezeFor.set(c().id)}
-                testID="inspector-unfreeze"
+                tooltip={wsReadOnly() ? tip("只读工作区无法取消归档") : undefined}
+                onPress={() => props.done(preview.setContestArchived(c().id, false))}
+                testID="inspector-unarchive"
               />
             </If>
           </View>
           <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
-            {frozen() ? "内容已锁定，仅支持查看和导出" : "定稿后，题库里的修改不再影响这场比赛"}
+            {archived()
+              ? "比赛已归档，当前只读；取消归档后可恢复编辑"
+              : frozen()
+                ? "内容已锁定，仅支持查看和导出"
+                : "定稿后，题库里的修改不再影响这场比赛"}
           </Text>
         </View>
         <ErrorDisplay
@@ -671,8 +690,9 @@ function ContestLayoutTab(props: {
 }) {
   const c = () => props.contest;
   const frozen = () => c().frozen;
+  const archived = () => c().archived;
   const wsReadOnly = () => info().readOnly;
-  const locked = () => frozen() || wsReadOnly();
+  const locked = () => frozen() || archived() || wsReadOnly();
   const meta = (patch: Parameters<typeof preview.updateContestMeta>[1]) => !locked() && props.done(preview.updateContestMeta(c().id, patch));
   const over = (patch: Parameters<typeof preview.setOverride>[2]) => !locked() && props.item && props.done(preview.setOverride(c().id, props.item.label, patch));
 

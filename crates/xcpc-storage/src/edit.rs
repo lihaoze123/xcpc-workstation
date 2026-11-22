@@ -121,6 +121,94 @@ impl Workspace {
         self.load_problem(id)
     }
 
+    /// Recursively duplicates `problems/<source_id>/` into `problems/<new_id>/` atomically.
+    ///
+    /// Rejects symlinks anywhere inside the source tree (`Error::PathEscape`), rejects
+    /// read-only workspaces (`Error::ReadOnly`), missing source (`Error::NotFound`), and
+    /// existing target (`Error::Conflict`). If `new_title` is non-empty, updates `title`
+    /// in the copied `problem.toml` via `toml_edit`, preserving comments, key order,
+    /// unknown fields, `[[source]]`, and `[template-options]`.
+    pub fn duplicate_problem(
+        &self,
+        source_id: &str,
+        new_id: &str,
+        new_title: Option<&str>,
+    ) -> Result<Problem> {
+        if self.is_read_only() {
+            return Err(Error::ReadOnly);
+        }
+        check_id(source_id)?;
+        check_id(new_id)?;
+
+        let src_dir_rel = format!("problems/{source_id}");
+        let src_meta_rel = format!("{src_dir_rel}/problem.toml");
+        let src_dir = self.resolve(&src_dir_rel)?;
+        let src_meta = self.resolve(&src_meta_rel)?;
+        let src_dir_meta = fs::symlink_metadata(&src_dir).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::NotFound(format!("problem {source_id:?}")),
+            _ => io(&src_dir_rel, e),
+        })?;
+        if src_dir_meta.file_type().is_symlink() {
+            return Err(Error::PathEscape(src_dir_rel));
+        }
+        if !src_meta.is_file() {
+            return Err(Error::NotFound(format!("problem {source_id:?}")));
+        }
+
+        let dst_dir_rel = format!("problems/{new_id}");
+        let dst_dir = self.resolve(&dst_dir_rel)?;
+        if fs::symlink_metadata(&dst_dir).is_ok() {
+            let actual = fs::read(dst_dir.join("problem.toml"))
+                .map(|b| content_hash(&b))
+                .unwrap_or_default();
+            return Err(Error::Conflict {
+                path: dst_dir_rel,
+                expected: String::new(),
+                actual,
+            });
+        }
+
+        let problems_root = self.resolve("problems")?;
+        fs::create_dir_all(&problems_root).map_err(|e| io("problems", e))?;
+        self.resolve("problems")?;
+
+        static DUP_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let stage_name = format!(
+            ".dup.tmp-{}-{}",
+            std::process::id(),
+            DUP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let stage_dir = problems_root.join(&stage_name);
+
+        let copy_result: Result<()> = (|| {
+            copy_dir_no_symlinks(self, &src_dir_rel, &src_dir, &stage_dir)?;
+            if let Some(title) = new_title.map(str::trim).filter(|s| !s.is_empty()) {
+                let stage_meta_path = stage_dir.join("problem.toml");
+                let dst_meta_rel = format!("{dst_dir_rel}/problem.toml");
+                let raw = fs::read_to_string(&stage_meta_path).map_err(|e| io(&dst_meta_rel, e))?;
+                let mut doc = parse_doc(&dst_meta_rel, &raw)?;
+                set_scalar(doc.as_table_mut(), "title", Value::from(title));
+                let rendered = doc.to_string();
+                let _: ProblemMeta = parse_toml(&dst_meta_rel, &rendered)?;
+                write_atomic(&stage_meta_path, rendered.as_bytes())
+                    .map_err(|e| io(&dst_meta_rel, e))?;
+            }
+            Ok(())
+        })();
+
+        if let Err(err) = copy_result {
+            let _ = fs::remove_dir_all(&stage_dir);
+            return Err(err);
+        }
+
+        if let Err(e) = fs::rename(&stage_dir, &dst_dir) {
+            let _ = fs::remove_dir_all(&stage_dir);
+            return Err(io(&dst_dir_rel, e));
+        }
+
+        self.load_problem(new_id)
+    }
+
     /// Partially updates `problems/<id>/problem.toml` via `toml_edit`, preserving
     /// comments, key order, and unknown fields.
     pub fn update_problem_meta(&self, id: &str, patch: &ProblemMetaPatch) -> Result<ProblemMeta> {
@@ -624,6 +712,9 @@ impl Workspace {
         }
 
         let contest = self.load_contest(contest_id)?;
+        if contest.meta.archived {
+            return Err(Error::Archived(contest_id.to_owned()));
+        }
         if contest.meta.frozen {
             return Err(Error::AlreadyFrozen(contest_id.to_owned()));
         }
@@ -819,6 +910,9 @@ impl Workspace {
         }
 
         let contest = self.load_contest(contest_id)?;
+        if contest.meta.archived {
+            return Err(Error::Archived(contest_id.to_owned()));
+        }
         if !contest.meta.frozen {
             return Err(Error::NotFrozen(contest_id.to_owned()));
         }
@@ -845,6 +939,33 @@ impl Workspace {
         }
 
         self.load_contest(contest_id)
+    }
+
+    /// Archives or unarchives a contest by setting `archived = true` or removing the
+    /// `archived` key in `contests/<id>/contest.toml` via `toml_edit`.
+    ///
+    /// Orthogonal to `frozen`, idempotent, and allowed on already-frozen or already-archived
+    /// contests (still enforces `read_only` and workspace sandbox).
+    pub fn set_contest_archived(&self, id: &str, archived: bool) -> Result<ContestMeta> {
+        check_id(id)?;
+        if self.is_read_only() {
+            return Err(Error::ReadOnly);
+        }
+        let rel = format!("contests/{id}/contest.toml");
+        let raw = self.read_text(&rel).map_err(|e| match e {
+            Error::NotFound(_) => Error::NotFound(format!("contest {id:?}")),
+            other => other,
+        })?;
+        let mut doc = parse_doc(&rel, &raw)?;
+        if archived {
+            set_scalar(doc.as_table_mut(), "archived", Value::from(true));
+        } else {
+            doc.as_table_mut().remove("archived");
+        }
+        let rendered = doc.to_string();
+        let meta: ContestMeta = parse_toml(&rel, &rendered)?;
+        self.write_unfreeze_bypass(&rel, rendered.as_bytes())?;
+        Ok(meta)
     }
 
     /// Collects the snapshot-scoped files (`problem.toml`, `statement*.md`, `editorial.md`,
@@ -1313,4 +1434,36 @@ fn apply_item_overrides_to_toml(raw: &str, item: &ContestItem, path: &str) -> Re
         apply_template_options_patch(doc.as_table_mut(), "template-options", &patches, None)?;
     }
     Ok(doc.to_string())
+}
+
+/// Recursively copies `src_dir` into `dst_dir`, rejecting any symlink anywhere in the tree
+/// (`Error::PathEscape`) and verifying every path stays within the workspace.
+fn copy_dir_no_symlinks(
+    ws: &Workspace,
+    src_rel: &str,
+    src_dir: &std::path::Path,
+    dst_dir: &std::path::Path,
+) -> Result<()> {
+    fs::create_dir_all(dst_dir).map_err(|e| io(src_rel, e))?;
+    let entries = fs::read_dir(src_dir).map_err(|e| io(src_rel, e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| io(src_rel, e))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let child_rel = format!("{src_rel}/{name_str}");
+        let child_src = entry.path();
+        let meta = fs::symlink_metadata(&child_src).map_err(|e| io(&child_rel, e))?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::PathEscape(child_rel));
+        }
+        ws.resolve(&child_rel)?;
+        let child_dst = dst_dir.join(&name);
+        if meta.is_dir() {
+            copy_dir_no_symlinks(ws, &child_rel, &child_src, &child_dst)?;
+        } else if meta.is_file() {
+            let bytes = fs::read(&child_src).map_err(|e| io(&child_rel, e))?;
+            write_atomic(&child_dst, &bytes).map_err(|e| io(&child_rel, e))?;
+        }
+    }
+    Ok(())
 }

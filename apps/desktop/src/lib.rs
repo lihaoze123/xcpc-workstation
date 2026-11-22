@@ -656,6 +656,18 @@ impl Preview {
         self.state.create_problem(&id, &title)
     }
 
+    /// Recursively duplicates `problems/<sourceId>/` into `problems/<newId>/`, optionally
+    /// updating `title` in `problem.toml`, and refreshes the in-memory index.
+    pub fn duplicate_problem(
+        &self,
+        source_id: String,
+        new_id: String,
+        title: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .duplicate_problem(&source_id, &new_id, title.as_deref())
+    }
+
     /// Partially updates `problems/<id>/problem.toml` via `toml_edit`, preserving comments,
     /// key order, and unknown fields.
     pub fn update_problem_meta(&self, id: String, patch: ProblemMetaPatchJs) -> ActionResult {
@@ -838,6 +850,11 @@ impl Preview {
     /// Partially updates `contests/<id>/contest.toml` metadata via `toml_edit`.
     pub fn update_contest_meta(&self, id: String, patch: ContestMetaPatchJs) -> ActionResult {
         self.state.update_contest_meta(&id, patch)
+    }
+
+    /// Archives or unarchives contest `id` (`archived = true` or removes `archived` in `contest.toml`).
+    pub fn set_contest_archived(&self, id: String, archived: bool) -> ActionResult {
+        self.state.set_contest_archived(&id, archived)
     }
 
     /// Sets or clears metadata overrides for `label` inside `contestId`. Passing `null`

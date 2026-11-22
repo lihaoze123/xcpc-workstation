@@ -114,6 +114,7 @@ author = "命题组"             # 可选，封面作者行，默认「出题人
 language = "chinese"          # chinese | english（决定读取 statement.zh/en.md 与限值语言）
 template = "olymp-classic"    # 可选，缺省沿用 workspace.toml；若存在 contests/<id>/template.typ 则优先用专属模板
 frozen = false                # 冻结后只读，从 snapshot/ 渲染
+archived = false              # 可选，默认 false；归档后收纳至已归档列表并强制只读（与 frozen 正交）
 
 # 比赛级模板参数（按模板名隔离，覆写 workspace.toml 中的默认值；cover / blank-pages / show-metadata 等均由模板 schema 声明）
 [template-options.cnoi-classic]
@@ -135,7 +136,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 ```
 
 - **活引用**：`contest.toml` 按顺序列出题目 ID 和题号（A/B/C…）。题库中修正一处错别字，所有引用该题且**未冻结**的比赛都会同步更新。
-- **元数据与单题版式覆写**：可以按题覆写**元数据**（`title`、`limits`）以及当前模板声明的**单题级模板参数**（`[problem.options.<template>]`，如 `show-metadata`、`sample-layout`、`prob-type`）。**题面正文、样例、配图不能覆写**；需要改动时，在题库里复制出一道新题（不提供专门的 fork 功能），再在比赛中引用新题。
+- **元数据与单题版式覆写**：可以按题覆写**元数据**（`title`、`limits`）以及当前模板声明的**单题级模板参数**（`[problem.options.<template>]`，如 `show-metadata`、`sample-layout`、`prob-type`）。**题面正文、样例、配图不能覆写**；需要改动时，可在题库中通过「复制题目」（GUI / `xcpc problem duplicate` / MCP `duplicate_problem`）完整递归复制整道题目录为独立新题（不追踪血缘关系，拒绝符号链接逃逸），再在比赛中引用新题。
 - **比赛专属模板**：每场比赛可在 `contests/<id>/template.typ` 放置独立模板文件（存在即优先于 `contest.toml` 的 `template`），并可在 `contests/<id>/assets/` 存放封面徽标等比赛专属资源。
 - **题号由顺序决定**：增删和移动题目后，Core 按顺序重排为 A、B、C……并写回 `label`；超过 26 题报错。
 - **冻结快照**：
@@ -143,7 +144,8 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
   - 冻结时，把每道题合并覆写后的全部源文件（`problem.toml`、`statement*.md`、`editorial.md`、`samples/`、`assets/`，不含题目包的程序和测试）、生效的 `template.typ` 副本（无论是 `contests/<id>/template.typ` 还是 `templates/<name>.typ`）、`.xcpc/preamble.typ`（若存在）与合并解析后的模板参数一并固化到 `contests/<id>/snapshot/`，并保存当时导出的 `snapshot/<id>.pdf` 和 `snapshot/<id>-editorial.pdf`（没有题解时不生成）。快照（含 PDF）是归档物，进 Git。之后比赛只从快照渲染，不再受题库、工作区模板或外部样式修改影响。
   - 冻结后，Core 层对整场比赛强制只读，包括快照。
   - **只能由人在 GUI 或 CLI 中解冻**（`xcpc contest unfreeze`，需要二次确认），确认时列出快照与题库当前版本有差异的题（题面已改、样例已改、题目已删除，逐文件比较字节），CLI 先打印差异再要求输入比赛 ID（`--yes` 跳过）。解冻后删除快照目录，恢复活引用。**MCP 不提供解冻能力。**
-- **删除题目**：被未冻结的比赛引用时拒绝删除并列出这些比赛；只被冻结的比赛引用时允许。
+- **比赛归档（Archive）**：应用内不提供「删除比赛」，而是通过 `contest.toml` 的 `archived = true` 实现可逆收纳（取消归档时移除该键）。`archived` 与 `frozen` 完全正交：未定稿或已定稿的比赛均可归档；归档后 Core 层强制拦截一切写操作并返回 `contest_archived`，仅允许「取消归档」恢复。
+- **删除题目**：被未冻结的比赛（无论是否已归档）引用时拒绝删除并列出这些比赛；只被冻结的比赛引用时允许。
 - **组题辅助**（Phase 2）：每题起止页（取真实编译结果）、难度分布和标签计数。不做按条件抽题，交给 Agent 组合 `search_problems` 与 `compose_contest`。
 
 ## 4. 个人训练与 OJ 同步（Phase 4）

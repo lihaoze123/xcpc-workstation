@@ -59,6 +59,7 @@ pub struct ContestSummary {
     pub date: Option<String>,
     pub language: Language,
     pub frozen: bool,
+    pub archived: bool,
     pub problem_count: usize,
 }
 
@@ -110,6 +111,7 @@ pub struct ContestDetail {
     pub has_cover: bool,
     pub blank_pages: bool,
     pub frozen: bool,
+    pub archived: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pages: Option<usize>,
     pub problems: Vec<ContestProblemView>,
@@ -184,6 +186,7 @@ pub fn list_contests(ws: &Workspace) -> Result<Vec<ContestSummary>, Error> {
                 date: contest.meta.date,
                 language: contest.meta.language,
                 frozen: contest.meta.frozen,
+                archived: contest.meta.archived,
                 problem_count: contest.meta.problems.len(),
             });
         }
@@ -279,6 +282,7 @@ pub fn contest_detail(
         has_cover,
         blank_pages: contest.meta.blank_pages,
         frozen: contest.meta.frozen,
+        archived: contest.meta.archived,
         pages,
         problems,
         stats,

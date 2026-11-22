@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 13);
+    assert_eq!(tools.len(), 16);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -199,10 +199,13 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "export_pdf",
         "add_template",
         "write_problem",
+        "duplicate_problem",
         "compose_contest",
         "set_override",
         "set_template_options",
         "freeze_contest",
+        "archive_contest",
+        "unarchive_contest",
     ] {
         assert_eq!(
             read_only_map.get(write_tool),
@@ -769,6 +772,18 @@ fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
 
     let w6 = client.call_tool("add_template", json!({ "preset": "minimal" }));
     assert_eq!(err_code(&w6), "read_only");
+
+    let w7 = client.call_tool(
+        "duplicate_problem",
+        json!({ "source_id": "alpha", "new_id": "alpha-ro" }),
+    );
+    assert_eq!(err_code(&w7), "read_only");
+
+    let w8 = client.call_tool("archive_contest", json!({ "id": "c1" }));
+    assert_eq!(err_code(&w8), "read_only");
+
+    let w9 = client.call_tool("unarchive_contest", json!({ "id": "c1" }));
+    assert_eq!(err_code(&w9), "read_only");
 }
 
 #[test]
@@ -823,4 +838,60 @@ fn template_tools_list_presets_install_and_set_local_options() {
         set_local["structuredContent"]["meta"]["template-options"]["local"]["cover"],
         "on"
     );
+}
+
+#[test]
+fn duplicate_problem_and_archive_contest_mcp_tools() {
+    let dir = setup_workspace();
+    let mut client = McpClient::spawn(dir.path(), false);
+    client.request("initialize", json!({ "protocolVersion": "2025-11-25" }));
+
+    // 1. duplicate_problem copies problem and updates title.
+    let dup = client.call_tool(
+        "duplicate_problem",
+        json!({ "source_id": "alpha", "new_id": "alpha-copy", "title": "Alpha Copy" }),
+    );
+    assert_ne!(dup["isError"], true, "duplicate failed: {dup}");
+    assert_eq!(dup["structuredContent"]["id"], "alpha-copy");
+    assert_eq!(dup["structuredContent"]["title"], "Alpha Copy");
+    assert_eq!(dup["structuredContent"]["path"], "problems/alpha-copy");
+    assert_eq!(dup["structuredContent"]["samples"], 1);
+
+    let dup_conflict = client.call_tool(
+        "duplicate_problem",
+        json!({ "source_id": "alpha", "new_id": "alpha-copy" }),
+    );
+    assert_eq!(err_code(&dup_conflict), "conflict");
+
+    // 2. Compose contest -> archive -> get_contest shows archived: true -> write blocked.
+    let _ = client.call_tool(
+        "compose_contest",
+        json!({ "id": "arch-cup", "problems": ["alpha"], "name": "Arch Cup" }),
+    );
+    let arch = client.call_tool("archive_contest", json!({ "id": "arch-cup" }));
+    assert_ne!(arch["isError"], true);
+    assert_eq!(arch["structuredContent"]["archived"], true);
+    assert_eq!(arch["structuredContent"]["frozen"], false);
+
+    let detail = client.call_tool("get_contest", json!({ "id": "arch-cup" }));
+    assert_eq!(detail["structuredContent"]["archived"], true);
+    let list = client.call_tool("get_contest", json!({}));
+    assert_eq!(list["structuredContent"]["contests"][0]["archived"], true);
+
+    let blocked = client.call_tool(
+        "compose_contest",
+        json!({ "id": "arch-cup", "problems": ["alpha", "alpha-copy"] }),
+    );
+    assert_eq!(err_code(&blocked), "contest_archived");
+
+    // 3. unarchive_contest restores editability.
+    let unarch = client.call_tool("unarchive_contest", json!({ "id": "arch-cup" }));
+    assert_ne!(unarch["isError"], true);
+    assert_eq!(unarch["structuredContent"]["archived"], false);
+
+    let ok_compose = client.call_tool(
+        "compose_contest",
+        json!({ "id": "arch-cup", "problems": ["alpha", "alpha-copy"] }),
+    );
+    assert_ne!(ok_compose["isError"], true);
 }

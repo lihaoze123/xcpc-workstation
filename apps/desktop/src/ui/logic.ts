@@ -319,7 +319,7 @@ export interface ErrorCopy {
   rule: boolean;
 }
 
-const RULES = new Set(["contest_frozen", "problem_referenced", "read_only", "already_frozen", "not_frozen"]);
+const RULES = new Set(["contest_frozen", "contest_archived", "problem_referenced", "read_only", "already_frozen", "not_frozen"]);
 
 /** The words for a Core error `code` (the raw `error` stays for 复制详情). */
 export function errorCopy(code: string | null | undefined, raw?: string | null): ErrorCopy {
@@ -327,6 +327,8 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
   switch (code) {
     case "contest_frozen":
       return { message: "比赛已定稿，内容只读", rule };
+    case "contest_archived":
+      return { message: "比赛已归档，当前只读", next: "如需修改，请先取消归档", rule };
     case "problem_referenced":
       return { message: "题目仍被比赛引用", next: "先从这些比赛中移除后再删除", rule };
     case "read_only":
@@ -373,6 +375,52 @@ export function errorDetails(code: string | null | undefined, raw: string | null
 /** A problem/contest ID as the Core accepts it (`xcpc_domain::InvalidId`). */
 export function validId(id: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id);
+}
+
+/** Suggest a non-colliding duplicate problem ID (`<id>-copy`, `<id>-copy-2`, …) within 64 chars. */
+export function suggestDuplicateId(sourceId: string, existingIds: Iterable<string>): string {
+  const used = new Set(existingIds);
+  for (let n = 1; n < 10_000; n++) {
+    const suffix = n === 1 ? "-copy" : `-copy-${n}`;
+    const maxBase = Math.max(1, 64 - suffix.length);
+    const trimmed = sourceId.slice(0, maxBase).replace(/[-_]+$/, "");
+    const base = trimmed || sourceId.slice(0, 1) || "p";
+    const candidate = `${base}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${sourceId.slice(0, 56)}-copy`;
+}
+
+/** Toggle a problem in the contest picker (append-only, respects existing problems & 26-problem cap). */
+export function togglePickProblem(
+  selected: readonly string[],
+  id: string,
+  existingIds: ReadonlySet<string>,
+  maxTotal = 26,
+): string[] {
+  if (existingIds.has(id)) return [...selected];
+  if (selected.includes(id)) return selected.filter((x) => x !== id);
+  const remaining = Math.max(0, maxTotal - existingIds.size);
+  if (selected.length >= remaining) return [...selected];
+  return [...selected, id];
+}
+
+/** Split contests into active (`archived === false`) and archived (`archived === true`). */
+export function partitionContests<T extends { archived: boolean }>(
+  contests: readonly T[],
+): { active: T[]; archived: T[] } {
+  const active: T[] = [];
+  const archived: T[] = [];
+  for (const c of contests) {
+    if (c.archived) archived.push(c);
+    else active.push(c);
+  }
+  return { active, archived };
+}
+
+/** Filter contests shown in "Add to Contest" (excludes archived contests). */
+export function filterAddableContests<T extends { archived: boolean }>(contests: readonly T[]): T[] {
+  return contests.filter((c) => !c.archived);
 }
 
 // ── Unfreeze ─────────────────────────────────────────────────────────────────

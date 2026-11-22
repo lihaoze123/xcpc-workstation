@@ -1,19 +1,21 @@
 // The few dialogs: a new problem, a new contest, adding a problem to a contest, deleting one.
 // Errors replace the field hint in place (§8.3), and Return submits.
 
-import { batch, cleanup, effect, Scroll, signal, Text, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
+import { batch, cleanup, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
 import { Btn } from "./kit";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
 import { Icon } from "./Icon";
-import { errorCopy, validId } from "./logic";
+import { errorCopy, filterAddableContests, suggestDuplicateId, validId } from "./logic";
+import { PickProblemsBody } from "./PickProblemsModal";
 import { EASE_STANDARD, MONO, ms } from "./theme";
 import {
   dialog,
   errorOf,
   goSpace,
   info,
+  jumpToContest,
   openStudio,
   preview,
   refresh,
@@ -174,6 +176,82 @@ function NewProblem(props: { addTo?: string }) {
   );
 }
 
+function DuplicateProblem(props: { problemId: string }) {
+  const id = signal("");
+  const title = signal("");
+  const error = signal<UiError | undefined>(undefined);
+  let idInput: InputRef | undefined;
+
+  effect(() => {
+    const sourceId = props.problemId;
+    if (!sourceId) return;
+    untracked(() => {
+      const ws = info();
+      const source = ws.problems.find((p) => p.id === sourceId);
+      const sourceTitle = source?.title || sourceId;
+      batch(() => {
+        title.set(`${sourceTitle}（副本）`);
+        id.set(suggestDuplicateId(sourceId, ws.problems.map((p) => p.id)));
+        error.set(undefined);
+      });
+    });
+  });
+
+  const submit = () => {
+    const pid = id().trim();
+    if (!validId(pid)) return error.set({ code: "invalid_id" });
+    const nextTitle = title().trim();
+    const res = preview.duplicateProblem(props.problemId, pid, nextTitle || null);
+    if (!res.ok) return error.set(errorOf(res));
+    refresh();
+    dialog.set(undefined);
+    selectedProblem.set(pid);
+  };
+
+  const onTitleSubmit = () => {
+    if (!id().trim()) {
+      idInput?.focus();
+      return;
+    }
+    submit();
+  };
+
+  return (
+    <Form
+      head={<DialogHeader icon="copy" title="复制题目" description="复制整道题的题面、样例、配图和题解为新题目。" />}
+      submit="复制"
+      onSubmit={submit}
+    >
+      <Field
+        label="标题"
+        value={title()}
+        placeholder="新题目标题"
+        autoFocus
+        onChange={(v) => title.set(v)}
+        onSubmit={onTitleSubmit}
+      />
+      <Field
+        label="ID"
+        hint="新题目文件夹的名字，建好后不能改"
+        error={message(error())}
+        value={id()}
+        placeholder="problem-copy"
+        mono
+        inputRef={(r) => {
+          idInput = r;
+        }}
+        onChange={(v) =>
+          batch(() => {
+            id.set(v.toLowerCase());
+            error.set(undefined);
+          })
+        }
+        onSubmit={submit}
+      />
+    </Form>
+  );
+}
+
 function NewContest(props: { withProblem?: string }) {
   const id = signal("");
   const name = signal("");
@@ -254,7 +332,7 @@ function NewContest(props: { withProblem?: string }) {
 
 function AddToContest(props: { problemId: string }) {
   const error = signal<UiError | undefined>(undefined);
-  const contests = () => info().contests;
+  const contests = () => filterAddableContests(info().contests);
   const isDisabled = (c: (typeof info extends () => { contests: (infer C)[] } ? C : never)) =>
     c.frozen || c.items.length >= 26 || c.items.some((i) => i.id === props.problemId);
 
@@ -418,8 +496,7 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
     if (props.onJumpContest) {
       props.onJumpContest(cid);
     } else {
-      selectedContest.set(cid);
-      goSpace("contests");
+      jumpToContest(cid);
     }
   };
   return (
@@ -491,15 +568,19 @@ export function Dialogs(props: { onJumpContest?: (contestId: string) => void } =
 
   // Cache last active payload so Modal's 140 ms exit fade does not flash blank labels.
   const lastAddTo = signal<string | undefined>(undefined);
+  const lastDuplicateProblemId = signal("");
   const lastWithProblem = signal<string | undefined>(undefined);
   const lastAddProblemId = signal("");
+  const lastPickContestId = signal("");
   const lastDeleteProblemId = signal("");
   effect(() => {
     const cur = d();
     if (!cur) return;
     if (cur.kind === "newProblem") lastAddTo.set(cur.addTo);
+    else if (cur.kind === "duplicateProblem") lastDuplicateProblemId.set(cur.problemId);
     else if (cur.kind === "newContest") lastWithProblem.set(cur.withProblem);
     else if (cur.kind === "addToContest") lastAddProblemId.set(cur.problemId);
+    else if (cur.kind === "pickProblems") lastPickContestId.set(cur.contestId);
     else if (cur.kind === "deleteProblem") lastDeleteProblemId.set(cur.problemId);
   });
 
@@ -508,11 +589,17 @@ export function Dialogs(props: { onJumpContest?: (contestId: string) => void } =
       <Modal open={d()?.kind === "newProblem"} onClose={close} testID="dialog-new-problem">
         <NewProblem addTo={lastAddTo()} />
       </Modal>
+      <Modal open={d()?.kind === "duplicateProblem"} onClose={close} testID="dialog-duplicate-problem">
+        <DuplicateProblem problemId={lastDuplicateProblemId()} />
+      </Modal>
       <Modal open={d()?.kind === "newContest"} onClose={close} testID="dialog-new-contest">
         <NewContest withProblem={lastWithProblem()} />
       </Modal>
       <Modal open={d()?.kind === "addToContest"} onClose={close} width={360} testID="dialog-add-to-contest">
         <AddToContest problemId={lastAddProblemId()} />
+      </Modal>
+      <Modal open={d()?.kind === "pickProblems"} onClose={close} width={640} testID="dialog-pick-problems">
+        <PickProblemsBody contestId={lastPickContestId()} />
       </Modal>
       <Modal open={d()?.kind === "deleteProblem"} onClose={close} width={420} testID="dialog-delete-problem">
         <DeleteProblem problemId={lastDeleteProblemId()} onJumpContest={props.onJumpContest} />
