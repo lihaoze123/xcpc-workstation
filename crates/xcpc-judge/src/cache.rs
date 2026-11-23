@@ -37,7 +37,7 @@ impl JudgeCache {
     /// Opens a cache at an explicit directory (useful for tests).
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
-        for sub in ["bin", "gen", "run", "inc"] {
+        for sub in ["bin", "gen", "run", "inc", "sanitize/bin"] {
             let dir = root.join(sub);
             fs::create_dir_all(&dir)
                 .map_err(|e| io_err(format!("create cache dir {}", dir.display()), e))?;
@@ -69,6 +69,15 @@ impl JudgeCache {
     pub fn binary_path(&self, key: &str) -> PathBuf {
         let ext = if cfg!(windows) { ".exe" } else { "" };
         self.root.join("bin").join(format!("{key}{ext}"))
+    }
+
+    /// Path for an isolated sanitizer-compiled executable (never touches normal `bin/` cache).
+    pub fn sanitizer_binary_path(&self, key: &str) -> PathBuf {
+        let ext = if cfg!(windows) { ".exe" } else { "" };
+        self.root
+            .join("sanitize")
+            .join("bin")
+            .join(format!("{key}{ext}"))
     }
 
     /// Path for a cached generated test input (Level 2).

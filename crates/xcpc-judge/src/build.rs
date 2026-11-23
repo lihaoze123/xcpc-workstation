@@ -18,14 +18,18 @@ use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, TestSource, build_dir_for, check_dirty_inputs,
     compute_package_hash, discover_solutions, expand_tests, find_generator_source,
-    find_validator_source, load_latest_report, report_path_for, resolve_checker_spec,
-    verified_report_path_for,
+    find_interactor_source, find_validator_source, has_explicit_checker, load_latest_report,
+    report_path_for, resolve_checker_spec, verified_report_path_for,
 };
 use crate::report::{
-    BuildMode, BuildReport, GateResult, GateStatus, MatrixCell, ProgressEvent, SafetyMargin,
-    SelfTestResult, SolutionSummary, TestSummary,
+    BuildMode, BuildReport, GateResult, GateStatus, InteractionTranscript, MatrixCell,
+    ProgressEvent, SafetyMargin, SelfTestResult, SolutionSummary, TestSummary,
 };
-use crate::runner::{RunLimits, RunOutcome, Verdict, run_checker, run_process, run_validator};
+use crate::runner::{
+    RunLimits, RunOutcome, Verdict, run_checker_with_score, run_multi_run_interactive,
+    run_multi_run_process, run_process, run_validator_with_group,
+};
+use crate::subtask::{evaluate_solution_subtasks, validate_subtask_config};
 use crate::toolchain::{
     CompileFailure, CompileResult, CppStd, SourceLanguage, compile_cached, resolve_active_compiler,
 };
@@ -392,6 +396,8 @@ pub fn build_packages_batch(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedSolutionRun {
     verdict: Verdict,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    score_ratio: Option<f64>,
     cpu_time_ms: u64,
     wall_time_ms: u64,
     peak_memory_kib: u64,
@@ -399,6 +405,8 @@ struct CachedSolutionRun {
     stderr: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     output_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transcript: Option<InteractionTranscript>,
 }
 
 #[derive(Debug, Clone)]
@@ -462,10 +470,21 @@ pub fn build_package(
         problem.meta.limits.memory.as_deref(),
     )?;
 
+    let interactor_src = find_interactor_source(&prob_dir);
+    let is_interactive = interactor_src.is_some();
+    let runs = problem.meta.run_count();
+    let use_checker = !is_interactive || has_explicit_checker(&prob_dir, &problem.meta);
     let checker_spec = resolve_checker_spec(&prob_dir, &problem.meta)?;
+    let checker_display = if use_checker {
+        checker_spec.display_name().to_owned()
+    } else {
+        "interactor".to_owned()
+    };
     let validator_src = find_validator_source(&prob_dir);
     let all_tests = expand_tests(&prob_dir, &problem.meta)?;
     let all_solutions = discover_solutions(&prob_dir, &problem.meta)?;
+    let subtask_val = validate_subtask_config(&problem.meta.subtask, &all_tests);
+    let has_subtasks = !problem.meta.subtask.is_empty();
 
     // Validate main solution: must have exactly one `main = true`.
     let main_solutions: Vec<&DiscoveredSolution> =
@@ -539,30 +558,43 @@ pub fn build_package(
         });
     }
 
-    match &checker_spec {
-        CheckerSpec::Builtin(name) => {
-            let src = standard_checker_source(name)
-                .ok_or_else(|| JudgeError::UnknownChecker(name.clone()))?;
-            compile_targets.push(CompileTarget {
-                id: "checker".to_owned(),
-                display_path: format!("<builtin:{name}>"),
-                language: SourceLanguage::Cpp { std: CppStd::Cpp20 },
-                source_bytes: src.as_bytes().to_vec(),
-                disk_path: None,
-            });
-        }
-        CheckerSpec::Custom { path, display_name } => {
-            let lang = SourceLanguage::from_path(path)
-                .unwrap_or(SourceLanguage::Cpp { std: CppStd::Cpp20 });
-            let bytes =
-                fs::read(path).map_err(|e| io_err(format!("read {}", path.display()), e))?;
-            compile_targets.push(CompileTarget {
-                id: "checker".to_owned(),
-                display_path: display_name.clone(),
-                language: lang,
-                source_bytes: bytes,
-                disk_path: Some(path.clone()),
-            });
+    if let Some((ref p, ref rel, lang)) = interactor_src {
+        let bytes = fs::read(p).map_err(|e| io_err(format!("read {}", p.display()), e))?;
+        compile_targets.push(CompileTarget {
+            id: "interactor".to_owned(),
+            display_path: rel.clone(),
+            language: lang,
+            source_bytes: bytes,
+            disk_path: Some(p.clone()),
+        });
+    }
+
+    if use_checker {
+        match &checker_spec {
+            CheckerSpec::Builtin(name) => {
+                let src = standard_checker_source(name)
+                    .ok_or_else(|| JudgeError::UnknownChecker(name.clone()))?;
+                compile_targets.push(CompileTarget {
+                    id: "checker".to_owned(),
+                    display_path: format!("<builtin:{name}>"),
+                    language: SourceLanguage::Cpp { std: CppStd::Cpp20 },
+                    source_bytes: src.as_bytes().to_vec(),
+                    disk_path: None,
+                });
+            }
+            CheckerSpec::Custom { path, display_name } => {
+                let lang = SourceLanguage::from_path(path)
+                    .unwrap_or(SourceLanguage::Cpp { std: CppStd::Cpp20 });
+                let bytes =
+                    fs::read(path).map_err(|e| io_err(format!("read {}", path.display()), e))?;
+                compile_targets.push(CompileTarget {
+                    id: "checker".to_owned(),
+                    display_path: display_name.clone(),
+                    language: lang,
+                    source_bytes: bytes,
+                    disk_path: Some(path.clone()),
+                });
+            }
         }
     }
 
@@ -664,7 +696,11 @@ pub fn build_package(
             subset: is_subset,
             built_at_epoch_secs: now_epoch_secs(),
             compiler: Some(compiler),
-            checker: checker_spec.display_name().to_owned(),
+            checker: checker_display,
+            interactive: is_interactive,
+            runs,
+            subtasks: subtask_val.summaries,
+            total_score: has_subtasks.then_some(subtask_val.total_score),
             compile_failures,
             dirty_inputs,
             self_tests: vec![],
@@ -693,16 +729,21 @@ pub fn build_package(
 
     // Phase 3: Self-tests (validator + custom checker) in parallel.
     let validator_bin = compiled.get("validator");
-    let checker_bin = compiled
-        .get("checker")
-        .ok_or_else(|| JudgeError::Internal("checker binary missing after compile".to_owned()))?;
+    let interactor_bin = compiled.get("interactor");
+    let checker_bin = if use_checker {
+        Some(compiled.get("checker").ok_or_else(|| {
+            JudgeError::Internal("checker binary missing after compile".to_owned())
+        })?)
+    } else {
+        None
+    };
 
     let self_tests = run_self_tests(
         &pool,
         &prob_dir,
         validator_bin.map(|c| c.binary_path.as_path()),
         &checker_spec,
-        checker_bin.binary_path.as_path(),
+        checker_bin.map(|c| c.binary_path.as_path()),
         cancel.as_ref(),
         &emit,
     )?;
@@ -751,29 +792,33 @@ pub fn build_package(
     check_cancel()?;
 
     // Phase 5: Validate all materialized test inputs in parallel (if validator exists).
-    let val_results: Vec<Result<Option<std::result::Result<(), String>>>> = if let Some(val_cr) =
-        validator_bin
-    {
-        let total_val = mat_tests.len();
-        let done_val = AtomicUsize::new(0);
-        pool.install(|| {
-            mat_tests
-                .par_iter()
-                .map(|mt| {
-                    let r = run_validator(&val_cr.binary_path, &mt.input_path, cancel.as_ref())?;
-                    let completed = done_val.fetch_add(1, Ordering::Relaxed) + 1;
-                    emit(ProgressEvent::Validating {
-                        test_name: mt.spec.name.clone(),
-                        completed,
-                        total: total_val,
-                    });
-                    Ok(Some(r))
-                })
-                .collect()
-        })
-    } else {
-        (0..mat_tests.len()).map(|_| Ok(None)).collect()
-    };
+    let val_results: Vec<Result<Option<std::result::Result<(), String>>>> =
+        if let Some(val_cr) = validator_bin {
+            let total_val = mat_tests.len();
+            let done_val = AtomicUsize::new(0);
+            pool.install(|| {
+                mat_tests
+                    .par_iter()
+                    .map(|mt| {
+                        let r = run_validator_with_group(
+                            &val_cr.binary_path,
+                            &mt.input_path,
+                            mt.spec.subtask.as_deref(),
+                            cancel.as_ref(),
+                        )?;
+                        let completed = done_val.fetch_add(1, Ordering::Relaxed) + 1;
+                        emit(ProgressEvent::Validating {
+                            test_name: mt.spec.name.clone(),
+                            completed,
+                            total: total_val,
+                        });
+                        Ok(Some(r))
+                    })
+                    .collect()
+            })
+        } else {
+            (0..mat_tests.len()).map(|_| Ok(None)).collect()
+        };
 
     let mut test_summaries = Vec::with_capacity(mat_tests.len());
     let mut diagnostics = Vec::new();
@@ -802,6 +847,7 @@ pub fn build_package(
             index: mt.spec.index,
             name: mt.spec.name.clone(),
             tag: mt.spec.tag.clone(),
+            subtask: mt.spec.subtask.clone(),
             is_sample: mt.spec.is_sample,
             size_bytes: mt.size_bytes,
             gen_cmd: mt.spec.gen_cmd.clone(),
@@ -812,7 +858,7 @@ pub fn build_package(
 
     check_cancel()?;
 
-    // Phase 6: Run main solution (`std`) to generate `.ans` and validate manual samples.
+    // Phase 6: Run main solution (`std`) to generate `.ans` (when needed) and validate samples.
     let sol_jobs = opts.solution_jobs.unwrap_or(1).max(1);
     let main_cr = compiled
         .get(&format!("sol:{}", main_sol.name))
@@ -843,92 +889,168 @@ pub fn build_package(
     for (idx, mt) in mat_tests.iter().enumerate() {
         check_cancel()?;
         let out_path = build_tests_dir.join(format!("{:03}.ans", mt.spec.index));
-        let (outcome, cache_hit) = run_solution_cached_with_output(
-            &cache,
-            main_cr,
-            &mt.input_path,
-            &mt.input_hash,
-            &out_path,
-            limits,
-            cancel.as_ref(),
-        )?;
 
-        let mut cell_verdict = outcome.verdict;
-        let mut checker_msg = String::new();
+        let (
+            cell_verdict,
+            cell_ratio,
+            checker_msg,
+            cpu_time_ms,
+            wall_time_ms,
+            peak_memory_kib,
+            cache_hit,
+            stderr,
+            transcript,
+            main_output_preview,
+        ) = if let Some(inter_cr) = interactor_bin {
+            let tout_tmp = tempfile::NamedTempFile::new()
+                .map_err(|e| io_err("create temp interactor tout", e))?;
+            let inter_out = run_multi_run_interactive(
+                &inter_cr.binary_path,
+                &main_cr.binary_path,
+                &mt.input_path,
+                tout_tmp.path(),
+                runs,
+                limits,
+                cancel.as_ref(),
+            )?;
+            let mut verdict = inter_out.verdict;
+            let mut ratio = inter_out.score_ratio;
+            let mut msg = inter_out.checker_message;
 
-        if cell_verdict == Verdict::AC {
-            // If this is a sample with an existing manual `.ans`, NEVER overwrite it;
-            // verify BOTH std output against manual .ans AND manual .ans against std output.
-            if let TestSource::Sample {
-                manual_ans_rel: Some(ref ans_rel),
-                ..
-            } = mt.spec.source
+            if verdict == Verdict::AC
+                && let Some(chk_cr) = checker_bin
             {
-                let manual_ans_path = prob_dir.join(ans_rel);
-                let (v1, m1) = run_checker(
-                    &checker_bin.binary_path,
+                let tout_bytes = fs::read(tout_tmp.path()).unwrap_or_default();
+                write_atomic(&out_path, &tout_bytes)?;
+                ans_paths[idx] = Some((out_path.clone(), xcpc_storage::content_hash(&tout_bytes)));
+                let chk_res = run_checker_with_score(
+                    &chk_cr.binary_path,
                     &mt.input_path,
                     &out_path,
-                    &manual_ans_path,
+                    &out_path,
                     cancel.as_ref(),
                 )?;
-                let (v2, m2) = if v1 == Verdict::AC {
-                    run_checker(
-                        &checker_bin.binary_path,
-                        &mt.input_path,
-                        &manual_ans_path,
-                        &out_path,
-                        cancel.as_ref(),
-                    )?
-                } else {
-                    (v1, m1.clone())
-                };
-                if v1 != Verdict::AC {
-                    cell_verdict = v1;
-                    checker_msg = format!("std vs manual {ans_rel}: {m1}");
-                } else if v2 != Verdict::AC {
-                    cell_verdict = v2;
-                    checker_msg = format!("manual {ans_rel} vs std: {m2}");
-                } else {
-                    checker_msg = m1;
-                }
-                let ans_bytes = fs::read(&manual_ans_path)
-                    .map_err(|e| io_err(format!("read {}", manual_ans_path.display()), e))?;
-                ans_paths[idx] = Some((manual_ans_path, xcpc_storage::content_hash(&ans_bytes)));
-            } else {
-                let ans_bytes = fs::read(&out_path)
-                    .map_err(|e| io_err(format!("read {}", out_path.display()), e))?;
-                ans_paths[idx] = Some((out_path.clone(), xcpc_storage::content_hash(&ans_bytes)));
+                verdict = chk_res.verdict;
+                ratio = ratio.min(chk_res.score_ratio);
+                msg = chk_res.message;
+            }
+            let preview = read_bounded_output_preview(tout_tmp.path());
+            (
+                verdict,
+                ratio,
+                msg,
+                inter_out.cpu_time_ms,
+                inter_out.wall_time_ms,
+                inter_out.peak_memory_kib,
+                false,
+                inter_out.stderr,
+                Some(inter_out.transcript),
+                preview,
+            )
+        } else {
+            let chk_cr = checker_bin.expect("non-interactive build requires checker");
+            let (outcome, hit) = run_solution_cached_with_output(
+                &cache,
+                main_cr,
+                &mt.input_path,
+                &mt.input_hash,
+                &out_path,
+                runs,
+                limits,
+                cancel.as_ref(),
+            )?;
 
-                // Write back to `samples/` ONLY when `[[test]]` explicitly has `sample = true`.
-                // Idempotent: skip if an existing `samples/*.in` already has identical bytes,
-                // and never overwrite an existing manual `.ans`.
-                if mt.spec.write_back_sample
-                    && !ws.is_read_only()
-                    && !existing_sample_in_hashes.contains(&mt.input_hash)
+            let mut verdict = outcome.verdict;
+            let mut ratio = if verdict == Verdict::AC { 1.0 } else { 0.0 };
+            let mut msg = String::new();
+
+            if verdict == Verdict::AC {
+                if let TestSource::Sample {
+                    manual_ans_rel: Some(ref ans_rel),
+                    ..
+                } = mt.spec.source
                 {
-                    let samples_dir = prob_dir.join("samples");
-                    let stem = loop {
-                        let candidate = format!("{next_sample_num:02}");
-                        next_sample_num += 1;
-                        if !samples_dir.join(format!("{candidate}.in")).exists()
-                            && !samples_dir.join(format!("{candidate}.ans")).exists()
-                            && !samples_dir.join(format!("{candidate}.out")).exists()
-                        {
-                            break candidate;
-                        }
+                    let manual_ans_path = prob_dir.join(ans_rel);
+                    let r1 = run_checker_with_score(
+                        &chk_cr.binary_path,
+                        &mt.input_path,
+                        &out_path,
+                        &manual_ans_path,
+                        cancel.as_ref(),
+                    )?;
+                    let r2 = if r1.verdict == Verdict::AC {
+                        run_checker_with_score(
+                            &chk_cr.binary_path,
+                            &mt.input_path,
+                            &manual_ans_path,
+                            &out_path,
+                            cancel.as_ref(),
+                        )?
+                    } else {
+                        r1.clone()
                     };
-                    let in_bytes = fs::read(&mt.input_path)
-                        .map_err(|e| io_err(format!("read {}", mt.input_path.display()), e))?;
-                    let in_rel = format!("{}/samples/{stem}.in", problem.dir);
-                    let ans_rel = format!("{}/samples/{stem}.ans", problem.dir);
-                    ws.write(&in_rel, &in_bytes)?;
-                    ws.write(&ans_rel, &ans_bytes)?;
-                    existing_sample_in_hashes.insert(mt.input_hash.clone());
-                    wrote_back_sample = true;
+                    if r1.verdict != Verdict::AC {
+                        verdict = r1.verdict;
+                        ratio = r1.score_ratio;
+                        msg = format!("std vs manual {ans_rel}: {}", r1.message);
+                    } else if r2.verdict != Verdict::AC {
+                        verdict = r2.verdict;
+                        ratio = r2.score_ratio;
+                        msg = format!("manual {ans_rel} vs std: {}", r2.message);
+                    } else {
+                        ratio = r1.score_ratio.min(r2.score_ratio);
+                        msg = r1.message;
+                    }
+                    let ans_bytes = fs::read(&manual_ans_path)
+                        .map_err(|e| io_err(format!("read {}", manual_ans_path.display()), e))?;
+                    ans_paths[idx] =
+                        Some((manual_ans_path, xcpc_storage::content_hash(&ans_bytes)));
+                } else {
+                    let ans_bytes = fs::read(&out_path)
+                        .map_err(|e| io_err(format!("read {}", out_path.display()), e))?;
+                    ans_paths[idx] =
+                        Some((out_path.clone(), xcpc_storage::content_hash(&ans_bytes)));
+
+                    if mt.spec.write_back_sample
+                        && !ws.is_read_only()
+                        && !existing_sample_in_hashes.contains(&mt.input_hash)
+                    {
+                        let samples_dir = prob_dir.join("samples");
+                        let stem = loop {
+                            let candidate = format!("{next_sample_num:02}");
+                            next_sample_num += 1;
+                            if !samples_dir.join(format!("{candidate}.in")).exists()
+                                && !samples_dir.join(format!("{candidate}.ans")).exists()
+                                && !samples_dir.join(format!("{candidate}.out")).exists()
+                            {
+                                break candidate;
+                            }
+                        };
+                        let in_bytes = fs::read(&mt.input_path)
+                            .map_err(|e| io_err(format!("read {}", mt.input_path.display()), e))?;
+                        let in_rel = format!("{}/samples/{stem}.in", problem.dir);
+                        let ans_rel = format!("{}/samples/{stem}.ans", problem.dir);
+                        ws.write(&in_rel, &in_bytes)?;
+                        ws.write(&ans_rel, &ans_bytes)?;
+                        existing_sample_in_hashes.insert(mt.input_hash.clone());
+                        wrote_back_sample = true;
+                    }
                 }
             }
-        }
+            let preview = read_bounded_output_preview(&out_path);
+            (
+                verdict,
+                ratio,
+                msg,
+                outcome.cpu_time_ms,
+                outcome.wall_time_ms,
+                outcome.peak_memory_kib,
+                hit,
+                outcome.stderr,
+                None,
+                preview,
+            )
+        };
 
         let repro = (!cell_verdict.is_ok()).then(|| {
             format!(
@@ -944,21 +1066,22 @@ pub fn build_package(
             repro_commands.push(r.clone());
         }
 
-        let main_output_preview = read_bounded_output_preview(&out_path);
         let main_cell = MatrixCell {
             test_index: mt.spec.index,
             test_name: mt.spec.name.clone(),
             solution: main_sol.name.clone(),
             verdict: cell_verdict,
-            cpu_time_ms: outcome.cpu_time_ms,
-            wall_time_ms: outcome.wall_time_ms,
-            peak_memory_kib: outcome.peak_memory_kib,
+            cpu_time_ms,
+            wall_time_ms,
+            peak_memory_kib,
             cache_hit,
             checker_message: checker_msg,
-            stderr: outcome.stderr,
+            stderr,
             output_preview: main_output_preview,
             stale: false,
             repro_cmd: repro,
+            score_ratio: Some(cell_ratio),
+            transcript,
         };
 
         let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
@@ -966,7 +1089,7 @@ pub fn build_package(
             solution: main_sol.name.clone(),
             test_name: mt.spec.name.clone(),
             verdict: cell_verdict,
-            cpu_time_ms: outcome.cpu_time_ms,
+            cpu_time_ms,
             completed,
             total: planned_runs,
             cell: include_main_in_report.then(|| Box::new(main_cell.clone())),
@@ -999,84 +1122,164 @@ pub fn build_package(
         let sol_cr = compiled
             .get(&format!("sol:{}", sol.name))
             .ok_or_else(|| JudgeError::Internal(format!("missing binary for {}", sol.name)))?;
-        let Some((ref ans_path, ref ans_hash)) = ans_paths[*idx] else {
-            let je_cell = MatrixCell {
-                test_index: mt.spec.index,
-                test_name: mt.spec.name.clone(),
-                solution: sol.name.clone(),
-                verdict: Verdict::JE,
-                cpu_time_ms: 0,
-                wall_time_ms: 0,
-                peak_memory_kib: 0,
-                cache_hit: false,
-                checker_message: "reference answer unavailable (main solution failed)".to_owned(),
-                stderr: String::new(),
-                output_preview: None,
-                stale: false,
-                repro_cmd: Some(format!(
-                    "xcpc package build {slug} --tests {} --solutions {}",
-                    mt.spec.index, sol.name
-                )),
+
+        let (cached, cache_hit) = if let Some(inter_cr) = interactor_bin {
+            let chk_hash = checker_bin.map(|c| c.binary_hash.as_str()).unwrap_or("");
+            let ans_hash = ans_paths[*idx]
+                .as_ref()
+                .map(|(_, h)| h.as_str())
+                .unwrap_or("");
+            let cache_key = interactive_run_cache_key(
+                &sol_cr.binary_hash,
+                &inter_cr.binary_hash,
+                &mt.input_hash,
+                runs,
+                limits,
+                chk_hash,
+                ans_hash,
+            );
+            if let Some(hit) = cache.get_run_json::<CachedSolutionRun>(&cache_key) {
+                (hit, true)
+            } else {
+                let tout_tmp = tempfile::NamedTempFile::new()
+                    .map_err(|e| io_err("create temp interactor tout", e))?;
+                let inter_out = run_multi_run_interactive(
+                    &inter_cr.binary_path,
+                    &sol_cr.binary_path,
+                    &mt.input_path,
+                    tout_tmp.path(),
+                    runs,
+                    limits,
+                    cancel.as_ref(),
+                )?;
+                let mut final_verdict = inter_out.verdict;
+                let mut score_ratio = inter_out.score_ratio;
+                let mut checker_msg = inter_out.checker_message;
+
+                if final_verdict == Verdict::AC
+                    && let Some(chk_cr) = checker_bin
+                {
+                    let fallback_ans;
+                    let ans_p = if let Some((ref p, _)) = ans_paths[*idx] {
+                        p.as_path()
+                    } else {
+                        fallback_ans = tempfile::NamedTempFile::new()
+                            .map_err(|e| io_err("create empty ans file", e))?;
+                        fallback_ans.path()
+                    };
+                    let chk_res = run_checker_with_score(
+                        &chk_cr.binary_path,
+                        &mt.input_path,
+                        tout_tmp.path(),
+                        ans_p,
+                        cancel.as_ref(),
+                    )?;
+                    final_verdict = chk_res.verdict;
+                    score_ratio = score_ratio.min(chk_res.score_ratio);
+                    checker_msg = chk_res.message;
+                }
+                let output_preview = read_bounded_output_preview(tout_tmp.path());
+                let entry = CachedSolutionRun {
+                    verdict: final_verdict,
+                    score_ratio: Some(score_ratio),
+                    cpu_time_ms: inter_out.cpu_time_ms,
+                    wall_time_ms: inter_out.wall_time_ms,
+                    peak_memory_kib: inter_out.peak_memory_kib,
+                    checker_message: checker_msg,
+                    stderr: inter_out.stderr,
+                    output_preview,
+                    transcript: Some(inter_out.transcript),
+                };
+                let _ = cache.put_run_json(&cache_key, &entry);
+                (entry, false)
+            }
+        } else {
+            let chk_cr = checker_bin.expect("non-interactive build requires checker");
+            let Some((ref ans_path, ref ans_hash)) = ans_paths[*idx] else {
+                let je_cell = MatrixCell {
+                    test_index: mt.spec.index,
+                    test_name: mt.spec.name.clone(),
+                    solution: sol.name.clone(),
+                    verdict: Verdict::JE,
+                    cpu_time_ms: 0,
+                    wall_time_ms: 0,
+                    peak_memory_kib: 0,
+                    cache_hit: false,
+                    checker_message: "reference answer unavailable (main solution failed)"
+                        .to_owned(),
+                    stderr: String::new(),
+                    output_preview: None,
+                    stale: false,
+                    repro_cmd: Some(format!(
+                        "xcpc package build {slug} --tests {} --solutions {}",
+                        mt.spec.index, sol.name
+                    )),
+                    score_ratio: Some(0.0),
+                    transcript: None,
+                };
+                let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
+                emit(ProgressEvent::Running {
+                    solution: sol.name.clone(),
+                    test_name: mt.spec.name.clone(),
+                    verdict: Verdict::JE,
+                    cpu_time_ms: 0,
+                    completed,
+                    total: planned_runs,
+                    cell: Some(Box::new(je_cell.clone())),
+                });
+                return Ok(je_cell);
             };
-            let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
-            emit(ProgressEvent::Running {
-                solution: sol.name.clone(),
-                test_name: mt.spec.name.clone(),
-                verdict: Verdict::JE,
-                cpu_time_ms: 0,
-                completed,
-                total: planned_runs,
-                cell: Some(Box::new(je_cell.clone())),
-            });
-            return Ok(je_cell);
-        };
 
-        let cache_key = run_cache_key(
-            &sol_cr.binary_hash,
-            &mt.input_hash,
-            limits,
-            &checker_bin.binary_hash,
-            ans_hash,
-        );
+            let cache_key = run_cache_key(
+                &sol_cr.binary_hash,
+                &mt.input_hash,
+                runs,
+                limits,
+                &chk_cr.binary_hash,
+                ans_hash,
+            );
 
-        let (cached, cache_hit) =
             if let Some(hit) = cache.get_run_json::<CachedSolutionRun>(&cache_key) {
                 (hit, true)
             } else {
                 let tmp_out = tempfile::NamedTempFile::new()
                     .map_err(|e| io_err("create temp solution output", e))?;
-                let outcome = run_process(
+                let outcome = run_multi_run_process(
                     &sol_cr.binary_path,
-                    &[],
-                    Some(&mt.input_path),
-                    Some(tmp_out.path()),
+                    &mt.input_path,
+                    tmp_out.path(),
+                    runs,
                     limits,
                     cancel.as_ref(),
                 )?;
-                let (final_verdict, checker_msg) = if outcome.verdict == Verdict::AC {
-                    run_checker(
-                        &checker_bin.binary_path,
+                let (final_verdict, score_ratio, checker_msg) = if outcome.verdict == Verdict::AC {
+                    let chk_res = run_checker_with_score(
+                        &chk_cr.binary_path,
                         &mt.input_path,
                         tmp_out.path(),
                         ans_path,
                         cancel.as_ref(),
-                    )?
+                    )?;
+                    (chk_res.verdict, chk_res.score_ratio, chk_res.message)
                 } else {
-                    (outcome.verdict, String::new())
+                    (outcome.verdict, 0.0, String::new())
                 };
                 let output_preview = read_bounded_output_preview(tmp_out.path());
                 let entry = CachedSolutionRun {
                     verdict: final_verdict,
+                    score_ratio: Some(score_ratio),
                     cpu_time_ms: outcome.cpu_time_ms,
                     wall_time_ms: outcome.wall_time_ms,
                     peak_memory_kib: outcome.peak_memory_kib,
                     checker_message: checker_msg,
                     stderr: outcome.stderr,
                     output_preview,
+                    transcript: None,
                 };
                 let _ = cache.put_run_json(&cache_key, &entry);
                 (entry, false)
-            };
+            }
+        };
 
         let cell = MatrixCell {
             test_index: mt.spec.index,
@@ -1092,6 +1295,8 @@ pub fn build_package(
             output_preview: cached.output_preview,
             stale: false,
             repro_cmd: None,
+            score_ratio: cached.score_ratio,
+            transcript: cached.transcript,
         };
 
         let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1161,7 +1366,7 @@ pub fn build_package(
                 .collect()
         };
 
-        let (actual_verdict, matched) =
+        let (actual_verdict, expect_matched) =
             if !sol.is_main && eval_cells.is_empty() && !cells.is_empty() {
                 // All tests this solution ran on failed validator: cannot legitimately satisfy `expect`.
                 let v = cells
@@ -1176,8 +1381,37 @@ pub fn build_package(
                     .find(|c| c.verdict != Verdict::AC)
                     .map(|c| c.verdict)
                     .unwrap_or(Verdict::AC);
-                (v, sol.expect.matches(v.as_str()))
+                let ok = if sol.is_main {
+                    v == Verdict::AC
+                } else if let Some(ref exp) = sol.explicit_expect {
+                    exp.matches(v.as_str())
+                } else if sol.score.is_some() || !sol.subtasks.is_empty() {
+                    true
+                } else {
+                    sol.expect.matches(v.as_str())
+                };
+                (v, ok)
             };
+
+        let (total_score, max_score, subtask_scores, subtask_ok, subtask_reasons) = if has_subtasks
+        {
+            let by_test: HashMap<usize, &MatrixCell> =
+                cells.iter().map(|c| (c.test_index, *c)).collect();
+            let eval =
+                evaluate_solution_subtasks(&subtask_val, sol, &by_test, &invalid_test_indices);
+            (
+                Some(eval.total_score),
+                Some(eval.max_score),
+                eval.subtask_scores,
+                eval.assertions_matched,
+                eval.failure_reasons,
+            )
+        } else {
+            (None, None, Vec::new(), true, Vec::new())
+        };
+
+        let matched = expect_matched && subtask_ok;
+
         if !matched {
             all_solutions_matched = false;
             let first_bad_test = cells
@@ -1194,12 +1428,17 @@ pub fn build_package(
                 }
                 None => format!("xcpc package build {slug} --solutions {}", sol.name),
             };
-            diagnostics.push(format!(
-                "solution `{}` expected {:?}, got {}",
-                sol.name,
-                sol.expect.normalized(),
-                actual_verdict
-            ));
+            if !expect_matched {
+                diagnostics.push(format!(
+                    "solution `{}` expected {:?}, got {}",
+                    sol.name,
+                    sol.expect.normalized(),
+                    actual_verdict
+                ));
+            }
+            for reason in subtask_reasons {
+                diagnostics.push(format!("solution `{}`: {reason}", sol.name));
+            }
             repro_commands.push(cmd.clone());
             // Attach repro_cmd to the offending cell(s).
             for c in matrix_cells.iter_mut().filter(|c| c.solution == sol.name) {
@@ -1219,6 +1458,9 @@ pub fn build_package(
             passed_tests,
             total_tests,
             tags: sol.tags.clone(),
+            total_score,
+            max_score,
+            subtask_scores,
         });
     }
 
@@ -1301,7 +1543,7 @@ pub fn build_package(
     }
 
     // 3. Custom checker self-tests (when using custom checker.cpp).
-    if checker_spec.is_custom() {
+    if use_checker && checker_spec.is_custom() {
         let chk_ok: Vec<&SelfTestResult> = self_tests
             .iter()
             .filter(|r| r.kind == "checker_ok")
@@ -1351,6 +1593,13 @@ pub fn build_package(
                 ),
             });
         }
+    } else if !use_checker {
+        gates.push(GateResult {
+            id: "checker_self_tests".to_owned(),
+            title: "交互器判定".to_owned(),
+            status: GateStatus::Skip,
+            message: "交互题由 interactor.cpp 直接判定（通过标程与错解验证）".to_owned(),
+        });
     } else {
         gates.push(GateResult {
             id: "checker_self_tests".to_owned(),
@@ -1358,6 +1607,42 @@ pub fn build_package(
             status: GateStatus::Skip,
             message: format!("使用内置标准校验器 {}", checker_spec.display_name()),
         });
+    }
+
+    // 3b. OI Subtasks structural gate (when `[[subtask]]` is declared or any test specifies `subtask`).
+    if has_subtasks || !subtask_val.errors.is_empty() {
+        if !subtask_val.errors.is_empty() {
+            for err in &subtask_val.errors {
+                diagnostics.push(format!("subtask config error: {err}"));
+            }
+            gates.push(GateResult {
+                id: "subtasks".to_owned(),
+                title: "OI 子任务配置与依赖".to_owned(),
+                status: GateStatus::Fail,
+                message: subtask_val.errors.join("；"),
+            });
+            next_steps.push(
+                "修复 [[subtask]] 配置（检查依赖环、未知 ID、空子任务与未归属测试点）。".to_owned(),
+            );
+        } else if !subtask_val.warnings.is_empty() {
+            gates.push(GateResult {
+                id: "subtasks".to_owned(),
+                title: "OI 子任务配置与依赖".to_owned(),
+                status: GateStatus::Warn,
+                message: subtask_val.warnings.join("；"),
+            });
+        } else {
+            gates.push(GateResult {
+                id: "subtasks".to_owned(),
+                title: "OI 子任务配置与依赖".to_owned(),
+                status: GateStatus::Pass,
+                message: format!(
+                    "{} 个子任务配置有效（总分 {}）",
+                    subtask_val.summaries.len(),
+                    subtask_val.total_score
+                ),
+            });
+        }
     }
 
     // 4. Dirty inputs check (warning).
@@ -1438,12 +1723,15 @@ pub fn build_package(
     }
 
     // 8. Cross-check & wrong solutions warning (prominent warning, never hard fail).
-    let has_other_ac = all_solutions
-        .iter()
-        .any(|s| !s.is_main && s.expect.matches("AC"));
-    let has_wrong_sol = all_solutions
-        .iter()
-        .any(|s| !s.is_main && !s.expect.matches("AC"));
+    let has_other_ac = all_solutions.iter().any(|s| {
+        !s.is_main && s.score.is_none() && s.subtasks.is_empty() && s.expect.matches("AC")
+    });
+    let has_wrong_sol = all_solutions.iter().any(|s| {
+        !s.is_main
+            && (!s.expect.matches("AC")
+                || s.score.is_some()
+                || s.subtasks.values().any(|e| !e.matches("AC")))
+    });
     if !has_other_ac || !has_wrong_sol {
         let mut missing = Vec::new();
         if !has_other_ac {
@@ -1515,7 +1803,11 @@ pub fn build_package(
         subset: is_subset,
         built_at_epoch_secs: now_epoch_secs(),
         compiler: Some(compiler),
-        checker: checker_spec.display_name().to_owned(),
+        checker: checker_display,
+        interactive: is_interactive,
+        runs,
+        subtasks: subtask_val.summaries,
+        total_score: has_subtasks.then_some(subtask_val.total_score),
         compile_failures,
         dirty_inputs,
         self_tests,
@@ -1630,16 +1922,18 @@ fn materialize_test(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_solution_cached_with_output(
     cache: &JudgeCache,
     sol_cr: &CompileResult,
     input_path: &Path,
     input_hash: &str,
     dest_out_path: &Path,
+    runs: u32,
     limits: RunLimits,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(RunOutcome, bool)> {
-    let key = std_cache_key(&sol_cr.binary_hash, input_hash, limits);
+    let key = std_cache_key(&sol_cr.binary_hash, input_hash, runs, limits);
     let out_cache = cache.root().join("run").join(format!("{key}.out"));
     if let Some(outcome) = cache.get_run_json::<RunOutcome>(&key)
         && out_cache.is_file()
@@ -1651,11 +1945,11 @@ fn run_solution_cached_with_output(
     }
 
     let tmp = tempfile::NamedTempFile::new().map_err(|e| io_err("create temp std output", e))?;
-    let outcome = run_process(
+    let outcome = run_multi_run_process(
         &sol_cr.binary_path,
-        &[],
-        Some(input_path),
-        Some(tmp.path()),
+        input_path,
+        tmp.path(),
+        runs,
         limits,
         cancel,
     )?;
@@ -1671,7 +1965,7 @@ fn run_self_tests(
     prob_dir: &Path,
     validator_bin: Option<&Path>,
     checker_spec: &CheckerSpec,
-    checker_bin: &Path,
+    checker_bin: Option<&Path>,
     cancel: Option<&Arc<AtomicBool>>,
     emit: &(impl Fn(ProgressEvent) + Sync),
 ) -> Result<Vec<SelfTestResult>> {
@@ -1679,10 +1973,12 @@ fn run_self_tests(
         ValValid {
             name: String,
             path: PathBuf,
+            group: Option<String>,
         },
         ValInvalid {
             name: String,
             path: PathBuf,
+            group: Option<String>,
         },
         ChkCase {
             kind: String,
@@ -1698,36 +1994,82 @@ fn run_self_tests(
         for (sub, is_valid) in [("valid", true), ("invalid", false)] {
             let dir = prob_dir.join("tests").join("validator").join(sub);
             if dir.is_dir() {
-                let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+                let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
                     .into_iter()
                     .flatten()
                     .flatten()
                     .map(|e| e.path())
-                    .filter(|p| {
-                        p.is_file()
-                            && p.extension()
-                                .and_then(|s| s.to_str())
-                                .is_some_and(|e| e == "in")
-                    })
                     .collect();
-                files.sort();
-                for p in files {
-                    let name = p
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("case")
-                        .to_owned();
-                    if is_valid {
-                        tasks.push(Task::ValValid { name, path: p });
-                    } else {
-                        tasks.push(Task::ValInvalid { name, path: p });
+                entries.sort();
+                for p in entries {
+                    if p.is_file()
+                        && p.extension()
+                            .and_then(|s| s.to_str())
+                            .is_some_and(|e| e == "in")
+                    {
+                        let name = p
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("case")
+                            .to_owned();
+                        if is_valid {
+                            tasks.push(Task::ValValid {
+                                name,
+                                path: p,
+                                group: None,
+                            });
+                        } else {
+                            tasks.push(Task::ValInvalid {
+                                name,
+                                path: p,
+                                group: None,
+                            });
+                        }
+                    } else if p.is_dir() {
+                        // Optional grouped self-tests: `tests/validator/{valid,invalid}/<subtask_id>/*.in`
+                        let Some(group_id) =
+                            p.file_name().and_then(|s| s.to_str()).map(str::to_owned)
+                        else {
+                            continue;
+                        };
+                        let mut sub_files: Vec<PathBuf> = fs::read_dir(&p)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .map(|e| e.path())
+                            .filter(|sp| {
+                                sp.is_file()
+                                    && sp
+                                        .extension()
+                                        .and_then(|s| s.to_str())
+                                        .is_some_and(|e| e == "in")
+                            })
+                            .collect();
+                        sub_files.sort();
+                        for sp in sub_files {
+                            let fname = sp.file_name().and_then(|s| s.to_str()).unwrap_or("case");
+                            let name = format!("{group_id}/{fname}");
+                            if is_valid {
+                                tasks.push(Task::ValValid {
+                                    name,
+                                    path: sp,
+                                    group: Some(group_id.clone()),
+                                });
+                            } else {
+                                tasks.push(Task::ValInvalid {
+                                    name,
+                                    path: sp,
+                                    group: Some(group_id.clone()),
+                                });
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    if checker_spec.is_custom() {
+    if checker_bin.is_some() && checker_spec.is_custom() {
         let chk_dir = prob_dir.join("tests").join("checker");
         if chk_dir.is_dir() {
             let mut dirs: Vec<PathBuf> = fs::read_dir(&chk_dir)
@@ -1774,9 +2116,9 @@ fn run_self_tests(
             .par_iter()
             .map(|task| {
                 let res = match task {
-                    Task::ValValid { name, path } => {
+                    Task::ValValid { name, path, group } => {
                         let bin = validator_bin.expect("validator bin");
-                        match run_validator(bin, path, cancel)? {
+                        match run_validator_with_group(bin, path, group.as_deref(), cancel)? {
                             Ok(()) => SelfTestResult {
                                 kind: "validator_valid".to_owned(),
                                 name: name.clone(),
@@ -1795,9 +2137,9 @@ fn run_self_tests(
                             },
                         }
                     }
-                    Task::ValInvalid { name, path } => {
+                    Task::ValInvalid { name, path, group } => {
                         let bin = validator_bin.expect("validator bin");
-                        match run_validator(bin, path, cancel)? {
+                        match run_validator_with_group(bin, path, group.as_deref(), cancel)? {
                             Ok(()) => SelfTestResult {
                                 kind: "validator_invalid".to_owned(),
                                 name: name.clone(),
@@ -1822,6 +2164,7 @@ fn run_self_tests(
                         expected,
                         dir,
                     } => {
+                        let chk_bin = checker_bin.expect("checker bin");
                         let in_p = dir.join("in");
                         let out_p = dir.join("out");
                         let ans_p = dir.join("ans");
@@ -1837,15 +2180,15 @@ fn run_self_tests(
                                         .to_owned(),
                             }
                         } else {
-                            let (actual, msg) =
-                                run_checker(checker_bin, &in_p, &out_p, &ans_p, cancel)?;
+                            let outcome =
+                                run_checker_with_score(chk_bin, &in_p, &out_p, &ans_p, cancel)?;
                             SelfTestResult {
                                 kind: kind.clone(),
                                 name: name.clone(),
-                                passed: actual == *expected,
+                                passed: outcome.verdict == *expected,
                                 expected: expected.as_str().to_owned(),
-                                actual: actual.as_str().to_owned(),
-                                message: msg,
+                                actual: outcome.verdict.as_str().to_owned(),
+                                message: outcome.message,
                             }
                         }
                     }
@@ -1980,13 +2323,14 @@ pub(crate) fn gen_cache_key(gen_bin_hash: &str, args_raw: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
-fn std_cache_key(sol_bin_hash: &str, input_hash: &str, limits: RunLimits) -> String {
+fn std_cache_key(sol_bin_hash: &str, input_hash: &str, runs: u32, limits: RunLimits) -> String {
     let mut h = Sha256::new();
-    h.update(b"xcpc-std-v1\0");
+    h.update(b"xcpc-std-v2\0");
     h.update(sol_bin_hash.as_bytes());
     h.update(b"\0");
     h.update(input_hash.as_bytes());
     h.update(b"\0");
+    h.update(runs.to_le_bytes());
     h.update(limits.time_limit_ms.to_le_bytes());
     h.update(limits.memory_limit_kib.to_le_bytes());
     format!("{:x}", h.finalize())
@@ -2048,16 +2392,45 @@ fn read_bounded_output_preview(path: &Path) -> Option<String> {
 fn run_cache_key(
     sol_bin_hash: &str,
     input_hash: &str,
+    runs: u32,
     limits: RunLimits,
     checker_bin_hash: &str,
     ans_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"xcpc-run-v2\0");
+    h.update(b"xcpc-run-v3\0");
     h.update(sol_bin_hash.as_bytes());
     h.update(b"\0");
     h.update(input_hash.as_bytes());
     h.update(b"\0");
+    h.update(runs.to_le_bytes());
+    h.update(limits.time_limit_ms.to_le_bytes());
+    h.update(limits.memory_limit_kib.to_le_bytes());
+    h.update(b"\0");
+    h.update(checker_bin_hash.as_bytes());
+    h.update(b"\0");
+    h.update(ans_hash.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+fn interactive_run_cache_key(
+    sol_bin_hash: &str,
+    interactor_bin_hash: &str,
+    input_hash: &str,
+    runs: u32,
+    limits: RunLimits,
+    checker_bin_hash: &str,
+    ans_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"xcpc-inter-v1\0");
+    h.update(sol_bin_hash.as_bytes());
+    h.update(b"\0");
+    h.update(interactor_bin_hash.as_bytes());
+    h.update(b"\0");
+    h.update(input_hash.as_bytes());
+    h.update(b"\0");
+    h.update(runs.to_le_bytes());
     h.update(limits.time_limit_ms.to_le_bytes());
     h.update(limits.memory_limit_kib.to_le_bytes());
     h.update(b"\0");

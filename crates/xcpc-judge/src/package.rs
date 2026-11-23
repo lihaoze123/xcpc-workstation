@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
-use xcpc_domain::{ExpectVerdict, ProblemMeta};
+use xcpc_domain::{ExpectVerdict, ProblemMeta, ScoreExpect};
 use xcpc_storage::Workspace;
 
 use crate::assets::is_standard_checker;
@@ -92,6 +92,9 @@ pub struct ExpandedTest {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// Optional OI subtask ID (`[[test]].subtask`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtask: Option<String>,
     pub is_sample: bool,
     /// When `true`, write generated `.in` and `std` `.ans` back into `samples/`.
     pub write_back_sample: bool,
@@ -113,7 +116,13 @@ pub struct DiscoveredSolution {
     pub language: SourceLanguage,
     pub is_main: bool,
     pub expect: ExpectVerdict,
+    /// Explicitly configured `expect` in `problem.toml` (vs default).
+    pub explicit_expect: Option<ExpectVerdict>,
     pub tags: Option<Vec<String>>,
+    /// Optional expected total score for OI subtask problems.
+    pub score: Option<ScoreExpect>,
+    /// Optional per-subtask expected verdict assertions.
+    pub subtasks: BTreeMap<String, ExpectVerdict>,
 }
 
 /// Returns `<workspace>/build/problems/<slug>`.
@@ -129,6 +138,11 @@ pub fn report_path_for(ws: &Workspace, slug: &str) -> PathBuf {
 /// Path to the preserved strict-verified report (`build/problems/<slug>/verified_report.json`).
 pub fn verified_report_path_for(ws: &Workspace, slug: &str) -> PathBuf {
     build_dir_for(ws, slug).join("verified_report.json")
+}
+
+/// Path to the isolated sanitizer UB check report (`build/problems/<slug>/sanitizer-report.json`).
+pub fn sanitizer_report_path_for(ws: &Workspace, slug: &str) -> PathBuf {
+    build_dir_for(ws, slug).join("sanitizer-report.json")
 }
 
 /// Loads the latest build report if present and valid JSON.
@@ -163,6 +177,10 @@ pub fn compute_package_hash(ws: &Workspace, slug: &str) -> Result<String> {
         "checker.17.cpp",
         "checker.20.cpp",
         "checker.23.cpp",
+        "interactor.cpp",
+        "interactor.17.cpp",
+        "interactor.20.cpp",
+        "interactor.23.cpp",
         "testlib.h",
     ] {
         let p = prob_dir.join(name);
@@ -341,6 +359,50 @@ pub fn find_validator_source(prob_dir: &Path) -> Option<(PathBuf, String, Source
     None
 }
 
+/// Finds `interactor.cpp` (or `interactor.{17,20,23}.cpp`) in `prob_dir` if present.
+/// Presence of an interactor automatically classifies the problem as interactive.
+pub fn find_interactor_source(prob_dir: &Path) -> Option<(PathBuf, String, SourceLanguage)> {
+    for name in [
+        "interactor.cpp",
+        "interactor.20.cpp",
+        "interactor.23.cpp",
+        "interactor.17.cpp",
+    ] {
+        let p = prob_dir.join(name);
+        if p.is_file()
+            && let Some(lang) = SourceLanguage::from_path(&p)
+        {
+            return Some((p, name.to_owned(), lang));
+        }
+    }
+    None
+}
+
+/// Returns `true` if a checker is explicitly configured via `[package].checker` or if a
+/// custom `checker.cpp` (or `checker.{17,20,23}.cpp`) exists in `prob_dir`.
+///
+/// For interactive problems, two-stage checking (passing interactor `tout` to `checker`)
+/// is enabled iff this returns `true`.
+pub fn has_explicit_checker(prob_dir: &Path, meta: &ProblemMeta) -> bool {
+    if meta
+        .package
+        .as_ref()
+        .and_then(|p| p.checker.as_deref())
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty())
+    {
+        return true;
+    }
+    [
+        "checker.cpp",
+        "checker.20.cpp",
+        "checker.23.cpp",
+        "checker.17.cpp",
+    ]
+    .iter()
+    .any(|name| prob_dir.join(name).is_file())
+}
+
 /// Finds a generator source file `generators/<name>.cpp` (or `.17/.20/.23.cpp`).
 pub fn find_generator_source(
     prob_dir: &Path,
@@ -406,9 +468,16 @@ pub fn discover_solutions(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<Dis
     for (name, (path, rel, lang)) in files_by_name {
         let spec = meta.solutions.get(&name);
         let is_main = spec.and_then(|s| s.main).unwrap_or(false);
-        let expect = spec
-            .and_then(|s| s.expect.clone())
-            .unwrap_or_else(|| ExpectVerdict::Single("AC".to_owned()));
+        let explicit_expect = spec.and_then(|s| s.expect.clone());
+        let score = spec.and_then(|s| s.score);
+        let subtasks = spec.map(|s| s.subtasks.clone()).unwrap_or_default();
+        let expect = explicit_expect.clone().unwrap_or_else(|| {
+            if !is_main && (score.is_some() || !subtasks.is_empty()) {
+                ExpectVerdict::Single("ANY".to_owned())
+            } else {
+                ExpectVerdict::Single("AC".to_owned())
+            }
+        });
         let tags = spec.and_then(|s| s.tags.clone());
         out.push(DiscoveredSolution {
             name,
@@ -417,7 +486,10 @@ pub fn discover_solutions(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<Dis
             language: lang,
             is_main,
             expect,
+            explicit_expect,
             tags,
+            score,
+            subtasks,
         });
     }
 
@@ -426,13 +498,16 @@ pub fn discover_solutions(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<Dis
     Ok(out)
 }
 
-/// Statically expands `samples/` (leading tests with tag `"sample"`) followed by `[[test]]`.
+/// Statically expands `samples/` (leading tests with tag `"sample"`, skipped automatically
+/// for interactive problems with `interactor.cpp`) followed by `[[test]]`.
 pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedTest>> {
     let mut tests = Vec::new();
+    let is_interactive = find_interactor_source(prob_dir).is_some();
 
-    // 1. Leading tests from `samples/*.in`.
+    // 1. Leading tests from `samples/*.in` (skipped for interactive problems unless explicitly
+    // declared via `[[test]]`).
     let samples_dir = prob_dir.join("samples");
-    if samples_dir.is_dir() {
+    if !is_interactive && samples_dir.is_dir() {
         let mut stems: Vec<String> = fs::read_dir(&samples_dir)
             .map_err(|e| io_err(format!("read {}", samples_dir.display()), e))?
             .flatten()
@@ -462,6 +537,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                 index: idx,
                 name: format!("sample-{stem}"),
                 tag: Some("sample".to_owned()),
+                subtask: None,
                 is_sample: true,
                 write_back_sample: false,
                 source: TestSource::Sample {
@@ -489,6 +565,12 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
 
     for (spec_idx, spec) in meta.test.iter().enumerate() {
         let write_back_sample = spec.sample.unwrap_or(false);
+        let subtask = spec
+            .subtask
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         match (&spec.file, &spec.generator) {
             (Some(file), None) => {
                 let idx = tests.len() + 1;
@@ -501,6 +583,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                     index: idx,
                     name: spec.name.clone().unwrap_or(default_name),
                     tag: spec.tag.clone(),
+                    subtask,
                     is_sample: write_back_sample,
                     write_back_sample,
                     source: TestSource::File {
@@ -551,6 +634,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                         index: idx,
                         name,
                         tag: spec.tag.clone(),
+                        subtask: subtask.clone(),
                         is_sample: write_back_sample,
                         write_back_sample,
                         source: TestSource::Generated {

@@ -309,6 +309,55 @@ pub struct PackageConfig {
     /// otherwise `wcmp`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checker: Option<String>,
+    /// Number of sequential stdio passes (`runs >= 2` enables multi-run communication mode;
+    /// omitted or `1` means single-run).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u32>,
+}
+
+impl PackageConfig {
+    /// Effective run count (minimum 1).
+    pub fn run_count(&self) -> u32 {
+        self.runs.unwrap_or(1).max(1)
+    }
+}
+
+/// Scoring policy for an OI subtask (`[[subtask]].scoring`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubtaskScoring {
+    /// Bundled scoring (default): any failure in this subtask or its transitive dependencies
+    /// yields 0; otherwise `score * min(test_ratio)`.
+    #[default]
+    Min,
+    /// Even split across tests in this subtask: `sum((score / count) * test_ratio)`,
+    /// or 0 if any transitive dependency did not achieve full score.
+    Sum,
+}
+
+impl SubtaskScoring {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubtaskScoring::Min => "min",
+            SubtaskScoring::Sum => "sum",
+        }
+    }
+}
+
+/// One `[[subtask]]` entry in `problem.toml` (Phase 3C OI subtasks / partial scoring).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SubtaskSpec {
+    /// Unique subtask identifier (e.g. `"1"`, `"small"`, `"chain"`).
+    pub id: String,
+    /// Integer point value for this subtask (`>= 0`).
+    pub score: u32,
+    /// Optional prerequisite subtask IDs forming a DAG.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<String>,
+    /// Scoring policy: `"min"` (default, bundled) or `"sum"` (per-test even split).
+    #[serde(default)]
+    pub scoring: SubtaskScoring,
 }
 
 /// One `[[test]]` entry in `problem.toml`.
@@ -341,6 +390,9 @@ pub struct TestSpec {
     /// When `true`, write the generated input/answer back into `samples/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<bool>,
+    /// Optional subtask ID this test belongs to (single ownership; reuse via `[[subtask]].depends`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtask: Option<String>,
 }
 
 fn deserialize_opt_args<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -388,6 +440,45 @@ impl ExpectVerdict {
     }
 }
 
+/// Expected total score for a solution in an OI subtask problem:
+/// an exact integer (`score = 30`) or an inclusive range (`score = [20, 40]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ScoreExpect {
+    Exact(u32),
+    Range([u32; 2]),
+}
+
+impl ScoreExpect {
+    /// Lower bound of the expected score (inclusive).
+    pub fn min_score(self) -> u32 {
+        match self {
+            ScoreExpect::Exact(v) => v,
+            ScoreExpect::Range([lo, hi]) => lo.min(hi),
+        }
+    }
+
+    /// Upper bound of the expected score (inclusive).
+    pub fn max_score(self) -> u32 {
+        match self {
+            ScoreExpect::Exact(v) => v,
+            ScoreExpect::Range([lo, hi]) => lo.max(hi),
+        }
+    }
+
+    /// Returns `true` if `actual` satisfies this score expectation (within `1e-6` tolerance).
+    pub fn matches(self, actual: f64) -> bool {
+        const EPS: f64 = 1e-6;
+        match self {
+            ScoreExpect::Exact(v) => (actual - f64::from(v)).abs() <= EPS,
+            ScoreExpect::Range([lo, hi]) => {
+                let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                actual >= f64::from(lo) - EPS && actual <= f64::from(hi) + EPS
+            }
+        }
+    }
+}
+
 /// One `[solutions.<name>]` entry in `problem.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -401,6 +492,12 @@ pub struct SolutionSpec {
     /// Optional tag filter: run this solution only on tests whose tag is in `tags`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Optional expected total score (exact or `[min, max]` range) for OI subtask problems.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<ScoreExpect>,
+    /// Optional per-subtask expected verdict assertions (`subtasks = { "1" = "AC", "2" = ["WA", "TLE"] }`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub subtasks: BTreeMap<String, ExpectVerdict>,
 }
 
 /// `problem.toml`.
@@ -427,6 +524,9 @@ pub struct ProblemMeta {
     /// Local Polygon package configuration (`[package]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageConfig>,
+    /// Ordered OI subtask specifications (`[[subtask]]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtask: Vec<SubtaskSpec>,
     /// Ordered test specifications (`[[test]]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub test: Vec<TestSpec>,
@@ -445,16 +545,35 @@ pub struct ProblemMeta {
 }
 
 impl ProblemMeta {
+    /// Effective multi-run pass count (`[package].runs`, default 1).
+    pub fn run_count(&self) -> u32 {
+        self.package.as_ref().map_or(1, PackageConfig::run_count)
+    }
+
+    /// Sum of all declared `[[subtask]].score` values.
+    pub fn total_subtask_score(&self) -> u32 {
+        self.subtask
+            .iter()
+            .fold(0u32, |acc, s| acc.saturating_add(s.score))
+    }
+
     /// Returns `true` if this problem is a Polygon package (either `solutions/` contains files,
-    /// or `problem.toml` declares `[[test]]` or `[solutions.*]`).
+    /// or `problem.toml` declares `[[test]]`, `[[subtask]]`, or `[solutions.*]`).
     pub fn has_package(&self, has_solution_files: bool) -> bool {
-        has_solution_files || !self.test.is_empty() || !self.solutions.is_empty()
+        has_solution_files
+            || !self.test.is_empty()
+            || !self.solutions.is_empty()
+            || !self.subtask.is_empty()
     }
 
     /// Checks on disk whether `problem_dir` has a Polygon package (`solutions/` directory
-    /// containing at least one file, or `!self.test.is_empty()`, or `!self.solutions.is_empty()`).
+    /// containing at least one file, `interactor.cpp`, or `!self.test.is_empty()`,
+    /// `!self.solutions.is_empty()`, `!self.subtask.is_empty()`).
     pub fn has_package_in_dir(&self, problem_dir: &std::path::Path) -> bool {
-        if !self.test.is_empty() || !self.solutions.is_empty() {
+        if !self.test.is_empty() || !self.solutions.is_empty() || !self.subtask.is_empty() {
+            return true;
+        }
+        if problem_dir.join("interactor.cpp").is_file() {
             return true;
         }
         has_solution_files_in_dir(problem_dir)
@@ -1597,5 +1716,90 @@ expect = ["WA", "TLE"]
         assert_eq!(meta.group.as_deref(), Some("省赛候选"));
         let back: ProblemMeta = toml::from_str(&toml::to_string(&meta).unwrap()).unwrap();
         assert_eq!(meta, back);
+    }
+
+    #[test]
+    fn phase_3c_runs_subtasks_and_solution_score_round_trip() {
+        let text = r#"
+title = "Interactive Subtask Communication"
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[package]
+checker = "checker.cpp"
+runs = 2
+
+[[subtask]]
+id = "1"
+score = 30
+scoring = "min"
+
+[[subtask]]
+id = "2"
+score = 70
+depends = ["1"]
+scoring = "sum"
+
+[[test]]
+gen = "gen_small"
+args = "{i}"
+repeat = 5
+subtask = "1"
+tag = "small"
+
+[[test]]
+gen = "gen_full"
+args = "{i}"
+repeat = 10
+subtask = "2"
+tag = "max"
+
+[solutions.std]
+main = true
+
+[solutions.brute]
+score = 30
+subtasks = { "1" = "AC", "2" = ["WA", "TLE", "ILE"] }
+
+[solutions.partial]
+score = [20, 40]
+"#;
+        let meta: ProblemMeta = toml::from_str(text).unwrap();
+        assert_eq!(meta.run_count(), 2);
+        assert_eq!(meta.total_subtask_score(), 100);
+        assert_eq!(meta.subtask.len(), 2);
+        assert_eq!(meta.subtask[0].id, "1");
+        assert_eq!(meta.subtask[0].score, 30);
+        assert_eq!(meta.subtask[0].scoring, SubtaskScoring::Min);
+        assert!(meta.subtask[0].depends.is_empty());
+        assert_eq!(meta.subtask[1].id, "2");
+        assert_eq!(meta.subtask[1].score, 70);
+        assert_eq!(meta.subtask[1].scoring, SubtaskScoring::Sum);
+        assert_eq!(meta.subtask[1].depends, vec!["1"]);
+
+        assert_eq!(meta.test[0].subtask.as_deref(), Some("1"));
+        assert_eq!(meta.test[1].subtask.as_deref(), Some("2"));
+
+        let brute = &meta.solutions["brute"];
+        assert_eq!(brute.score, Some(ScoreExpect::Exact(30)));
+        assert!(brute.score.unwrap().matches(30.0));
+        assert!(!brute.score.unwrap().matches(29.0));
+        assert!(brute.subtasks["1"].matches("AC"));
+        assert!(brute.subtasks["2"].matches("ILE"));
+        assert!(brute.subtasks["2"].matches("wa"));
+        assert!(!brute.subtasks["2"].matches("AC"));
+
+        let partial = &meta.solutions["partial"];
+        assert_eq!(partial.score, Some(ScoreExpect::Range([20, 40])));
+        assert!(partial.score.unwrap().matches(20.0));
+        assert!(partial.score.unwrap().matches(35.5));
+        assert!(partial.score.unwrap().matches(40.0));
+        assert!(!partial.score.unwrap().matches(41.0));
+
+        let serialized = toml::to_string(&meta).unwrap();
+        let again: ProblemMeta = toml::from_str(&serialized).unwrap();
+        assert_eq!(meta, again);
     }
 }

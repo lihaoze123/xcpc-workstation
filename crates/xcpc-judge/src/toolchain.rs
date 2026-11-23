@@ -137,6 +137,20 @@ impl SourceLanguage {
             SourceLanguage::Cpp { std } => vec!["-O2".to_owned(), std.flag().to_owned()],
         }
     }
+
+    /// Returns ASan + UBSan instrumentation compiler flags for this language.
+    pub fn sanitizer_compile_flags(self) -> Vec<String> {
+        match self {
+            SourceLanguage::Cpp { std } => vec![
+                "-O1".to_owned(),
+                std.flag().to_owned(),
+                "-fsanitize=address,undefined".to_owned(),
+                "-fno-omit-frame-pointer".to_owned(),
+                "-g".to_owned(),
+                "-fno-sanitize-recover=undefined".to_owned(),
+            ],
+        }
+    }
 }
 
 /// Structured compiler diagnostic parsed from compiler stderr.
@@ -352,6 +366,140 @@ fn platform_install_guide() -> &'static str {
     }
 }
 
+/// Probes whether `compiler` can compile and execute a minimal binary with
+/// `-fsanitize=address,undefined -fno-omit-frame-pointer -g`.
+///
+/// Returns `Ok(())` if supported, or `Err(reason)` if the toolchain lacks ASan/UBSan runtime
+/// support on this host.
+pub fn probe_sanitizer_support(compiler: &DetectedCompiler) -> std::result::Result<(), String> {
+    let tmp_dir = tempfile::tempdir().map_err(|e| format!("create temp dir: {e}"))?;
+    let src = tmp_dir.path().join("probe_san.cpp");
+    let bin = tmp_dir.path().join(if cfg!(windows) {
+        "probe_san.exe"
+    } else {
+        "probe_san"
+    });
+    fs::write(&src, "int main() { volatile int x = 0; return x; }\n")
+        .map_err(|e| format!("write sanitizer probe source: {e}"))?;
+
+    let flags = SourceLanguage::Cpp { std: CppStd::Cpp20 }.sanitizer_compile_flags();
+    let mut cmd = Command::new(&compiler.path);
+    for f in &flags {
+        cmd.arg(f);
+    }
+    cmd.arg(&src).arg("-o").arg(&bin);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("spawn compiler {} for sanitizer probe: {e}", compiler.path))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let first = stderr.lines().next().unwrap_or("sanitizer compile failed");
+        return Err(format!("编译器不支持 ASan/UBSan：{first}"));
+    }
+
+    let run = Command::new(&bin)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=0",
+        )
+        .env("UBSAN_OPTIONS", "print_stacktrace=1:halt_on_error=1")
+        .output()
+        .map_err(|e| format!("execute sanitizer probe binary: {e}"))?;
+    if !run.status.success() {
+        let stderr = String::from_utf8_lossy(&run.stderr).trim().to_owned();
+        let first = stderr.lines().next().unwrap_or("sanitizer runtime failed");
+        return Err(format!("ASan/UBSan 运行库不可用：{first}"));
+    }
+    Ok(())
+}
+
+/// Compiles a C++ source file with ASan + UBSan into the isolated sanitizer cache namespace
+/// (`<cache>/sanitize/bin/`), never touching normal `-O2` binaries.
+#[allow(clippy::too_many_arguments)]
+pub fn compile_cached_sanitized(
+    cache: &JudgeCache,
+    compiler: &DetectedCompiler,
+    language: SourceLanguage,
+    target_label: &str,
+    source_path_for_display: &str,
+    source_bytes: &[u8],
+    source_disk_path: Option<&Path>,
+    testlib: &ResolvedTestlib,
+) -> std::result::Result<CompileResult, CompileFailure> {
+    let flags = language.sanitizer_compile_flags();
+    compile_cached_inner(
+        cache,
+        compiler,
+        &flags,
+        b"xcpc-judge-sanitize-v1\0",
+        true,
+        target_label,
+        source_path_for_display,
+        source_bytes,
+        source_disk_path,
+        testlib,
+    )
+}
+
+/// Compiles a C++ source file directly into `output_binary_path` without touching the shared
+/// judge cache (used for zero-pollution external tester submissions).
+#[allow(clippy::too_many_arguments)]
+pub fn compile_to_path(
+    cache: &JudgeCache,
+    compiler: &DetectedCompiler,
+    language: SourceLanguage,
+    target_label: &str,
+    source_disk_path: &Path,
+    output_binary_path: &Path,
+    testlib: &ResolvedTestlib,
+) -> std::result::Result<String, CompileFailure> {
+    let flags = language.compile_flags();
+    let display = source_disk_path.to_string_lossy().into_owned();
+    let inc_dir = match testlib {
+        ResolvedTestlib::UserFile { include_dir, .. } => include_dir.clone(),
+        ResolvedTestlib::Bundled { .. } => {
+            cache
+                .ensure_bundled_testlib_dir()
+                .map_err(|e| CompileFailure {
+                    target: target_label.to_owned(),
+                    source_path: display.clone(),
+                    stderr: e.to_string(),
+                    diagnostics: vec![],
+                })?
+        }
+    };
+
+    let mut cmd = Command::new(&compiler.path);
+    for f in &flags {
+        cmd.arg(f);
+    }
+    cmd.arg("-I").arg(&inc_dir);
+    if let Some(parent) = source_disk_path.parent() {
+        cmd.arg("-I").arg(parent);
+    }
+    cmd.arg(source_disk_path).arg("-o").arg(output_binary_path);
+
+    let output = cmd.output().map_err(|e| CompileFailure {
+        target: target_label.to_owned(),
+        source_path: display.clone(),
+        stderr: io_err(format!("spawn compiler {}", compiler.path), e).to_string(),
+        diagnostics: vec![],
+    })?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.status.success() {
+        let diagnostics = parse_compiler_diagnostics(&stderr);
+        return Err(CompileFailure {
+            target: target_label.to_owned(),
+            source_path: display,
+            stderr,
+            diagnostics,
+        });
+    }
+    Ok(stderr)
+}
+
 /// Compiles a C++ source file (or in-memory source bytes for a built-in checker)
 /// using the Level 1 content-hash cache.
 #[allow(clippy::too_many_arguments)]
@@ -366,13 +514,40 @@ pub fn compile_cached(
     testlib: &ResolvedTestlib,
 ) -> std::result::Result<CompileResult, CompileFailure> {
     let flags = language.compile_flags();
+    compile_cached_inner(
+        cache,
+        compiler,
+        &flags,
+        b"xcpc-judge-compile-v1\0",
+        false,
+        target_label,
+        source_path_for_display,
+        source_bytes,
+        source_disk_path,
+        testlib,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_cached_inner(
+    cache: &JudgeCache,
+    compiler: &DetectedCompiler,
+    flags: &[String],
+    namespace: &[u8],
+    use_sanitizer_dir: bool,
+    target_label: &str,
+    source_path_for_display: &str,
+    source_bytes: &[u8],
+    source_disk_path: Option<&Path>,
+    testlib: &ResolvedTestlib,
+) -> std::result::Result<CompileResult, CompileFailure> {
     let mut hasher = Sha256::new();
-    hasher.update(b"xcpc-judge-compile-v1\0");
+    hasher.update(namespace);
     hasher.update(compiler.path.as_bytes());
     hasher.update(b"\0");
     hasher.update(compiler.version.as_bytes());
     hasher.update(b"\0");
-    for f in &flags {
+    for f in flags {
         hasher.update(f.as_bytes());
         hasher.update(b"\0");
     }
@@ -381,7 +556,11 @@ pub fn compile_cached(
     hasher.update(source_bytes);
     let key = format!("{:x}", hasher.finalize());
 
-    let bin_path = cache.binary_path(&key);
+    let bin_path = if use_sanitizer_dir {
+        cache.sanitizer_binary_path(&key)
+    } else {
+        cache.binary_path(&key)
+    };
     if bin_path.is_file() {
         return Ok(CompileResult {
             binary_path: bin_path,
@@ -428,7 +607,7 @@ pub fn compile_cached(
 
     let tmp_out = bin_path.with_extension(format!("{}.tmp", std::process::id()));
     let mut cmd = Command::new(&compiler.path);
-    for f in &flags {
+    for f in flags {
         cmd.arg(f);
     }
     cmd.arg("-I").arg(&inc_dir);

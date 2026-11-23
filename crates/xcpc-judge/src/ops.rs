@@ -4,6 +4,7 @@
 //! - `init_package`
 //! - `stress_package`
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -12,7 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
+use xcpc_domain::{ExpectVerdict, ScoreExpect, SubtaskScoring, SubtaskSpec};
 use xcpc_storage::Workspace;
 
 use crate::assets::{is_standard_checker, resolve_testlib, standard_checker_source};
@@ -21,17 +23,30 @@ use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, ExpandedTest, PackageFreshness, TestSource, build_dir_for, check_dirty_inputs,
     check_package_freshness, compute_package_hash, discover_solutions, expand_tests,
-    find_generator_source, find_validator_source, load_latest_report, resolve_checker_spec,
+    find_generator_source, find_interactor_source, find_validator_source, has_explicit_checker,
+    load_latest_report, resolve_checker_spec,
 };
-use crate::report::{BuildReport, DirtyInputIssue, GateResult};
-use crate::runner::{RunLimits, Verdict, run_checker, run_process, run_validator};
+use crate::report::{
+    BuildReport, DirtyInputIssue, GateResult, InteractionTranscript, SubtaskSummary,
+};
+use crate::runner::{
+    RunLimits, Verdict, run_checker_with_score, run_multi_run_interactive, run_multi_run_process,
+    run_process, run_validator,
+};
+use crate::subtask::validate_subtask_config;
 use crate::toolchain::{CppStd, SourceLanguage, compile_cached, resolve_active_compiler};
+
+fn default_runs() -> u32 {
+    1
+}
 
 /// Inventory of package files inside a problem directory.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageFiles {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_checker: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -62,6 +77,10 @@ pub struct PackageSolutionInfo {
     pub expected: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<ScoreExpect>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub subtasks: BTreeMap<String, ExpectVerdict>,
 }
 
 /// Read-only overview of a problem package (`inspect_package`).
@@ -72,6 +91,14 @@ pub struct PackageInspection {
     pub package_hash: String,
     pub freshness: PackageFreshness,
     pub checker: String,
+    #[serde(default)]
+    pub interactive: bool,
+    #[serde(default = "default_runs")]
+    pub runs: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<SubtaskSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_score: Option<u32>,
     pub files: PackageFiles,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub solutions: Vec<PackageSolutionInfo>,
@@ -148,9 +175,24 @@ pub enum PackageSourceKind {
     Solution,
     Generator,
     Validator,
+    Interactor,
     CustomChecker,
     ValidatorSelfTestValid,
     ValidatorSelfTestInvalid,
+}
+
+/// Options for scaffolding a problem package (`init_package_with_options`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitPackageOptions {
+    /// Generate `interactor.cpp` (with flush/deadlock best practices) and interactive `std.cpp`.
+    #[serde(default)]
+    pub interactive: bool,
+    /// Optional multi-run pass count (`>= 2` writes `[package].runs = N`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u32>,
+    /// Generate `[[subtask]]` scaffold in `problem.toml` and assign tests to subtasks.
+    #[serde(default)]
+    pub subtasks: bool,
 }
 
 /// Result of appending a hand-written or generated `[[test]]` rule.
@@ -226,6 +268,9 @@ pub struct StressResult {
     pub solution_output_preview: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checker_message: Option<String>,
+    /// Truncated interactive transcript when stress testing an interactive problem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<InteractionTranscript>,
 }
 
 /// Pure read-only inspection of a problem package. Never compiles or executes anything.
@@ -235,8 +280,18 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
     let has_pkg = problem.meta.has_package_in_dir(&prob_dir);
     let package_hash = compute_package_hash(ws, slug)?;
     let freshness = check_package_freshness(ws, slug)?;
+    let is_interactive = find_interactor_source(&prob_dir).is_some();
+    let runs = problem.meta.run_count();
+    let use_checker = !is_interactive || has_explicit_checker(&prob_dir, &problem.meta);
     let checker_spec = resolve_checker_spec(&prob_dir, &problem.meta)?;
+    let checker_display = if use_checker {
+        checker_spec.display_name().to_owned()
+    } else {
+        "interactor".to_owned()
+    };
     let expanded_tests = expand_tests(&prob_dir, &problem.meta)?;
+    let subtask_val = validate_subtask_config(&problem.meta.subtask, &expanded_tests);
+    let has_subtasks = !problem.meta.subtask.is_empty();
     let dirty_inputs = check_dirty_inputs(&prob_dir);
 
     let files = collect_package_files(&prob_dir, &checker_spec);
@@ -249,6 +304,8 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
                 is_main: s.is_main,
                 expected: s.expect.normalized(),
                 tags: s.tags,
+                score: s.score,
+                subtasks: s.subtasks,
             })
             .collect(),
         Err(_) => {
@@ -267,6 +324,8 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
                         .map(|e| e.normalized())
                         .unwrap_or_else(|| vec!["AC".to_owned()]),
                     tags: spec.tags.clone(),
+                    score: spec.score,
+                    subtasks: spec.subtasks.clone(),
                 })
                 .collect();
             list.sort_by(|a, b| b.is_main.cmp(&a.is_main).then_with(|| a.name.cmp(&b.name)));
@@ -316,7 +375,11 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
         has_package: has_pkg,
         package_hash,
         freshness,
-        checker: checker_spec.display_name().to_owned(),
+        checker: checker_display,
+        interactive: is_interactive,
+        runs,
+        subtasks: subtask_val.summaries,
+        total_score: has_subtasks.then_some(subtask_val.total_score),
         files,
         solutions,
         expanded_tests,
@@ -493,16 +556,42 @@ pub fn inspect_test_case(
 
 /// Scaffolds a Polygon package with `testlib.h` best practices without overwriting existing files.
 pub fn init_package(ws: &Workspace, slug: &str) -> Result<InitPackageResult> {
+    init_package_with_options(ws, slug, &InitPackageOptions::default())
+}
+
+/// Scaffolds a Polygon package with optional Phase 3C features (`interactive`, `runs`, `subtasks`)
+/// without overwriting existing files.
+pub fn init_package_with_options(
+    ws: &Workspace,
+    slug: &str,
+    opts: &InitPackageOptions,
+) -> Result<InitPackageResult> {
+    if let Some(r) = opts.runs
+        && r == 0
+    {
+        return Err(JudgeError::InvalidConfig("runs must be >= 1".to_owned()));
+    }
+
     let problem = ws.load_problem(slug)?;
     let prob_dir = ws.resolve(&problem.dir)?;
 
-    let scaffold_files: &[(&str, &str)] = &[
+    let mut scaffold_files: Vec<(&str, &str)> = vec![
         ("validator.cpp", TEMPLATE_VALIDATOR_CPP),
         ("generators/gen_random.cpp", TEMPLATE_GEN_RANDOM_CPP),
-        ("solutions/std.cpp", TEMPLATE_STD_CPP),
+        (
+            "solutions/std.cpp",
+            if opts.interactive {
+                TEMPLATE_INTERACTIVE_STD_CPP
+            } else {
+                TEMPLATE_STD_CPP
+            },
+        ),
         ("tests/validator/valid/01.in", "1 2\n"),
         ("tests/validator/invalid/01.in", "-1 2\n"),
     ];
+    if opts.interactive {
+        scaffold_files.push(("interactor.cpp", TEMPLATE_INTERACTOR_CPP));
+    }
 
     let mut created_files = Vec::new();
     let mut skipped_files = Vec::new();
@@ -510,15 +599,15 @@ pub fn init_package(ws: &Workspace, slug: &str) -> Result<InitPackageResult> {
     for (rel_in_prob, content) in scaffold_files {
         let abs = prob_dir.join(rel_in_prob);
         if abs.exists() {
-            skipped_files.push((*rel_in_prob).to_owned());
+            skipped_files.push(rel_in_prob.to_owned());
         } else {
             let ws_rel = format!("{}/{rel_in_prob}", problem.dir);
             ws.write(&ws_rel, content.as_bytes())?;
-            created_files.push((*rel_in_prob).to_owned());
+            created_files.push(rel_in_prob.to_owned());
         }
     }
 
-    // Update `problem.toml` via `toml_edit` if `[solutions.std]` or `[[test]]` is absent.
+    // Update `problem.toml` via `toml_edit` preserving comments & unknown fields.
     let toml_rel = format!("{}/problem.toml", problem.dir);
     let raw_toml = ws.read_text(&toml_rel)?;
     let mut doc: DocumentMut = raw_toml
@@ -527,14 +616,63 @@ pub fn init_package(ws: &Workspace, slug: &str) -> Result<InitPackageResult> {
 
     let mut updated_toml = false;
 
+    if let Some(runs) = opts.runs
+        && runs >= 2
+    {
+        let pkg_tbl = doc
+            .entry("package")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| JudgeError::InvalidConfig("[package] is not a table".to_owned()))?;
+        if pkg_tbl.get("runs").is_none() {
+            pkg_tbl.insert("runs", value(i64::from(runs)));
+            updated_toml = true;
+        }
+    }
+
+    if opts.subtasks && doc.get("subtask").is_none() {
+        let mut arr = ArrayOfTables::new();
+        let mut s1 = Table::new();
+        s1.insert("id", value("1"));
+        s1.insert("score", value(30));
+        s1.insert("scoring", value("min"));
+        arr.push(s1);
+
+        let mut s2 = Table::new();
+        s2.insert("id", value("2"));
+        s2.insert("score", value(70));
+        let mut deps = Array::new();
+        deps.push("1");
+        s2.insert("depends", value(deps));
+        s2.insert("scoring", value("min"));
+        arr.push(s2);
+
+        doc.insert("subtask", Item::ArrayOfTables(arr));
+        updated_toml = true;
+    }
+
     if doc.get("test").is_none() {
         let mut arr = ArrayOfTables::new();
-        let mut t = Table::new();
-        t.insert("gen", value("gen_random"));
-        t.insert("args", value("-n 10 {i}"));
-        t.insert("repeat", value(3));
-        t.insert("tag", value("small"));
-        arr.push(t);
+        let mut t1 = Table::new();
+        t1.insert("gen", value("gen_random"));
+        t1.insert("args", value("-n 10 {i}"));
+        t1.insert("repeat", value(3));
+        t1.insert("tag", value("small"));
+        if opts.subtasks {
+            t1.insert("subtask", value("1"));
+        }
+        arr.push(t1);
+
+        if opts.subtasks {
+            let mut t2 = Table::new();
+            t2.insert("gen", value("gen_random"));
+            t2.insert("args", value("-n 1000 {i}"));
+            t2.insert("repeat", value(5));
+            t2.insert("tag", value("max"));
+            t2.insert("subtask", value("2"));
+            arr.push(t2);
+        }
+
         doc.insert("test", Item::ArrayOfTables(arr));
         updated_toml = true;
     }
@@ -665,44 +803,71 @@ pub fn stress_package(
         None
     };
 
+    let inter_cr = if let Some((ip, irel, ilang)) = find_interactor_source(&prob_dir) {
+        let ibytes = fs::read(&ip).map_err(|e| io_err(format!("read {}", ip.display()), e))?;
+        let cr = compile_cached(
+            &cache,
+            &compiler,
+            ilang,
+            "interactor",
+            &irel,
+            &ibytes,
+            Some(&ip),
+            &testlib,
+        )
+        .map_err(|f| {
+            JudgeError::InvalidConfig(format!("interactor compile failed:\n{}", f.stderr))
+        })?;
+        Some(cr)
+    } else {
+        None
+    };
+
+    let runs = problem.meta.run_count();
+    let use_checker = inter_cr.is_none() || has_explicit_checker(&prob_dir, &problem.meta);
     let checker_spec = resolve_checker_spec(&prob_dir, &problem.meta)?;
-    let checker_cr = match &checker_spec {
-        CheckerSpec::Builtin(name) => {
-            let src = standard_checker_source(name)
-                .ok_or_else(|| JudgeError::UnknownChecker(name.clone()))?;
-            compile_cached(
-                &cache,
-                &compiler,
-                SourceLanguage::Cpp { std: CppStd::Cpp20 },
-                "checker",
-                &format!("<builtin:{name}>"),
-                src.as_bytes(),
-                None,
-                &testlib,
-            )
-            .map_err(|f| {
-                JudgeError::Internal(format!("builtin checker compile failed: {}", f.stderr))
-            })?
-        }
-        CheckerSpec::Custom { path, display_name } => {
-            let lang = SourceLanguage::from_path(path)
-                .unwrap_or(SourceLanguage::Cpp { std: CppStd::Cpp20 });
-            let bytes =
-                fs::read(path).map_err(|e| io_err(format!("read {}", path.display()), e))?;
-            compile_cached(
-                &cache,
-                &compiler,
-                lang,
-                "checker",
-                display_name,
-                &bytes,
-                Some(path),
-                &testlib,
-            )
-            .map_err(|f| {
-                JudgeError::InvalidConfig(format!("checker compile failed:\n{}", f.stderr))
-            })?
-        }
+    let checker_cr = if use_checker {
+        let cr = match &checker_spec {
+            CheckerSpec::Builtin(name) => {
+                let src = standard_checker_source(name)
+                    .ok_or_else(|| JudgeError::UnknownChecker(name.clone()))?;
+                compile_cached(
+                    &cache,
+                    &compiler,
+                    SourceLanguage::Cpp { std: CppStd::Cpp20 },
+                    "checker",
+                    &format!("<builtin:{name}>"),
+                    src.as_bytes(),
+                    None,
+                    &testlib,
+                )
+                .map_err(|f| {
+                    JudgeError::Internal(format!("builtin checker compile failed: {}", f.stderr))
+                })?
+            }
+            CheckerSpec::Custom { path, display_name } => {
+                let lang = SourceLanguage::from_path(path)
+                    .unwrap_or(SourceLanguage::Cpp { std: CppStd::Cpp20 });
+                let bytes =
+                    fs::read(path).map_err(|e| io_err(format!("read {}", path.display()), e))?;
+                compile_cached(
+                    &cache,
+                    &compiler,
+                    lang,
+                    "checker",
+                    display_name,
+                    &bytes,
+                    Some(path),
+                    &testlib,
+                )
+                .map_err(|f| {
+                    JudgeError::InvalidConfig(format!("checker compile failed:\n{}", f.stderr))
+                })?
+            }
+        };
+        Some(cr)
+    } else {
+        None
     };
 
     let main_bytes = fs::read(&main_sol.source_path)
@@ -803,63 +968,37 @@ pub fn stress_package(
                 std_output_preview: None,
                 solution_output_preview: None,
                 checker_message: Some(format!("validator rejected generated input: {vmsg}")),
+                transcript: None,
             });
         }
 
-        // Run std.
-        let std_outcome = run_process(
-            &main_cr.binary_path,
-            &[],
-            Some(&in_path),
-            Some(&ans_path),
-            limits,
-            cancel.as_ref(),
-        )?;
-        if std_outcome.verdict != Verdict::AC {
-            let saved = save_stress_counterexample(ws, &problem.dir, &prob_dir, &in_path)?;
-            return Ok(StressResult {
-                problem_id: slug.to_owned(),
-                found_counterexample: true,
-                iterations_run,
-                elapsed_ms: start.elapsed().as_millis() as u64,
-                seed: Some(seed),
-                gen_cmd: Some(gen_cmd),
-                saved_test_path: Some(saved),
-                failing_solution: Some(main_sol.name.clone()),
-                verdict: Some(std_outcome.verdict),
-                input_preview: Some(read_truncated_preview(&in_path, 4096)),
-                std_output_preview: Some(read_truncated_preview(&ans_path, 2048)),
-                solution_output_preview: None,
-                checker_message: Some(format!(
-                    "main solution `{}` failed with {}",
-                    main_sol.name, std_outcome.verdict
-                )),
-            });
-        }
-
-        // Run each target solution and compare with checker.
-        for (sol, cr) in &target_crs {
-            let sol_outcome = run_process(
-                &cr.binary_path,
-                &[],
-                Some(&in_path),
-                Some(&out_path),
+        if let Some(ref ic) = inter_cr {
+            // Interactive stress: run std with interactor first.
+            let std_inter = run_multi_run_interactive(
+                &ic.binary_path,
+                &main_cr.binary_path,
+                &in_path,
+                &ans_path,
+                runs,
                 limits,
                 cancel.as_ref(),
             )?;
-            let (verdict, msg) = if sol_outcome.verdict == Verdict::AC {
-                run_checker(
-                    &checker_cr.binary_path,
+            let mut std_verdict = std_inter.verdict;
+            let mut std_msg = std_inter.checker_message;
+            if std_verdict == Verdict::AC
+                && let Some(ref chk_cr) = checker_cr
+            {
+                let res = run_checker_with_score(
+                    &chk_cr.binary_path,
                     &in_path,
-                    &out_path,
+                    &ans_path,
                     &ans_path,
                     cancel.as_ref(),
-                )?
-            } else {
-                (sol_outcome.verdict, sol_outcome.stderr.clone())
-            };
-
-            if verdict != Verdict::AC {
+                )?;
+                std_verdict = res.verdict;
+                std_msg = res.message;
+            }
+            if std_verdict != Verdict::AC {
                 let saved = save_stress_counterexample(ws, &problem.dir, &prob_dir, &in_path)?;
                 return Ok(StressResult {
                     problem_id: slug.to_owned(),
@@ -869,13 +1008,140 @@ pub fn stress_package(
                     seed: Some(seed),
                     gen_cmd: Some(gen_cmd),
                     saved_test_path: Some(saved),
-                    failing_solution: Some(sol.name.clone()),
-                    verdict: Some(verdict),
+                    failing_solution: Some(main_sol.name.clone()),
+                    verdict: Some(std_verdict),
                     input_preview: Some(read_truncated_preview(&in_path, 4096)),
                     std_output_preview: Some(read_truncated_preview(&ans_path, 2048)),
-                    solution_output_preview: Some(read_truncated_preview(&out_path, 2048)),
-                    checker_message: Some(msg),
+                    solution_output_preview: None,
+                    checker_message: Some(std_msg),
+                    transcript: Some(std_inter.transcript),
                 });
+            }
+
+            // Run each target solution against the interactor (+ optional checker).
+            for (sol, cr) in &target_crs {
+                let sol_inter = run_multi_run_interactive(
+                    &ic.binary_path,
+                    &cr.binary_path,
+                    &in_path,
+                    &out_path,
+                    runs,
+                    limits,
+                    cancel.as_ref(),
+                )?;
+                let mut verdict = sol_inter.verdict;
+                let mut msg = sol_inter.checker_message;
+                if verdict == Verdict::AC
+                    && let Some(ref chk_cr) = checker_cr
+                {
+                    let res = run_checker_with_score(
+                        &chk_cr.binary_path,
+                        &in_path,
+                        &out_path,
+                        &ans_path,
+                        cancel.as_ref(),
+                    )?;
+                    verdict = res.verdict;
+                    msg = res.message;
+                }
+                if verdict != Verdict::AC {
+                    let saved = save_stress_counterexample(ws, &problem.dir, &prob_dir, &in_path)?;
+                    return Ok(StressResult {
+                        problem_id: slug.to_owned(),
+                        found_counterexample: true,
+                        iterations_run,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        seed: Some(seed),
+                        gen_cmd: Some(gen_cmd),
+                        saved_test_path: Some(saved),
+                        failing_solution: Some(sol.name.clone()),
+                        verdict: Some(verdict),
+                        input_preview: Some(read_truncated_preview(&in_path, 4096)),
+                        std_output_preview: Some(read_truncated_preview(&ans_path, 2048)),
+                        solution_output_preview: Some(read_truncated_preview(&out_path, 2048)),
+                        checker_message: Some(msg),
+                        transcript: Some(sol_inter.transcript),
+                    });
+                }
+            }
+        } else {
+            let chk_cr = checker_cr
+                .as_ref()
+                .expect("non-interactive stress requires checker");
+            // Run std.
+            let std_outcome = run_multi_run_process(
+                &main_cr.binary_path,
+                &in_path,
+                &ans_path,
+                runs,
+                limits,
+                cancel.as_ref(),
+            )?;
+            if std_outcome.verdict != Verdict::AC {
+                let saved = save_stress_counterexample(ws, &problem.dir, &prob_dir, &in_path)?;
+                return Ok(StressResult {
+                    problem_id: slug.to_owned(),
+                    found_counterexample: true,
+                    iterations_run,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    seed: Some(seed),
+                    gen_cmd: Some(gen_cmd),
+                    saved_test_path: Some(saved),
+                    failing_solution: Some(main_sol.name.clone()),
+                    verdict: Some(std_outcome.verdict),
+                    input_preview: Some(read_truncated_preview(&in_path, 4096)),
+                    std_output_preview: Some(read_truncated_preview(&ans_path, 2048)),
+                    solution_output_preview: None,
+                    checker_message: Some(format!(
+                        "main solution `{}` failed with {}",
+                        main_sol.name, std_outcome.verdict
+                    )),
+                    transcript: None,
+                });
+            }
+
+            // Run each target solution and compare with checker.
+            for (sol, cr) in &target_crs {
+                let sol_outcome = run_multi_run_process(
+                    &cr.binary_path,
+                    &in_path,
+                    &out_path,
+                    runs,
+                    limits,
+                    cancel.as_ref(),
+                )?;
+                let (verdict, msg) = if sol_outcome.verdict == Verdict::AC {
+                    let res = run_checker_with_score(
+                        &chk_cr.binary_path,
+                        &in_path,
+                        &out_path,
+                        &ans_path,
+                        cancel.as_ref(),
+                    )?;
+                    (res.verdict, res.message)
+                } else {
+                    (sol_outcome.verdict, sol_outcome.stderr.clone())
+                };
+
+                if verdict != Verdict::AC {
+                    let saved = save_stress_counterexample(ws, &problem.dir, &prob_dir, &in_path)?;
+                    return Ok(StressResult {
+                        problem_id: slug.to_owned(),
+                        found_counterexample: true,
+                        iterations_run,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        seed: Some(seed),
+                        gen_cmd: Some(gen_cmd),
+                        saved_test_path: Some(saved),
+                        failing_solution: Some(sol.name.clone()),
+                        verdict: Some(verdict),
+                        input_preview: Some(read_truncated_preview(&in_path, 4096)),
+                        std_output_preview: Some(read_truncated_preview(&ans_path, 2048)),
+                        solution_output_preview: Some(read_truncated_preview(&out_path, 2048)),
+                        checker_message: Some(msg),
+                        transcript: None,
+                    });
+                }
             }
         }
     }
@@ -894,6 +1160,7 @@ pub fn stress_package(
         std_output_preview: None,
         solution_output_preview: None,
         checker_message: None,
+        transcript: None,
     })
 }
 
@@ -1309,6 +1576,9 @@ pub fn create_package_source(
             )
         }
         PackageSourceKind::Validator => ("validator.cpp".to_owned(), TEMPLATE_VALIDATOR_CPP, None),
+        PackageSourceKind::Interactor => {
+            ("interactor.cpp".to_owned(), TEMPLATE_INTERACTOR_CPP, None)
+        }
         PackageSourceKind::CustomChecker => ("checker.cpp".to_owned(), TEMPLATE_CHECKER_CPP, None),
         PackageSourceKind::ValidatorSelfTestValid => {
             let stem = validate_safe_stem(name.strip_suffix(".in").unwrap_or(name), "self-test")?;
@@ -1951,6 +2221,7 @@ fn collect_package_files(prob_dir: &Path, checker_spec: &CheckerSpec) -> Package
 
     PackageFiles {
         validator: find_validator_source(prob_dir).map(|(_, rel, _)| rel),
+        interactor: find_interactor_source(prob_dir).map(|(_, rel, _)| rel),
         custom_checker: match checker_spec {
             CheckerSpec::Custom { display_name, .. } => Some(display_name.clone()),
             CheckerSpec::Builtin(_) => None,
@@ -1967,6 +2238,342 @@ fn collect_package_files(prob_dir: &Path, checker_spec: &CheckerSpec) -> Package
         checker_self_tests: chk_dirs,
         self_test_files,
     }
+}
+
+/// Deletes `interactor.cpp` (or `interactor.{17,20,23}.cpp`) from `problems/<slug>/`.
+pub fn delete_interactor(ws: &Workspace, slug: &str) -> Result<bool> {
+    if ws.is_read_only() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::ReadOnly));
+    }
+    let problem = ws.load_problem(slug)?;
+    let prob_dir = ws.resolve(&problem.dir)?;
+    let canon_prob = fs::canonicalize(&prob_dir)
+        .map_err(|e| io_err(format!("canonicalize {}", prob_dir.display()), e))?;
+
+    let mut removed = false;
+    for name in [
+        "interactor.cpp",
+        "interactor.20.cpp",
+        "interactor.23.cpp",
+        "interactor.17.cpp",
+    ] {
+        let p = prob_dir.join(name);
+        if p.is_file() {
+            let canon = fs::canonicalize(&p)
+                .map_err(|e| io_err(format!("canonicalize {}", p.display()), e))?;
+            if !canon.starts_with(&canon_prob) {
+                return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+                    name.to_owned(),
+                )));
+            }
+            fs::remove_file(&canon)
+                .map_err(|e| io_err(format!("remove {}", canon.display()), e))?;
+            removed = true;
+        }
+    }
+    Ok(removed)
+}
+
+/// Updates `[package].runs` in `problem.toml` via `toml_edit`.
+/// `None` or `Some(1)` removes the key (returning to single-run default).
+pub fn set_package_runs(ws: &Workspace, slug: &str, runs: Option<u32>) -> Result<()> {
+    if let Some(0) = runs {
+        return Err(JudgeError::InvalidConfig("runs must be >= 1".to_owned()));
+    }
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    match runs {
+        Some(n) if n >= 2 => {
+            let pkg_tbl = doc
+                .entry("package")
+                .or_insert_with(|| Item::Table(Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| JudgeError::InvalidConfig("[package] is not a table".to_owned()))?;
+            pkg_tbl.insert("runs", value(i64::from(n)));
+        }
+        _ => {
+            if let Some(pkg_tbl) = doc.get_mut("package").and_then(Item::as_table_mut) {
+                pkg_tbl.remove("runs");
+                if pkg_tbl.is_empty() {
+                    doc.remove("package");
+                }
+            }
+        }
+    }
+
+    ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    Ok(())
+}
+
+/// Adds or updates a `[[subtask]]` entry in `problem.toml` (matched by `spec.id`) via `toml_edit`.
+pub fn upsert_subtask(ws: &Workspace, slug: &str, spec: &SubtaskSpec) -> Result<()> {
+    let id = validate_safe_stem(&spec.id, "subtask")?;
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let arr = doc
+        .entry("subtask")
+        .or_insert_with(|| Item::ArrayOfTables(ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or_else(|| {
+            JudgeError::InvalidConfig("[[subtask]] is not an array of tables".to_owned())
+        })?;
+
+    let fill_table = |tbl: &mut Table| {
+        tbl.insert("id", value(id));
+        tbl.insert("score", value(i64::from(spec.score)));
+        if spec.depends.is_empty() {
+            tbl.remove("depends");
+        } else {
+            let mut deps = Array::new();
+            for d in &spec.depends {
+                let d = d.trim();
+                if !d.is_empty() {
+                    deps.push(d);
+                }
+            }
+            if deps.is_empty() {
+                tbl.remove("depends");
+            } else {
+                tbl.insert("depends", value(deps));
+            }
+        }
+        if spec.scoring == SubtaskScoring::Min {
+            tbl.insert("scoring", value("min"));
+        } else {
+            tbl.insert("scoring", value("sum"));
+        }
+    };
+
+    let existing_idx = arr
+        .iter()
+        .position(|t| t.get("id").and_then(|v| v.as_str()) == Some(id));
+    if let Some(idx) = existing_idx {
+        if let Some(tbl) = arr.get_mut(idx) {
+            fill_table(tbl);
+        }
+    } else {
+        let mut tbl = Table::new();
+        fill_table(&mut tbl);
+        arr.push(tbl);
+    }
+
+    ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    Ok(())
+}
+
+/// Deletes a `[[subtask]]` entry by `subtask_id` via `toml_edit`.
+/// When `clear_references` is `true`, also removes references from `[[test]].subtask`,
+/// other subtasks' `depends`, and `[solutions.*].subtasks`.
+pub fn delete_subtask(
+    ws: &Workspace,
+    slug: &str,
+    subtask_id: &str,
+    clear_references: bool,
+) -> Result<bool> {
+    let id = subtask_id.trim();
+    if id.is_empty() {
+        return Err(JudgeError::InvalidConfig(
+            "subtask id cannot be empty".to_owned(),
+        ));
+    }
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let mut removed = false;
+    if let Some(arr) = doc
+        .get_mut("subtask")
+        .and_then(Item::as_array_of_tables_mut)
+    {
+        let pos = arr
+            .iter()
+            .position(|t| t.get("id").and_then(|v| v.as_str()) == Some(id));
+        if let Some(pos) = pos {
+            arr.remove(pos);
+            removed = true;
+        }
+        if clear_references {
+            for tbl in arr.iter_mut() {
+                if let Some(deps) = tbl.get_mut("depends").and_then(|v| v.as_array_mut()) {
+                    deps.retain(|v| v.as_str() != Some(id));
+                    if deps.is_empty() {
+                        tbl.remove("depends");
+                    }
+                }
+            }
+        }
+        if arr.is_empty() {
+            doc.remove("subtask");
+        }
+    }
+
+    if clear_references {
+        if let Some(tests) = doc.get_mut("test").and_then(Item::as_array_of_tables_mut) {
+            for tbl in tests.iter_mut() {
+                if tbl.get("subtask").and_then(|v| v.as_str()) == Some(id) {
+                    tbl.remove("subtask");
+                }
+            }
+        }
+        if let Some(sols) = doc.get_mut("solutions").and_then(Item::as_table_mut) {
+            for (_, v) in sols.iter_mut() {
+                if let Some(tbl) = v.as_table_mut()
+                    && let Some(sub_item) = tbl.get_mut("subtasks")
+                {
+                    if let Some(inline) = sub_item.as_inline_table_mut() {
+                        inline.remove(id);
+                        if inline.is_empty() {
+                            tbl.remove("subtasks");
+                        }
+                    } else if let Some(sub_tbl) = sub_item.as_table_mut() {
+                        sub_tbl.remove(id);
+                        if sub_tbl.is_empty() {
+                            tbl.remove("subtasks");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if removed || clear_references {
+        ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    }
+    Ok(removed)
+}
+
+/// Sets or clears `[[test]].subtask` on the `rule_index`-th test rule in `problem.toml`.
+pub fn set_test_subtask(
+    ws: &Workspace,
+    slug: &str,
+    rule_index: usize,
+    subtask: Option<&str>,
+) -> Result<()> {
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let arr = doc
+        .get_mut("test")
+        .and_then(Item::as_array_of_tables_mut)
+        .ok_or_else(|| JudgeError::TestNotFound(format!("rule #{rule_index}")))?;
+
+    let tbl = arr
+        .get_mut(rule_index)
+        .ok_or_else(|| JudgeError::TestNotFound(format!("rule #{rule_index}")))?;
+
+    match subtask.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(sid) => {
+            tbl.insert("subtask", value(sid));
+        }
+        None => {
+            tbl.remove("subtask");
+        }
+    }
+
+    ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    Ok(())
+}
+
+/// Updates `[solutions.<name>]` OI scoring assertions (`score` and `subtasks`) via `toml_edit`.
+///
+/// - `score`: `None` leaves unchanged; `Some(None)` clears `score`; `Some(Some(exp))` writes exact or `[min, max]`.
+/// - `subtasks`: `None` leaves unchanged; `Some(map)` replaces `subtasks` (clearing when empty).
+pub fn set_solution_scoring(
+    ws: &Workspace,
+    slug: &str,
+    name: &str,
+    score: Option<Option<ScoreExpect>>,
+    subtasks: Option<BTreeMap<String, ExpectVerdict>>,
+) -> Result<()> {
+    let name = validate_safe_stem(name, "solution")?;
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let sols_tbl = doc
+        .entry("solutions")
+        .or_insert_with(|| {
+            let mut t = Table::new();
+            t.set_implicit(true);
+            Item::Table(t)
+        })
+        .as_table_mut()
+        .ok_or_else(|| JudgeError::InvalidConfig("[solutions] is not a table".to_owned()))?;
+
+    let entry_tbl = sols_tbl
+        .entry(name)
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| JudgeError::InvalidConfig(format!("[solutions.{name}] is not a table")))?;
+
+    if let Some(score_opt) = score {
+        match score_opt {
+            None => {
+                entry_tbl.remove("score");
+            }
+            Some(ScoreExpect::Exact(v)) => {
+                entry_tbl.insert("score", value(i64::from(v)));
+            }
+            Some(ScoreExpect::Range([lo, hi])) => {
+                let mut arr = Array::new();
+                arr.push(i64::from(lo));
+                arr.push(i64::from(hi));
+                entry_tbl.insert("score", value(arr));
+            }
+        }
+    }
+
+    if let Some(sub_map) = subtasks {
+        if sub_map.is_empty() {
+            entry_tbl.remove("subtasks");
+        } else {
+            let mut inline = InlineTable::new();
+            for (sid, exp) in sub_map {
+                let norm = exp.normalized();
+                match norm.len() {
+                    0 => {}
+                    1 => {
+                        inline.insert(sid, Value::from(norm[0].as_str()));
+                    }
+                    _ => {
+                        let mut arr = Array::new();
+                        for v in norm {
+                            arr.push(v);
+                        }
+                        inline.insert(sid, Value::Array(arr));
+                    }
+                }
+            }
+            if inline.is_empty() {
+                entry_tbl.remove("subtasks");
+            } else {
+                entry_tbl.insert("subtasks", Item::Value(Value::InlineTable(inline)));
+            }
+        }
+    }
+
+    ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    Ok(())
 }
 
 const TEMPLATE_CHECKER_CPP: &str = r#"// TODO: 按本题题面实现自定义评测器
@@ -2026,6 +2633,47 @@ int main() {
     long long a, b;
     if (std::cin >> a >> b) {
         std::cout << (a + b) << '\n';
+    }
+    return 0;
+}
+"#;
+
+const TEMPLATE_INTERACTOR_CPP: &str = r#"// TODO: 按本题交互协议实现交互器（标准 testlib.h registerInteraction）
+// 注意：
+// 1. 每次向选手输出（stdout）后必须立即 flush（std::endl 或 std::cout.flush()），否则会导致死锁 ILE！
+// 2. 切勿在选手输出答案前向 stdout 泄露隐藏信息；可将需要二段复判的数据写入 tout。
+#include "testlib.h"
+#include <iostream>
+
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+
+    long long a = inf.readLong();
+    long long b = inf.readLong();
+
+    // 向选手发送初始信息并立即刷新缓冲区，防止双向等待死锁（ILE）
+    std::cout << a << ' ' << b << std::endl;
+
+    long long ans = ouf.readLong();
+    tout << ans << '\n';
+
+    if (ans != a + b) {
+        quitf(_wa, "expected %lld, found %lld", a + b, ans);
+    }
+    quitf(_ok, "correct");
+}
+"#;
+
+const TEMPLATE_INTERACTIVE_STD_CPP: &str = r#"// TODO: 按本题交互协议实现标程
+// 注意：交互题每次输出后必须立即 flush（std::endl 或 std::cout.flush()），否则会触发 ILE！
+#include <iostream>
+
+int main() {
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    long long a, b;
+    if (std::cin >> a >> b) {
+        std::cout << (a + b) << std::endl;
     }
     return 0;
 }

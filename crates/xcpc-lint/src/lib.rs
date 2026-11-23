@@ -34,6 +34,8 @@ pub mod code {
     pub const SAMPLE_UNPAIRED: &str = "sample_unpaired";
     pub const SAMPLE_NON_CONTIGUOUS: &str = "sample_non_contiguous";
     pub const MISSING_IO_SECTION: &str = "missing_io_section";
+    pub const MISSING_INTERACTION_SECTION: &str = "missing_interaction_section";
+    pub const MISSING_SUBTASKS_SECTION: &str = "missing_subtasks_section";
     pub const MISSING_EDITORIAL: &str = "missing_editorial";
     pub const PACKAGE_UNVERIFIED: &str = "package_unverified";
     pub const PACKAGE_STALE: &str = "package_stale";
@@ -253,12 +255,36 @@ fn lint_problem_dir(
     // 1. Samples: unpaired files and non-contiguous numbering.
     lint_samples(ws, dir, findings)?;
 
+    // Detect Phase 3C package features (`interactor.cpp` and `[[subtask]]`) for non-blocking
+    // statement section hints.
+    let has_interactor = !is_snapshot
+        && ws
+            .resolve(dir)
+            .ok()
+            .is_some_and(|p| xcpc_judge::find_interactor_source(&p).is_some());
+    let has_subtasks = !is_snapshot
+        && ws
+            .load_problem(problem_id)
+            .ok()
+            .is_some_and(|p| !p.meta.subtask.is_empty());
+
     // 2. Statements (`statement.md`, `statement.zh.md`, `statement.en.md`):
-    //    check images (`missing_image`) and I/O sections (`missing_io_section`).
+    //    check images (`missing_image`), I/O sections (`missing_io_section`),
+    //    interactive protocol section (`missing_interaction_section`), and subtasks section
+    //    (`missing_subtasks_section`).
     for name in ["statement.md", "statement.zh.md", "statement.en.md"] {
         let rel = format!("{dir}/{name}");
         if let Some(text) = read_with_unsaved(ws, &rel, opts.unsaved)? {
-            lint_markdown_file(ws, dir, &rel, &text, true, findings)?;
+            lint_markdown_file(
+                ws,
+                dir,
+                &rel,
+                &text,
+                true,
+                has_interactor,
+                has_subtasks,
+                findings,
+            )?;
         }
     }
 
@@ -268,7 +294,16 @@ fn lint_problem_dir(
     let editorial_rel = format!("{dir}/editorial.md");
     match read_with_unsaved(ws, &editorial_rel, opts.unsaved)? {
         Some(text) => {
-            lint_markdown_file(ws, dir, &editorial_rel, &text, false, findings)?;
+            lint_markdown_file(
+                ws,
+                dir,
+                &editorial_rel,
+                &text,
+                false,
+                false,
+                false,
+                findings,
+            )?;
         }
         None if opts.check_editorial => {
             let message = match label {
@@ -434,18 +469,22 @@ fn markdown_options() -> Options {
     options
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lint_markdown_file(
     ws: &Workspace,
     problem_dir: &str,
     file_rel: &str,
     text: &str,
     check_io_sections: bool,
+    has_interactor: bool,
+    has_subtasks: bool,
     findings: &mut Vec<Finding>,
 ) -> Result<(), Error> {
     let mut active_heading: Option<String> = None;
     let mut has_input = false;
     let mut has_output = false;
     let mut has_interaction = false;
+    let mut has_subtasks_section = false;
 
     for (event, range) in Parser::new_ext(text, markdown_options()).into_offset_iter() {
         match event {
@@ -460,6 +499,7 @@ fn lint_markdown_file(
                         Some(SectionKind::Known("input")) => has_input = true,
                         Some(SectionKind::Known("output")) => has_output = true,
                         Some(SectionKind::Known("interaction")) => has_interaction = true,
+                        Some(SectionKind::Known("subtasks")) => has_subtasks_section = true,
                         _ => {}
                     }
                 }
@@ -489,24 +529,49 @@ fn lint_markdown_file(
         }
     }
 
-    if check_io_sections && !has_interaction {
-        if !has_input {
-            findings.push(Finding {
-                severity: Severity::Warning,
-                code: code::MISSING_IO_SECTION.to_owned(),
-                message: "statement is missing an input section (e.g. ## 输入格式 / ## Input)"
-                    .to_owned(),
-                file: Some(file_rel.to_owned()),
-                line: None,
-                column: None,
-            });
+    if check_io_sections {
+        if !has_interaction {
+            if has_interactor {
+                findings.push(Finding {
+                    severity: Severity::Warning,
+                    code: code::MISSING_INTERACTION_SECTION.to_owned(),
+                    message: "interactive problem (interactor.cpp) is missing an interaction section (e.g. ## 交互方式 / ## Interaction)".to_owned(),
+                    file: Some(file_rel.to_owned()),
+                    line: None,
+                    column: None,
+                });
+            } else {
+                if !has_input {
+                    findings.push(Finding {
+                        severity: Severity::Warning,
+                        code: code::MISSING_IO_SECTION.to_owned(),
+                        message:
+                            "statement is missing an input section (e.g. ## 输入格式 / ## Input)"
+                                .to_owned(),
+                        file: Some(file_rel.to_owned()),
+                        line: None,
+                        column: None,
+                    });
+                }
+                if !has_output {
+                    findings.push(Finding {
+                        severity: Severity::Warning,
+                        code: code::MISSING_IO_SECTION.to_owned(),
+                        message:
+                            "statement is missing an output section (e.g. ## 输出格式 / ## Output)"
+                                .to_owned(),
+                        file: Some(file_rel.to_owned()),
+                        line: None,
+                        column: None,
+                    });
+                }
+            }
         }
-        if !has_output {
+        if has_subtasks && !has_subtasks_section {
             findings.push(Finding {
                 severity: Severity::Warning,
-                code: code::MISSING_IO_SECTION.to_owned(),
-                message: "statement is missing an output section (e.g. ## 输出格式 / ## Output)"
-                    .to_owned(),
+                code: code::MISSING_SUBTASKS_SECTION.to_owned(),
+                message: "problem declares [[subtask]] but statement is missing a subtasks section (e.g. ## 子任务 / ## Subtasks)".to_owned(),
                 file: Some(file_rel.to_owned()),
                 line: None,
                 column: None,
@@ -1038,6 +1103,10 @@ mod tests {
             built_at_epoch_secs: 1_700_000_000,
             compiler: None,
             checker: "wcmp".to_owned(),
+            interactive: false,
+            runs: 1,
+            subtasks: Vec::new(),
+            total_score: None,
             compile_failures: Vec::new(),
             dirty_inputs: Vec::new(),
             self_tests: Vec::new(),
@@ -1139,5 +1208,73 @@ mod tests {
         assert_eq!(stale[0].file.as_deref(), Some("problems/pkg/problem.toml"));
         assert!(stale[0].message.contains("题目「pkg」"));
         assert!(stale[0].message.contains("重新执行严格验收"));
+    }
+
+    #[test]
+    fn phase_3c_interactive_and_subtask_section_warnings() {
+        let (dir, ws) = scratch_ws();
+
+        // 1. Interactive problem missing `## 交互方式` -> non-blocking warning.
+        write_problem(
+            dir.path(),
+            "inter",
+            "描述。\n\n## 输入格式\n\n无。\n\n## 输出格式\n\n无。\n",
+            None,
+        );
+        fs::write(
+            dir.path().join("problems/inter/interactor.cpp"),
+            "int main() { return 0; }\n",
+        )
+        .unwrap();
+        let f1 = lint_problem(&ws, "inter", &LintOptions::default()).unwrap();
+        assert!(
+            f1.iter()
+                .any(|f| !f.is_error() && f.code == code::MISSING_INTERACTION_SECTION),
+            "{f1:#?}"
+        );
+
+        // Adding `## 交互方式` clears the warning.
+        fs::write(
+            dir.path().join("problems/inter/statement.md"),
+            "描述。\n\n## 交互方式\n\n按行交互。\n",
+        )
+        .unwrap();
+        let f2 = lint_problem(&ws, "inter", &LintOptions::default()).unwrap();
+        assert!(
+            !f2.iter()
+                .any(|f| f.code == code::MISSING_INTERACTION_SECTION),
+            "{f2:#?}"
+        );
+
+        // 2. OI subtask problem missing `## 子任务` -> non-blocking warning.
+        write_problem(
+            dir.path(),
+            "oi",
+            "描述。\n\n## 输入格式\n\n整数。\n\n## 输出格式\n\n答案。\n",
+            None,
+        );
+        fs::write(
+            dir.path().join("problems/oi/problem.toml"),
+            "title = \"OI\"\n\n[[subtask]]\nid = \"1\"\nscore = 100\n",
+        )
+        .unwrap();
+        let f3 = lint_problem(&ws, "oi", &LintOptions::default()).unwrap();
+        assert!(
+            f3.iter()
+                .any(|f| !f.is_error() && f.code == code::MISSING_SUBTASKS_SECTION),
+            "{f3:#?}"
+        );
+
+        // Adding `## 子任务` clears the warning.
+        fs::write(
+            dir.path().join("problems/oi/statement.md"),
+            "描述。\n\n## 输入格式\n\n整数。\n\n## 输出格式\n\n答案。\n\n## 子任务\n\n子任务 1：100 分。\n",
+        )
+        .unwrap();
+        let f4 = lint_problem(&ws, "oi", &LintOptions::default()).unwrap();
+        assert!(
+            !f4.iter().any(|f| f.code == code::MISSING_SUBTASKS_SECTION),
+            "{f4:#?}"
+        );
     }
 }

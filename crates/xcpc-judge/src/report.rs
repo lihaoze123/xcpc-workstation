@@ -1,9 +1,81 @@
 //! Build report, gates, safety margin, and progress event data structures.
 
 use serde::{Deserialize, Serialize};
+use xcpc_domain::SubtaskScoring;
 
 use crate::runner::Verdict;
 use crate::toolchain::{CompileFailure, DetectedCompiler};
+
+fn default_runs() -> u32 {
+    1
+}
+
+/// Direction of one recorded line/chunk in an interactive transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptDirection {
+    /// Interactor -> Solution (`→`).
+    InteractorToSolution,
+    /// Solution -> Interactor (`←`).
+    SolutionToInteractor,
+}
+
+/// One line/entry in a bounded interactive transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptEntry {
+    pub direction: TranscriptDirection,
+    pub text: String,
+    /// 1-based pass number for multi-run problems (`None` for single-run).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<u32>,
+}
+
+/// Bounded head+tail transcript of an interactive run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionTranscript {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub head: Vec<TranscriptEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tail: Vec<TranscriptEntry>,
+    #[serde(default)]
+    pub omitted_entries: usize,
+    #[serde(default)]
+    pub total_entries: usize,
+    #[serde(default)]
+    pub total_bytes_i2s: u64,
+    #[serde(default)]
+    pub total_bytes_s2i: u64,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub interactor_message: String,
+}
+
+/// Summary of one OI subtask in a build report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtaskSummary {
+    pub id: String,
+    pub score: u32,
+    pub scoring: SubtaskScoring,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<String>,
+    pub test_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_indices: Vec<usize>,
+}
+
+/// One solution's evaluated score and verdict on a single OI subtask.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SolutionSubtaskScore {
+    pub subtask_id: String,
+    pub max_score: u32,
+    pub score: f64,
+    pub verdict: Verdict,
+    pub full_score: bool,
+    /// `None` if no per-subtask verdict assertion was declared for this solution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched: Option<bool>,
+}
 
 /// Build mode: development (`Debug`) vs strict acceptance (`Verify`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -54,7 +126,7 @@ pub struct SafetyMargin {
 }
 
 /// One cell in the `tests × solutions` execution matrix.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatrixCell {
     pub test_index: usize,
     pub test_name: String,
@@ -76,10 +148,16 @@ pub struct MatrixCell {
     pub stale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repro_cmd: Option<String>,
+    /// Partial score ratio in `[0.0, 1.0]` from `testlib.h` `quitp` (or `1.0` for full AC, `0.0` for WA/etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_ratio: Option<f64>,
+    /// Bounded interactive transcript (`→` / `←`) for interactive problems.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<InteractionTranscript>,
 }
 
 /// Aggregated result for one solution across the tests it ran on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SolutionSummary {
     pub name: String,
     pub is_main: bool,
@@ -92,6 +170,15 @@ pub struct SolutionSummary {
     pub total_tests: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Total OI score across all subtasks (present when `[[subtask]]` is declared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_score: Option<f64>,
+    /// Maximum achievable OI score across all subtasks (present when `[[subtask]]` is declared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_score: Option<u32>,
+    /// Per-subtask score breakdown (present when `[[subtask]]` is declared).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtask_scores: Vec<SolutionSubtaskScore>,
 }
 
 /// Summary of one expanded test case in a build report.
@@ -101,6 +188,8 @@ pub struct TestSummary {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtask: Option<String>,
     pub is_sample: bool,
     pub size_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,6 +238,18 @@ pub struct BuildReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compiler: Option<DetectedCompiler>,
     pub checker: String,
+    /// `true` when `interactor.cpp` is present in the problem directory.
+    #[serde(default)]
+    pub interactive: bool,
+    /// Effective multi-run pass count (`[package].runs`, default 1).
+    #[serde(default = "default_runs")]
+    pub runs: u32,
+    /// OI subtask definitions & test mapping when `[[subtask]]` is declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<SubtaskSummary>,
+    /// Sum of `[[subtask]].score` when `[[subtask]]` is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_score: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compile_failures: Vec<CompileFailure>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
