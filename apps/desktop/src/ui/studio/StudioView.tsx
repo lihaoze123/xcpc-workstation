@@ -1333,6 +1333,7 @@ export function StudioView(props: { active: boolean }) {
                         packageRefreshSeq.set(packageRefreshSeq() + 1);
                         compileNow();
                       }}
+                      onSwitchToStatement={() => setStudioMode("statement")}
                     />
                   )}
                 </If>

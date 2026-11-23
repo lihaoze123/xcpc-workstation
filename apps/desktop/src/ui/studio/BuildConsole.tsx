@@ -19,7 +19,7 @@ import { locale, t } from "../i18n";
 import { Btn, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { goSpace, onExternalChange, preview, type UiError } from "../store";
+import { dialog, goSpace, onExternalChange, preview, type UiError } from "../store";
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import {
@@ -213,6 +213,7 @@ export function BuildConsole(props: {
   inspectionResult: PackageInspectionResultJs | undefined;
   onInitPackage?: () => void;
   onRefreshPackage: () => void;
+  onSwitchToStatement?: () => void;
   onCollapseInspector?: () => void;
   controller?: (c: BuildConsoleController | undefined) => void;
 }) {
@@ -1504,6 +1505,29 @@ export function BuildConsole(props: {
                         </Text>
                       </View>
                     </If>
+
+                    <If when={!isRunningThis() && singleStatus().kind === "ready" && anomalousRowIndices().size === 0 && !onlyAnomalyRows()}>
+                      <View testID="build-verified-next-steps" style={{ flexDirection: "row", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                        <If when={!!props.onSwitchToStatement}>
+                          <Text
+                            onPress={() => props.onSwitchToStatement?.()}
+                            style={{ fontSize: 11.5, fontWeight: 500 }}
+                            class="text-secondary-foreground hover:text-foreground"
+                          >
+                            {t("build.verified.backToStatement")}
+                          </Text>
+                        </If>
+                        <If when={!props.readOnly}>
+                          <Text
+                            onPress={() => dialog.set({ kind: "addToContest", problemId: props.problemId })}
+                            style={{ fontSize: 11.5, fontWeight: 500 }}
+                            class="text-primary"
+                          >
+                            {t("build.verified.addToContest")}
+                          </Text>
+                        </If>
+                      </View>
+                    </If>
                   </View>
                 </If>
 
@@ -2258,6 +2282,53 @@ export function BuildConsole(props: {
             class="bg-popover border-border"
           >
             <Scroll style={{ maxHeight: 380 }} contentStyle={{ padding: 12, gap: 8 }}>
+              <If when={singleStatus().kind === "ready"}>
+                <View
+                  testID="build-checks-verified-header"
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    paddingBottom: gates().length > 0 ? 8 : 0,
+                    borderBottomWidth: gates().length > 0 ? 1 : 0,
+                  }}
+                  class="border-border"
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+                    <Icon name="check" size={13.5} style={{ tintColor: colorScheme() === "dark" ? "#4ade80" : "#16a34a" }} />
+                    <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                      {t("build.verified.headline")}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                    <If when={!!props.onSwitchToStatement}>
+                      <Text
+                        onPress={() => {
+                          checksExpanded.set(false);
+                          props.onSwitchToStatement?.();
+                        }}
+                        style={{ fontSize: 12, fontWeight: 500 }}
+                        class="text-secondary-foreground hover:text-foreground"
+                      >
+                        {t("build.verified.backToStatement")}
+                      </Text>
+                    </If>
+                    <If when={!props.readOnly}>
+                      <Text
+                        onPress={() => {
+                          checksExpanded.set(false);
+                          dialog.set({ kind: "addToContest", problemId: props.problemId });
+                        }}
+                        style={{ fontSize: 12, fontWeight: 500 }}
+                        class="text-primary"
+                      >
+                        {t("build.verified.addToContest")}
+                      </Text>
+                    </If>
+                  </View>
+                </View>
+              </If>
               <If
                 when={gates().length > 0}
                 else={
