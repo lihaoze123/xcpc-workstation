@@ -126,6 +126,7 @@ export interface PackageFilesData {
   validator_self_tests_valid?: string[];
   validator_self_tests_invalid?: string[];
   checker_self_tests?: string[];
+  self_test_files?: string[];
 }
 
 export interface PackageSolutionSpecData {
@@ -143,6 +144,7 @@ export interface ExpandedTestData {
   name: string;
   tag?: string | null;
   is_sample: boolean;
+  rule_index?: number | null;
   gen_cmd?: string | null;
   source?:
     | { kind: "sample"; stem: string; input_rel: string; manual_ans_rel?: string | null }
@@ -555,6 +557,80 @@ export function nextActionForCheck(
       }
     }
     return { kind: "open_file", relPath: "solutions" };
+  }
+  return undefined;
+}
+
+export const BUILTIN_CHECKERS = [
+  "wcmp",
+  "ncmp",
+  "fcmp",
+  "lcmp",
+  "rcmp4",
+  "rcmp6",
+  "rcmp9",
+  "yesno",
+  "nyesno",
+] as const;
+
+export const EXPECT_PRESETS: readonly (readonly string[])[] = [
+  ["AC"],
+  ["WA"],
+  ["TLE"],
+  ["MLE"],
+  ["RE"],
+  ["WA", "TLE"],
+];
+
+export const MAX_INLINE_TEST_EDIT_BYTES = 64 * 1024;
+
+/** True when a test row has a validator failure or at least one expectation-violating cell. */
+export function isRowAnomalous(
+  row: Pick<TestSummaryData, "index" | "validator_ok">,
+  cols: readonly SolutionHeaderSpec[],
+  matrixLookup: ReadonlyMap<string, MatrixCellData>,
+  summaryByName: ReadonlyMap<string, SolutionSummaryData>,
+): boolean {
+  if (row.validator_ok === false) return true;
+  for (const col of cols) {
+    const cell = matrixLookup.get(matrixCellKey(row.index, col.name));
+    if (!cell) continue;
+    const sum = summaryByName.get(col.name);
+    if (isCellVerdictAnomaly(cell.verdict, col.expected, col.is_main, sum?.matched)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** True when a test case is a small hand-written/sample file safe for inline editing (<= 64 KiB). */
+export function canInlineEditTest(preview: {
+  ok: boolean;
+  fileRel?: string | null;
+  sizeBytes: number;
+} | undefined): boolean {
+  if (!preview?.ok || !preview.fileRel) return false;
+  if (!preview.fileRel.startsWith("tests/") && !preview.fileRel.startsWith("samples/")) return false;
+  return preview.sizeBytes <= MAX_INLINE_TEST_EDIT_BYTES;
+}
+
+/** Matches a `self_test_files` relative path against its latest `SelfTestResultData` entry. */
+export function matchSelfTestResult(
+  relPath: string,
+  results: readonly SelfTestResultData[] | undefined,
+): SelfTestResultData | undefined {
+  if (!results || results.length === 0) return undefined;
+  const parts = relPath.split("/");
+  const fileName = parts[parts.length - 1] ?? "";
+  if (relPath.startsWith("tests/validator/valid/")) {
+    return results.find((r) => r.kind === "validator_valid" && r.name === fileName);
+  }
+  if (relPath.startsWith("tests/validator/invalid/")) {
+    return results.find((r) => r.kind === "validator_invalid" && r.name === fileName);
+  }
+  if (relPath.startsWith("tests/checker/")) {
+    const dirName = parts[2] ?? "";
+    return results.find((r) => r.kind.startsWith("checker_") && r.name === dirName);
   }
   return undefined;
 }

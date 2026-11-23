@@ -38,17 +38,18 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
-    AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
-    ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs,
-    MarkdownSpanJs, MathPreviewJs, OverridePatchJs, PackageBuildStatusJs, PackageInitResultJs,
-    PackageInspectionResultJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
-    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
-    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
-    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
-    TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem,
+    AboutInfoJs, ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs,
+    CleanUnusedAssetsResultJs, ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs,
+    ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
+    FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs, NormalizeDirtyResultJs,
+    OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs,
+    PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PickedFolder,
+    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
+    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
+    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
+    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1237,6 +1238,94 @@ impl Preview {
     ) -> TestCasePreviewJs {
         self.state
             .inspect_test_case(&slug, &selector, head_lines, tail_lines)
+    }
+
+    /// Updates `[package].checker` in `problem.toml` (built-in checker name or `"checker.cpp"`).
+    pub fn set_package_checker(&self, slug: String, checker: String) -> ActionResult {
+        self.state.set_package_checker(&slug, &checker)
+    }
+
+    /// Updates `[solutions.<name>]` (`main`, `expect`, `tags`) in `problem.toml`.
+    pub fn set_solution_config(
+        &self,
+        slug: String,
+        name: String,
+        is_main: Option<bool>,
+        expect: Option<Vec<String>>,
+        tags: Option<Vec<String>>,
+    ) -> ActionResult {
+        self.state
+            .set_solution_config(&slug, &name, is_main, expect, tags)
+    }
+
+    /// Creates a new boilerplate package source file (`solution`, `generator`, `validator`,
+    /// `custom_checker`, `validator_self_test_valid`, `validator_self_test_invalid`).
+    pub fn create_package_source(
+        &self,
+        slug: String,
+        kind: String,
+        name: String,
+    ) -> PackageCreateResultJs {
+        self.state.create_package_source(&slug, &kind, &name)
+    }
+
+    /// Adds a hand-written test file under `tests/` and appends a `[[test]]` rule.
+    pub fn add_hand_test(
+        &self,
+        slug: String,
+        name: Option<String>,
+        tag: Option<String>,
+        content: String,
+    ) -> AddedTestResultJs {
+        self.state
+            .add_hand_test(&slug, name.as_deref(), tag.as_deref(), &content)
+    }
+
+    /// Appends a generator `[[test]]` batch rule to `problem.toml`.
+    pub fn add_generator_test(
+        &self,
+        slug: String,
+        generator: String,
+        args: String,
+        repeat: u32,
+        tag: Option<String>,
+        name: Option<String>,
+    ) -> AddedTestResultJs {
+        self.state.add_generator_test(
+            &slug,
+            &generator,
+            &args,
+            repeat,
+            tag.as_deref(),
+            name.as_deref(),
+        )
+    }
+
+    /// Removes the 0-based `[[test]]` rule from `problem.toml`.
+    pub fn remove_test_rule(&self, slug: String, rule_index: u32) -> ActionResult {
+        self.state.remove_test_rule(&slug, rule_index)
+    }
+
+    /// Normalizes CRLF, UTF-8 BOM, and missing trailing newlines across hand-written inputs.
+    pub fn normalize_dirty_inputs(&self, slug: String) -> NormalizeDirtyResultJs {
+        self.state.normalize_dirty_inputs(&slug)
+    }
+
+    /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor
+    /// (enforces a strict 256 KiB cap).
+    pub fn read_package_file(&self, slug: String, rel_path: String) -> PackageFileContentJs {
+        self.state.read_package_file(&slug, &rel_path)
+    }
+
+    /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
+    /// watcher self-write suppressed).
+    pub fn save_package_file(
+        &self,
+        slug: String,
+        rel_path: String,
+        content: String,
+    ) -> ActionResult {
+        self.state.save_package_file(&slug, &rel_path, &content)
     }
 }
 

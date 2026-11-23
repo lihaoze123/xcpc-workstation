@@ -26,9 +26,10 @@ use crate::cache::{
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
 use crate::snapshot;
 use crate::types::{
-    ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
-    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
-    FreezeResultJs, FuzzyHitJs, MathPreviewJs, OverridePatchJs, PackageBuildStatusJs,
+    ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
+    ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
+    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, MathPreviewJs, NormalizeDirtyResultJs,
+    OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs,
     PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PreviewDiagnostic,
     PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
@@ -2947,6 +2948,14 @@ impl State {
                 head: p.head,
                 tail: p.tail,
                 truncated: p.truncated,
+                ans_available: p.ans_available,
+                ans_size_bytes: p.ans_size_bytes as f64,
+                ans_head: p.ans_head,
+                ans_tail: p.ans_tail,
+                ans_truncated: p.ans_truncated,
+                ans_total_lines: p.ans_total_lines.map(|n| n as u32),
+                rule_index: p.rule_index.map(|n| n as u32),
+                file_rel: p.file_rel,
                 error: None,
             },
             Err(e) => TestCasePreviewJs {
@@ -2954,6 +2963,388 @@ impl State {
                 error: Some(e.to_string()),
                 ..Default::default()
             },
+        }
+    }
+
+    pub(crate) fn set_package_checker(&self, slug: &str, checker: &str) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::set_package_checker(&ws, slug, checker) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn set_solution_config(
+        &self,
+        slug: &str,
+        name: &str,
+        is_main: Option<bool>,
+        expect: Option<Vec<String>>,
+        tags: Option<Vec<String>>,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::set_solution_config(&ws, slug, name, is_main, expect, tags) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn create_package_source(
+        &self,
+        slug: &str,
+        kind: &str,
+        name: &str,
+    ) -> PackageCreateResultJs {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return PackageCreateResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return PackageCreateResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+        let parsed_kind = match kind.trim().to_ascii_lowercase().as_str() {
+            "solution" => xcpc_judge::PackageSourceKind::Solution,
+            "generator" => xcpc_judge::PackageSourceKind::Generator,
+            "validator" => xcpc_judge::PackageSourceKind::Validator,
+            "custom_checker" | "checker" => xcpc_judge::PackageSourceKind::CustomChecker,
+            "validator_self_test_valid" => xcpc_judge::PackageSourceKind::ValidatorSelfTestValid,
+            "validator_self_test_invalid" => {
+                xcpc_judge::PackageSourceKind::ValidatorSelfTestInvalid
+            }
+            other => {
+                return PackageCreateResultJs {
+                    ok: false,
+                    code: Some("invalid_config".into()),
+                    error: Some(format!("unknown package source kind: {other}")),
+                    ..Default::default()
+                };
+            }
+        };
+        match xcpc_judge::create_package_source(&ws, slug, parsed_kind, name) {
+            Ok(rel_path) => {
+                self.invalidate_cache();
+                PackageCreateResultJs {
+                    ok: true,
+                    rel_path,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => PackageCreateResultJs {
+                ok: false,
+                code: Some(e.code().to_owned()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn add_hand_test(
+        &self,
+        slug: &str,
+        name: Option<&str>,
+        tag: Option<&str>,
+        content: &str,
+    ) -> AddedTestResultJs {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return AddedTestResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return AddedTestResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+        match xcpc_judge::add_hand_test(&ws, slug, name, tag, content) {
+            Ok(info) => {
+                self.invalidate_cache();
+                AddedTestResultJs {
+                    ok: true,
+                    rule_index: info.rule_index as u32,
+                    file_rel: info.file_rel,
+                    name: info.name,
+                    tag: info.tag,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => AddedTestResultJs {
+                ok: false,
+                code: Some(e.code().to_owned()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn add_generator_test(
+        &self,
+        slug: &str,
+        generator: &str,
+        args: &str,
+        repeat: u32,
+        tag: Option<&str>,
+        name: Option<&str>,
+    ) -> AddedTestResultJs {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return AddedTestResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return AddedTestResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+        match xcpc_judge::add_generator_test(&ws, slug, generator, args, repeat, tag, name) {
+            Ok(info) => {
+                self.invalidate_cache();
+                AddedTestResultJs {
+                    ok: true,
+                    rule_index: info.rule_index as u32,
+                    file_rel: info.file_rel,
+                    name: info.name,
+                    tag: info.tag,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => AddedTestResultJs {
+                ok: false,
+                code: Some(e.code().to_owned()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn remove_test_rule(&self, slug: &str, rule_index: u32) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::remove_test_rule(&ws, slug, rule_index as usize) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn normalize_dirty_inputs(&self, slug: &str) -> NormalizeDirtyResultJs {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return NormalizeDirtyResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return NormalizeDirtyResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+        match xcpc_judge::normalize_dirty_inputs(&ws, slug) {
+            Ok(fixed) => {
+                self.invalidate_cache();
+                NormalizeDirtyResultJs {
+                    ok: true,
+                    fixed,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => NormalizeDirtyResultJs {
+                ok: false,
+                code: Some(e.code().to_owned()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor.
+    /// Never loads files larger than 256 KiB into memory.
+    pub(crate) fn read_package_file(&self, slug: &str, rel_path: &str) -> PackageFileContentJs {
+        const MAX_QUICK_EDIT_BYTES: u64 = 256 * 1024;
+        let canonical = match self.resolve_package_file(slug, rel_path) {
+            Ok(p) => p,
+            Err(err) => {
+                return PackageFileContentJs {
+                    ok: false,
+                    code: err.code,
+                    error: err.error,
+                    ..Default::default()
+                };
+            }
+        };
+        let meta = match std::fs::metadata(&canonical) {
+            Ok(m) => m,
+            Err(e) => {
+                return PackageFileContentJs {
+                    ok: false,
+                    code: Some("io".into()),
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                };
+            }
+        };
+        if !meta.is_file() {
+            return PackageFileContentJs {
+                ok: false,
+                code: Some("invalid_path".into()),
+                error: Some(format!("{rel_path} is not a file")),
+                ..Default::default()
+            };
+        }
+        let size = meta.len();
+        if size > MAX_QUICK_EDIT_BYTES {
+            return PackageFileContentJs {
+                ok: true,
+                content: String::new(),
+                size_bytes: size as f64,
+                too_large: true,
+                error: None,
+                code: None,
+            };
+        }
+        match std::fs::read(&canonical) {
+            Ok(bytes) => PackageFileContentJs {
+                ok: true,
+                content: String::from_utf8_lossy(&bytes).into_owned(),
+                size_bytes: bytes.len() as f64,
+                too_large: false,
+                error: None,
+                code: None,
+            },
+            Err(e) => PackageFileContentJs {
+                ok: false,
+                code: Some("io".into()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
+    /// wired through `Workspace::write` for watcher self-write suppression).
+    pub(crate) fn save_package_file(
+        &self,
+        slug: &str,
+        rel_path: &str,
+        content: &str,
+    ) -> ActionResult {
+        const MAX_QUICK_EDIT_BYTES: usize = 256 * 1024;
+        if content.len() > MAX_QUICK_EDIT_BYTES {
+            return ActionResult::err(
+                "too_large",
+                "file exceeds 256 KiB quick-edit limit; open in external editor",
+            );
+        }
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        if let Err(e) = check_id(slug) {
+            return ActionResult::err("invalid_id", e.to_string());
+        }
+        let cleaned = rel_path.trim().trim_start_matches('/');
+        if cleaned.is_empty() || cleaned.contains("..") {
+            return ActionResult::err("path_escape", "invalid package file path");
+        }
+        let prob_dir_rel = format!("problems/{slug}");
+        let prob_dir = match ws.resolve(&prob_dir_rel) {
+            Ok(p) => p,
+            Err(e) => return ActionResult::from_storage_err(e),
+        };
+        let canonical_prob = match prob_dir.canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ActionResult::err("not_found", format!("{prob_dir_rel}: {e}")),
+        };
+        let ws_rel = format!("{prob_dir_rel}/{cleaned}");
+        let target = match ws.resolve(&ws_rel) {
+            Ok(p) => p,
+            Err(e) => return ActionResult::from_storage_err(e),
+        };
+        // Reject symlink escape if target or its parent already exists.
+        if target.exists() {
+            let Ok(canonical) = target.canonicalize() else {
+                return ActionResult::err("io", format!("cannot resolve {cleaned}"));
+            };
+            if !canonical.starts_with(ws.root()) || !canonical.starts_with(&canonical_prob) {
+                return ActionResult::err(
+                    "path_escape",
+                    format!("path {cleaned:?} is outside problem directory"),
+                );
+            }
+        } else if let Some(parent) = target.parent()
+            && parent.exists()
+            && let Ok(canon_parent) = parent.canonicalize()
+            && (!canon_parent.starts_with(ws.root()) || !canon_parent.starts_with(&canonical_prob))
+        {
+            return ActionResult::err(
+                "path_escape",
+                format!("path {cleaned:?} is outside problem directory"),
+            );
+        }
+
+        match ws.write(&ws_rel, content.as_bytes()) {
+            Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_path(&ws, &ws_rel);
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
         }
     }
 }

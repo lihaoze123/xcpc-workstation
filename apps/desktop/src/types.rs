@@ -1375,8 +1375,71 @@ pub struct TestCasePreviewJs {
     pub head: String,
     pub tail: String,
     pub truncated: bool,
+    pub ans_available: bool,
+    pub ans_size_bytes: f64,
+    pub ans_head: String,
+    pub ans_tail: String,
+    pub ans_truncated: bool,
+    #[prop(skip_none)]
+    pub ans_total_lines: Option<u32>,
+    #[prop(skip_none)]
+    pub rule_index: Option<u32>,
+    #[prop(skip_none)]
+    pub file_rel: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
+}
+
+/// Bounded read result for the lightweight in-app quick-editor (`readPackageFile`, max 256 KiB).
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct PackageFileContentJs {
+    pub ok: bool,
+    pub content: String,
+    pub size_bytes: f64,
+    pub too_large: bool,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Result of creating a new package source file (`createPackageSource`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PackageCreateResultJs {
+    pub ok: bool,
+    pub rel_path: String,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Result of adding a hand-written or generator `[[test]]` rule.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct AddedTestResultJs {
+    pub ok: bool,
+    pub rule_index: u32,
+    #[prop(skip_none)]
+    pub file_rel: Option<String>,
+    #[prop(skip_none)]
+    pub name: Option<String>,
+    #[prop(skip_none)]
+    pub tag: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Result of normalizing CRLF / BOM / missing trailing newline across hand-written inputs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct NormalizeDirtyResultJs {
+    pub ok: bool,
+    pub fixed: Vec<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
 }
 
 impl From<xcpc_judge::DetectedCompiler> for DetectedCompilerJs {

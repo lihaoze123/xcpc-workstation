@@ -1,16 +1,17 @@
 // Polygon-grade local Build Console (4th single-problem tab in Studio).
-// Organizes the package workflow into 3 clean segmented sub-views:
-// 1. `测试矩阵` (Matrix): compact single-line check summary bar (expandable with actionable
-//    next-step buttons), compact metrics strip (post-build), tightly grouped Result Matrix
-//    (zero Unicode status glyphs — Lucide SVG icons everywhere), and on-demand right diagnostic
-//    panel when a cell is selected.
-// 2. `测试数据` (Tests): left list of expanded test cases + right safe head/tail input preview
-//    powered by `preview.inspectTestCase`, with generator/validator quick actions.
-// 3. `程序与配置` (Programs & Config): 5 ordered Polygon cards (Validator, Checker, Generators,
-//    Solutions, Config) with self-test summaries and one-click external open.
+// Organizes the package workflow into 3 clean segmented sub-views (`结果` | `数据` | `程序`):
+// 1. `结果` (Results): compact single-line check bar with actionable next-steps, `仅看异常`
+//    toggle, pinned header + summary row over scrollable test rows, dirty-input one-click fix,
+//    and on-demand right diagnostic panel with `查看测试点 #N` jump.
+// 2. `数据` (Tests): left list with `全部 / 异常 / 自测` filter pills & `+ 添加 ▾` menu
+//    (`手写测试`, `生成批次`, `有效/无效校验自测`); right bounded preview with `输入 | 标程输出`
+//    toggle, inline `<Editor>` for small hand-written tests (<= 64 KiB), and rule deletion.
+// 3. `程序` (Programs): 5 ordered Polygon cards with structured quick config (checker dropdown,
+//    solution expect/main menu, `+ 新建` solution/generator) and lightweight single-file
+//    quick-edit modal (`PackageQuickEditModal`) with `外部打开` escape hatch.
 
 import { cleanup, Clipboard, colorScheme, computed, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { Progress } from "nsh/base";
+import { Editor, Progress } from "nsh/base";
 import type { PackageBuildStatusJs, PackageInspectionResultJs, TestCasePreviewJs } from "xcpc-workstation/native";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
@@ -19,9 +20,12 @@ import { Btn, Chip, IconBtn, Segmented, tip } from "../kit";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
 import { errorOf, goSettings, preview, refresh, type UiError } from "../store";
-import { cardShadow, EASE_STANDARD, MONO, ms, token } from "../theme";
+import { cardShadow, EASE_STANDARD, editorFontSize, editorLineHeight, editorMono, MONO, ms, token } from "../theme";
 import {
   buildMatrixLookup,
+  BUILTIN_CHECKERS,
+  canInlineEditTest,
+  EXPECT_PRESETS,
   formatAcVsTleMargin,
   formatBytesCompact,
   formatMemoryKib,
@@ -31,6 +35,8 @@ import {
   isCellVerdictAnomaly,
   isMissingCompilerError,
   isPackageIncomplete,
+  isRowAnomalous,
+  matchSelfTestResult,
   matrixCellKey,
   nextActionForCheck,
   parseBuildReport,
@@ -48,11 +54,15 @@ import {
   type SelectedCellKey,
   type SolutionSummaryData,
 } from "./buildLogic";
+import { AddGeneratorBatchModal, ConfirmDeleteRuleModal, CreateSourceModal } from "./PackageModals";
+import { PackageQuickEditModal } from "./PackageQuickEditModal";
 
 const POLL_INTERVAL_MS = 120;
 const DIAG_PANEL_WIDTH = 320;
 
 type BuildSubTab = "matrix" | "tests" | "programs";
+type TestsFilterMode = "all" | "anomalies" | "self_tests";
+type PreviewStreamTab = "input" | "ans";
 
 export interface BuildConsoleController {
   /** Triggered by Mod+B on the Build tab: runs Verify, or Run Selected when subset filters are active. */
@@ -103,13 +113,27 @@ export function BuildConsole(props: {
   const selectedSolutions = signal<string[]>([]);
   const selectedTests = signal<string[]>([]);
   const filterOpen = signal(false);
+  const anomaliesOnly = signal(false);
   const selectedCell = signal<SelectedCellKey | undefined>(undefined);
   const selectedTestIndex = signal<number | undefined>(undefined);
+  const testsFilter = signal<TestsFilterMode>("all");
+  const previewStream = signal<PreviewStreamTab>("input");
+  const inlineEditing = signal(false);
+  const inlineInitialText = signal("");
+  const inlineDirty = signal(false);
+  let inlineDraft = "";
   const checksExpanded = signal(false);
   const actionError = signal<UiError | undefined>(undefined);
   const copiedRepro = signal(false);
   const copiedGenCmd = signal(false);
   const copiedCompileTarget = signal<string | undefined>(undefined);
+  const testPreviewRev = signal(0);
+
+  // Modals
+  const quickEditPath = signal<string | undefined>(undefined);
+  const createModalKind = signal<"solution" | "generator" | undefined>(undefined);
+  const genBatchOpen = signal(false);
+  const deleteRuleIndex = signal<number | undefined>(undefined);
 
   let pollTimer: number | undefined;
   let copyTimer: number | undefined;
@@ -150,10 +174,19 @@ export function BuildConsole(props: {
       selectedSolutions.set([]);
       selectedTests.set([]);
       filterOpen.set(false);
+      anomaliesOnly.set(false);
       selectedCell.set(undefined);
       selectedTestIndex.set(undefined);
+      testsFilter.set("all");
+      previewStream.set("input");
+      inlineEditing.set(false);
+      inlineDirty.set(false);
       checksExpanded.set(false);
       actionError.set(undefined);
+      quickEditPath.set(undefined);
+      createModalKind.set(undefined);
+      genBatchOpen.set(false);
+      deleteRuleIndex.set(undefined);
       const cur = preview.packageBuildStatus();
       buildStatus.set(cur);
       lastSeenSeq = cur.seq;
@@ -241,9 +274,36 @@ export function BuildConsole(props: {
     }));
   });
 
-  // Keep a valid test selected when switching to the `测试数据` sub-view.
-  const activeTestIndex = computed<number | undefined>(() => {
+  const anomalousRowSet = computed(() => {
+    const set = new Set<number>();
+    const cols = matrixCols();
+    const lookup = matrixLookup();
+    const sumMap = solutionSummaryByName();
+    for (const r of matrixRows()) {
+      if (isRowAnomalous(r, cols, lookup, sumMap)) set.add(r.index);
+    }
+    return set;
+  });
+
+  const visibleResultRows = computed(() => {
     const rows = matrixRows();
+    if (!anomaliesOnly()) return rows;
+    const set = anomalousRowSet();
+    return rows.filter((r) => set.has(r.index));
+  });
+
+  const visibleTestsList = computed(() => {
+    const rows = matrixRows();
+    if (testsFilter() === "anomalies") {
+      const set = anomalousRowSet();
+      return rows.filter((r) => set.has(r.index));
+    }
+    return rows;
+  });
+
+  // Keep a valid test selected when switching to the `数据` sub-view.
+  const activeTestIndex = computed<number | undefined>(() => {
+    const rows = visibleTestsList();
     if (rows.length === 0) return undefined;
     const cur = selectedTestIndex();
     if (cur != null && rows.some((r) => r.index === cur)) return cur;
@@ -257,13 +317,23 @@ export function BuildConsole(props: {
   });
 
   const activeTestPreview = computed<TestCasePreviewJs | undefined>(() => {
-    if (subTab() !== "tests") return undefined;
+    if (subTab() !== "tests" || testsFilter() === "self_tests") return undefined;
     const idx = activeTestIndex();
     if (idx == null) return undefined;
-    // Re-read when report or inspection refreshes.
     void activeReport();
     void props.inspectionResult;
+    void testPreviewRev();
     return preview.inspectTestCase(props.problemId, String(idx), 40, 20);
+  });
+
+  // Reset inline edit & stream toggle when active test changes.
+  effect(() => {
+    void activeTestIndex();
+    untracked(() => {
+      inlineEditing.set(false);
+      inlineDirty.set(false);
+      previewStream.set("input");
+    });
   });
 
   const inspectedCell = computed<MatrixCellData | undefined>(() =>
@@ -287,6 +357,12 @@ export function BuildConsole(props: {
     if (!st.running || st.total <= 0) return 0;
     return Math.min(100, Math.max(0, (st.completed / st.total) * 100));
   });
+
+  function refreshAll() {
+    testPreviewRev.set(testPreviewRev() + 1);
+    props.onRefreshPackage();
+    refresh();
+  }
 
   function runBuild(mode: "debug" | "verify") {
     if (props.readOnly || isRunningAny()) return;
@@ -323,17 +399,21 @@ export function BuildConsole(props: {
       return;
     }
     actionError.set(undefined);
-    props.onRefreshPackage();
-    refresh();
+    refreshAll();
   }
 
-  function openSource(relPath: string) {
+  function openExternal(relPath: string) {
     void preview.openPackageFile(props.problemId, relPath).then((res) => {
       if (!res.ok) actionError.set(errorOf(res, t("ctx.openPackageFile")));
     });
   }
 
+  function openQuickEdit(relPath: string) {
+    quickEditPath.set(relPath);
+  }
+
   function jumpToTest(index: number) {
+    testsFilter.set("all");
     selectedTestIndex.set(index);
     subTab.set("tests");
   }
@@ -348,8 +428,12 @@ export function BuildConsole(props: {
     else if (act.kind === "select_cell") {
       checksExpanded.set(false);
       selectMatrixCellWithCollapse({ testIndex: act.testIndex, solution: act.solution });
-    } else if (act.kind === "open_file") openSource(act.relPath);
-    else subTab.set("programs");
+    } else if (act.kind === "open_file") {
+      if (act.relPath === "solutions" || act.relPath === "generators") openExternal(act.relPath);
+      else openQuickEdit(act.relPath);
+    } else {
+      subTab.set("programs");
+    }
   }
 
   function checkActionLabel(act: CheckAction): string {
@@ -362,6 +446,138 @@ export function BuildConsole(props: {
     if (act.relPath.includes("validator")) return t("build.checks.action.openValidator");
     if (act.relPath.includes("checker")) return t("build.checks.action.openChecker");
     return act.relPath;
+  }
+
+  function fixDirtyInputs() {
+    if (props.readOnly) return;
+    const res = preview.normalizeDirtyInputs(props.problemId);
+    if (!res.ok) {
+      actionError.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      return;
+    }
+    actionError.set(undefined);
+    refreshAll();
+  }
+
+  function switchChecker(checker: string) {
+    if (props.readOnly) return;
+    if (checker === "checker.cpp" && !files()?.custom_checker) {
+      const created = preview.createPackageSource(props.problemId, "custom_checker", "checker");
+      if (!created.ok) {
+        actionError.set({ code: created.code, error: created.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      const setRes = preview.setPackageChecker(props.problemId, "checker.cpp");
+      if (!setRes.ok) {
+        actionError.set(errorOf(setRes, t("ctx.updatePackage")));
+        return;
+      }
+      refreshAll();
+      openQuickEdit(created.relPath);
+      return;
+    }
+    const res = preview.setPackageChecker(props.problemId, checker);
+    if (!res.ok) {
+      actionError.set(errorOf(res, t("ctx.updatePackage")));
+      return;
+    }
+    refreshAll();
+  }
+
+  function updateSolutionExpect(name: string, expect: readonly string[]) {
+    if (props.readOnly) return;
+    const res = preview.setSolutionConfig(props.problemId, name, null, [...expect], null);
+    if (!res.ok) {
+      actionError.set(errorOf(res, t("ctx.updatePackage")));
+      return;
+    }
+    refreshAll();
+  }
+
+  function promoteSolutionToMain(name: string) {
+    if (props.readOnly) return;
+    const res = preview.setSolutionConfig(props.problemId, name, true, ["AC"], null);
+    if (!res.ok) {
+      actionError.set(errorOf(res, t("ctx.updatePackage")));
+      return;
+    }
+    refreshAll();
+  }
+
+  function handleAddTestAction(id: string) {
+    if (props.readOnly) return;
+    if (id === "hand") {
+      const res = preview.addHandTest(props.problemId, null, "hand", "");
+      if (!res.ok) {
+        actionError.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      testsFilter.set("all");
+      refreshAll();
+      // Select the newly appended test and open inline editor.
+      const latest = preview.inspectPackage(props.problemId);
+      const parsed = latest.ok ? parsePackageInspection(latest.inspectionJson) : undefined;
+      const lastTest = parsed?.expanded_tests?.[parsed.expanded_tests.length - 1];
+      if (lastTest) {
+        selectedTestIndex.set(lastTest.index);
+        if (res.fileRel) {
+          startInlineEdit(res.fileRel);
+        }
+      }
+    } else if (id === "gen_batch") {
+      genBatchOpen.set(true);
+    } else if (id === "self_valid" || id === "self_invalid") {
+      const existingCount =
+        id === "self_valid"
+          ? (files()?.validator_self_tests_valid?.length ?? 0)
+          : (files()?.validator_self_tests_invalid?.length ?? 0);
+      const stem = String(existingCount + 1).padStart(2, "0");
+      const kind = id === "self_valid" ? "validator_self_test_valid" : "validator_self_test_invalid";
+      const res = preview.createPackageSource(props.problemId, kind, stem);
+      if (!res.ok) {
+        actionError.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      refreshAll();
+      openQuickEdit(res.relPath);
+    }
+  }
+
+  function startInlineEdit(fileRel: string) {
+    const res = preview.readPackageFile(props.problemId, fileRel);
+    if (!res.ok || res.tooLarge) {
+      openExternal(fileRel);
+      return;
+    }
+    inlineInitialText.set(res.content);
+    inlineDraft = res.content;
+    inlineDirty.set(false);
+    inlineEditing.set(true);
+  }
+
+  function saveInlineEdit(fileRel: string) {
+    const res = preview.savePackageFile(props.problemId, fileRel, inlineDraft);
+    if (!res.ok) {
+      actionError.set(errorOf(res, t("ctx.savePackageFile")));
+      return;
+    }
+    inlineInitialText.set(inlineDraft);
+    inlineDirty.set(false);
+    inlineEditing.set(false);
+    refreshAll();
+  }
+
+  function confirmDeleteRule() {
+    const idx = deleteRuleIndex();
+    deleteRuleIndex.set(undefined);
+    if (idx == null || props.readOnly) return;
+    const res = preview.removeTestRule(props.problemId, idx);
+    if (!res.ok) {
+      actionError.set(errorOf(res, t("ctx.updatePackage")));
+      return;
+    }
+    selectedTestIndex.set(undefined);
+    refreshAll();
   }
 
   function copyRepro(cmd: string) {
@@ -450,9 +666,11 @@ export function BuildConsole(props: {
     return t("build.checks.passedSummary", { count: passed.length });
   });
 
+  const selfTestFiles = computed(() => files()?.self_test_files ?? []);
+
   return (
     <View testID="build-console" style={{ flex: 1, minHeight: 0 }} class="bg-card">
-      {/* Shared compact top bar: left 3 sub-views, right split CTA + filter + status pill */}
+      {/* Shared compact top bar: left 3 sub-views, right `[状态] [局部运行?] [筛选?] [取消?] [验证 ▾]` */}
       <View
         style={{
           paddingLeft: 14,
@@ -477,7 +695,36 @@ export function BuildConsole(props: {
 
           <View style={{ flex: 1 }} />
 
-          {/* Filter toggle (only relevant on Matrix sub-view when filters exist) */}
+          {/* Status pill first */}
+          <View
+            testID="build-freshness-badge"
+            style={{
+              height: 22,
+              paddingLeft: 8,
+              paddingRight: 8,
+              borderRadius: 9999,
+              justifyContent: "center",
+              backgroundColor: freshBadge().bg,
+            }}
+          >
+            <Text style={{ fontSize: 11.5, fontWeight: 500, color: freshBadge().fg }}>
+              {freshBadge().label}
+            </Text>
+          </View>
+
+          <If when={activeReport()?.subset}>
+            <View
+              testID="build-partial-badge"
+              class="bg-muted"
+              style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 9999, justifyContent: "center" }}
+            >
+              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                {t("build.badge.partialRun")}
+              </Text>
+            </View>
+          </If>
+
+          {/* Filter toggle (only relevant on Results sub-view when filters exist) */}
           <If when={subTab() === "matrix" && hasFiltersAvailable()}>
             <Btn
               testID="build-filter-toggle"
@@ -488,7 +735,17 @@ export function BuildConsole(props: {
             />
           </If>
 
-          {/* Single split primary CTA: 验证 ▾ (or 运行所选 when subset filters are active) */}
+          <If when={isRunningThis()}>
+            <Btn
+              testID="build-cancel-btn"
+              label={t("build.action.cancel")}
+              icon="x"
+              variant="danger"
+              onPress={cancelBuild}
+            />
+          </If>
+
+          {/* Primary split CTA permanently anchored at the far right edge */}
           <If
             when={hasSubset()}
             else={
@@ -556,44 +813,6 @@ export function BuildConsole(props: {
               onPress={() => runBuild("debug")}
             />
           </If>
-
-          <If when={isRunningThis()}>
-            <Btn
-              testID="build-cancel-btn"
-              label={t("build.action.cancel")}
-              icon="x"
-              variant="danger"
-              onPress={cancelBuild}
-            />
-          </If>
-
-          <If when={activeReport()?.subset}>
-            <View
-              testID="build-partial-badge"
-              class="bg-muted"
-              style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 9999, justifyContent: "center" }}
-            >
-              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
-                {t("build.badge.partialRun")}
-              </Text>
-            </View>
-          </If>
-
-          <View
-            testID="build-freshness-badge"
-            style={{
-              height: 22,
-              paddingLeft: 8,
-              paddingRight: 8,
-              borderRadius: 9999,
-              justifyContent: "center",
-              backgroundColor: freshBadge().bg,
-            }}
-          >
-            <Text style={{ fontSize: 11.5, fontWeight: 500, color: freshBadge().fg }}>
-              {freshBadge().label}
-            </Text>
-          </View>
         </View>
 
         {/* Collapsible subset filter chips */}
@@ -668,11 +887,11 @@ export function BuildConsole(props: {
         </If>
       </View>
 
-      {/* ── Sub-view 1: 测试矩阵 (Matrix) ─────────────────────────────────────── */}
+      {/* ── Sub-view 1: 结果 (Results) ────────────────────────────────────────── */}
       <If when={subTab() === "matrix"}>
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            {/* Compact horizontal metrics strip (hidden before first build) */}
+            {/* Compact horizontal metrics strip (hidden before first build) + subtle 仅看异常 toggle */}
             <If when={activeReport()}>
               {(rep) => (
                 <View
@@ -685,7 +904,7 @@ export function BuildConsole(props: {
                     flexDirection: "row",
                     alignItems: "center",
                     flexWrap: "wrap",
-                    gap: 20,
+                    gap: 18,
                     borderBottomWidth: 1,
                   }}
                   class="border-border bg-muted/20"
@@ -703,95 +922,104 @@ export function BuildConsole(props: {
                     {(m) => <CompactMetric label={t("build.margin.acVsTle")} value={m()} />}
                   </If>
                   <CompactMetric label={t("build.margin.checker")} value={rep().checker} mono />
+                  <View style={{ flex: 1 }} />
+                  <If when={anomalousRowSet().size > 0}>
+                    <Chip
+                      label={`${t("build.results.anomaliesOnly")} (${anomalousRowSet().size})`}
+                      active={anomaliesOnly()}
+                      onPress={() => anomaliesOnly.set(!anomaliesOnly())}
+                    />
+                  </If>
                 </View>
               )}
             </If>
 
-            <Scroll style={{ flex: 1 }}>
-              <View style={{ padding: 14, gap: 12 }}>
-                <If when={actionError()}>
-                  <ErrorDisplay error={actionError()} onDismiss={() => actionError.set(undefined)} />
-                </If>
-                <If when={buildErrorMsg()}>
-                  {(msg) => (
-                    <ErrorDisplay
-                      error={{ error: msg(), context: t("ctx.buildPackage") }}
-                      action={
-                        isMissingCompilerError(msg()) ? (
-                          <Btn
-                            testID="build-open-toolchain-btn"
-                            label={t("build.error.openToolchain")}
-                            icon="settings"
-                            onPress={() => goSettings("toolchain")}
-                          />
-                        ) : undefined
+            {/* Fixed top notices (errors, compact check bar, compile errors, dirty inputs) + flex-1 sticky-header table */}
+            <View style={{ flex: 1, minHeight: 0, padding: 14, gap: 10 }}>
+              <If when={actionError()}>
+                <ErrorDisplay error={actionError()} onDismiss={() => actionError.set(undefined)} />
+              </If>
+              <If when={buildErrorMsg()}>
+                {(msg) => (
+                  <ErrorDisplay
+                    error={{ error: msg(), context: t("ctx.buildPackage") }}
+                    action={
+                      isMissingCompilerError(msg()) ? (
+                        <Btn
+                          testID="build-open-toolchain-btn"
+                          label={t("build.error.openToolchain")}
+                          icon="settings"
+                          onPress={() => goSettings("toolchain")}
+                        />
+                      ) : undefined
+                    }
+                  />
+                )}
+              </If>
+
+              {/* Compact single-line check summary bar (concentric radii: outer 10 - padding 4 = inner 6) */}
+              <If when={allChecks().length > 0}>
+                <View
+                  testID="build-checks-bar"
+                  style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden", flexShrink: 0 }}
+                  class="border-border bg-muted/25"
+                >
+                  <View
+                    testID="build-checks-toggle"
+                    onPress={() => checksExpanded.set(!checksExpanded())}
+                    class="hover:bg-muted/60 active:bg-accent"
+                    style={{
+                      minHeight: 34,
+                      paddingLeft: 10,
+                      paddingRight: 10,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                      ...colorTransition(120),
+                    }}
+                  >
+                    <Icon
+                      name={
+                        splitChecks().failed.length > 0
+                          ? "circleAlert"
+                          : splitChecks().warn.length > 0
+                            ? "triangleAlert"
+                            : "check"
+                      }
+                      size={14}
+                      tone={
+                        splitChecks().failed.length > 0
+                          ? "destructive"
+                          : splitChecks().warn.length > 0
+                            ? "chart-4"
+                            : "primary"
                       }
                     />
-                  )}
-                </If>
-
-                {/* Compact single-line check summary bar (concentric radii: outer 10 - padding 4 = inner 6) */}
-                <If when={allChecks().length > 0}>
-                  <View
-                    testID="build-checks-bar"
-                    style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden" }}
-                    class="border-border bg-muted/25"
-                  >
-                    <View
-                      testID="build-checks-toggle"
-                      onPress={() => checksExpanded.set(!checksExpanded())}
-                      class="hover:bg-muted/60 active:bg-accent"
-                      style={{
-                        minHeight: 34,
-                        paddingLeft: 10,
-                        paddingRight: 10,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                        ...colorTransition(120),
-                      }}
+                    <Text
+                      style={{ flex: 1, fontSize: 12.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                      class={
+                        splitChecks().failed.length > 0
+                          ? "text-destructive"
+                          : splitChecks().warn.length > 0
+                            ? "text-chart-4"
+                            : "text-secondary-foreground"
+                      }
                     >
-                      <Icon
-                        name={
-                          splitChecks().failed.length > 0
-                            ? "circleAlert"
-                            : splitChecks().warn.length > 0
-                              ? "triangleAlert"
-                              : "check"
-                        }
-                        size={14}
-                        tone={
-                          splitChecks().failed.length > 0
-                            ? "destructive"
-                            : splitChecks().warn.length > 0
-                              ? "chart-4"
-                              : "primary"
-                        }
-                      />
-                      <Text
-                        style={{ flex: 1, fontSize: 12.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                        class={
-                          splitChecks().failed.length > 0
-                            ? "text-destructive"
-                            : splitChecks().warn.length > 0
-                              ? "text-chart-4"
-                              : "text-secondary-foreground"
-                        }
-                      >
-                        {checkSummaryText()}
-                      </Text>
-                      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                        {checksExpanded() ? t("build.checks.collapse") : t("build.checks.expand")}
-                      </Text>
-                      <Icon
-                        name="chevronDown"
-                        size={13}
-                        tone="muted-foreground"
-                        style={{ transform: checksExpanded() ? "rotate(180deg)" : "rotate(0deg)" }}
-                      />
-                    </View>
+                      {checkSummaryText()}
+                    </Text>
+                    <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                      {checksExpanded() ? t("build.checks.collapse") : t("build.checks.expand")}
+                    </Text>
+                    <Icon
+                      name="chevronDown"
+                      size={13}
+                      tone="muted-foreground"
+                      style={{ transform: checksExpanded() ? "rotate(180deg)" : "rotate(0deg)" }}
+                    />
+                  </View>
 
-                    <If when={checksExpanded()}>
+                  <If when={checksExpanded()}>
+                    <Scroll style={{ maxHeight: 220 }}>
                       <View style={{ borderTopWidth: 1, padding: 4, gap: 4 }} class="border-border bg-card">
                         <Each of={allChecks()} key={(g) => g.id}>
                           {(gate) => {
@@ -844,418 +1072,443 @@ export function BuildConsole(props: {
                           }}
                         </Each>
                       </View>
+                    </Scroll>
+                  </If>
+                </View>
+              </If>
+
+              {/* Compile errors */}
+              <If when={(activeReport()?.compile_failures?.length ?? 0) > 0}>
+                <View
+                  style={{ borderRadius: 10, borderWidth: 1, padding: 12, gap: 10, flexShrink: 0 }}
+                  class="border-border bg-muted/40"
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Icon name="circleAlert" size={14} tone="destructive" />
+                    <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-destructive">
+                      {t("build.section.compileErrors")}
+                    </Text>
+                  </View>
+                  <Each of={activeReport()?.compile_failures ?? []} key={(f) => `${f.target}:${f.source_path}`}>
+                    {(cf) => {
+                      const canOpen = () => !cf().source_path.startsWith("<");
+                      const isCopied = () => copiedCompileTarget() === cf().target;
+                      return (
+                        <View style={{ gap: 6 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Text style={{ flex: 1, fontSize: 12, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
+                              {`${cf().target} (${cf().source_path})`}
+                            </Text>
+                            <If when={canOpen()}>
+                              <Btn
+                                label={t("build.compile.openFile")}
+                                icon="code"
+                                variant="ghost"
+                                onPress={() => openQuickEdit(cf().source_path)}
+                              />
+                            </If>
+                            <Btn
+                              label={isCopied() ? t("common.copied") : t("build.compile.copyStderr")}
+                              icon={isCopied() ? "check" : "copy"}
+                              variant="ghost"
+                              onPress={() => copyCompileStderr(cf().target, cf().stderr)}
+                            />
+                          </View>
+                          <Scroll style={{ maxHeight: 160 }}>
+                            <View style={{ borderRadius: 6, borderWidth: 1, padding: 8 }} class="border-border bg-card">
+                              <Text style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }} class="text-secondary-foreground">
+                                {cf().stderr.trim()}
+                              </Text>
+                            </View>
+                          </Scroll>
+                        </View>
+                      );
+                    }}
+                  </Each>
+                </View>
+              </If>
+
+              {/* Dirty inputs warning with one-click fix */}
+              <If when={(inspection()?.dirty_inputs?.length ?? 0) > 0}>
+                <View
+                  style={{ borderRadius: 10, borderWidth: 1, padding: 10, gap: 6, flexShrink: 0 }}
+                  class="border-border bg-muted/40"
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Icon name="triangleAlert" size={14} tone="chart-4" />
+                    <Text style={{ flex: 1, fontSize: 12, fontWeight: 600 }} class="text-chart-4">
+                      {t("build.section.dirtyInputs")}
+                    </Text>
+                    <If when={!props.readOnly}>
+                      <Btn
+                        testID="build-fix-dirty-btn"
+                        label={t("build.dirty.fixAll")}
+                        icon="check"
+                        onPress={fixDirtyInputs}
+                      />
                     </If>
                   </View>
-                </If>
+                  <Each of={inspection()?.dirty_inputs ?? []} key={(d) => d.path}>
+                    {(d) => (
+                      <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-secondary-foreground">
+                        {`${d().path}: ${[
+                          d().has_crlf && "CRLF",
+                          d().has_bom && "BOM",
+                          d().missing_trailing_newline && t("build.dirty.missingNewline"),
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}`}
+                      </Text>
+                    )}
+                  </Each>
+                </View>
+              </If>
 
-                {/* Compile errors: full copyable stderr + click-to-open source file */}
-                <If when={(activeReport()?.compile_failures?.length ?? 0) > 0}>
-                  <View
-                    style={{ borderRadius: 10, borderWidth: 1, padding: 12, gap: 10 }}
-                    class="border-border bg-muted/40"
-                  >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <Icon name="circleAlert" size={14} tone="destructive" />
-                      <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-destructive">
-                        {t("build.section.compileErrors")}
+              {/* Sticky-header Result Table: header + summary pinned above scrollable test rows */}
+              <View
+                testID="build-result-matrix"
+                style={{
+                  flex: 1,
+                  minHeight: 160,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  overflow: "hidden",
+                  boxShadow: cardShadow(),
+                }}
+                class="border-border bg-card"
+              >
+                <If
+                  when={matrixCols().length > 0}
+                  else={
+                    <View style={{ padding: 20, alignItems: "center" }}>
+                      <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                        {t("build.matrix.noSolutions")}
                       </Text>
                     </View>
-                    <Each of={activeReport()?.compile_failures ?? []} key={(f) => `${f.target}:${f.source_path}`}>
-                      {(cf) => {
-                        const canOpen = () => !cf().source_path.startsWith("<");
-                        const isCopied = () => copiedCompileTarget() === cf().target;
-                        return (
-                          <View style={{ gap: 6 }}>
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ flex: 1, fontSize: 12, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
-                                {`${cf().target} (${cf().source_path})`}
-                              </Text>
-                              <If when={canOpen()}>
-                                <Btn
-                                  label={t("build.compile.openFile")}
-                                  icon="code"
-                                  variant="ghost"
-                                  onPress={() => openSource(cf().source_path)}
-                                />
-                              </If>
-                              <Btn
-                                label={isCopied() ? t("common.copied") : t("build.compile.copyStderr")}
-                                icon={isCopied() ? "check" : "copy"}
-                                variant="ghost"
-                                onPress={() => copyCompileStderr(cf().target, cf().stderr)}
-                              />
-                            </View>
-                            <Scroll style={{ maxHeight: 220 }}>
-                              <View style={{ borderRadius: 6, borderWidth: 1, padding: 8 }} class="border-border bg-card">
-                                <Text style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }} class="text-secondary-foreground">
-                                  {cf().stderr.trim()}
-                                </Text>
-                              </View>
-                            </Scroll>
-                          </View>
-                        );
-                      }}
-                    </Each>
-                  </View>
-                </If>
-
-                {/* Dirty inputs warning */}
-                <If when={(inspection()?.dirty_inputs?.length ?? 0) > 0}>
-                  <View
-                    style={{ borderRadius: 10, borderWidth: 1, padding: 10, gap: 4 }}
-                    class="border-border bg-muted/40"
-                  >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <Icon name="triangleAlert" size={14} tone="chart-4" />
-                      <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-chart-4">
-                        {t("build.section.dirtyInputs")}
-                      </Text>
-                    </View>
-                    <Each of={inspection()?.dirty_inputs ?? []} key={(d) => d.path}>
-                      {(d) => (
-                        <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-secondary-foreground">
-                          {`${d().path}: ${[
-                            d().has_crlf && "CRLF",
-                            d().has_bom && "BOM",
-                            d().missing_trailing_newline && t("build.dirty.missingNewline"),
-                          ]
-                            .filter(Boolean)
-                            .join(", ")}`}
-                        </Text>
-                      )}
-                    </Each>
-                  </View>
-                </If>
-
-                {/* Clean Result Matrix: Lucide SVG icons, tightly grouped cells, sensible column widths */}
-                <View
-                  testID="build-result-matrix"
-                  style={{
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    overflow: "hidden",
-                    boxShadow: cardShadow(),
-                  }}
-                  class="border-border bg-card"
+                  }
                 >
-                  <If
-                    when={matrixCols().length > 0}
-                    else={
-                      <View style={{ padding: 20, alignItems: "center" }}>
-                        <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
-                          {t("build.matrix.noSolutions")}
-                        </Text>
+                  <Scroll horizontal style={{ flex: 1, maxWidth: "100%" }}>
+                    <View style={{ flex: 1, minWidth: "100%", flexGrow: 1, minHeight: 0 }}>
+                      {/* Pinned solution header row */}
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          borderBottomWidth: 1,
+                          minHeight: 42,
+                          flexShrink: 0,
+                        }}
+                        class="border-border bg-muted/30"
+                      >
+                        <View style={{ width: 184, flexShrink: 0, paddingLeft: 12, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}>
+                          <Text style={{ fontSize: 11.5, fontWeight: 600 }} class="text-secondary-foreground">
+                            {t("build.matrix.testHeader")}
+                          </Text>
+                        </View>
+                        <Each of={matrixCols()} key={(col) => col.name}>
+                          {(col) => (
+                            <View
+                              style={{
+                                flex: 1,
+                                minWidth: 112,
+                                maxWidth: useCompactCols() ? 220 : undefined,
+                                paddingLeft: 10,
+                                paddingRight: 10,
+                                paddingTop: 6,
+                                paddingBottom: 6,
+                                gap: 2,
+                              }}
+                            >
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <Text
+                                  style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 12, fontWeight: 600, fontFamily: MONO }}
+                                  class="text-foreground"
+                                >
+                                  {col().name}
+                                </Text>
+                                <If when={col().is_main}>
+                                  <View
+                                    class="bg-muted border border-border"
+                                    style={{ height: 18, paddingLeft: 5, paddingRight: 5, borderRadius: 4, justifyContent: "center" }}
+                                  >
+                                    <Text style={{ fontSize: 10, fontWeight: 500 }} class="text-foreground">
+                                      {t("build.matrix.mainBadge")}
+                                    </Text>
+                                  </View>
+                                </If>
+                              </View>
+                              <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                {t("build.matrix.expectPrefix", {
+                                  verdict: col().is_main ? "AC" : col().expected.join(" / "),
+                                })}
+                              </Text>
+                            </View>
+                          )}
+                        </Each>
                       </View>
-                    }
-                  >
-                    <Scroll horizontal style={{ maxWidth: "100%" }}>
-                      <View style={{ minWidth: "100%", flexGrow: 1 }}>
-                        {/* Solution header row */}
+
+                      {/* Pinned per-solution summary row */}
+                      <If when={activeReport() && (activeReport()!.solutions?.length ?? 0) > 0}>
                         <View
+                          testID="build-matrix-summary-row"
                           style={{
                             flexDirection: "row",
                             alignItems: "center",
                             borderBottomWidth: 1,
                             minHeight: 42,
+                            flexShrink: 0,
                           }}
-                          class="border-border bg-muted/30"
+                          class="border-border bg-muted/15"
                         >
-                          <View style={{ width: 184, flexShrink: 0, paddingLeft: 12, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}>
-                            <Text style={{ fontSize: 11.5, fontWeight: 600 }} class="text-secondary-foreground">
-                              {t("build.matrix.testHeader")}
+                          <View style={{ width: 184, flexShrink: 0, paddingLeft: 12, paddingRight: 8 }}>
+                            <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                              {t("build.summary.label")}
                             </Text>
                           </View>
-                          <Each of={matrixCols()} key={(col) => col.name}>
-                            {(col) => (
-                              <View
-                                style={{
-                                  flex: 1,
-                                  minWidth: 112,
-                                  maxWidth: useCompactCols() ? 220 : undefined,
-                                  paddingLeft: 10,
-                                  paddingRight: 10,
-                                  paddingTop: 6,
-                                  paddingBottom: 6,
-                                  gap: 2,
-                                }}
-                              >
-                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                                  <Text
-                                    style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 12, fontWeight: 600, fontFamily: MONO }}
-                                    class="text-foreground"
-                                  >
-                                    {col().name}
-                                  </Text>
-                                  <If when={col().is_main}>
-                                    <View
-                                      class="bg-muted border border-border"
-                                      style={{ height: 18, paddingLeft: 5, paddingRight: 5, borderRadius: 4, justifyContent: "center" }}
-                                    >
-                                      <Text style={{ fontSize: 10, fontWeight: 500 }} class="text-foreground">
-                                        {t("build.matrix.mainBadge")}
-                                      </Text>
-                                    </View>
-                                  </If>
-                                </View>
-                                <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                  {t("build.matrix.expectPrefix", {
-                                    verdict: col().is_main ? "AC" : col().expected.join(" / "),
-                                  })}
-                                </Text>
-                              </View>
-                            )}
-                          </Each>
-                        </View>
-
-                        {/* Per-solution summary row using Lucide SVG icons */}
-                        <If when={activeReport() && (activeReport()!.solutions?.length ?? 0) > 0}>
-                          <View
-                            testID="build-matrix-summary-row"
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              borderBottomWidth: 1,
-                              minHeight: 42,
-                            }}
-                            class="border-border bg-muted/15"
-                          >
-                            <View style={{ width: 184, flexShrink: 0, paddingLeft: 12, paddingRight: 8 }}>
-                              <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                                {t("build.summary.label")}
-                              </Text>
-                            </View>
-                            <Each of={matrixCols()} key={(col) => `sum:${col.name}`}>
-                              {(col) => {
-                                const sum = () => solutionSummaryByName().get(col().name);
-                                return (
-                                  <View
-                                    style={{
-                                      flex: 1,
-                                      minWidth: 112,
-                                      maxWidth: useCompactCols() ? 220 : undefined,
-                                      paddingLeft: 10,
-                                      paddingRight: 10,
-                                      paddingTop: 6,
-                                      paddingBottom: 6,
-                                      gap: 2,
-                                    }}
-                                  >
-                                    <If
-                                      when={sum()}
-                                      else={
-                                        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                                          –
-                                        </Text>
-                                      }
-                                    >
-                                      {(s) => {
-                                        const badge = () => verdictBadgeStyle(s().matched ? "AC" : "WA", dark());
-                                        return (
-                                          <>
-                                            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                                              <Icon
-                                                name={s().matched ? "check" : "x"}
-                                                size={13}
-                                                tone={s().matched ? "primary" : "destructive"}
-                                              />
-                                              <Text
-                                                style={{
-                                                  fontSize: 11.5,
-                                                  fontWeight: 600,
-                                                  fontVariant: ["tabular-nums"],
-                                                  color: s().matched ? undefined : badge().fg,
-                                                }}
-                                                class={s().matched ? "text-foreground" : undefined}
-                                              >
-                                                {`${s().passed_tests}/${s().total_tests}`}
-                                              </Text>
-                                            </View>
-                                            <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                              {`${s().max_time_ms} ms  ${formatMemoryKib(s().max_memory_kib)}`}
-                                            </Text>
-                                          </>
-                                        );
-                                      }}
-                                    </If>
-                                  </View>
-                                );
-                              }}
-                            </Each>
-                          </View>
-                        </If>
-
-                        {/* Test rows */}
-                        <Each of={matrixRows()} key={(row) => String(row.index)}>
-                          {(row, rowIdx) => {
-                            const isLast = () => rowIdx() === matrixRows().length - 1;
-                            const valFailed = () => row().validator_ok === false;
-                            return (
-                              <View
-                                style={{
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  borderBottomWidth: isLast() ? 0 : 1,
-                                  minHeight: 38,
-                                }}
-                                class="border-border"
-                              >
+                          <Each of={matrixCols()} key={(col) => `sum:${col.name}`}>
+                            {(col) => {
+                              const sum = () => solutionSummaryByName().get(col().name);
+                              return (
                                 <View
-                                  onPress={() => jumpToTest(row().index)}
-                                  class="hover:bg-muted/40"
                                   style={{
-                                    width: 184,
-                                    flexShrink: 0,
-                                    paddingLeft: 12,
-                                    paddingRight: 8,
-                                    paddingTop: 5,
-                                    paddingBottom: 5,
-                                    gap: 1,
-                                    ...colorTransition(120),
+                                    flex: 1,
+                                    minWidth: 112,
+                                    maxWidth: useCompactCols() ? 220 : undefined,
+                                    paddingLeft: 10,
+                                    paddingRight: 10,
+                                    paddingTop: 6,
+                                    paddingBottom: 6,
+                                    gap: 2,
                                   }}
                                 >
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                                    <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                      {String(row().index).padStart(2, "0")}
-                                    </Text>
-                                    <Text
-                                      style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 12, fontFamily: MONO }}
-                                      class={valFailed() ? "text-destructive" : "text-foreground"}
-                                    >
-                                      {row().name}
-                                    </Text>
-                                    <If when={valFailed()}>
-                                      <View tooltip={tip(row().validator_message ?? t("build.detail.validatorFailed"))}>
-                                        <Icon name="triangleAlert" size={13} tone="destructive" />
+                                  <If
+                                    when={sum()}
+                                    else={
+                                      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                        –
+                                      </Text>
+                                    }
+                                  >
+                                    {(s) => {
+                                      const badge = () => verdictBadgeStyle(s().matched ? "AC" : "WA", dark());
+                                      return (
+                                        <>
+                                          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                                            <Icon
+                                              name={s().matched ? "check" : "x"}
+                                              size={13}
+                                              tone={s().matched ? "primary" : "destructive"}
+                                            />
+                                            <Text
+                                              style={{
+                                                fontSize: 11.5,
+                                                fontWeight: 600,
+                                                fontVariant: ["tabular-nums"],
+                                                color: s().matched ? undefined : badge().fg,
+                                              }}
+                                              class={s().matched ? "text-foreground" : undefined}
+                                            >
+                                              {`${s().passed_tests}/${s().total_tests}`}
+                                            </Text>
+                                          </View>
+                                          <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                            {`${s().max_time_ms} ms  ${formatMemoryKib(s().max_memory_kib)}`}
+                                          </Text>
+                                        </>
+                                      );
+                                    }}
+                                  </If>
+                                </View>
+                              );
+                            }}
+                          </Each>
+                        </View>
+                      </If>
+
+                      {/* Vertically scrollable test rows */}
+                      <Scroll style={{ flex: 1 }}>
+                        <If
+                          when={visibleResultRows().length > 0}
+                          else={
+                            <View style={{ padding: 20, alignItems: "center" }}>
+                              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                                {anomaliesOnly() ? t("build.results.noAnomalies") : t("build.tests.empty")}
+                              </Text>
+                            </View>
+                          }
+                        >
+                          <Each of={visibleResultRows()} key={(row) => String(row.index)}>
+                            {(row, rowIdx) => {
+                              const isLast = () => rowIdx() === visibleResultRows().length - 1;
+                              const valFailed = () => row().validator_ok === false;
+                              return (
+                                <View
+                                  style={{
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    borderBottomWidth: isLast() ? 0 : 1,
+                                    minHeight: 38,
+                                  }}
+                                  class="border-border"
+                                >
+                                  <View
+                                    onPress={() => jumpToTest(row().index)}
+                                    class="hover:bg-muted/40"
+                                    style={{
+                                      width: 184,
+                                      flexShrink: 0,
+                                      paddingLeft: 12,
+                                      paddingRight: 8,
+                                      paddingTop: 5,
+                                      paddingBottom: 5,
+                                      gap: 1,
+                                      ...colorTransition(120),
+                                    }}
+                                  >
+                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                      <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                        {String(row().index).padStart(2, "0")}
+                                      </Text>
+                                      <Text
+                                        style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 12, fontFamily: MONO }}
+                                        class={valFailed() ? "text-destructive" : "text-foreground"}
+                                      >
+                                        {row().name}
+                                      </Text>
+                                      <If when={valFailed()}>
+                                        <View tooltip={tip(row().validator_message ?? t("build.detail.validatorFailed"))}>
+                                          <Icon name="triangleAlert" size={13} tone="destructive" />
+                                        </View>
+                                      </If>
+                                    </View>
+                                    <If when={row().tag || row().size_bytes > 0}>
+                                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                        <If when={row().tag || row().is_sample}>
+                                          <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+                                            {row().tag ?? t("build.matrix.sampleTag")}
+                                          </Text>
+                                        </If>
+                                        <If when={row().size_bytes > 0}>
+                                          <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                            {formatBytesCompact(row().size_bytes)}
+                                          </Text>
+                                        </If>
                                       </View>
                                     </If>
                                   </View>
-                                  <If when={row().tag || row().size_bytes > 0}>
-                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                                      <If when={row().tag || row().is_sample}>
-                                        <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
-                                          {row().tag ?? t("build.matrix.sampleTag")}
-                                        </Text>
-                                      </If>
-                                      <If when={row().size_bytes > 0}>
-                                        <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                          {formatBytesCompact(row().size_bytes)}
-                                        </Text>
-                                      </If>
-                                    </View>
-                                  </If>
-                                </View>
 
-                                <Each of={matrixCols()} key={(col) => `${row().index}:${col.name}`}>
-                                  {(col) => {
-                                    const cell = () => matrixLookup().get(matrixCellKey(row().index, col().name));
-                                    const solSum = () => solutionSummaryByName().get(col().name);
-                                    const isSelected = () =>
-                                      selectedCell()?.testIndex === row().index && selectedCell()?.solution === col().name;
-                                    const anomaly = () => {
-                                      const c = cell();
-                                      if (!c) return false;
-                                      return isCellVerdictAnomaly(c.verdict, col().expected, col().is_main, solSum()?.matched);
-                                    };
-                                    return (
-                                      <View
-                                        testID={`matrix-cell-${row().index}-${col().name}`}
-                                        onPress={() => {
-                                          if (!cell()) return;
-                                          if (isSelected()) selectMatrixCellWithCollapse(undefined);
-                                          else selectMatrixCellWithCollapse({ testIndex: row().index, solution: col().name });
-                                        }}
-                                        class={
-                                          isSelected()
-                                            ? "bg-accent"
-                                            : cell()
-                                              ? "hover:bg-muted/60 active:bg-accent"
-                                              : undefined
-                                        }
-                                        style={{
-                                          flex: 1,
-                                          minWidth: 112,
-                                          maxWidth: useCompactCols() ? 220 : undefined,
-                                          minHeight: 38,
-                                          paddingLeft: 10,
-                                          paddingRight: 10,
-                                          paddingTop: 5,
-                                          paddingBottom: 5,
-                                          flexDirection: "row",
-                                          alignItems: "center",
-                                          gap: 8,
-                                          ...colorTransition(120),
-                                        }}
-                                      >
-                                        <If
-                                          when={cell()}
-                                          else={
-                                            <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                                              –
-                                            </Text>
+                                  <Each of={matrixCols()} key={(col) => `${row().index}:${col.name}`}>
+                                    {(col) => {
+                                      const cell = () => matrixLookup().get(matrixCellKey(row().index, col().name));
+                                      const solSum = () => solutionSummaryByName().get(col().name);
+                                      const isSelected = () =>
+                                        selectedCell()?.testIndex === row().index && selectedCell()?.solution === col().name;
+                                      const anomaly = () => {
+                                        const c = cell();
+                                        if (!c) return false;
+                                        return isCellVerdictAnomaly(c.verdict, col().expected, col().is_main, solSum()?.matched);
+                                      };
+                                      return (
+                                        <View
+                                          testID={`matrix-cell-${row().index}-${col().name}`}
+                                          onPress={() => {
+                                            if (!cell()) return;
+                                            if (isSelected()) selectMatrixCellWithCollapse(undefined);
+                                            else selectMatrixCellWithCollapse({ testIndex: row().index, solution: col().name });
+                                          }}
+                                          class={
+                                            isSelected()
+                                              ? "bg-accent"
+                                              : cell()
+                                                ? "hover:bg-muted/60 active:bg-accent"
+                                                : undefined
                                           }
+                                          style={{
+                                            flex: 1,
+                                            minWidth: 112,
+                                            maxWidth: useCompactCols() ? 220 : undefined,
+                                            minHeight: 38,
+                                            paddingLeft: 10,
+                                            paddingRight: 10,
+                                            paddingTop: 5,
+                                            paddingBottom: 5,
+                                            flexDirection: "row",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            ...colorTransition(120),
+                                          }}
                                         >
-                                          {(c) => {
-                                            const badge = () => verdictBadgeStyle(c().verdict, dark());
-                                            const errColor = () => verdictBadgeStyle("WA", dark()).fg;
-                                            return (
-                                              <>
-                                                <View
-                                                  style={{
-                                                    height: 20,
-                                                    minWidth: 32,
-                                                    paddingLeft: 6,
-                                                    paddingRight: 6,
-                                                    borderRadius: 4,
-                                                    borderWidth: anomaly() ? 1.5 : 0,
-                                                    borderColor: anomaly() ? errColor() : "transparent",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    backgroundColor: badge().bg,
-                                                  }}
-                                                >
-                                                  <Text
+                                          <If
+                                            when={cell()}
+                                            else={
+                                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                                –
+                                              </Text>
+                                            }
+                                          >
+                                            {(c) => {
+                                              const badge = () => verdictBadgeStyle(c().verdict, dark());
+                                              const errColor = () => verdictBadgeStyle("WA", dark()).fg;
+                                              return (
+                                                <>
+                                                  <View
                                                     style={{
-                                                      fontSize: 10.5,
-                                                      fontWeight: 600,
-                                                      fontVariant: ["tabular-nums"],
-                                                      color: badge().fg,
+                                                      height: 20,
+                                                      minWidth: 32,
+                                                      paddingLeft: 6,
+                                                      paddingRight: 6,
+                                                      borderRadius: 4,
+                                                      borderWidth: anomaly() ? 1.5 : 0,
+                                                      borderColor: anomaly() ? errColor() : "transparent",
+                                                      alignItems: "center",
+                                                      justifyContent: "center",
+                                                      backgroundColor: badge().bg,
                                                     }}
                                                   >
-                                                    {c().verdict}
+                                                    <Text
+                                                      style={{
+                                                        fontSize: 10.5,
+                                                        fontWeight: 600,
+                                                        fontVariant: ["tabular-nums"],
+                                                        color: badge().fg,
+                                                      }}
+                                                    >
+                                                      {c().verdict}
+                                                    </Text>
+                                                  </View>
+                                                  <Text
+                                                    style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }}
+                                                    class="text-secondary-foreground"
+                                                  >
+                                                    {`${c().cpu_time_ms} ms`}
                                                   </Text>
-                                                </View>
-                                                <Text
-                                                  style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }}
-                                                  class="text-secondary-foreground"
-                                                >
-                                                  {`${c().cpu_time_ms} ms`}
-                                                </Text>
-                                              </>
-                                            );
-                                          }}
-                                        </If>
-                                      </View>
-                                    );
-                                  }}
-                                </Each>
-                              </View>
-                            );
-                          }}
-                        </Each>
-                      </View>
-                    </Scroll>
+                                                </>
+                                              );
+                                            }}
+                                          </If>
+                                        </View>
+                                      );
+                                    }}
+                                  </Each>
+                                </View>
+                              );
+                            }}
+                          </Each>
+                        </If>
+                      </Scroll>
 
-                    <If when={!activeReport()}>
-                      <View style={{ padding: 12, borderTopWidth: 1, alignItems: "center" }} class="border-border bg-muted/20">
-                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                          {t("build.matrix.emptyHint")}
-                        </Text>
-                      </View>
-                    </If>
-                  </If>
-                </View>
+                      <If when={!activeReport()}>
+                        <View style={{ padding: 12, borderTopWidth: 1, alignItems: "center", flexShrink: 0 }} class="border-border bg-muted/20">
+                          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                            {t("build.matrix.emptyHint")}
+                          </Text>
+                        </View>
+                      </If>
+                    </View>
+                  </Scroll>
+                </If>
               </View>
-            </Scroll>
+            </View>
           </View>
 
           {/* On-demand right diagnostic panel: rendered ONLY when a matrix cell is selected */}
@@ -1321,20 +1574,28 @@ export function BuildConsole(props: {
                         </Text>
                       </View>
 
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                        <Icon
-                          name={isAnomaly() ? "circleAlert" : "check"}
-                          size={13}
-                          tone={isAnomaly() ? "destructive" : "primary"}
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flex: 1 }}>
+                          <Icon
+                            name={isAnomaly() ? "circleAlert" : "check"}
+                            size={13}
+                            tone={isAnomaly() ? "destructive" : "primary"}
+                          />
+                          <Text
+                            style={{ fontSize: 11.5, fontWeight: 500 }}
+                            class={isAnomaly() ? "text-destructive" : "text-secondary-foreground"}
+                          >
+                            {isAnomaly()
+                              ? t("build.detail.mismatch", { expected: expectedLabel() })
+                              : t("build.detail.matched")}
+                          </Text>
+                        </View>
+                        <Btn
+                          testID="diag-view-test-btn"
+                          label={t("build.detail.viewTest", { index: cell().test_index })}
+                          variant="outline"
+                          onPress={() => jumpToTest(cell().test_index)}
                         />
-                        <Text
-                          style={{ fontSize: 11.5, fontWeight: 500 }}
-                          class={isAnomaly() ? "text-destructive" : "text-secondary-foreground"}
-                        >
-                          {isAnomaly()
-                            ? t("build.detail.mismatch", { expected: expectedLabel() })
-                            : t("build.detail.matched")}
-                        </Text>
                       </View>
 
                       <If when={valFailed()}>
@@ -1383,97 +1644,216 @@ export function BuildConsole(props: {
         </View>
       </If>
 
-      {/* ── Sub-view 2: 测试数据 (Tests & Safe Preview) ───────────────────────── */}
+      {/* ── Sub-view 2: 数据 (Tests, .ans Preview, Inline Edit, Self-Tests) ───── */}
       <If when={subTab() === "tests"}>
         <View testID="build-tests-view" style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
-          {/* Left test case list */}
-          <View style={{ width: 264, flexShrink: 0, borderRightWidth: 1 }} class="border-border bg-background/40">
-            <Scroll style={{ flex: 1 }}>
-              <View style={{ padding: 6, gap: 2 }}>
-                <If
-                  when={matrixRows().length > 0}
-                  else={
-                    <View style={{ padding: 16, alignItems: "center" }}>
-                      <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                        {t("build.tests.empty")}
-                      </Text>
-                    </View>
+          {/* Left test / self-test list */}
+          <View style={{ width: 276, flexShrink: 0, borderRightWidth: 1 }} class="border-border bg-background/40">
+            {/* List header: filter pills + `+ 添加 ▾` menu */}
+            <View
+              style={{
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 8,
+                paddingBottom: 8,
+                borderBottomWidth: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+              }}
+              class="border-border"
+            >
+              <Chip
+                label={`${t("build.tests.filterAll")} (${matrixRows().length})`}
+                active={testsFilter() === "all"}
+                onPress={() => testsFilter.set("all")}
+              />
+              <If when={anomalousRowSet().size > 0}>
+                <Chip
+                  label={`${t("build.tests.filterAnomalies")} (${anomalousRowSet().size})`}
+                  active={testsFilter() === "anomalies"}
+                  onPress={() => testsFilter.set("anomalies")}
+                />
+              </If>
+              <Chip
+                label={t("build.tests.filterSelfTests")}
+                active={testsFilter() === "self_tests"}
+                onPress={() => testsFilter.set("self_tests")}
+              />
+              <View style={{ flex: 1 }} />
+              <If when={!props.readOnly}>
+                <AppMenu
+                  align="end"
+                  minWidth={172}
+                  entries={[
+                    { id: "hand", label: t("build.tests.addHand"), icon: "fileText" },
+                    {
+                      id: "gen_batch",
+                      label: t("build.tests.addGenBatch"),
+                      icon: "code",
+                      disabled: (files()?.generators?.length ?? 0) === 0,
+                    },
+                    { separator: true, id: "sep" },
+                    { id: "self_valid", label: t("build.tests.addSelfValid"), icon: "check" },
+                    { id: "self_invalid", label: t("build.tests.addSelfInvalid"), icon: "triangleAlert" },
+                  ]}
+                  onSelect={handleAddTestAction}
+                  trigger={
+                    <IconBtn
+                      testID="build-add-test-menu"
+                      icon="plus"
+                      size={24}
+                      iconSize={14}
+                      tooltip={tip(t("build.tests.add"))}
+                    />
                   }
-                >
-                  <Each of={matrixRows()} key={(r) => String(r.index)}>
-                    {(row) => {
-                      const selected = () => activeTestIndex() === row().index;
-                      const valFailed = () => row().validator_ok === false;
-                      const valPassed = () => row().validator_ok === true;
-                      return (
-                        <View
-                          testID={`build-test-row-${row().index}`}
-                          onPress={() => selectedTestIndex.set(row().index)}
-                          class={selected() ? "bg-accent" : "hover:bg-muted active:bg-accent"}
-                          style={{
-                            paddingLeft: 10,
-                            paddingRight: 10,
-                            paddingTop: 7,
-                            paddingBottom: 7,
-                            borderRadius: 7,
-                            gap: 2,
-                            ...colorTransition(120),
-                          }}
-                        >
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                            <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                              {String(row().index).padStart(2, "0")}
-                            </Text>
-                            <Text
-                              style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, fontWeight: 500, fontFamily: MONO }}
-                              class={valFailed() ? "text-destructive" : "text-foreground"}
-                            >
-                              {row().name}
-                            </Text>
-                            <If when={valFailed()}>
-                              <Icon name="triangleAlert" size={13} tone="destructive" />
-                            </If>
-                            <If when={valPassed()}>
-                              <Icon name="check" size={13} tone="primary" />
-                            </If>
-                          </View>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                            <If when={row().tag || row().is_sample}>
-                              <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
-                                {row().tag ?? t("build.matrix.sampleTag")}
-                              </Text>
-                            </If>
-                            <If when={row().size_bytes > 0}>
-                              <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                {formatBytesCompact(row().size_bytes)}
-                              </Text>
-                            </If>
-                          </View>
+                />
+              </If>
+            </View>
+
+            <Scroll style={{ flex: 1 }}>
+              <If
+                when={testsFilter() === "self_tests"}
+                else={
+                  <View style={{ padding: 6, gap: 2 }}>
+                    <If
+                      when={visibleTestsList().length > 0}
+                      else={
+                        <View style={{ padding: 16, alignItems: "center" }}>
+                          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                            {t("build.tests.empty")}
+                          </Text>
                         </View>
-                      );
-                    }}
-                  </Each>
-                </If>
-              </View>
+                      }
+                    >
+                      <Each of={visibleTestsList()} key={(r) => String(r.index)}>
+                        {(row) => {
+                          const selected = () => activeTestIndex() === row().index;
+                          const valFailed = () => row().validator_ok === false;
+                          const valPassed = () => row().validator_ok === true;
+                          return (
+                            <View
+                              testID={`build-test-row-${row().index}`}
+                              onPress={() => selectedTestIndex.set(row().index)}
+                              class={selected() ? "bg-accent" : "hover:bg-muted active:bg-accent"}
+                              style={{
+                                paddingLeft: 10,
+                                paddingRight: 10,
+                                paddingTop: 7,
+                                paddingBottom: 7,
+                                borderRadius: 7,
+                                gap: 2,
+                                ...colorTransition(120),
+                              }}
+                            >
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  {String(row().index).padStart(2, "0")}
+                                </Text>
+                                <Text
+                                  style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, fontWeight: 500, fontFamily: MONO }}
+                                  class={valFailed() ? "text-destructive" : "text-foreground"}
+                                >
+                                  {row().name}
+                                </Text>
+                                <If when={valFailed()}>
+                                  <Icon name="triangleAlert" size={13} tone="destructive" />
+                                </If>
+                                <If when={valPassed()}>
+                                  <Icon name="check" size={13} tone="primary" />
+                                </If>
+                              </View>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <If when={row().tag || row().is_sample}>
+                                  <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+                                    {row().tag ?? t("build.matrix.sampleTag")}
+                                  </Text>
+                                </If>
+                                <If when={row().size_bytes > 0}>
+                                  <Text style={{ fontSize: 10.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                    {formatBytesCompact(row().size_bytes)}
+                                  </Text>
+                                </If>
+                              </View>
+                            </View>
+                          );
+                        }}
+                      </Each>
+                    </If>
+                  </View>
+                }
+              >
+                {/* Self-tests list */}
+                <View style={{ padding: 6, gap: 2 }}>
+                  <If
+                    when={selfTestFiles().length > 0}
+                    else={
+                      <View style={{ padding: 16, alignItems: "center" }}>
+                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                          {t("build.tests.selfTestsEmpty")}
+                        </Text>
+                      </View>
+                    }
+                  >
+                    <Each of={selfTestFiles()} key={(f) => f}>
+                      {(rel) => {
+                        const res = () => matchSelfTestResult(rel(), activeReport()?.self_tests);
+                        return (
+                          <View
+                            onPress={() => openQuickEdit(rel())}
+                            class="hover:bg-muted active:bg-accent"
+                            style={{
+                              paddingLeft: 10,
+                              paddingRight: 10,
+                              paddingTop: 7,
+                              paddingBottom: 7,
+                              borderRadius: 7,
+                              gap: 2,
+                              ...colorTransition(120),
+                            }}
+                          >
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <Text
+                                style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, fontWeight: 500, fontFamily: MONO }}
+                                class="text-foreground"
+                              >
+                                {rel().replace(/^tests\//, "")}
+                              </Text>
+                              <If when={res()}>
+                                {(r) => (
+                                  <Icon
+                                    name={r().passed ? "check" : "circleAlert"}
+                                    size={13}
+                                    tone={r().passed ? "primary" : "destructive"}
+                                  />
+                                )}
+                              </If>
+                            </View>
+                            <If when={res()?.message}>
+                              <Text style={{ fontSize: 11, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                {res()!.message!}
+                              </Text>
+                            </If>
+                          </View>
+                        );
+                      }}
+                    </Each>
+                  </If>
+                </View>
+              </If>
             </Scroll>
           </View>
 
-          {/* Right safe head/tail preview pane */}
+          {/* Right safe head/tail preview & inline editor pane */}
           <Scroll style={{ flex: 1 }}>
-            <If when={activeTestRow()}>
-              {(row) => {
+            <If when={testsFilter() !== "self_tests" && activeTestRow()}>
+              {() => {
+                const row = () => activeTestRow()!;
                 const prev = () => activeTestPreview();
                 const expanded = () => expandedTestByIndex().get(row().index);
                 const genName = () => {
                   const src = expanded()?.source;
                   return src && src.kind === "generated" ? src.gen_name : undefined;
-                };
-                const sourceFileRel = () => {
-                  const src = expanded()?.source;
-                  if (!src) return undefined;
-                  if (src.kind === "sample") return src.input_rel;
-                  if (src.kind === "file") return src.file_rel;
-                  return undefined;
                 };
                 const genFileRel = () => {
                   const g = genName();
@@ -1481,6 +1861,19 @@ export function BuildConsole(props: {
                   const match = (files()?.generators ?? []).find((f) => f === g || f.startsWith(`${g}.`));
                   return match ? `generators/${match}` : undefined;
                 };
+                const fileRel = () => prev()?.fileRel ?? undefined;
+                const ruleIdx = () => prev()?.ruleIndex ?? expanded()?.rule_index ?? undefined;
+                const canEditInline = () => !props.readOnly && canInlineEditTest(prev());
+                const showAns = () => Boolean(prev()?.ansAvailable);
+                const streamHead = () => (previewStream() === "ans" ? (prev()?.ansHead ?? "") : (prev()?.head ?? ""));
+                const streamTail = () => (previewStream() === "ans" ? (prev()?.ansTail ?? "") : (prev()?.tail ?? ""));
+                const streamTruncated = () =>
+                  previewStream() === "ans" ? Boolean(prev()?.ansTruncated) : Boolean(prev()?.truncated);
+                const streamSize = () =>
+                  previewStream() === "ans" ? (prev()?.ansSizeBytes ?? 0) : (prev()?.sizeBytes ?? 0);
+                const streamLines = () =>
+                  previewStream() === "ans" ? (prev()?.ansTotalLines ?? 0) : (prev()?.totalLines ?? 0);
+
                 return (
                   <View testID="build-test-preview" style={{ padding: 16, gap: 14 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -1492,27 +1885,75 @@ export function BuildConsole(props: {
                       </If>
                       <If when={prev()?.ok && prev()!.availableOnDisk}>
                         <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                          {`${formatBytesCompact(prev()!.sizeBytes)}  ${t("build.tests.linesInfo", { lines: prev()!.totalLines })}`}
+                          {`${formatBytesCompact(streamSize())}  ${t("build.tests.linesInfo", { lines: streamLines() })}`}
                         </Text>
                       </If>
                       <View style={{ flex: 1 }} />
+                      <If when={showAns() && !inlineEditing()}>
+                        <Segmented
+                          items={[
+                            { value: "input" as PreviewStreamTab, label: t("build.tests.tabInput") },
+                            { value: "ans" as PreviewStreamTab, label: t("build.tests.tabAns") },
+                          ]}
+                          value={previewStream()}
+                          onChange={(v) => previewStream.set(v)}
+                          itemWidth={isZh() ? 74 : 84}
+                        />
+                      </If>
+                      <If when={canEditInline() && previewStream() === "input"}>
+                        <If
+                          when={inlineEditing()}
+                          else={
+                            <Btn
+                              testID="test-inline-edit-btn"
+                              label={t("build.tests.editInline")}
+                              icon="pencil"
+                              onPress={() => fileRel() && startInlineEdit(fileRel()!)}
+                            />
+                          }
+                        >
+                          <Btn
+                            testID="test-inline-save-btn"
+                            label={t("build.quickEdit.save")}
+                            icon="check"
+                            variant="primary"
+                            disabled={!inlineDirty()}
+                            onPress={() => fileRel() && saveInlineEdit(fileRel()!)}
+                          />
+                          <Btn
+                            label={t("common.cancel")}
+                            variant="ghost"
+                            onPress={() => inlineEditing.set(false)}
+                          />
+                        </If>
+                      </If>
                       <If when={genFileRel()}>
                         {(rel) => (
                           <Btn
                             label={t("build.tests.openGenerator")}
                             icon="code"
-                            onPress={() => openSource(rel())}
+                            onPress={() => openQuickEdit(rel())}
                           />
                         )}
                       </If>
-                      <If when={sourceFileRel()}>
+                      <If when={!inlineEditing() ? fileRel() : undefined}>
                         {(rel) => (
                           <Btn
-                            label={t("build.tests.openSource")}
-                            icon="fileText"
-                            onPress={() => openSource(rel())}
+                            label={t("build.quickEdit.openExternal")}
+                            icon="folderOpen"
+                            variant="ghost"
+                            onPress={() => openExternal(rel())}
                           />
                         )}
+                      </If>
+                      <If when={!props.readOnly && !row().is_sample && ruleIdx() != null}>
+                        <IconBtn
+                          testID="test-delete-rule-btn"
+                          icon="trash"
+                          tone="destructive"
+                          tooltip={tip(t("build.tests.deleteRule"))}
+                          onPress={() => deleteRuleIndex.set(ruleIdx()!)}
+                        />
                       </If>
                     </View>
 
@@ -1532,7 +1973,7 @@ export function BuildConsole(props: {
                               <Btn
                                 label={t("build.checks.action.openValidator")}
                                 icon="code"
-                                onPress={() => openSource(valRel())}
+                                onPress={() => openQuickEdit(valRel())}
                               />
                             )}
                           </If>
@@ -1567,38 +2008,74 @@ export function BuildConsole(props: {
                       </View>
                     </If>
 
-                    {/* Input head/tail monospace preview */}
+                    {/* Inline editor for small hand-written tests OR bounded head/tail preview */}
                     <If
-                      when={prev()?.ok && prev()!.availableOnDisk}
+                      when={inlineEditing() && fileRel()}
                       else={
-                        <View style={{ borderRadius: 8, borderWidth: 1, padding: 16 }} class="border-border bg-muted/20">
-                          <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
-                            {t("build.tests.notGenerated")}
-                          </Text>
-                        </View>
-                      }
-                    >
-                      <View style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
-                        <View style={{ padding: 12 }}>
-                          <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-foreground">
-                            {prev()!.head}
-                          </Text>
-                        </View>
-                        <If when={prev()!.truncated && prev()!.tail.length > 0}>
-                          <View
-                            style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, borderTopWidth: 1, borderBottomWidth: 1 }}
-                            class="border-border bg-muted/30"
-                          >
-                            <Text style={{ fontSize: 11 }} class="text-muted-foreground">
-                              {t("build.tests.truncatedHint")}
-                            </Text>
-                          </View>
-                          <View style={{ padding: 12 }}>
-                            <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-foreground">
-                              {prev()!.tail}
-                            </Text>
+                        <If
+                          when={prev()?.ok && (previewStream() === "ans" ? prev()!.ansAvailable : prev()!.availableOnDisk)}
+                          else={
+                            <View style={{ borderRadius: 8, borderWidth: 1, padding: 16 }} class="border-border bg-muted/20">
+                              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                                {t("build.tests.notGenerated")}
+                              </Text>
+                            </View>
+                          }
+                        >
+                          <View style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+                            <View style={{ padding: 12 }}>
+                              <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-foreground">
+                                {streamHead()}
+                              </Text>
+                            </View>
+                            {/* Always show truncation banner whenever `truncated` is true, even if `tail` is empty */}
+                            <If when={streamTruncated()}>
+                              <View
+                                style={{
+                                  paddingLeft: 12,
+                                  paddingRight: 12,
+                                  paddingTop: 5,
+                                  paddingBottom: 5,
+                                  borderTopWidth: 1,
+                                  borderBottomWidth: streamTail().length > 0 ? 1 : 0,
+                                }}
+                                class="border-border bg-muted/30"
+                              >
+                                <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                                  {t("build.tests.truncatedHint")}
+                                </Text>
+                              </View>
+                            </If>
+                            <If when={streamTruncated() && streamTail().length > 0}>
+                              <View style={{ padding: 12 }}>
+                                <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-foreground">
+                                  {streamTail()}
+                                </Text>
+                              </View>
+                            </If>
                           </View>
                         </If>
+                      }
+                    >
+                      <View style={{ height: 360, borderRadius: 10, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+                        <Editor
+                          style={{ flex: 1 }}
+                          defaultValue={inlineInitialText()}
+                          highlighting={false}
+                          folding={false}
+                          tabSize={2}
+                          softWrap={false}
+                          fontFamily={editorMono()}
+                          fontSize={editorFontSize()}
+                          lineHeight={Math.round(editorFontSize() * editorLineHeight())}
+                          activeLine
+                          class="bg-card"
+                          classes={{ content: "pl-3 pr-4 pt-3 pb-4" }}
+                          onChange={(e) => {
+                            inlineDraft = e.value;
+                            inlineDirty.set(e.value !== inlineInitialText());
+                          }}
+                        />
                       </View>
                     </If>
                   </View>
@@ -1609,7 +2086,7 @@ export function BuildConsole(props: {
         </View>
       </If>
 
-      {/* ── Sub-view 3: 程序与配置 (5 Ordered Polygon Cards) ──────────────────── */}
+      {/* ── Sub-view 3: 程序 (5 Ordered Polygon Cards + Structured Quick Config) ─ */}
       <If when={subTab() === "programs"}>
         <Scroll style={{ flex: 1 }}>
           <View testID="build-programs-view" style={{ maxWidth: 820, width: "100%", alignSelf: "center", padding: 16, gap: 14 }}>
@@ -1621,7 +2098,7 @@ export function BuildConsole(props: {
                   <Btn
                     label={t("build.programs.openFile")}
                     icon="code"
-                    onPress={() => openSource(files()!.validator!)}
+                    onPress={() => openQuickEdit(files()!.validator!)}
                   />
                 ) : undefined
               }
@@ -1648,17 +2125,61 @@ export function BuildConsole(props: {
               </If>
             </ProgramCard>
 
-            {/* 2. 评测器 (Checker) */}
+            {/* 2. 评测器 (Checker — inline selector for all 9 built-ins + custom checker.cpp) */}
             <ProgramCard
               title={t("build.programs.checkerTitle")}
               trailing={
-                files()?.custom_checker ? (
-                  <Btn
-                    label={t("build.programs.openFile")}
-                    icon="code"
-                    onPress={() => openSource(files()!.custom_checker!)}
-                  />
-                ) : undefined
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <If when={!props.readOnly}>
+                    <AppMenu
+                      align="end"
+                      minWidth={190}
+                      entries={[
+                        ...BUILTIN_CHECKERS.map((name) => ({
+                          id: name,
+                          label: name,
+                          checked: !files()?.custom_checker && (inspection()?.checker ?? "wcmp") === name,
+                        })),
+                        { separator: true, id: "sep" },
+                        {
+                          id: "checker.cpp",
+                          label: t("build.programs.customChecker"),
+                          icon: "code",
+                          checked: Boolean(files()?.custom_checker),
+                        },
+                      ]}
+                      onSelect={switchChecker}
+                      trigger={
+                        <View
+                          testID="program-checker-select"
+                          class="border border-border bg-card hover:bg-muted active:bg-accent"
+                          style={{
+                            height: 28,
+                            paddingLeft: 10,
+                            paddingRight: 8,
+                            borderRadius: 6,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                            ...colorTransition(120),
+                          }}
+                        >
+                          <Text style={{ fontSize: 12.5, fontFamily: MONO }} class="text-foreground">
+                            {files()?.custom_checker ?? inspection()?.checker ?? "wcmp"}
+                          </Text>
+                          <Icon name="chevronDown" size={13} tone="muted-foreground" />
+                        </View>
+                      }
+                    />
+                  </If>
+                  <If when={files()?.custom_checker}>
+                    <Btn
+                      label={t("build.programs.openFile")}
+                      icon="code"
+                      onPress={() => openQuickEdit(files()!.custom_checker!)}
+                    />
+                  </If>
+                </View>
               }
             >
               <View style={{ gap: 4 }}>
@@ -1677,18 +2198,28 @@ export function BuildConsole(props: {
               </View>
             </ProgramCard>
 
-            {/* 3. 数据生成器 (Generators) */}
+            {/* 3. 数据生成器 (Generators — clean basenames + New button + Open folder) */}
             <ProgramCard
               title={t("build.programs.generatorsTitle")}
               trailing={
-                (files()?.generators?.length ?? 0) > 0 ? (
-                  <Btn
-                    label={t("build.programs.openFolder")}
-                    icon="folderOpen"
-                    variant="ghost"
-                    onPress={() => openSource("generators")}
-                  />
-                ) : undefined
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <If when={!props.readOnly}>
+                    <Btn
+                      testID="program-new-generator-btn"
+                      label={t("build.programs.newItem")}
+                      icon="plus"
+                      onPress={() => createModalKind.set("generator")}
+                    />
+                  </If>
+                  <If when={(files()?.generators?.length ?? 0) > 0}>
+                    <Btn
+                      label={t("build.programs.openFolder")}
+                      icon="folderOpen"
+                      variant="ghost"
+                      onPress={() => openExternal("generators")}
+                    />
+                  </If>
+                </View>
               }
             >
               <If
@@ -1704,7 +2235,7 @@ export function BuildConsole(props: {
                     {(gen) => (
                       <ProgramFileRow
                         name={gen()}
-                        onOpen={() => openSource(`generators/${gen()}`)}
+                        onOpen={() => openQuickEdit(`generators/${gen()}`)}
                       />
                     )}
                   </Each>
@@ -1712,18 +2243,28 @@ export function BuildConsole(props: {
               </If>
             </ProgramCard>
 
-            {/* 4. 解法 (Solutions) */}
+            {/* 4. 解法 (Solutions — New button + inline expect/main menu + quick-edit) */}
             <ProgramCard
               title={t("build.programs.solutionsTitle")}
               trailing={
-                matrixCols().length > 0 ? (
-                  <Btn
-                    label={t("build.programs.openFolder")}
-                    icon="folderOpen"
-                    variant="ghost"
-                    onPress={() => openSource("solutions")}
-                  />
-                ) : undefined
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <If when={!props.readOnly}>
+                    <Btn
+                      testID="program-new-solution-btn"
+                      label={t("build.programs.newItem")}
+                      icon="plus"
+                      onPress={() => createModalKind.set("solution")}
+                    />
+                  </If>
+                  <If when={matrixCols().length > 0}>
+                    <Btn
+                      label={t("build.programs.openFolder")}
+                      icon="folderOpen"
+                      variant="ghost"
+                      onPress={() => openExternal("solutions")}
+                    />
+                  </If>
+                </View>
               }
             >
               <If
@@ -1746,42 +2287,41 @@ export function BuildConsole(props: {
                             ? t("build.matrix.altBadge")
                             : t("build.matrix.wrongBadge");
                       const relPath = () => sol().source_rel ?? `solutions/${sol().name}.cpp`;
+                      const curExpectKey = () => (sol().is_main ? "AC" : sol().expected.join("/"));
                       return (
                         <View
-                          onPress={() => openSource(relPath())}
-                          class="hover:bg-muted active:bg-accent"
                           style={{
-                            minHeight: 34,
+                            minHeight: 36,
                             paddingLeft: 8,
-                            paddingRight: 8,
+                            paddingRight: 6,
                             borderRadius: 6,
                             flexDirection: "row",
                             alignItems: "center",
                             gap: 8,
-                            ...colorTransition(120),
                           }}
+                          class="hover:bg-muted/50"
                         >
-                          <Icon name="code" size={14} tone="muted-foreground" />
-                          <Text style={{ fontSize: 12.5, fontWeight: 500, fontFamily: MONO }} class="text-foreground">
-                            {sol().name}
-                          </Text>
                           <View
-                            class={role() === "main" ? "bg-muted border border-border" : "bg-muted"}
-                            style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                            onPress={() => openQuickEdit(relPath())}
+                            style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}
                           >
-                            <Text
-                              style={{ fontSize: 10.5, fontWeight: 500 }}
-                              class={role() === "main" ? "text-foreground" : "text-secondary-foreground"}
-                            >
-                              {roleLabel()}
+                            <Icon name="code" size={14} tone="muted-foreground" />
+                            <Text style={{ fontSize: 12.5, fontWeight: 500, fontFamily: MONO }} class="text-foreground">
+                              {sol().name}
                             </Text>
+                            <View
+                              class={role() === "main" ? "bg-muted border border-border" : "bg-muted"}
+                              style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                            >
+                              <Text
+                                style={{ fontSize: 10.5, fontWeight: 500 }}
+                                class={role() === "main" ? "text-foreground" : "text-secondary-foreground"}
+                              >
+                                {roleLabel()}
+                              </Text>
+                            </View>
                           </View>
-                          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                            {t("build.matrix.expectPrefix", {
-                              verdict: sol().is_main ? "AC" : sol().expected.join(" / "),
-                            })}
-                          </Text>
-                          <View style={{ flex: 1 }} />
+
                           <If when={sum()}>
                             {(s) => (
                               <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
@@ -1795,6 +2335,68 @@ export function BuildConsole(props: {
                                 </Text>
                               </View>
                             )}
+                          </If>
+
+                          <If
+                            when={!props.readOnly}
+                            else={
+                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                {t("build.matrix.expectPrefix", {
+                                  verdict: sol().is_main ? "AC" : sol().expected.join(" / "),
+                                })}
+                              </Text>
+                            }
+                          >
+                            <AppMenu
+                              align="end"
+                              minWidth={168}
+                              entries={[
+                                ...EXPECT_PRESETS.map((preset) => {
+                                  const key = preset.join("/");
+                                  return {
+                                    id: `exp:${key}`,
+                                    label: t("build.matrix.expectPrefix", { verdict: preset.join(" / ") }),
+                                    checked: curExpectKey() === key,
+                                    disabled: sol().is_main && key !== "AC",
+                                  };
+                                }),
+                                ...(!sol().is_main
+                                  ? [
+                                      { separator: true as const, id: "sep" },
+                                      { id: "set_main", label: t("build.programs.setMain"), icon: "check" as const },
+                                    ]
+                                  : []),
+                              ]}
+                              onSelect={(id) => {
+                                if (id === "set_main") promoteSolutionToMain(sol().name);
+                                else if (id.startsWith("exp:")) {
+                                  updateSolutionExpect(sol().name, id.slice(4).split("/"));
+                                }
+                              }}
+                              trigger={
+                                <View
+                                  testID={`sol-expect-menu-${sol().name}`}
+                                  class="border border-border bg-card hover:bg-muted active:bg-accent"
+                                  style={{
+                                    height: 24,
+                                    paddingLeft: 7,
+                                    paddingRight: 6,
+                                    borderRadius: 5,
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    ...colorTransition(120),
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                    {t("build.matrix.expectPrefix", {
+                                      verdict: sol().is_main ? "AC" : sol().expected.join(" / "),
+                                    })}
+                                  </Text>
+                                  <Icon name="chevronDown" size={11} tone="muted-foreground" />
+                                </View>
+                              }
+                            />
                           </If>
                         </View>
                       );
@@ -1823,7 +2425,7 @@ export function BuildConsole(props: {
                     testID="pkg-file-problem.toml"
                     label={t("build.programs.openFile")}
                     icon="code"
-                    onPress={() => openSource("problem.toml")}
+                    onPress={() => openQuickEdit("problem.toml")}
                   />
                 </View>
               }
@@ -1840,6 +2442,45 @@ export function BuildConsole(props: {
           </View>
         </Scroll>
       </If>
+
+      {/* Lightweight single-file quick-editor modal */}
+      <PackageQuickEditModal
+        open={Boolean(quickEditPath())}
+        problemId={props.problemId}
+        relPath={quickEditPath()}
+        readOnly={props.readOnly}
+        onClose={() => quickEditPath.set(undefined)}
+        onSaved={refreshAll}
+        onOpenExternal={(rel) => openExternal(rel)}
+      />
+
+      {/* New solution / generator modal */}
+      <CreateSourceModal
+        open={Boolean(createModalKind())}
+        kind={createModalKind() ?? "solution"}
+        problemId={props.problemId}
+        onClose={() => createModalKind.set(undefined)}
+        onCreated={(relPath) => {
+          refreshAll();
+          openQuickEdit(relPath);
+        }}
+      />
+
+      {/* Add generator batch modal */}
+      <AddGeneratorBatchModal
+        open={genBatchOpen()}
+        problemId={props.problemId}
+        generators={files()?.generators ?? []}
+        onClose={() => genBatchOpen.set(false)}
+        onAdded={refreshAll}
+      />
+
+      {/* Confirm delete test rule modal */}
+      <ConfirmDeleteRuleModal
+        open={deleteRuleIndex() != null}
+        onClose={() => deleteRuleIndex.set(undefined)}
+        onConfirm={confirmDeleteRule}
+      />
     </View>
   );
 }

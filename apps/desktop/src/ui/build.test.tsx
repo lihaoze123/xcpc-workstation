@@ -1,6 +1,7 @@
 import { describe, expect, test } from "nsh/test";
 import {
   buildMatrixLookup,
+  canInlineEditTest,
   customOverrideInputValue,
   dedupDetectedCompilers,
   formatAcVsTleMargin,
@@ -12,6 +13,8 @@ import {
   isCellVerdictAnomaly,
   isMissingCompilerError,
   isPackageIncomplete,
+  isRowAnomalous,
+  matchSelfTestResult,
   matrixCellKey,
   nextActionForCheck,
   normalizeCxxOverrideInput,
@@ -319,5 +322,133 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     const detected = [{ name: "g++", path: "/usr/bin/g++", version: "g++ 16", kind: "gpp" }];
     expect(customOverrideInputValue("/usr/bin/g++", detected)).toBe("");
     expect(customOverrideInputValue("/opt/custom/g++", detected)).toBe("/opt/custom/g++");
+  });
+
+  test("identifies anomalous test rows, inline-editable tests, and self-test results", () => {
+    const cols = [
+      { name: "std", is_main: true, expected: ["AC"] },
+      { name: "brute_tle", is_main: false, expected: ["TLE"] },
+    ];
+    const unmatchedSummary = new Map([
+      [
+        "std",
+        {
+          name: "std",
+          is_main: true,
+          expected: ["AC"],
+          actual_verdict: "WA",
+          matched: false,
+          max_time_ms: 10,
+          max_memory_kib: 2048,
+          passed_tests: 1,
+          total_tests: 2,
+        },
+      ],
+      [
+        "brute_tle",
+        {
+          name: "brute_tle",
+          is_main: false,
+          expected: ["TLE"],
+          actual_verdict: "AC",
+          matched: false,
+          max_time_ms: 3,
+          max_memory_kib: 1024,
+          passed_tests: 1,
+          total_tests: 1,
+        },
+      ],
+    ]);
+    const matchedSummary = new Map([
+      [
+        "std",
+        {
+          name: "std",
+          is_main: true,
+          expected: ["AC"],
+          actual_verdict: "AC",
+          matched: true,
+          max_time_ms: 2,
+          max_memory_kib: 1024,
+          passed_tests: 1,
+          total_tests: 1,
+        },
+      ],
+      [
+        "brute_tle",
+        {
+          name: "brute_tle",
+          is_main: false,
+          expected: ["TLE"],
+          actual_verdict: "TLE",
+          matched: true,
+          max_time_ms: 2100,
+          max_memory_kib: 1024,
+          passed_tests: 1,
+          total_tests: 2,
+        },
+      ],
+    ]);
+    const lookup = buildMatrixLookup([
+      {
+        test_index: 1,
+        test_name: "sample-01",
+        solution: "std",
+        verdict: "AC",
+        cpu_time_ms: 2,
+        wall_time_ms: 4,
+        peak_memory_kib: 1024,
+        cache_hit: false,
+      },
+      {
+        test_index: 1,
+        test_name: "sample-01",
+        solution: "brute_tle",
+        verdict: "AC",
+        cpu_time_ms: 3,
+        wall_time_ms: 5,
+        peak_memory_kib: 1024,
+        cache_hit: false,
+      },
+      {
+        test_index: 2,
+        test_name: "max-01",
+        solution: "std",
+        verdict: "WA",
+        cpu_time_ms: 10,
+        wall_time_ms: 12,
+        peak_memory_kib: 2048,
+        cache_hit: false,
+      },
+    ]);
+
+    // Row 1: brute_tle is unmatched overall and got AC on row 1 -> anomalous.
+    expect(isRowAnomalous({ index: 1, validator_ok: true }, cols, lookup, unmatchedSummary)).toBe(true);
+    // If brute_tle matched overall (expected TLE and got TLE elsewhere), AC on sample is NOT anomalous.
+    expect(isRowAnomalous({ index: 1, validator_ok: true }, cols, lookup, matchedSummary)).toBe(false);
+    // Row 2: std got WA -> anomalous.
+    expect(isRowAnomalous({ index: 2, validator_ok: true }, cols, lookup, unmatchedSummary)).toBe(true);
+    // Validator failure makes a row anomalous even with no matrix cells.
+    expect(isRowAnomalous({ index: 3, validator_ok: false }, cols, lookup, matchedSummary)).toBe(true);
+
+    expect(canInlineEditTest({ ok: true, fileRel: "tests/hand/01.in", sizeBytes: 128 })).toBe(true);
+    expect(canInlineEditTest({ ok: true, fileRel: "samples/01.in", sizeBytes: 64 })).toBe(true);
+    expect(canInlineEditTest({ ok: true, fileRel: null, sizeBytes: 128 })).toBe(false);
+    expect(canInlineEditTest({ ok: true, fileRel: "tests/hand/big.in", sizeBytes: 100_000 })).toBe(false);
+
+    const selfTests = [
+      { kind: "validator_valid", name: "01-min.in", expected: "accept", actual: "accept", passed: true, message: "ok" },
+      {
+        kind: "validator_invalid",
+        name: "02-oob.in",
+        expected: "reject",
+        actual: "accept",
+        passed: false,
+        message: "unexpectedly accepted",
+      },
+    ];
+    expect(matchSelfTestResult("tests/validator/valid/01-min.in", selfTests)?.passed).toBe(true);
+    expect(matchSelfTestResult("tests/validator/invalid/02-oob.in", selfTests)?.passed).toBe(false);
+    expect(matchSelfTestResult("tests/validator/valid/missing.in", selfTests)).toBeUndefined();
   });
 });

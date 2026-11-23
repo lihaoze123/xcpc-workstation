@@ -2601,4 +2601,59 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     let escape = state.resolve_package_file("sum", "../../workspace.toml");
     assert!(escape.is_err());
     assert_eq!(escape.unwrap_err().code.as_deref(), Some("path_escape"));
+
+    // Structured mutations: checker, solution config, create source, hand/gen test, remove, normalize.
+    assert!(state.set_package_checker("sum", "ncmp").ok);
+    let created_sol = state.create_package_source("sum", "solution", "wrong_wa");
+    assert!(
+        created_sol.ok,
+        "create solution failed: {:?}",
+        created_sol.error
+    );
+    assert_eq!(created_sol.rel_path, "solutions/wrong_wa.cpp");
+    assert!(
+        state
+            .set_solution_config(
+                "sum",
+                "wrong_wa",
+                Some(false),
+                Some(vec!["WA".into()]),
+                None
+            )
+            .ok
+    );
+
+    let hand = state.add_hand_test("sum", Some("edge"), Some("hand"), "1 2\r\n");
+    assert!(hand.ok, "add_hand_test failed: {:?}", hand.error);
+    let hand_rel = hand.file_rel.clone().unwrap();
+
+    // Quick-editor read & save round-trip + dirty input normalization.
+    let read_back = state.read_package_file("sum", &hand_rel);
+    assert!(read_back.ok && !read_back.too_large);
+    assert!(state.save_package_file("sum", &hand_rel, "3 4\r\n").ok);
+    let norm = state.normalize_dirty_inputs("sum");
+    assert!(norm.ok);
+    let after_norm = state.read_package_file("sum", &hand_rel);
+    assert_eq!(after_norm.content, "3 4\n");
+
+    // 256 KiB cap rejects loading oversized files into JS.
+    let big_path = ws_dir.0.join("problems/sum/tests/big.in");
+    std::fs::write(&big_path, vec![b'a'; 300 * 1024]).unwrap();
+    let too_big = state.read_package_file("sum", "tests/big.in");
+    assert!(too_big.ok && too_big.too_large && too_big.content.is_empty());
+
+    // Sandbox rejects path traversal on save.
+    let save_escape = state.save_package_file("sum", "../../evil.txt", "nope");
+    assert!(!save_escape.ok);
+    assert_eq!(save_escape.code.as_deref(), Some("path_escape"));
+
+    // Generator batch & rule removal.
+    let gen_added =
+        state.add_generator_test("sum", "gen_random", "-n 100 {i}", 2, Some("max"), None);
+    assert!(
+        gen_added.ok,
+        "add_generator_test failed: {:?}",
+        gen_added.error
+    );
+    assert!(state.remove_test_rule("sum", gen_added.rule_index).ok);
 }
