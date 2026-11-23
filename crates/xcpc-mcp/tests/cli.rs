@@ -1059,7 +1059,7 @@ fn package_cli_init_build_strict_and_stress_end_to_end() {
     assert_eq!(vj["verified"], true);
     assert_eq!(vj["mode"], "verify");
 
-    // Human-readable output also works cleanly.
+    // Human-readable output also works cleanly (consistently Chinese).
     let human_out = run_xcpc(
         Some(dir.path()),
         &[
@@ -1076,10 +1076,54 @@ fn package_cli_init_build_strict_and_stress_end_to_end() {
     assert_eq!(human_out.status.code(), Some(0));
     let human_stdout = String::from_utf8_lossy(&human_out.stdout);
     assert!(
-        human_stdout.contains("package aplusb: OK"),
+        human_stdout.contains("题目包「aplusb」：构建通过"),
         "{human_stdout}"
     );
-    assert!(human_stdout.contains("margin:"), "{human_stdout}");
+    assert!(human_stdout.contains("安全边际："), "{human_stdout}");
+
+    // Validator failure prints concrete test name and validator error message in CLI output.
+    fs::write(dir.path().join("problems/aplusb/samples/02.in"), "-5 3\n").unwrap();
+    fs::write(dir.path().join("problems/aplusb/samples/02.ans"), "-2\n").unwrap();
+    let val_fail_out = run_xcpc(
+        Some(dir.path()),
+        &["package", "build", "aplusb", "--tests", "sample-02"],
+        None,
+    );
+    assert_eq!(val_fail_out.status.code(), Some(1));
+    let val_fail_stdout = String::from_utf8_lossy(&val_fail_out.stdout);
+    assert!(
+        val_fail_stdout.contains("校验器未通过："),
+        "{val_fail_stdout}"
+    );
+    assert!(val_fail_stdout.contains("sample-02"), "{val_fail_stdout}");
+    fs::remove_file(dir.path().join("problems/aplusb/samples/02.in")).unwrap();
+    fs::remove_file(dir.path().join("problems/aplusb/samples/02.ans")).unwrap();
+
+    // Human-readable `contest freeze` error for unverified/stale package is natural Chinese + CLI hint.
+    ws.compose_contest("c-check", &["aplusb".into()], None)
+        .unwrap();
+    let orig_std =
+        fs::read_to_string(dir.path().join("problems/aplusb/solutions/std.cpp")).unwrap();
+    fs::write(
+        dir.path().join("problems/aplusb/solutions/std.cpp"),
+        format!("{orig_std}// touch\n"),
+    )
+    .unwrap();
+    let stale_freeze = run_xcpc(Some(dir.path()), &["contest", "freeze", "c-check"], None);
+    assert_eq!(stale_freeze.status.code(), Some(1));
+    let sf_stderr = String::from_utf8_lossy(&stale_freeze.stderr);
+    assert!(sf_stderr.contains("题目 A（aplusb）"), "{sf_stderr}");
+    assert!(sf_stderr.contains("重新执行严格验收"), "{sf_stderr}");
+    assert!(
+        sf_stderr.contains("xcpc package build aplusb --strict"),
+        "{sf_stderr}"
+    );
+    assert!(sf_stderr.contains("未能定稿"), "{sf_stderr}");
+    fs::write(
+        dir.path().join("problems/aplusb/solutions/std.cpp"),
+        orig_std,
+    )
+    .unwrap();
 
     // 4. After strict verify, `xcpc check problem aplusb` passes statically!
     let post_check = run_xcpc(

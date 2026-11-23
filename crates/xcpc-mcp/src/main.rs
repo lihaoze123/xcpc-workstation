@@ -835,18 +835,15 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
                     .expect("serializable")
                 );
             } else {
-                println!(
-                    "initialized package scaffold for problem {}",
-                    res.problem_id
-                );
+                println!("已初始化题目「{}」的题目包脚手架", res.problem_id);
                 for f in &res.created_files {
-                    println!("  created: {f}");
+                    println!("  新建：{f}");
                 }
                 for f in &res.skipped_files {
-                    println!("  skipped (exists): {f}");
+                    println!("  跳过（已存在）：{f}");
                 }
                 if res.updated_problem_toml {
-                    println!("  updated: problem.toml");
+                    println!("  已更新：problem.toml");
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -932,26 +929,26 @@ fn format_bytes(bytes: u64) -> String {
 
 fn print_build_report(report: &xcpc_judge::BuildReport) {
     let mode_str = match report.mode {
-        xcpc_judge::BuildMode::Debug => "debug",
-        xcpc_judge::BuildMode::Verify => "verify",
+        xcpc_judge::BuildMode::Debug => "开发构建",
+        xcpc_judge::BuildMode::Verify => "严格验收",
     };
     let status_str = if report.verified {
-        "VERIFIED"
+        "已通过验收"
     } else if report.ok {
-        "OK"
+        "构建通过"
     } else {
-        "FAILED"
+        "未通过"
     };
     println!(
-        "package {}: {} [mode={}{}, checker={}]",
+        "题目包「{}」：{}（模式：{}{}，校验器：{}）",
         report.problem_id,
         status_str,
         mode_str,
-        if report.subset { ", subset" } else { "" },
+        if report.subset { "，局部运行" } else { "" },
         report.checker
     );
     if let Some(ref c) = report.compiler {
-        println!("  compiler: {} ({})", c.name, c.version);
+        println!("  编译器：{}（{}）", c.name, c.version);
     }
 
     // Safety margin summary
@@ -960,7 +957,7 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     let lim_sec = sm.time_limit_ms as f64 / 1000.0;
     let pct = sm.std_time_ratio * 100.0;
     println!(
-        "  margin: max_input={}, std={:.3}s / {:.2}s ({:.1}%), std_mem={:.1} MiB / {:.0} MiB",
+        "  安全边际：最大输入 {}，标程最慢 {:.3}s / {:.2}s（{:.1}%），峰值内存 {:.1} MiB / {:.0} MiB",
         format_bytes(sm.max_input_bytes),
         std_sec,
         lim_sec,
@@ -975,16 +972,16 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
         sm.fastest_tle_time_ms,
     ) {
         println!(
-            "  ac_vs_tle: slowest AC `{ac_sol}` ({:.3}s) vs fastest TLE `{tle_sol}` ({:.3}s)",
+            "  耗时余量：最慢 AC 解「{ac_sol}」（{:.3}s）对比最快 TLE 错解「{tle_sol}」（{:.3}s）",
             ac_ms as f64 / 1000.0,
             tle_ms as f64 / 1000.0
         );
     }
 
     if !report.compile_failures.is_empty() {
-        println!("\ncompile failures:");
+        println!("\n编译失败：");
         for cf in &report.compile_failures {
-            println!("  {} ({}):", cf.target, cf.source_path);
+            println!("  {}（{}）：", cf.target, cf.source_path);
             for line in cf.stderr.lines().take(20) {
                 println!("    {line}");
             }
@@ -992,29 +989,67 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     }
 
     if !report.dirty_inputs.is_empty() {
-        println!("\ndirty inputs:");
+        println!("\n脏输入检查：");
         for d in &report.dirty_inputs {
             let mut flags = Vec::new();
             if d.has_crlf {
-                flags.push("CRLF");
+                flags.push("CRLF 换行");
             }
             if d.has_bom {
                 flags.push("UTF-8 BOM");
             }
             if d.missing_trailing_newline {
-                flags.push("missing trailing newline");
+                flags.push("缺少末尾换行");
             }
-            println!("  {}: {}", d.path, flags.join(", "));
+            println!("  {}：{}", d.path, flags.join("、"));
+        }
+    }
+
+    let failed_self_tests: Vec<_> = report.self_tests.iter().filter(|st| !st.passed).collect();
+    if !failed_self_tests.is_empty() {
+        println!("\n自测未通过：");
+        for st in failed_self_tests {
+            let detail = if st.message.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", st.message.trim())
+            };
+            println!(
+                "  [{}] {}：预期 {}，实际 {}{detail}",
+                st.kind, st.name, st.expected, st.actual
+            );
+        }
+    }
+
+    let validator_failures: Vec<_> = report
+        .tests
+        .iter()
+        .filter(|t| t.validator_ok == Some(false))
+        .collect();
+    if !validator_failures.is_empty() {
+        println!("\n校验器未通过：");
+        for t in validator_failures {
+            let msg = t
+                .validator_message
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("校验失败（无详细输出）");
+            println!("  #{} {}：{msg}", t.index, t.name);
         }
     }
 
     if !report.solutions.is_empty() {
-        println!("\nsolutions:");
+        println!("\n解法结果：");
         for s in &report.solutions {
-            let mark = if s.matched { "OK" } else { "MISMATCH" };
-            let role = if s.is_main { " [main]" } else { "" };
+            let mark = if s.matched {
+                "符合预期"
+            } else {
+                "不符预期"
+            };
+            let role = if s.is_main { " [标程]" } else { "" };
             println!(
-                "  {mark:<8} {}{role}: actual={}, expect=[{}], {}/{} passed, max={}ms, {:.1} MiB",
+                "  [{mark}] {}{role}：实际 {}，预期 [{}]，通过 {}/{}，最慢 {}ms，峰值 {:.1} MiB",
                 s.name,
                 s.actual_verdict,
                 s.expected.join("|"),
@@ -1032,7 +1067,7 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
         .filter(|c| c.verdict != xcpc_judge::Verdict::AC)
         .collect();
     if !failing_cells.is_empty() {
-        println!("\nnon-AC cells (showing up to 20):");
+        println!("\n非 AC 详情（最多显示 20 项）：");
         for c in failing_cells.iter().take(20) {
             let detail = if !c.checker_message.is_empty() {
                 format!(" — {}", c.checker_message.trim())
@@ -1042,34 +1077,34 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
                 String::new()
             };
             println!(
-                "  #{} {} × {}: {} ({}ms){detail}",
+                "  #{} {} × {}：{}（{}ms）{detail}",
                 c.test_index, c.test_name, c.solution, c.verdict, c.cpu_time_ms
             );
         }
     }
 
     if !report.gates.is_empty() {
-        println!("\ngates:");
+        println!("\n验收门禁：");
         for g in &report.gates {
             let tag = match g.status {
-                xcpc_judge::GateStatus::Pass => "PASS",
-                xcpc_judge::GateStatus::Fail => "FAIL",
-                xcpc_judge::GateStatus::Warn => "WARN",
-                xcpc_judge::GateStatus::Skip => "SKIP",
+                xcpc_judge::GateStatus::Pass => "通过",
+                xcpc_judge::GateStatus::Fail => "失败",
+                xcpc_judge::GateStatus::Warn => "警告",
+                xcpc_judge::GateStatus::Skip => "跳过",
             };
-            println!("  [{tag}] {}: {}", g.title, g.message);
+            println!("  [{tag}] {}：{}", g.title, g.message);
         }
     }
 
     if !report.repro_commands.is_empty() {
-        println!("\nrepro:");
+        println!("\n单步复现：");
         for cmd in &report.repro_commands {
             println!("  {cmd}");
         }
     }
 
     if !report.next_steps.is_empty() {
-        println!("\nnext steps:");
+        println!("\n下一步建议：");
         for step in &report.next_steps {
             println!("  - {step}");
         }
@@ -1079,36 +1114,36 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
 fn print_stress_result(res: &xcpc_judge::StressResult) {
     if res.found_counterexample {
         println!(
-            "stress {}: COUNTEREXAMPLE found after {} iteration(s) ({} ms)",
+            "对拍「{}」：第 {} 轮发现反例（耗时 {} ms）",
             res.problem_id, res.iterations_run, res.elapsed_ms
         );
         if let Some(seed) = res.seed {
-            println!("  seed: {seed}");
+            println!("  种子：{seed}");
         }
         if let Some(ref cmd) = res.gen_cmd {
-            println!("  gen_cmd: {cmd}");
+            println!("  生成命令：{cmd}");
         }
         if let Some(ref path) = res.saved_test_path {
-            println!("  saved: {path}");
+            println!("  已保存反例：{path}");
         }
         if let (Some(sol), Some(v)) = (&res.failing_solution, res.verdict) {
-            println!("  failing: {sol} ({v})");
+            println!("  失败解法：{sol}（{v}）");
         }
         if let Some(ref msg) = res.checker_message {
-            println!("  checker: {}", msg.trim());
+            println!("  校验器输出：{}", msg.trim());
         }
         if let Some(ref inp) = res.input_preview {
-            println!("--- input preview ---\n{inp}");
+            println!("--- 输入预览 ---\n{inp}");
         }
         if let Some(ref out) = res.std_output_preview {
-            println!("--- std output ---\n{out}");
+            println!("--- 标程输出 ---\n{out}");
         }
         if let Some(ref out) = res.solution_output_preview {
-            println!("--- solution output ---\n{out}");
+            println!("--- 解法输出 ---\n{out}");
         }
     } else {
         println!(
-            "stress {}: PASS ({} iteration(s) in {} ms, no counterexample found)",
+            "对拍「{}」：通过（共 {} 轮，耗时 {} ms，未发现反例）",
             res.problem_id, res.iterations_run, res.elapsed_ms
         );
     }
@@ -1387,7 +1422,9 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
             } else {
                 print_report(&out.report, &out.outputs);
                 if out.frozen {
-                    println!("frozen contest {}", out.id);
+                    println!("已定稿比赛「{}」", out.id);
+                } else {
+                    eprintln!("比赛「{}」未能定稿，请先修复上述错误。", out.id);
                 }
             }
             if out.frozen {
@@ -1535,7 +1572,19 @@ fn print_report(report: &Report, outputs: &[String]) {
     for d in &report.diagnostics {
         eprintln!("{}", d.display());
         for hint in &d.hints {
-            eprintln!("  hint: {hint}");
+            eprintln!("  提示：{hint}");
+        }
+        if matches!(
+            d.code.as_deref(),
+            Some("package_unverified" | "package_stale" | "package_failed")
+        ) && let Some(slug) = d
+            .file
+            .as_deref()
+            .and_then(|f| f.strip_prefix("problems/"))
+            .and_then(|rest| rest.split('/').next())
+            .filter(|s| !s.is_empty())
+        {
+            eprintln!("  提示：请先运行 `xcpc package build {slug} --strict`");
         }
     }
     if let Some(pages) = report.pages {

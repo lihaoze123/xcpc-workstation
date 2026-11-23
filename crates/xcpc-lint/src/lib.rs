@@ -304,8 +304,8 @@ fn lint_package_freshness(
     findings: &mut Vec<Finding>,
 ) {
     let prefix = match label {
-        Some(lbl) => format!("problem {lbl} ({problem_id})"),
-        None => format!("problem {problem_id:?}"),
+        Some(lbl) => format!("题目 {lbl}（{problem_id}）"),
+        None => format!("题目「{problem_id}」"),
     };
     let meta_rel = format!("{dir}/problem.toml");
     match xcpc_judge::check_package_freshness(ws, problem_id) {
@@ -314,9 +314,7 @@ fn lint_package_freshness(
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_UNVERIFIED.to_owned(),
-                message: format!(
-                    "{prefix} has a package that has not been strictly verified; run `xcpc package build {problem_id} --strict`"
-                ),
+                message: format!("{prefix}包含题目包但尚未通过严格验收，请先完成严格验收"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -326,9 +324,7 @@ fn lint_package_freshness(
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_STALE.to_owned(),
-                message: format!(
-                    "{prefix} package files changed since last strict verification; run `xcpc package build {problem_id} --strict`"
-                ),
+                message: format!("{prefix}的题目包文件已变更，请重新执行严格验收"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -339,7 +335,7 @@ fn lint_package_freshness(
                 severity: Severity::Error,
                 code: code::PACKAGE_FAILED.to_owned(),
                 message: format!(
-                    "{prefix} package verification failed ({summary}); fix failures and run `xcpc package build {problem_id} --strict`"
+                    "{prefix}的题目包最近一次验收未通过（{summary}），请修复后重新验收"
                 ),
                 file: Some(meta_rel),
                 line: None,
@@ -350,9 +346,7 @@ fn lint_package_freshness(
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_FAILED.to_owned(),
-                message: format!(
-                    "{prefix} package check failed: {err}; run `xcpc package build {problem_id} --strict`"
-                ),
+                message: format!("{prefix}的题目包状态检查失败：{err}"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -1087,11 +1081,12 @@ mod tests {
         assert_eq!(unverified.len(), 1, "{unverified:#?}");
         assert!(unverified[0].is_error());
         assert_eq!(unverified[0].code, code::PACKAGE_UNVERIFIED);
-        assert!(
-            unverified[0]
-                .message
-                .contains("xcpc package build pkg --strict")
+        assert_eq!(
+            unverified[0].file.as_deref(),
+            Some("problems/pkg/problem.toml")
         );
+        assert!(unverified[0].message.contains("题目「pkg」"));
+        assert!(unverified[0].message.contains("严格验收"));
 
         // Contest referencing unverified package problem also gets PACKAGE_UNVERIFIED.
         let cdir = dir.path().join("contests/c-pkg");
@@ -1104,6 +1099,11 @@ mod tests {
         let contest_unverified = lint_contest(&ws, "c-pkg", &LintOptions::default()).unwrap();
         assert_eq!(contest_unverified.len(), 1, "{contest_unverified:#?}");
         assert_eq!(contest_unverified[0].code, code::PACKAGE_UNVERIFIED);
+        assert_eq!(
+            contest_unverified[0].file.as_deref(),
+            Some("problems/pkg/problem.toml")
+        );
+        assert!(contest_unverified[0].message.contains("题目 B（pkg）"));
 
         // Latest failed build report for current hash -> PACKAGE_FAILED error.
         let hash1 = xcpc_judge::compute_package_hash(&ws, "pkg").unwrap();
@@ -1136,6 +1136,8 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:#?}");
         assert!(stale[0].is_error());
         assert_eq!(stale[0].code, code::PACKAGE_STALE);
-        assert!(stale[0].message.contains("xcpc package build pkg --strict"));
+        assert_eq!(stale[0].file.as_deref(), Some("problems/pkg/problem.toml"));
+        assert!(stale[0].message.contains("题目「pkg」"));
+        assert!(stale[0].message.contains("重新执行严格验收"));
     }
 }
