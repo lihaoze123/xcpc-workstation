@@ -20,7 +20,7 @@ pub use ops::{
     PackageSourceKind, StressOptions, StressResult, TestCasePreview, add_generator_test,
     add_hand_test, create_package_source, init_package, inspect_package, inspect_test_case,
     normalize_dirty_inputs, remove_test_rule, set_package_checker, set_solution_config,
-    stress_package,
+    stress_package, update_generator_test,
 };
 pub use package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, PackageFreshness, TestSource, build_dir_for,

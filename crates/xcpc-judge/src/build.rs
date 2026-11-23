@@ -945,11 +945,7 @@ pub fn build_package(
             id: "validator".to_owned(),
             title: "Validator 存在与自测".to_owned(),
             status,
-            message: format!(
-                "validator 自测不完整（valid: {}, invalid: {}，严格验收要求各至少 1 组）",
-                val_valid_tests.len(),
-                val_invalid_tests.len()
-            ),
+            message: "校验器缺少自测用例（需要至少 1 组有效和 1 组无效用例）".to_owned(),
         });
         next_steps
             .push("在 tests/validator/valid/ 与 invalid/ 各添加至少 1 组自测用例。".to_owned());
@@ -959,7 +955,7 @@ pub fn build_package(
             title: "Validator 存在与自测".to_owned(),
             status: GateStatus::Pass,
             message: format!(
-                "valid {} 组、invalid {} 组全部通过",
+                "已通过 {} 组有效和 {} 组无效自测用例",
                 val_valid_tests.len(),
                 val_invalid_tests.len()
             ),
@@ -1001,11 +997,8 @@ pub fn build_package(
                 id: "checker_self_tests".to_owned(),
                 title: "自定义 Checker 自测".to_owned(),
                 status,
-                message: format!(
-                    "自定义 checker 自测不完整（ok: {}, wa: {}，严格验收要求各至少 1 组）",
-                    chk_ok.len(),
-                    chk_wa.len()
-                ),
+                message: "自定义评测器缺少自测用例（需要至少 1 组通过和 1 组不通过用例）"
+                    .to_owned(),
             });
             next_steps.push("在 tests/checker/ 添加至少 1 组 ok-* 与 1 组 wa-* 自测。".to_owned());
         } else {
@@ -1013,7 +1006,11 @@ pub fn build_package(
                 id: "checker_self_tests".to_owned(),
                 title: "自定义 Checker 自测".to_owned(),
                 status: GateStatus::Pass,
-                message: format!("ok {} 组、wa {} 组全部通过", chk_ok.len(), chk_wa.len()),
+                message: format!(
+                    "已通过 {} 组通过和 {} 组不通过自测用例",
+                    chk_ok.len(),
+                    chk_wa.len()
+                ),
             });
         }
     } else {
@@ -1031,7 +1028,7 @@ pub fn build_package(
             id: "dirty_inputs".to_owned(),
             title: "手写数据格式检查".to_owned(),
             status: GateStatus::Pass,
-            message: "未发现 CRLF / BOM / 缺尾换行".to_owned(),
+            message: "未发现 CRLF、BOM 或缺少末尾换行".to_owned(),
         });
     } else {
         gates.push(GateResult {
@@ -1039,7 +1036,7 @@ pub fn build_package(
             title: "手写数据格式检查".to_owned(),
             status: GateStatus::Warn,
             message: format!(
-                "{} 个手写输入文件存在格式问题（CRLF/BOM/缺尾换行）",
+                "{} 个手写输入文件存在格式问题（CRLF、BOM 或缺少末尾换行）",
                 dirty_inputs.len()
             ),
         });

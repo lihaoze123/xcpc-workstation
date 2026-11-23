@@ -10,7 +10,7 @@ use xcpc_judge::{
     build_package, check_dirty_inputs, check_package_freshness, create_package_source,
     detect_toolchain, init_package, inspect_package, inspect_test_case, normalize_dirty_inputs,
     parse_compiler_diagnostics, parse_memory_limit_kib, parse_time_limit_ms, remove_test_rule,
-    set_package_checker, set_solution_config, stress_package,
+    set_package_checker, set_solution_config, stress_package, update_generator_test,
 };
 use xcpc_storage::{Workspace, init_workspace};
 
@@ -1012,6 +1012,44 @@ main = true
     let p = ws.load_problem("mut-pkg").unwrap();
     assert_eq!(p.meta.test.len(), 1);
     assert_eq!(p.meta.test[0].generator.as_deref(), Some("gen_tree"));
+
+    // 4b. update_generator_test updates in-place preserving comments, unknown fields, and other rules.
+    let gen_second = add_generator_test(
+        &ws,
+        "mut-pkg",
+        "gen_tree",
+        "-n 200 {i}",
+        2,
+        Some("edge"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(gen_second.rule_index, 1);
+
+    update_generator_test(
+        &ws,
+        "mut-pkg",
+        0,
+        "gen_tree",
+        "-n 500 {i}",
+        8,
+        Some("stress"),
+        Some("tree-big"),
+    )
+    .unwrap();
+    assert!(update_generator_test(&ws, "mut-pkg", 0, "gen_tree", "", 0, None, None).is_err());
+    assert!(update_generator_test(&ws, "mut-pkg", 99, "gen_tree", "", 1, None, None).is_err());
+
+    let p = ws.load_problem("mut-pkg").unwrap();
+    assert_eq!(p.meta.test.len(), 2);
+    assert_eq!(p.meta.test[0].generator.as_deref(), Some("gen_tree"));
+    assert_eq!(p.meta.test[0].args.as_deref(), Some("-n 500 {i}"));
+    assert_eq!(p.meta.test[0].repeat, Some(8));
+    assert_eq!(p.meta.test[0].tag.as_deref(), Some("stress"));
+    assert_eq!(p.meta.test[0].name.as_deref(), Some("tree-big"));
+    // Second rule untouched.
+    assert_eq!(p.meta.test[1].args.as_deref(), Some("-n 200 {i}"));
+    assert_eq!(p.meta.test[1].repeat, Some(2));
 
     // 5. normalize_dirty_inputs fixes BOM + CRLF + missing trailing newline.
     ws.write("problems/mut-pkg/samples/01.in", b"\xEF\xBB\xBF1 2\r\n3 4")

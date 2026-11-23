@@ -1504,6 +1504,73 @@ pub fn add_generator_test(
     })
 }
 
+/// Updates the `rule_index`-th `[[test]]` entry in `problem.toml` in-place via `toml_edit`
+/// (preserving comments, order, and unknown fields).
+#[allow(clippy::too_many_arguments)]
+pub fn update_generator_test(
+    ws: &Workspace,
+    slug: &str,
+    rule_index: usize,
+    generator: &str,
+    args: &str,
+    repeat: u32,
+    tag: Option<&str>,
+    name: Option<&str>,
+) -> Result<()> {
+    let generator = validate_safe_stem(generator, "generator")?;
+    if !(1..=200).contains(&repeat) {
+        return Err(JudgeError::InvalidConfig(format!(
+            "repeat must be between 1 and 200 (got {repeat})"
+        )));
+    }
+
+    let problem = ws.load_problem(slug)?;
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let arr = doc
+        .get_mut("test")
+        .and_then(Item::as_array_of_tables_mut)
+        .ok_or_else(|| JudgeError::TestNotFound(format!("rule #{rule_index}")))?;
+
+    let tbl = arr
+        .get_mut(rule_index)
+        .ok_or_else(|| JudgeError::TestNotFound(format!("rule #{rule_index}")))?;
+
+    let clean_args = args.trim();
+    let clean_tag = tag.map(str::trim).filter(|s| !s.is_empty());
+    let clean_name = name.map(str::trim).filter(|s| !s.is_empty());
+
+    tbl.remove("file");
+    tbl.insert("gen", value(generator));
+    if clean_args.is_empty() {
+        tbl.remove("args");
+    } else {
+        tbl.insert("args", value(clean_args));
+    }
+    if repeat > 1 {
+        tbl.insert("repeat", value(i64::from(repeat)));
+    } else {
+        tbl.remove("repeat");
+    }
+    if let Some(t) = clean_tag {
+        tbl.insert("tag", value(t));
+    } else {
+        tbl.remove("tag");
+    }
+    if let Some(n) = clean_name {
+        tbl.insert("name", value(n));
+    } else {
+        tbl.remove("name");
+    }
+
+    ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    Ok(())
+}
+
 /// Removes the `rule_index`-th `[[test]]` entry from `problem.toml` via `toml_edit`.
 /// Does not touch `samples/`.
 pub fn remove_test_rule(ws: &Workspace, slug: &str, rule_index: usize) -> Result<()> {
@@ -1684,7 +1751,8 @@ fn collect_package_files(prob_dir: &Path, checker_spec: &CheckerSpec) -> Package
     }
 }
 
-const TEMPLATE_CHECKER_CPP: &str = r#"#include "testlib.h"
+const TEMPLATE_CHECKER_CPP: &str = r#"// TODO: 按本题题面实现自定义评测器
+#include "testlib.h"
 
 int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
@@ -1701,7 +1769,8 @@ int main(int argc, char* argv[]) {
 }
 "#;
 
-const TEMPLATE_VALIDATOR_CPP: &str = r#"#include "testlib.h"
+const TEMPLATE_VALIDATOR_CPP: &str = r#"// TODO: 按本题题面实现输入校验器
+#include "testlib.h"
 
 int main(int argc, char* argv[]) {
     registerValidation(argc, argv);
@@ -1716,7 +1785,8 @@ int main(int argc, char* argv[]) {
 }
 "#;
 
-const TEMPLATE_GEN_RANDOM_CPP: &str = r#"#include "testlib.h"
+const TEMPLATE_GEN_RANDOM_CPP: &str = r#"// TODO: 按本题题面实现随机数据生成器
+#include "testlib.h"
 #include <iostream>
 
 int main(int argc, char* argv[]) {
@@ -1729,7 +1799,8 @@ int main(int argc, char* argv[]) {
 }
 "#;
 
-const TEMPLATE_STD_CPP: &str = r#"#include <iostream>
+const TEMPLATE_STD_CPP: &str = r#"// TODO: 按本题题面实现标程
+#include <iostream>
 
 int main() {
     std::ios::sync_with_stdio(false);
