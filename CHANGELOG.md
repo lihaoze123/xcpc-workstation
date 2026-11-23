@@ -2,6 +2,25 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0-beta.4] - 2026-11-23
+
+### 新增
+
+- **桌面端与声明式模板体系国际化（i18n）**：
+  - 桌面端 GUI 全面支持 **简体中文** 与 **English**，启动时自动识别操作系统语言（Linux `LC_ALL`/`LC_MESSAGES`/`LANG`/`LANGUAGE`，Windows `GetUserDefaultLocaleName`），可在 **「设置 → 外观」** 实时热切换并持久化至全局 `prefs.json`，无需重启、零闪白、不丢失编辑器状态。
+  - 原生文件/目录选择对话框标题、按钮与过滤器标签随界面语言本地化；`Cmd+K` 命令面板与 `/` 斜杠命令在展示当前界面语言的同时保留中英双语与拼音检索；`/` 斜杠插入片段（提示、交互、表格、子任务表）自动跟随当前题面/比赛的出版语言。
+  - 声明式模板 `#let schema` 新增多态 `LocalizedText`（同时兼容单语纯字符串与 BCP 47 多语字典及完整 6 步回退链），`olymp-classic`、`cnoi-classic`、`minimal` 三大预设模板均补齐中英双语参数声明。
+- **工作区定位与多人 Git 协同出题**：
+  - 明确工作区为自包含开放项目目录（支持个人题库与多人 Git 协同比赛仓库并存），个人偏好/主题与项目内容彻底解耦。
+  - 工作区级 `preamble.typ` 从 `.xcpc/preamble.typ` 迁移至 `templates/preamble.typ` 以天然纳入 Git 版本管理，同时将 `preamble` 保留为非可选模板名（`list_templates` 排除、`fork`/`install` 拒绝），文件监听与定稿快照同步适配。
+  - 移除工作区级 `.xcpc/theme.toml` 覆写，界面主题定制统一归口至用户全局 `<dataDir>/theme.toml`，保持 `.xcpc/` 100% 本地化。
+- **英文版 README 与英文界面截图**：
+  - 新增 [`README_EN.md`](./README_EN.md) 及英文版出版工作室与题库中心截图（`docs/images/studio-en.png`、`docs/images/library-en.png`）。
+
+### 修复
+
+- 修复英文界面下题库右侧预览区 `Statement` / `Editorial` 标签页因固定宽度过窄导致文字换行的问题。
+
 ## [0.2.0-beta.3] - 2026-11-22
 
 ### 新增
