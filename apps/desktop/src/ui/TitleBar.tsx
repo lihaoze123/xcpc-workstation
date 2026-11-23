@@ -53,9 +53,9 @@ export function TitleBar(props: { leading?: JSX.Element; center?: JSX.Element; t
       <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "box-none" }}>
         {props.center}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0 }}>{props.leading}</View>
-      <View style={{ flex: 1 }} />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>{props.trailing}</View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>{props.leading}</View>
+      <View style={{ flex: 1, minWidth: 4 }} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.trailing}</View>
     </View>
   );
 }

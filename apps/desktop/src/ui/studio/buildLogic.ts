@@ -25,6 +25,47 @@ export interface SafetyMarginData {
   fastest_tle_time_ms?: number | null;
 }
 
+export type TranscriptDirection = "interactor_to_solution" | "solution_to_interactor";
+
+export interface TranscriptEntryData {
+  direction: TranscriptDirection;
+  text: string;
+  run?: number | null;
+}
+
+export interface InteractionTranscriptData {
+  head?: TranscriptEntryData[];
+  tail?: TranscriptEntryData[];
+  omitted_entries: number;
+  total_entries: number;
+  total_bytes_i2s: number;
+  total_bytes_s2i: number;
+  truncated: boolean;
+  interactor_message?: string;
+}
+
+export type SubtaskScoringKind = "min" | "sum";
+
+export interface SubtaskSummaryData {
+  id: string;
+  score: number;
+  scoring: SubtaskScoringKind;
+  depends?: string[];
+  test_count: number;
+  test_indices?: number[];
+}
+
+export interface SolutionSubtaskScoreData {
+  subtask_id: string;
+  max_score: number;
+  score: number;
+  verdict: string;
+  full_score: boolean;
+  matched?: boolean | null;
+}
+
+export type ScoreExpectData = number | [number, number];
+
 export interface MatrixCellData {
   test_index: number;
   test_name: string;
@@ -39,6 +80,8 @@ export interface MatrixCellData {
   output_preview?: string | null;
   stale?: boolean;
   repro_cmd?: string | null;
+  score_ratio?: number | null;
+  transcript?: InteractionTranscriptData | null;
 }
 
 export interface SolutionSummaryData {
@@ -52,12 +95,16 @@ export interface SolutionSummaryData {
   passed_tests: number;
   total_tests: number;
   tags?: string[] | null;
+  total_score?: number | null;
+  max_score?: number | null;
+  subtask_scores?: SolutionSubtaskScoreData[];
 }
 
 export interface TestSummaryData {
   index: number;
   name: string;
   tag?: string | null;
+  subtask?: string | null;
   is_sample: boolean;
   size_bytes: number;
   gen_cmd?: string | null;
@@ -105,6 +152,10 @@ export interface BuildReportData {
   subset: boolean;
   built_at_epoch_secs: number;
   checker: string;
+  interactive?: boolean;
+  runs?: number;
+  subtasks?: SubtaskSummaryData[];
+  total_score?: number | null;
   compile_failures?: CompileFailureData[];
   dirty_inputs?: DirtyInputIssueData[];
   self_tests?: SelfTestResultData[];
@@ -120,6 +171,7 @@ export interface BuildReportData {
 
 export interface PackageFilesData {
   validator?: string | null;
+  interactor?: string | null;
   custom_checker?: string | null;
   generators?: string[];
   solutions?: string[];
@@ -139,12 +191,15 @@ export interface PackageSolutionSpecData {
   expected?: string[];
   expect?: string | string[];
   tags?: string[] | null;
+  score?: ScoreExpectData | null;
+  subtasks?: Record<string, string | string[]>;
 }
 
 export interface ExpandedTestData {
   index: number;
   name: string;
   tag?: string | null;
+  subtask?: string | null;
   is_sample: boolean;
   rule_index?: number | null;
   gen_cmd?: string | null;
@@ -160,6 +215,10 @@ export interface PackageInspectionData {
   package_hash: string;
   freshness: { status: string; summary?: string };
   checker: string;
+  interactive?: boolean;
+  runs?: number;
+  subtasks?: SubtaskSummaryData[];
+  total_score?: number | null;
   files: PackageFilesData;
   solutions?: PackageSolutionSpecData[];
   expanded_tests: ExpandedTestData[];
@@ -330,6 +389,10 @@ export function verdictBadgeStyle(verdict: string, dark: boolean): { bg: string;
       return dark
         ? { bg: "rgba(192, 132, 252, 0.16)", fg: "#C084FC" }
         : { bg: "rgba(126, 34, 206, 0.11)", fg: "#7E22CE" };
+    case "ILE":
+      return dark
+        ? { bg: "rgba(129, 140, 248, 0.16)", fg: "#818CF8" }
+        : { bg: "rgba(67, 56, 202, 0.11)", fg: "#4338CA" };
     case "PE":
       return dark
         ? { bg: "rgba(34, 211, 238, 0.16)", fg: "#22D3EE" }
@@ -410,6 +473,8 @@ export interface SolutionHeaderSpec {
   is_main: boolean;
   expected: string[];
   tags?: string[] | null;
+  score?: ScoreExpectData | null;
+  subtasks?: Record<string, string | string[]>;
 }
 
 function normalizeExpected(spec: PackageSolutionSpecData): string[] {
@@ -445,6 +510,8 @@ export function resolveSolutionHeaderSpecs(
       is_main: Boolean(s.is_main ?? s.main),
       expected: normalizeExpected(s),
       tags: s.tags ?? null,
+      ...(s.score != null ? { score: s.score } : {}),
+      ...(s.subtasks ? { subtasks: s.subtasks } : {}),
     }));
   }
   if (inspection?.files?.solutions && inspection.files.solutions.length > 0) {
@@ -510,6 +577,7 @@ export function humanizeCheckText(text: string, isZh: boolean): string {
     .replace(/使用内置标准校验器/g, "使用内置标准评测器")
     .replace(/ *\bvalidator(?!\.(?:(?:17|20|23)\.)?(?:cpp|cc|cxx)\b)\b */gi, "校验器")
     .replace(/ *\bchecker(?!\.(?:(?:17|20|23)\.)?(?:cpp|cc|cxx)\b)\b */gi, "评测器")
+    .replace(/ *\binteractor(?!\.(?:(?:17|20|23)\.)?(?:cpp|cc|cxx)\b)\b */gi, "交互器")
     .replace(/ *\bexpect\b */gi, "预期")
     .replace(/\bvalid\b/gi, "有效")
     .replace(/\binvalid\b/gi, "无效")
@@ -523,6 +591,7 @@ export type CheckAction =
   | { kind: "view_test"; testIndex: number }
   | { kind: "select_cell"; testIndex: number; solution: string }
   | { kind: "open_file"; relPath: string }
+  | { kind: "open_subtasks" }
   | { kind: "open_programs" };
 
 /** Computes the most helpful one-click next-step action for a failed/warning check item. */
@@ -532,6 +601,13 @@ export function nextActionForCheck(
   files: PackageFilesData | undefined,
 ): CheckAction | undefined {
   const id = gate.id.toLowerCase();
+  if (id.includes("subtask")) {
+    return { kind: "open_subtasks" };
+  }
+  if (id.includes("interactor")) {
+    if (files?.interactor) return { kind: "open_file", relPath: files.interactor };
+    return { kind: "open_file", relPath: "interactor.cpp" };
+  }
   if (id.includes("validator") && id.includes("test") && !id.includes("self")) {
     const failedTest = report?.tests?.find((t) => t.validator_ok === false);
     if (failedTest) return { kind: "view_test", testIndex: failedTest.index };
@@ -583,6 +659,7 @@ export const EXPECT_PRESETS: readonly (readonly string[])[] = [
   ["TLE"],
   ["MLE"],
   ["RE"],
+  ["ILE"],
   ["WA", "TLE"],
 ];
 
@@ -902,6 +979,7 @@ export interface LogicalTestGroup {
   label: string;
   genCmd?: string | null;
   tag?: string | null;
+  subtask?: string | null;
   tests: TestSummaryData[];
   hasValidatorFail: boolean;
 }
@@ -919,7 +997,7 @@ export function groupTestRows(
   for (const r of testRows) rowByIdx.set(r.index, r);
 
   const samples: TestSummaryData[] = [];
-  const byRule = new Map<number, { tests: TestSummaryData[]; genCmd?: string | null }>();
+  const byRule = new Map<number, { tests: TestSummaryData[]; genCmd?: string | null; subtask?: string | null }>();
   const ruleOrder: number[] = [];
 
   if (expandedTests && expandedTests.length > 0) {
@@ -928,6 +1006,7 @@ export function groupTestRows(
         index: et.index,
         name: et.name,
         tag: et.tag ?? null,
+        subtask: et.subtask ?? null,
         is_sample: et.is_sample,
         size_bytes: 0,
         gen_cmd: et.gen_cmd ?? null,
@@ -939,7 +1018,7 @@ export function groupTestRows(
       } else {
         let bucket = byRule.get(et.rule_index);
         if (!bucket) {
-          bucket = { tests: [], genCmd: et.gen_cmd ?? row.gen_cmd };
+          bucket = { tests: [], genCmd: et.gen_cmd ?? row.gen_cmd, subtask: et.subtask ?? row.subtask ?? null };
           byRule.set(et.rule_index, bucket);
           ruleOrder.push(et.rule_index);
         }
@@ -951,7 +1030,7 @@ export function groupTestRows(
       if (row.is_sample) samples.push(row);
       else {
         const fakeIdx = row.index;
-        byRule.set(fakeIdx, { tests: [row], genCmd: row.gen_cmd });
+        byRule.set(fakeIdx, { tests: [row], genCmd: row.gen_cmd, subtask: row.subtask ?? null });
         ruleOrder.push(fakeIdx);
       }
     }
@@ -964,6 +1043,7 @@ export function groupTestRows(
       kind: "samples",
       ruleIndex: null,
       label: `samples`,
+      subtask: null,
       tests: samples,
       hasValidatorFail: samples.some((t) => t.validator_ok === false),
     });
@@ -988,9 +1068,167 @@ export function groupTestRows(
       label,
       genCmd: bucket.genCmd ?? null,
       tag: batchTag,
+      subtask: bucket.subtask ?? first?.subtask ?? null,
       tests: bucket.tests,
       hasValidatorFail: bucket.tests.some((t) => t.validator_ok === false),
     });
   }
   return out;
+}
+
+// ── Phase 3C: Interactive / Multi-run / OI Subtasks helpers ──────────────────
+
+export interface PackageModeBadge {
+  id: "interactive" | "runs" | "subtasks";
+  label: string;
+}
+
+/** Builds compact top-bar badges for interactive, multi-run (`runs > 1`), and OI subtask problems. */
+export function buildPackageModeBadges(
+  inspection: Pick<PackageInspectionData, "interactive" | "runs" | "subtasks" | "total_score"> | undefined,
+  report: Pick<BuildReportData, "interactive" | "runs" | "subtasks" | "total_score"> | undefined,
+  isZh: boolean,
+): PackageModeBadge[] {
+  const badges: PackageModeBadge[] = [];
+  const interactive = Boolean(inspection?.interactive ?? report?.interactive);
+  const runs = inspection?.runs ?? report?.runs ?? 1;
+  const subtasks = inspection?.subtasks?.length ? inspection.subtasks : (report?.subtasks ?? []);
+  const totalScore =
+    inspection?.total_score ??
+    report?.total_score ??
+    (subtasks.length > 0 ? subtasks.reduce((acc, s) => acc + s.score, 0) : null);
+
+  if (interactive) {
+    badges.push({
+      id: "interactive",
+      label: isZh ? "交互题" : "Interactive",
+    });
+  }
+  if (runs > 1) {
+    badges.push({
+      id: "runs",
+      label: isZh ? `多轮通信（×${runs}）` : `Multi-run (×${runs})`,
+    });
+  }
+  if (subtasks.length > 0 && totalScore != null) {
+    badges.push({
+      id: "subtasks",
+      label: isZh ? `OI 子任务（总分 ${totalScore}）` : `OI Subtasks (${totalScore} pts)`,
+    });
+  }
+  return badges;
+}
+
+/** Formats a numeric OI score cleanly (integer when exact, else up to 1 decimal place). */
+export function formatScoreValue(score: number): string {
+  if (!Number.isFinite(score)) return "0";
+  const rounded = Math.round(score * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/** Formats a `quitp` partial score ratio in `(0, 1)` (or any ratio when `includeFull` is true) as percentage. */
+export function formatScoreRatioPercent(
+  ratio: number | null | undefined,
+  includeFull = false,
+): string | undefined {
+  if (ratio == null || !Number.isFinite(ratio)) return undefined;
+  const clamped = Math.max(0, Math.min(1, ratio));
+  if (!includeFull && (clamped <= 0 || clamped >= 1)) return undefined;
+  const pct = Math.round(clamped * 1000) / 10;
+  return Number.isInteger(pct) ? `${pct}%` : `${pct.toFixed(1)}%`;
+}
+
+/** Formats a `ScoreExpectData` (`30` or `[20, 40]`) for display. */
+export function formatScoreExpect(score: ScoreExpectData | null | undefined): string | undefined {
+  if (score == null) return undefined;
+  if (Array.isArray(score)) {
+    return `${score[0]}–${score[1]}`;
+  }
+  return String(score);
+}
+
+/**
+ * Parses a user-entered expected score string:
+ * - `""` -> `null` (clear)
+ * - `"30"` -> `30`
+ * - `"20-40"` / `"20..40"` / `"20–40"` / `"20, 40"` -> `[20, 40]`
+ */
+export function parseScoreExpectInput(
+  raw: string,
+): { ok: true; value: ScoreExpectData | null } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: null };
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number.parseInt(trimmed, 10);
+    return { ok: true, value: n };
+  }
+  const rangeMatch = trimmed.match(/^(\d+)\s*(?:-|\.\.|–|,)\s*(\d+)$/);
+  if (rangeMatch) {
+    const lo = Number.parseInt(rangeMatch[1]!, 10);
+    const hi = Number.parseInt(rangeMatch[2]!, 10);
+    if (lo > hi) {
+      return { ok: false, error: "range_inverted" };
+    }
+    return { ok: true, value: [lo, hi] };
+  }
+  return { ok: false, error: "invalid_format" };
+}
+
+/** Formats a solution's OI total score summary (`30 / 100`). */
+export function formatSolutionScoreSummary(
+  summary: Pick<SolutionSummaryData, "total_score" | "max_score"> | undefined,
+): string | undefined {
+  if (!summary || summary.total_score == null || summary.max_score == null) return undefined;
+  return `${formatScoreValue(summary.total_score)} / ${summary.max_score}`;
+}
+
+export interface SubtaskMatrixGroup {
+  key: string;
+  subtaskId: string | null;
+  summary?: SubtaskSummaryData;
+  rows: TestSummaryData[];
+}
+
+/**
+ * Groups test rows by declared `subtasks` order for collapsible matrix sections.
+ * Rows without a matching subtask are placed in a trailing `subtaskId: null` group (only when non-empty).
+ */
+export function groupMatrixRowsBySubtask(
+  rows: readonly TestSummaryData[],
+  subtasks: readonly SubtaskSummaryData[] | undefined,
+): SubtaskMatrixGroup[] {
+  if (!subtasks || subtasks.length === 0) {
+    return [{ key: "__all__", subtaskId: null, rows: [...rows] }];
+  }
+  const byId = new Map<string, TestSummaryData[]>();
+  const knownIds = new Set(subtasks.map((s) => s.id));
+  for (const s of subtasks) byId.set(s.id, []);
+  const unassigned: TestSummaryData[] = [];
+
+  for (const row of rows) {
+    const sid = row.subtask?.trim();
+    if (sid && knownIds.has(sid)) {
+      byId.get(sid)!.push(row);
+    } else {
+      unassigned.push(row);
+    }
+  }
+
+  const groups: SubtaskMatrixGroup[] = [];
+  for (const s of subtasks) {
+    groups.push({
+      key: `subtask:${s.id}`,
+      subtaskId: s.id,
+      summary: s,
+      rows: byId.get(s.id) ?? [],
+    });
+  }
+  if (unassigned.length > 0) {
+    groups.push({
+      key: "__unassigned__",
+      subtaskId: null,
+      rows: unassigned,
+    });
+  }
+  return groups;
 }

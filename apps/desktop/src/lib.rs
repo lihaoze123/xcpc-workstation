@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use nsh_base as _;
 use nsh_core::element::JsError;
-use nsh_core::file_dialog::{FileFilter, OpenDialog};
+use nsh_core::file_dialog::{FileFilter, OpenDialog, SaveDialog};
 use nsh_core::prelude::*;
 use xcpc_storage::Workspace;
 
@@ -38,21 +38,22 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
-    AboutInfoJs, ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, BatchDeleteItemJs,
-    BatchDeleteResultJs, BatchExportRequestJs, BatchItemResultJs, BatchMutationResultJs,
-    BatchStartResultJs, BatchTaskEventJs, BatchTaskItemJs, BatchTaskSnapshotJs,
-    CleanUnusedAssetsResultJs, ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs,
-    ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
-    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs, LimitsJs, MarkdownSpanJs,
-    MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs,
-    PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
-    PackageWarningJs, PdfFreshnessJs, PickedFolder, PolygonImportResultJs, PreviewDiagnostic,
+    AboutInfoJs, ActionResult, AddedTestResultJs, AdoptSolutionResultJs, AppPrefsJs,
+    AssetReferenceJs, BatchDeleteItemJs, BatchDeleteResultJs, BatchExportRequestJs,
+    BatchItemResultJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
+    BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
+    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs,
+    DialogLabelsJs, ExportBookStatusJs, ExportOjResultJs, FreezeResultJs, FuzzyHitJs,
+    GroupSummaryJs, JsonReportResultJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
+    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
+    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PackageWarningJs,
+    PdfFreshnessJs, PickedFolder, PickedPathsJs, PolygonImportResultJs, PreviewDiagnostic,
     PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
     PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
     ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs,
-    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    SaveReportResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
+    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1293,6 +1294,18 @@ impl Preview {
         self.state.init_package(&slug)
     }
 
+    /// Scaffolds a problem package with optional Phase 3C features (`interactive`, `runs`, `subtasks`).
+    pub fn init_package_with_options(
+        &self,
+        slug: String,
+        interactive: bool,
+        runs: Option<u32>,
+        subtasks: bool,
+    ) -> PackageInitResultJs {
+        self.state
+            .init_package_with_options(&slug, interactive, runs, subtasks)
+    }
+
     /// Spawns a background thread to run `xcpc_judge::build_package` (`"debug"` or
     /// `"verify"`) with optional test/solution subset filters.
     pub fn start_package_build(
@@ -1463,6 +1476,67 @@ impl Preview {
     /// Deletes a validator or checker self-test file inside `problems/<slug>/tests/{validator,checker}/`.
     pub fn delete_self_test(&self, slug: String, rel_path: String) -> ActionResult {
         self.state.delete_self_test(&slug, &rel_path)
+    }
+
+    /// Deletes `interactor.cpp` (or versioned C++ variants) from `problems/<slug>/`.
+    pub fn delete_interactor(&self, slug: String) -> ActionResult {
+        self.state.delete_interactor(&slug)
+    }
+
+    /// Updates `[package].runs` in `problem.toml` (`null` or `1` returns to single-run default).
+    pub fn set_package_runs(&self, slug: String, runs: Option<u32>) -> ActionResult {
+        self.state.set_package_runs(&slug, runs)
+    }
+
+    /// Adds or updates a `[[subtask]]` entry in `problem.toml` (matched by `id`).
+    pub fn upsert_subtask(
+        &self,
+        slug: String,
+        id: String,
+        score: u32,
+        depends: Vec<String>,
+        scoring: String,
+    ) -> ActionResult {
+        self.state
+            .upsert_subtask(&slug, &id, score, depends, &scoring)
+    }
+
+    /// Deletes a `[[subtask]]` entry by `subtaskId` and optionally clears references.
+    pub fn delete_subtask(
+        &self,
+        slug: String,
+        subtask_id: String,
+        clear_references: bool,
+    ) -> ActionResult {
+        self.state
+            .delete_subtask(&slug, &subtask_id, clear_references)
+    }
+
+    /// Sets or clears `[[test]].subtask` on the 0-based `ruleIndex` test rule.
+    pub fn set_test_subtask(
+        &self,
+        slug: String,
+        rule_index: u32,
+        subtask: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .set_test_subtask(&slug, rule_index, subtask.as_deref())
+    }
+
+    /// Updates `[solutions.<name>]` OI scoring assertions (`scoreJson`, `subtasksJson`).
+    pub fn set_solution_scoring(
+        &self,
+        slug: String,
+        name: String,
+        score_json: Option<String>,
+        subtasks_json: Option<String>,
+    ) -> ActionResult {
+        self.state.set_solution_scoring(
+            &slug,
+            &name,
+            score_json.as_deref(),
+            subtasks_json.as_deref(),
+        )
     }
 
     /// Deletes the 1-based sample pair (`samples/NN.{in,ans}`) and renumbers remaining samples contiguously.
@@ -1641,6 +1715,282 @@ impl Preview {
                 detail: Some(format!("oj package export task failed: {e}")),
                 ..Default::default()
             })
+    }
+
+    // ---- Phase 3D: Sanitizer, external trial run, adopt & contest readiness audit ------
+
+    /// Loads the latest isolated sanitizer report (`build/problems/<slug>/sanitizer-report.json`),
+    /// returning `ok: true, reportJson: null` when no sanitizer run has been recorded yet.
+    pub fn load_sanitizer_report(&self, slug: String) -> JsonReportResultJs {
+        self.state.load_sanitizer_report(&slug)
+    }
+
+    /// Runs ASan/UBSan check on `slug` off the UI thread and returns the serialized `SanitizerReport`.
+    pub async fn sanitize_problem(
+        this: Instance<Self>,
+        slug: String,
+        tests: Option<Vec<String>>,
+        solutions: Option<Vec<String>>,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.sanitize_problem(&slug, tests, solutions))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("io", format!("sanitizer task failed: {e}"))
+            })
+    }
+
+    /// Opens the native multi-file picker filtered to C++ source files (`.cpp`, `.cc`, `.cxx`).
+    pub async fn pick_cpp_files(
+        this: Instance<Self>,
+        labels: Option<DialogLabelsJs>,
+    ) -> PickedPathsJs {
+        if this.is_disposed() {
+            return PickedPathsJs {
+                cancelled: true,
+                paths: Vec::new(),
+                error: None,
+            };
+        }
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择外部解法文件",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "选择",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "C++ 源码",
+        );
+        let dialog = OpenDialog::files()
+            .multiple(true)
+            .title(title)
+            .button_label(button)
+            .filter(FileFilter::new(filter, ["cpp", "cc", "cxx"]));
+        match pick_paths(dialog).await {
+            Ok(Some(paths)) if !paths.is_empty() => PickedPathsJs {
+                cancelled: false,
+                paths: paths
+                    .into_iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect(),
+                error: None,
+            },
+            Ok(_) => PickedPathsJs {
+                cancelled: true,
+                paths: Vec::new(),
+                error: None,
+            },
+            Err(e) => PickedPathsJs {
+                cancelled: false,
+                paths: Vec::new(),
+                error: Some(e),
+            },
+        }
+    }
+
+    /// Opens the native folder picker for selecting an external tester directory.
+    pub async fn pick_external_folder(
+        this: Instance<Self>,
+        labels: Option<DialogLabelsJs>,
+    ) -> PickedFolder {
+        if this.is_disposed() {
+            return PickedFolder::default();
+        }
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择验题人解法目录",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "选择",
+        );
+        let dialog = OpenDialog::folders().title(title).button_label(button);
+        match pick_paths(dialog).await {
+            Ok(Some(mut paths)) if !paths.is_empty() => PickedFolder {
+                cancelled: false,
+                path: paths.remove(0).to_string_lossy().into_owned(),
+                error: None,
+                ..Default::default()
+            },
+            Ok(_) => PickedFolder {
+                cancelled: true,
+                ..Default::default()
+            },
+            Err(e) => PickedFolder {
+                cancelled: false,
+                path: String::new(),
+                error: Some(e),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Zero-pollution trial run of external `.cpp` files against `slug` off the UI thread.
+    /// Returns serialized `ExternalProblemReport` in `reportJson` and Markdown in `markdown`.
+    pub async fn run_external_problem_solutions(
+        this: Instance<Self>,
+        slug: String,
+        files: Vec<String>,
+        auto_build: bool,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        let file_paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+        blocking(move || state.run_external_problem_solutions(&slug, &file_paths, auto_build))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("io", format!("external run task failed: {e}"))
+            })
+    }
+
+    /// Zero-pollution trial run of a single-directory or multi-tester directory against `contestId`
+    /// off the UI thread. Returns serialized `ExternalContestReport` + rendered Markdown.
+    pub async fn run_external_contest_solutions(
+        this: Instance<Self>,
+        contest_id: String,
+        dir: String,
+        auto_build: bool,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        let dir_path = PathBuf::from(dir);
+        blocking(move || state.run_external_contest_solutions(&contest_id, &dir_path, auto_build))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("io", format!("external contest run task failed: {e}"))
+            })
+    }
+
+    /// Explicitly adopts an external `.cpp` file into `problems/<slug>/solutions/` and registers
+    /// it in `problem.toml` atomically.
+    pub fn adopt_external_solution(
+        &self,
+        slug: String,
+        source_file: String,
+        name: Option<String>,
+        expect: Option<Vec<String>>,
+        tags: Option<Vec<String>>,
+        is_main: Option<bool>,
+    ) -> AdoptSolutionResultJs {
+        self.state.adopt_external_solution(
+            &slug,
+            Path::new(&source_file),
+            name,
+            expect,
+            tags,
+            is_main,
+        )
+    }
+
+    /// Performs a read-only contest readiness audit across all problems in `contestId` off the
+    /// UI thread (populating `xcpc-lint` counts per problem), returning serialized
+    /// `ContestAuditReport` + rendered Markdown.
+    pub async fn audit_contest(this: Instance<Self>, contest_id: String) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.audit_contest(&contest_id))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("io", format!("contest audit task failed: {e}"))
+            })
+    }
+
+    /// Opens the native save dialog and writes a Markdown report atomically off the UI thread.
+    pub async fn save_markdown_report(
+        this: Instance<Self>,
+        suggested_name: String,
+        content: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> SaveReportResultJs {
+        if this.is_disposed() {
+            return SaveReportResultJs {
+                ok: false,
+                cancelled: true,
+                path: None,
+                error: None,
+            };
+        }
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "导出 Markdown 报告",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "导出",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "Markdown 文件",
+        );
+        let dialog = SaveDialog::new()
+            .title(title)
+            .button_label(button)
+            .file_name(suggested_name)
+            .filter(FileFilter::new(filter, ["md"]));
+        let picked = match pick_save_path(dialog).await {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: true,
+                    path: None,
+                    error: None,
+                };
+            }
+            Err(e) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(e),
+                };
+            }
+        };
+        let path_str = picked.to_string_lossy().into_owned();
+        let write_res = blocking(move || -> Result<(), String> {
+            if let Some(parent) = picked.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let tmp = picked.with_extension(format!("md.tmp.{}", std::process::id()));
+            std::fs::write(&tmp, content.as_bytes()).map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, &picked).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                e.to_string()
+            })
+        })
+        .await;
+        match write_res {
+            Ok(Ok(())) => SaveReportResultJs {
+                ok: true,
+                cancelled: false,
+                path: Some(path_str),
+                error: None,
+            },
+            Ok(Err(e)) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(e),
+            },
+            Err(e) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(format!("save markdown task failed: {e}")),
+            },
+        }
     }
 }
 

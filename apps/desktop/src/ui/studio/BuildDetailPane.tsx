@@ -15,7 +15,10 @@ import {
   formatBytesCompact,
   formatCellConclusion,
   formatMemoryKib,
+  formatScoreRatioPercent,
+  verdictBadgeStyle,
   type MatrixCellData,
+  type TranscriptEntryData,
 } from "./buildLogic";
 
 /** No-ligature monospace font stack so `!=`, `<=`, `>=` never render as ligatures in code/TOML editors (P2). */
@@ -377,6 +380,51 @@ export function CellDiagnosticDrawer(props: {
     return t("build.diag.noOutputPreview");
   };
 
+  const isIle = () => props.cell.verdict.toUpperCase() === "ILE";
+  const partialPct = () => formatScoreRatioPercent(props.cell.score_ratio, false);
+  const transcript = () => props.cell.transcript ?? undefined;
+
+  const renderTranscriptEntry = (entry: TranscriptEntryData) => {
+    const isI2S = entry.direction === "interactor_to_solution";
+    const dark = colorScheme() === "dark";
+    const arrowColor = isI2S
+      ? dark ? "#38bdf8" : "#0e7490"
+      : dark ? "#c084fc" : "#7e22ce";
+    const rowBg = isI2S
+      ? dark ? "rgba(56, 189, 248, 0.08)" : "rgba(14, 116, 144, 0.06)"
+      : dark ? "rgba(192, 132, 252, 0.08)" : "rgba(126, 34, 206, 0.06)";
+    return (
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "flex-start",
+          gap: 6,
+          paddingLeft: 8,
+          paddingRight: 8,
+          paddingTop: 3,
+          paddingBottom: 3,
+          borderRadius: 4,
+          backgroundColor: rowBg,
+        }}
+      >
+        <If when={entry.run != null}>
+          <Text
+            style={{ fontSize: 10.5, fontFamily: MONO, fontVariant: ["tabular-nums"], flexShrink: 0, paddingTop: 1 }}
+            class="text-muted-foreground"
+          >
+            {`#${entry.run}`}
+          </Text>
+        </If>
+        <Text style={{ fontSize: 11.5, fontWeight: 700, color: arrowColor, width: 14, flexShrink: 0 }}>
+          {isI2S ? "→" : "←"}
+        </Text>
+        <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16, flex: 1 }} class="text-foreground">
+          {entry.text}
+        </Text>
+      </View>
+    );
+  };
+
   return (
     <View
       testID="cell-diagnostic-drawer"
@@ -404,12 +452,38 @@ export function CellDiagnosticDrawer(props: {
         class="border-border"
       >
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <Text
-            testID="diag-conclusion-headline"
-            style={{ fontSize: 14, fontWeight: 600, color: conclusionColor(), flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
-          >
-            {conclusion().text}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+            <Text
+              testID="diag-conclusion-headline"
+              style={{ fontSize: 14, fontWeight: 600, color: conclusionColor(), numberOfLines: 1, textOverflow: "ellipsis" }}
+            >
+              {conclusion().text}
+            </Text>
+            <If when={isIle()}>
+              {(() => {
+                const st = verdictBadgeStyle("ILE", colorScheme() === "dark");
+                return (
+                  <View
+                    testID="diag-ile-badge"
+                    style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, backgroundColor: st.bg, justifyContent: "center", flexShrink: 0 }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: 600, color: st.fg }}>{"ILE"}</Text>
+                  </View>
+                );
+              })()}
+            </If>
+            <If when={Boolean(partialPct())}>
+              <View
+                testID="diag-partial-score-badge"
+                style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", flexShrink: 0 }}
+                class="bg-muted"
+              >
+                <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                  {`${t("build.diag.partialScore")} ${partialPct()!}`}
+                </Text>
+              </View>
+            </If>
+          </View>
           <IconBtn icon="x" size={26} iconSize={14} onPress={props.onClose} />
         </View>
 
@@ -418,7 +492,9 @@ export function CellDiagnosticDrawer(props: {
             style={{ fontSize: 12, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
             class="text-secondary-foreground"
           >
-            {`#${props.cell.test_index} ${props.cell.test_name}   ${props.cell.solution}   ${props.cell.cpu_time_ms} ms   ${formatMemoryKib(props.cell.peak_memory_kib)}`}
+            {isIle()
+              ? `#${props.cell.test_index} ${props.cell.test_name}   ${props.cell.solution}   ${props.cell.cpu_time_ms} ms (${t("build.diag.wallTime", { ms: props.cell.wall_time_ms })})   ${formatMemoryKib(props.cell.peak_memory_kib)}`
+              : `#${props.cell.test_index} ${props.cell.test_name}   ${props.cell.solution}   ${props.cell.cpu_time_ms} ms   ${formatMemoryKib(props.cell.peak_memory_kib)}`}
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
             <If when={props.solutionRelPath}>
@@ -443,46 +519,104 @@ export function CellDiagnosticDrawer(props: {
         </View>
       </View>
 
-      {/* Drawer Scroll Body: 3-column I/O -> Repro command -> Neutral checker output */}
+      {/* Drawer Scroll Body: ILE notice / Transcript or 3-column I/O -> Repro command -> Neutral checker output */}
       <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 16 }}>
-        {/* 1. 3-column Input / Expected Answer / Actual Output */}
-        <View style={{ gap: 6 }}>
-          <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-            {t("build.diag.ioComparison")}
-          </Text>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
-                {t("build.diag.input")}
-              </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
-                <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
-                  {inputSnippet()}
+        <If when={isIle()}>
+          <View
+            testID="diag-ile-notice"
+            style={{ padding: 10, borderRadius: 6, flexDirection: "row", alignItems: "flex-start", gap: 8 }}
+            class="bg-muted/50 border border-border"
+          >
+            <Icon name="triangleAlert" size={14} tone="chart-4" />
+            <Text style={{ fontSize: 12, lineHeight: 17, flex: 1 }} class="text-foreground">
+              {t("build.diag.ileNotice")}
+            </Text>
+          </View>
+        </If>
+
+        {/* 1a. Bidirectional Interaction Transcript (interactive problems) */}
+        <If when={transcript()}>
+          {(tr) => (
+            <View testID="diag-interaction-transcript" style={{ gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                  {t("build.diag.transcript")}
                 </Text>
+                <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  {t("build.diag.transcriptStats", {
+                    entries: tr().total_entries,
+                    i2s: formatBytesCompact(tr().total_bytes_i2s),
+                    s2i: formatBytesCompact(tr().total_bytes_s2i),
+                  })}
+                </Text>
+              </View>
+              <Scroll style={{ borderRadius: 6, maxHeight: 260 }} contentStyle={{ padding: 6, gap: 3 }} class="bg-muted/35 border border-border/60">
+                {(tr().head ?? []).map((entry) => renderTranscriptEntry(entry))}
+                <If when={tr().omitted_entries > 0}>
+                  <View style={{ paddingTop: 4, paddingBottom: 4, alignItems: "center" }}>
+                    <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                      {t("build.diag.transcriptOmitted", { count: tr().omitted_entries })}
+                    </Text>
+                  </View>
+                </If>
+                {(tr().tail ?? []).map((entry) => renderTranscriptEntry(entry))}
               </Scroll>
+              <If when={!!tr().interactor_message}>
+                <View style={{ gap: 4, paddingTop: 4 }}>
+                  <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                    {t("build.diag.interactorMsg")}
+                  </Text>
+                  <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/40">
+                    <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+                      {tr().interactor_message!}
+                    </Text>
+                  </View>
+                </View>
+              </If>
             </View>
-            <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
-                {t("build.diag.expected")}
-              </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
-                <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
-                  {expectedSnippet()}
+          )}
+        </If>
+
+        {/* 1b. 3-column Input / Expected Answer / Actual Output (standard problems) */}
+        <If when={!transcript()}>
+          <View style={{ gap: 6 }}>
+            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+              {t("build.diag.ioComparison")}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
+                  {t("build.diag.input")}
                 </Text>
-              </Scroll>
-            </View>
-            <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
-                {t("build.diag.actual")}
-              </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
-                <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
-                  {actualSnippet()}
+                <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
+                  <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
+                    {inputSnippet()}
+                  </Text>
+                </Scroll>
+              </View>
+              <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
+                  {t("build.diag.expected")}
                 </Text>
-              </Scroll>
+                <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
+                  <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
+                    {expectedSnippet()}
+                  </Text>
+                </Scroll>
+              </View>
+              <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
+                  {t("build.diag.actual")}
+                </Text>
+                <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
+                  <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
+                    {actualSnippet()}
+                  </Text>
+                </Scroll>
+              </View>
             </View>
           </View>
-        </View>
+        </If>
 
         {/* 2. Copyable single-step repro command */}
         <If when={!!props.cell.repro_cmd}>

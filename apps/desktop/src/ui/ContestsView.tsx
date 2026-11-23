@@ -443,6 +443,13 @@ function ContestPanel(props: { id: string }) {
               onPress={() => open()}
               testID="contest-edit"
             />
+            <Btn
+              variant="outline"
+              icon="shieldCheck"
+              label={t("readiness.title")}
+              onPress={() => openStudio({ target: "contest", id: props.id, initialTab: "readiness" })}
+              testID="contest-readiness"
+            />
             <If
               when={detail().archived}
               else={

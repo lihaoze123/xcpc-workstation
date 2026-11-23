@@ -76,6 +76,22 @@ function actions(): Action[] {
     { id: "a:tab-samples", icon: "table", label: t("palette.action.tabSamples"), keywords: ["samples", "sample", "tab", "样例", "yangli"], shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },
     { id: "a:tab-editorial", icon: "filePenLine", label: t("palette.action.tabEditorial"), keywords: ["editorial", "solution", "tab", "题解", "tijie"], shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
     { id: "a:tab-build", icon: "database", label: t("palette.action.tabBuild"), keywords: ["build", "judge", "package", "verify", "authoring", "出题", "构建", "chuti", "goujian", "yanshou"], shortcut: "alt+4", run: () => s!.setTab("build"), when: () => inStudio && !contest },
+    { id: "a:sanitize-problem", icon: "shieldCheck", label: t("palette.action.sanitizeProblem"), keywords: ["sanitize", "asan", "ubsan", "ub", "体检", "tijian"], run: () => s!.runSanitize(), when: () => inStudio && !contest && s!.hasPackage() && !info().readOnly },
+    {
+      id: "a:contest-readiness",
+      icon: "shieldCheck",
+      label: t("palette.action.contestReadiness"),
+      keywords: ["readiness", "audit", "contest", "check", "验题", "体检", "yanti", "tijian"],
+      run: () => {
+        if (contest) {
+          s!.setTab("readiness");
+        } else {
+          const cid = selectedContest();
+          if (cid) openStudio({ target: "contest", id: cid, initialTab: "readiness" });
+        }
+      },
+      when: () => contest || (!inStudio && !!selectedContest()),
+    },
     { id: "a:init-package", icon: "plus", label: t("palette.action.initPackage"), keywords: ["package", "init", "scaffold", "polygon", "题目包", "脚手架", "初始化", "chushihua"], run: () => s!.initPackage(), when: () => inStudio && !contest && !s!.hasPackage() && !info().readOnly },
     { id: "a:inspector", icon: "panelRight", label: t("palette.action.properties"), keywords: ["properties", "inspector", "layout", "属性", "版式", "shuxing"], shortcut: "mod+i", run: () => s!.toggleInspector(), when: () => inStudio },
     { id: "a:assets", icon: "image", label: t("palette.action.assets"), keywords: ["assets", "image", "gallery", "pic", "素材", "图片", "sucai", "tupian"], run: () => s!.openAssets(), when: () => inStudio && s!.hasAssets() },

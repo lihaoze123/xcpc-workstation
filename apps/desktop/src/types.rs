@@ -1896,3 +1896,88 @@ impl BatchTaskEventJs {
         }
     }
 }
+
+// ---- Phase 3D: Sanitizer, external trial run, adopt & contest readiness audit ----------
+
+/// Result of picking one or more files via the native file dialog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PickedPathsJs {
+    pub cancelled: bool,
+    pub paths: Vec<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Generic JSON + optional Markdown report payload returned by Phase 3D Core operations
+/// (`loadSanitizerReport`, `sanitizeProblem`, `runExternalProblemSolutions`,
+/// `runExternalContestSolutions`, `auditContest`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct JsonReportResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub report_json: Option<String>,
+    #[prop(skip_none)]
+    pub markdown: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl JsonReportResultJs {
+    pub(crate) fn ok(report_json: Option<String>, markdown: Option<String>) -> Self {
+        Self {
+            ok: true,
+            report_json,
+            markdown,
+            error: None,
+            code: None,
+        }
+    }
+
+    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            report_json: None,
+            markdown: None,
+            error: Some(message.into()),
+            code: Some(code.into()),
+        }
+    }
+}
+
+/// Result of adopting an external `.cpp` solution into `problems/<slug>/solutions/`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct AdoptSolutionResultJs {
+    pub ok: bool,
+    pub problem_id: String,
+    pub solution_name: String,
+    pub target_rel_path: String,
+    pub updated_problem_toml: bool,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl AdoptSolutionResultJs {
+    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: Some(message.into()),
+            code: Some(code.into()),
+            ..Default::default()
+        }
+    }
+}
+
+/// Result of saving a Markdown report via the native save dialog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct SaveReportResultJs {
+    pub ok: bool,
+    pub cancelled: bool,
+    #[prop(skip_none)]
+    pub path: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}

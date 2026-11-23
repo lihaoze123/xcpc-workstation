@@ -2120,7 +2120,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
         "init example failed: {:?}",
         info.error
     );
-    assert_eq!(info.problems.len(), 3);
+    assert_eq!(info.problems.len(), 12);
     assert_eq!(info.contests.len(), 2);
 
     let req = PreviewRequest {
@@ -3065,4 +3065,121 @@ fn batch_task_streaming_completion_and_cancellation() {
         .recv_timeout(Duration::from_secs(2))
         .expect("blocked batch receiver should wake immediately on Preview drop");
     assert_eq!(woke_kind.as_deref(), Some("closed"));
+}
+
+#[test]
+fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
+    let (_dir, preview) = init_temp_preview("phase3c-bridge");
+    assert!(preview.create_problem("guess".into(), "Guess".into()).ok);
+
+    // Init with interactive + multi-run + subtasks options.
+    let init = preview.init_package_with_options("guess".into(), true, Some(2), true);
+    assert!(
+        init.ok,
+        "init_package_with_options failed: {:?}",
+        init.error
+    );
+    assert!(init.created_files.iter().any(|f| f == "interactor.cpp"));
+
+    let insp_res = preview.inspect_package("guess".into());
+    assert!(insp_res.ok && insp_res.has_package);
+    let insp: JsonValue = insp_res
+        .inspection_json
+        .parse()
+        .expect("valid inspection json");
+    assert_eq!(insp["interactive"], true);
+    assert_eq!(insp["runs"], 2);
+    assert_eq!(insp["total_score"], 100);
+    assert_eq!(insp["files"]["interactor"], "interactor.cpp");
+    assert_eq!(insp["subtasks"].as_array().unwrap().len(), 2);
+
+    // Update runs and delete/recreate interactor.
+    assert!(preview.set_package_runs("guess".into(), Some(3)).ok);
+    let after_runs: JsonValue = preview
+        .inspect_package("guess".into())
+        .inspection_json
+        .parse()
+        .unwrap();
+    assert_eq!(after_runs["runs"], 3);
+
+    assert!(preview.delete_interactor("guess".into()).ok);
+    let after_del_int: JsonValue = preview
+        .inspect_package("guess".into())
+        .inspection_json
+        .parse()
+        .unwrap();
+    assert_eq!(after_del_int["interactive"], false);
+
+    let recreated =
+        preview.create_package_source("guess".into(), "interactor".into(), "interactor".into());
+    assert!(
+        recreated.ok,
+        "recreate interactor failed: {:?}",
+        recreated.error
+    );
+    assert_eq!(recreated.rel_path, "interactor.cpp");
+
+    // Reset runs to single-run default.
+    assert!(preview.set_package_runs("guess".into(), None).ok);
+    let after_reset_runs: JsonValue = preview
+        .inspect_package("guess".into())
+        .inspection_json
+        .parse()
+        .unwrap();
+    assert_eq!(after_reset_runs["runs"], 1);
+
+    // Upsert subtask, assign test subtask, set solution scoring, and delete subtask with reference cleanup.
+    assert!(
+        preview
+            .upsert_subtask(
+                "guess".into(),
+                "3".into(),
+                20,
+                vec!["1".into()],
+                "sum".into(),
+            )
+            .ok
+    );
+    assert!(
+        preview
+            .set_test_subtask("guess".into(), 0, Some("3".into()))
+            .ok
+    );
+
+    let brute = preview.create_package_source("guess".into(), "solution".into(), "brute".into());
+    assert!(brute.ok);
+    assert!(
+        preview
+            .set_solution_scoring(
+                "guess".into(),
+                "brute".into(),
+                Some("[20, 50]".into()),
+                Some(r#"{"1":"AC","3":["WA","TLE"]}"#.into()),
+            )
+            .ok
+    );
+
+    let with_sub3: JsonValue = preview
+        .inspect_package("guess".into())
+        .inspection_json
+        .parse()
+        .unwrap();
+    assert_eq!(with_sub3["total_score"], 120);
+    let brute_info = with_sub3["solutions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "brute")
+        .expect("brute solution in inspection");
+    assert_eq!(brute_info["score"], serde_json::json!([20, 50]));
+    assert_eq!(brute_info["subtasks"]["1"], "AC");
+
+    assert!(preview.delete_subtask("guess".into(), "3".into(), true).ok);
+    let after_del_sub3: JsonValue = preview
+        .inspect_package("guess".into())
+        .inspection_json
+        .parse()
+        .unwrap();
+    assert_eq!(after_del_sub3["total_score"], 100);
+    assert_eq!(after_del_sub3["subtasks"].as_array().unwrap().len(), 2);
 }

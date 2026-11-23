@@ -4,7 +4,7 @@
 // - ConfirmDeleteRuleModal: confirm removing a `[[test]]` rule stating exact test count
 
 import { effect, signal, Text, untracked, View } from "nsh";
-import { Input } from "nsh/base";
+import { Input, Switch } from "nsh/base";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
 import { Btn, FieldLabel } from "../kit";
@@ -12,7 +12,15 @@ import { AppMenu } from "../Menu";
 import { Modal } from "../Modal";
 import { preview } from "../store";
 import { MONO } from "../theme";
-import { logicalSolutionName } from "./buildLogic";
+import {
+  EXPECT_PRESETS,
+  formatScoreExpect,
+  logicalSolutionName,
+  parseScoreExpectInput,
+  type ScoreExpectData,
+  type SubtaskScoringKind,
+  type SubtaskSummaryData,
+} from "./buildLogic";
 
 const SAFE_STEM_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
@@ -142,6 +150,7 @@ export function AddGeneratorBatchModal(props: {
   open: boolean;
   problemId: string;
   generators: readonly string[];
+  subtasks?: readonly SubtaskSummaryData[];
   initialGenerator?: string;
   onClose: () => void;
   onAdded: () => void;
@@ -151,6 +160,7 @@ export function AddGeneratorBatchModal(props: {
   const args = signal("-n 100 {i}");
   const repeat = signal("5");
   const tag = signal("random");
+  const selectedSubtask = signal<string | null>(null);
   const inlineError = signal<string | undefined>(undefined);
 
   effect(() => {
@@ -162,6 +172,7 @@ export function AddGeneratorBatchModal(props: {
         args.set("-n 100 {i}");
         repeat.set("5");
         tag.set("random");
+        selectedSubtask.set(props.subtasks?.[0]?.id ?? null);
         inlineError.set(undefined);
       });
     }
@@ -176,6 +187,10 @@ export function AddGeneratorBatchModal(props: {
     if (!res.ok) {
       inlineError.set(res.error ?? t("ctx.updatePackage"));
       return;
+    }
+    const sub = selectedSubtask();
+    if (sub && (props.subtasks?.length ?? 0) > 0) {
+      preview.setTestSubtask(props.problemId, res.ruleIndex, sub);
     }
     props.onClose();
     props.onAdded();
@@ -263,6 +278,46 @@ export function AddGeneratorBatchModal(props: {
           </View>
         </View>
 
+        <If when={(props.subtasks?.length ?? 0) > 0}>
+          <View style={{ gap: 5 }}>
+            <FieldLabel label={t("build.subtasks.assignLabel")} />
+            <AppMenu
+              align="start"
+              minWidth={220}
+              entries={[
+                { id: "__none__", label: t("build.subtasks.assignNone"), checked: selectedSubtask() == null },
+                ...(props.subtasks ?? []).map((s) => ({
+                  id: s.id,
+                  label: `${t("build.table.subtaskHeader", { id: s.id })}  (${s.score})`,
+                  checked: selectedSubtask() === s.id,
+                })),
+              ]}
+              onSelect={(id) => selectedSubtask.set(id === "__none__" ? null : id)}
+              trigger={
+                <View
+                  class="border border-border bg-card hover:bg-muted"
+                  style={{
+                    height: 32,
+                    paddingLeft: 10,
+                    paddingRight: 8,
+                    borderRadius: 6,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Text style={{ fontSize: 13 }} class="text-foreground">
+                    {selectedSubtask()
+                      ? t("build.table.subtaskHeader", { id: selectedSubtask()! })
+                      : t("build.subtasks.assignNone")}
+                  </Text>
+                  <Icon name="chevronDown" size={14} tone="muted-foreground" />
+                </View>
+              }
+            />
+          </View>
+        </If>
+
         <Text
           style={{ fontSize: 12, minHeight: 16 }}
           class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
@@ -325,7 +380,9 @@ export type PendingDeleteTarget =
   | { kind: "solution"; name: string }
   | { kind: "generator"; file: string; stem: string; refBatchCount: number }
   | { kind: "sample"; sampleIndex: number }
-  | { kind: "selfTest"; relPath: string };
+  | { kind: "selfTest"; relPath: string }
+  | { kind: "interactor" }
+  | { kind: "subtask"; id: string };
 
 export function ConfirmPackageDeleteModal(props: {
   target: PendingDeleteTarget | undefined;
@@ -338,6 +395,8 @@ export function ConfirmPackageDeleteModal(props: {
     if (cur.kind === "solution") return t("build.delete.solutionTitle", { name: cur.name });
     if (cur.kind === "generator") return t("build.delete.generatorTitle", { name: cur.stem });
     if (cur.kind === "sample") return t("build.delete.sampleTitle", { index: cur.sampleIndex });
+    if (cur.kind === "interactor") return t("build.delete.interactorTitle");
+    if (cur.kind === "subtask") return t("build.delete.subtaskTitle", { id: cur.id });
     return t("build.delete.selfTestTitle", { name: cur.relPath.split("/").slice(-2).join("/") });
   };
 
@@ -351,6 +410,8 @@ export function ConfirmPackageDeleteModal(props: {
         : t("build.delete.generatorDesc");
     }
     if (cur.kind === "sample") return t("build.delete.sampleDesc");
+    if (cur.kind === "interactor") return t("build.delete.interactorDesc");
+    if (cur.kind === "subtask") return t("build.delete.subtaskDesc");
     return t("build.delete.selfTestDesc");
   };
 
@@ -366,6 +427,490 @@ export function ConfirmPackageDeleteModal(props: {
             variant="danger"
             onPress={() => {
               if (props.target) props.onConfirm(props.target);
+            }}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Add or edit an OI `[[subtask]]` entry (`id`, `score`, `scoring`, `depends`). */
+export function SubtaskModal(props: {
+  open: boolean;
+  problemId: string;
+  editing?: SubtaskSummaryData;
+  existingSubtasks: readonly SubtaskSummaryData[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const id = signal("");
+  const score = signal("30");
+  const scoring = signal<SubtaskScoringKind>("min");
+  const depends = signal<string[]>([]);
+  const inlineError = signal<string | undefined>(undefined);
+
+  effect(() => {
+    if (props.open) {
+      untracked(() => {
+        if (props.editing) {
+          id.set(props.editing.id);
+          score.set(String(props.editing.score));
+          scoring.set(props.editing.scoring);
+          depends.set([...(props.editing.depends ?? [])]);
+        } else {
+          const nextNum = props.existingSubtasks.length + 1;
+          id.set(String(nextNum));
+          score.set(nextNum === 1 ? "30" : "70");
+          scoring.set("min");
+          depends.set([]);
+        }
+        inlineError.set(undefined);
+      });
+    }
+  });
+
+  const depCandidates = () =>
+    props.existingSubtasks.filter((s) => s.id !== (props.editing?.id ?? id().trim()));
+
+  function toggleDep(depId: string) {
+    const cur = depends();
+    if (cur.includes(depId)) {
+      depends.set(cur.filter((x) => x !== depId));
+    } else {
+      depends.set([...cur, depId]);
+    }
+  }
+
+  function submit() {
+    const cleanedId = id().trim();
+    if (!cleanedId || !SAFE_STEM_RE.test(cleanedId) || cleanedId.includes("..")) {
+      inlineError.set(t("build.programs.nameHint"));
+      return;
+    }
+    const parsedScore = Number.parseInt(score().trim(), 10);
+    if (!Number.isFinite(parsedScore) || parsedScore < 0) {
+      inlineError.set(t("build.scoring.scoreError"));
+      return;
+    }
+    const res = preview.upsertSubtask(
+      props.problemId,
+      cleanedId,
+      parsedScore,
+      depends(),
+      scoring(),
+    );
+    if (!res.ok) {
+      inlineError.set(res.error ?? t("ctx.updatePackage"));
+      return;
+    }
+    props.onClose();
+    props.onSaved();
+  }
+
+  return (
+    <Modal open={props.open} onClose={props.onClose} width={430} testID="subtask-modal">
+      <View style={{ padding: 18, gap: 13 }}>
+        <ModalHeader
+          icon="listOrdered"
+          title={
+            props.editing
+              ? t("build.subtasks.modalEditTitle", { id: props.editing.id })
+              : t("build.subtasks.modalAddTitle")
+          }
+          subtitle={t("build.subtasks.modalSubtitle")}
+        />
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1, gap: 5 }}>
+            <FieldLabel label={t("build.subtasks.idLabel")} />
+            <Input
+              testID="subtask-id-input"
+              value={id()}
+              readonly={Boolean(props.editing)}
+              autoFocus={!props.editing}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder={t("build.subtasks.idPlaceholder")}
+              onChange={(e) => {
+                id.set(e.value);
+                if (inlineError()) inlineError.set(undefined);
+              }}
+              onSubmit={submit}
+              class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+              style={{ fontFamily: MONO, opacity: props.editing ? 0.65 : 1 }}
+            />
+          </View>
+          <View style={{ width: 112, gap: 5 }}>
+            <FieldLabel label={t("build.subtasks.scoreLabel")} />
+            <Input
+              testID="subtask-score-input"
+              value={score()}
+              autoFocus={Boolean(props.editing)}
+              keyboardType="number-pad"
+              onChange={(e) => {
+                score.set(e.value);
+                if (inlineError()) inlineError.set(undefined);
+              }}
+              onSubmit={submit}
+              class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+              style={{ fontVariant: ["tabular-nums"] }}
+            />
+          </View>
+        </View>
+
+        <View style={{ gap: 5 }}>
+          <FieldLabel label={t("build.subtasks.scoringLabel")} />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {(["min", "sum"] as const).map((mode) => (
+              <View
+                onPress={() => scoring.set(mode)}
+                class={scoring() === mode ? "bg-muted border border-border" : "border border-border/60 hover:bg-muted/50"}
+                style={{
+                  flex: 1,
+                  height: 30,
+                  borderRadius: 6,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text
+                  style={{ fontSize: 12, fontWeight: 500 }}
+                  class={scoring() === mode ? "text-foreground" : "text-secondary-foreground"}
+                >
+                  {mode === "min" ? t("build.subtasks.scoringMin") : t("build.subtasks.scoringSum")}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <If when={depCandidates().length > 0}>
+          <View style={{ gap: 6 }}>
+            <FieldLabel label={t("build.subtasks.dependsLabel")} />
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              <Each of={depCandidates()} key={(s) => s.id}>
+                {(s) => {
+                  const active = () => depends().includes(s().id);
+                  return (
+                    <View
+                      onPress={() => toggleDep(s().id)}
+                      class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
+                      style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
+                    >
+                      <Text
+                        style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                        class={active() ? "text-primary-foreground" : "text-foreground"}
+                      >
+                        {t("build.table.subtaskHeader", { id: s().id })}
+                      </Text>
+                    </View>
+                  );
+                }}
+              </Each>
+            </View>
+          </View>
+        </If>
+
+        <If when={inlineError()}>
+          <Text style={{ fontSize: 12 }} class="text-destructive">
+            {inlineError()!}
+          </Text>
+        </If>
+
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn
+            testID="subtask-modal-submit"
+            label={t("build.subtasks.save")}
+            variant="primary"
+            disabled={!id().trim()}
+            onPress={submit}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Edit `[solutions.<name>]` OI scoring assertions (`score` and per-subtask verdicts). */
+export function SolutionScoringModal(props: {
+  open: boolean;
+  problemId: string;
+  solutionName: string;
+  initialScore?: ScoreExpectData | null;
+  initialSubtasks?: Record<string, string | string[]>;
+  subtasks: readonly SubtaskSummaryData[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const scoreInput = signal("");
+  const subMap = signal<Record<string, string[]>>({});
+  const inlineError = signal<string | undefined>(undefined);
+
+  effect(() => {
+    if (props.open) {
+      untracked(() => {
+        scoreInput.set(formatScoreExpect(props.initialScore)?.replace("–", "-") ?? "");
+        const next: Record<string, string[]> = {};
+        for (const [k, v] of Object.entries(props.initialSubtasks ?? {})) {
+          next[k] = Array.isArray(v) ? [...v] : [v];
+        }
+        subMap.set(next);
+        inlineError.set(undefined);
+      });
+    }
+  });
+
+  function setSubtaskVerdict(sid: string, verdicts: string[] | null) {
+    const next = { ...subMap() };
+    if (!verdicts || verdicts.length === 0) {
+      delete next[sid];
+    } else {
+      next[sid] = verdicts;
+    }
+    subMap.set(next);
+  }
+
+  function submit() {
+    const parsed = parseScoreExpectInput(scoreInput());
+    if (!parsed.ok) {
+      inlineError.set(t("build.scoring.scoreError"));
+      return;
+    }
+    const scoreJson = parsed.value == null ? "null" : JSON.stringify(parsed.value);
+    const outSubtasks: Record<string, string | string[]> = {};
+    for (const [sid, list] of Object.entries(subMap())) {
+      if (list.length === 1) outSubtasks[sid] = list[0]!;
+      else if (list.length > 1) outSubtasks[sid] = list;
+    }
+    const res = preview.setSolutionScoring(
+      props.problemId,
+      props.solutionName,
+      scoreJson,
+      JSON.stringify(outSubtasks),
+    );
+    if (!res.ok) {
+      inlineError.set(res.error ?? t("ctx.updatePackage"));
+      return;
+    }
+    props.onClose();
+    props.onSaved();
+  }
+
+  return (
+    <Modal open={props.open} onClose={props.onClose} width={450} testID="solution-scoring-modal">
+      <View style={{ padding: 18, gap: 13 }}>
+        <ModalHeader
+          icon="scale"
+          title={t("build.scoring.modalTitle", { name: props.solutionName })}
+          subtitle={t("build.scoring.modalSubtitle")}
+        />
+
+        <View style={{ gap: 5 }}>
+          <FieldLabel label={t("build.scoring.scoreLabel")} />
+          <Input
+            testID="solution-score-expect-input"
+            value={scoreInput()}
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder={t("build.scoring.scorePlaceholder")}
+            onChange={(e) => {
+              scoreInput.set(e.value);
+              if (inlineError()) inlineError.set(undefined);
+            }}
+            onSubmit={submit}
+            class={
+              inlineError()
+                ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] placeholder:text-muted-foreground focus:border-destructive focus:ring-1 focus:ring-inset focus:ring-destructive"
+                : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+            }
+            style={{ fontVariant: ["tabular-nums"] }}
+          />
+          <Text
+            style={{ fontSize: 12, numberOfLines: 1, textOverflow: "ellipsis" }}
+            class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
+          >
+            {inlineError() ?? t("build.scoring.scoreHint")}
+          </Text>
+        </View>
+
+        <If when={props.subtasks.length > 0}>
+          <View style={{ gap: 6 }}>
+            <FieldLabel label={t("build.scoring.subtasksLabel")} />
+            <View style={{ gap: 6 }}>
+              <Each of={props.subtasks} key={(s) => s.id}>
+                {(s) => {
+                  const cur = () => subMap()[s().id];
+                  const curLabel = () => (cur() && cur()!.length > 0 ? cur()!.join(" / ") : t("build.scoring.anyVerdict"));
+                  return (
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                        {`${t("build.table.subtaskHeader", { id: s().id })}  (${s().score})`}
+                      </Text>
+                      <AppMenu
+                        align="end"
+                        minWidth={150}
+                        entries={[
+                          { id: "__any__", label: t("build.scoring.anyVerdict"), checked: !cur() },
+                          ...EXPECT_PRESETS.map((preset) => ({
+                            id: preset.join(","),
+                            label: preset.join(" / "),
+                            checked: cur()?.join(",") === preset.join(","),
+                          })),
+                        ]}
+                        onSelect={(id) => {
+                          if (id === "__any__") setSubtaskVerdict(s().id, null);
+                          else setSubtaskVerdict(s().id, id.split(","));
+                        }}
+                        trigger={
+                          <View
+                            class="border border-border bg-card hover:bg-muted"
+                            style={{
+                              height: 28,
+                              minWidth: 112,
+                              paddingLeft: 9,
+                              paddingRight: 7,
+                              borderRadius: 6,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                              {curLabel()}
+                            </Text>
+                            <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                          </View>
+                        }
+                      />
+                    </View>
+                  );
+                }}
+              </Each>
+            </View>
+          </View>
+        </If>
+
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn
+            testID="solution-scoring-submit"
+            label={t("build.subtasks.save")}
+            variant="primary"
+            onPress={submit}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Package scaffold initialization modal allowing optional Phase 3C features. */
+export function InitPackageModal(props: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (opts: { interactive: boolean; runs: number | null; subtasks: boolean }) => void;
+}) {
+  const interactive = signal(false);
+  const subtasks = signal(false);
+  const runs = signal(1);
+
+  effect(() => {
+    if (props.open) {
+      untracked(() => {
+        interactive.set(false);
+        subtasks.set(false);
+        runs.set(1);
+      });
+    }
+  });
+
+  return (
+    <Modal open={props.open} onClose={props.onClose} width={430} testID="init-package-modal">
+      <View style={{ padding: 18, gap: 14 }}>
+        <ModalHeader
+          icon="database"
+          title={t("build.initModal.title")}
+          subtitle={t("build.initModal.subtitle")}
+        />
+
+        <View style={{ gap: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                {t("build.initModal.interactive")}
+              </Text>
+              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                {t("build.initModal.interactiveDesc")}
+              </Text>
+            </View>
+            <Switch checked={interactive()} onChange={(e) => interactive.set(e.checked)} />
+          </View>
+
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                {t("build.initModal.subtasks")}
+              </Text>
+              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                {t("build.initModal.subtasksDesc")}
+              </Text>
+            </View>
+            <Switch checked={subtasks()} onChange={(e) => subtasks.set(e.checked)} />
+          </View>
+
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+              {t("build.initModal.runs")}
+            </Text>
+            <AppMenu
+              align="end"
+              minWidth={150}
+              entries={[1, 2, 3, 4].map((n) => ({
+                id: String(n),
+                label: n === 1 ? t("build.interactor.runsSingle") : t("build.interactor.runsMulti", { count: n }),
+                checked: runs() === n,
+              }))}
+              onSelect={(id) => runs.set(Number.parseInt(id, 10) || 1)}
+              trigger={
+                <View
+                  class="border border-border bg-card hover:bg-muted"
+                  style={{
+                    height: 28,
+                    paddingLeft: 9,
+                    paddingRight: 7,
+                    borderRadius: 6,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                    {runs() === 1 ? t("build.interactor.runsSingle") : t("build.interactor.runsMulti", { count: runs() })}
+                  </Text>
+                  <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                </View>
+              }
+            />
+          </View>
+        </View>
+
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn
+            testID="init-package-modal-confirm"
+            label={t("build.initModal.confirm")}
+            variant="primary"
+            onPress={() => {
+              props.onClose();
+              props.onConfirm({
+                interactive: interactive(),
+                runs: runs() >= 2 ? runs() : null,
+                subtasks: subtasks(),
+              });
             }}
           />
         </View>

@@ -24,6 +24,7 @@ import { dialog, goSpace, onExternalChange, preview, type UiError } from "../sto
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import {
+  buildPackageModeBadges,
   BUILTIN_CHECKERS,
   canInlineEditTest,
   cellVisualStyle,
@@ -31,8 +32,13 @@ import {
   EXPECT_PRESETS,
   formatAcVsTleMargin,
   formatBytesCompact,
+  formatScoreExpect,
+  formatScoreRatioPercent,
+  formatScoreValue,
   formatSolutionConclusion,
+  formatSolutionScoreSummary,
   formatStdTimeRatio,
+  groupMatrixRowsBySubtask,
   groupTestRows,
   humanizeCheckText,
   isCellVerdictAnomaly,
@@ -54,13 +60,25 @@ import {
   type PackageInspectionData,
   type SafetyMarginData,
   type SolutionSummaryData,
+  type SubtaskSummaryData,
   type TestSummaryData,
 } from "./buildLogic";
+import {
+  formatExternalRatio,
+  inferAdoptExpect,
+  parseExternalProblemReport,
+  parseSanitizerReport,
+  type ExternalProblemReportData,
+  type ExternalSubmissionResultData,
+  type SanitizerReportData,
+} from "./readinessLogic";
 import {
   AddGeneratorBatchModal,
   ConfirmDeleteRuleModal,
   ConfirmPackageDeleteModal,
   CreateSourceModal,
+  SolutionScoringModal,
+  SubtaskModal,
   type PendingDeleteTarget,
 } from "./PackageModals";
 
@@ -73,14 +91,19 @@ export interface BuildConsoleController {
   filterCount(): number;
   toggleFilter(): void;
   running(): boolean;
+  runningSanitize(): boolean;
+  runningExternal(): boolean;
+  sanitizerStatus(): "passed" | "failed" | "unsupported" | "not_run";
   quickRunDone(): boolean;
-  startRun(mode: "debug" | "verify"): void;
+  startRun(mode: "debug" | "verify" | "sanitize"): void;
+  pickAndRunExternal(): void;
   cancelRun(): void;
 }
 
 /**
  * Authoring actions rendered directly in StudioView's TitleBar trailing slot:
  * - Status pill: neutral surface + small semantic dot (green tint ONLY when ready for contest)
+ * - Phase 3D: UB Check & Trial Run External buttons (fixed slots, zero layout shift)
  * - Filter button: stays present in fixed slot (disabled when not on Results view)
  * - Primary CTA: constant "验证" label (swaps in-place with outline "取消" while running)
  */
@@ -89,6 +112,15 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
   const running = () => props.ctrl.running();
   const filterCount = () => props.ctrl.filterCount();
   const canFilter = () => props.ctrl.canFilter();
+  const sanStatus = () => props.ctrl.sanitizerStatus();
+  const sanDotColor = () => {
+    const dark = colorScheme() === "dark";
+    const s = sanStatus();
+    if (s === "passed") return dark ? "#4ade80" : "#16a34a";
+    if (s === "failed") return dark ? "#f87171" : "#dc2626";
+    if (s === "unsupported") return dark ? "#fbbf24" : "#d97706";
+    return undefined;
+  };
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -118,6 +150,43 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
         </Text>
         <Icon name={pill().expanded ? "chevronDown" : "chevronRight"} size={12} tone="secondary-foreground" />
       </View>
+
+      {/* Phase 3D: UB Check button */}
+      <View style={{ position: "relative", flexShrink: 0 }}>
+        <Btn
+          testID="build-sanitize-btn"
+          label={t("build.sanitize.button")}
+          icon="shieldCheck"
+          variant="outline"
+          disabled={props.readOnly || running()}
+          tooltip={tip(t("build.sanitize.tooltip"))}
+          onPress={() => props.ctrl.startRun("sanitize")}
+        />
+        <If when={!!sanDotColor()}>
+          <View
+            style={{
+              position: "absolute",
+              top: 3,
+              right: 3,
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: sanDotColor(),
+            }}
+          />
+        </If>
+      </View>
+
+      {/* Phase 3D: Trial Run External Solutions button */}
+      <Btn
+        testID="build-external-btn"
+        label={t("build.external.button")}
+        icon="play"
+        variant="outline"
+        disabled={props.ctrl.runningExternal()}
+        tooltip={tip(t("build.external.tooltip"))}
+        onPress={() => props.ctrl.pickAndRunExternal()}
+      />
 
       {/* Filter button — stays in place (disabled when on detail view so status pill never shifts!) */}
       <Btn
@@ -218,10 +287,14 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
 
 type TreeSelection =
   | { kind: "results" }
+  | { kind: "sanitizer" }
+  | { kind: "external" }
   | { kind: "testGroup"; groupId: string; testIndex: number }
   | { kind: "selfTests"; relPath?: string }
   | { kind: "validator" }
+  | { kind: "interactor" }
   | { kind: "checker" }
+  | { kind: "subtasks" }
   | { kind: "generator"; file: string }
   | { kind: "solution"; name: string };
 
@@ -274,6 +347,10 @@ export function BuildConsole(props: {
   const addGenInitial = signal<string | undefined>(undefined);
   const deleteRuleIndex = signal<number | undefined>(undefined);
   const pendingDelete = signal<PendingDeleteTarget | undefined>(undefined);
+  const collapsedSubtasks = signal<Record<string, boolean>>({});
+  const subtaskModalOpen = signal(false);
+  const editingSubtask = signal<SubtaskSummaryData | undefined>(undefined);
+  const scoringModalSolution = signal<string | undefined>(undefined);
   const dirtyUndoNotice = signal<number | undefined>(undefined);
   const notice = signal<UiError | undefined>(undefined);
 
@@ -281,6 +358,21 @@ export function BuildConsole(props: {
   const buildStatus = signal<PackageBuildStatusJs>(preview.packageBuildStatus());
   const finishedReport = signal<BuildReportData | undefined>(undefined);
   const liveCells = signal<MatrixCellData[]>([]);
+
+  // Phase 3D: Isolated Sanitizer (UB Check) & External Trial Run state
+  const sanitizerReport = signal<SanitizerReportData | undefined>(undefined);
+  const externalReport = signal<ExternalProblemReportData | undefined>(undefined);
+  const externalMarkdown = signal<string | undefined>(undefined);
+  const externalRunning = signal(false);
+  const externalExported = createTransientFlag(1600);
+  const adoptedExternalPaths = signal<Record<string, boolean>>({});
+
+  function refreshSanitizerReport(slug: string) {
+    const res = preview.loadSanitizerReport(slug);
+    if (res.ok) {
+      sanitizerReport.set(parseSanitizerReport(res.reportJson));
+    }
+  }
 
   // Reset per-problem state when switching problems
   let lastSlug = "";
@@ -304,6 +396,15 @@ export function BuildConsole(props: {
         lastFullSummaries.set(new Map());
         lastFullMargin.set(undefined);
         batchEditRuleIdx.set(undefined);
+        collapsedSubtasks.set({});
+        subtaskModalOpen.set(false);
+        editingSubtask.set(undefined);
+        scoringModalSolution.set(undefined);
+        externalReport.set(undefined);
+        externalMarkdown.set(undefined);
+        externalRunning.set(false);
+        adoptedExternalPaths.set({});
+        refreshSanitizerReport(slug);
       }
     });
   });
@@ -321,6 +422,7 @@ export function BuildConsole(props: {
     if (relevant) {
       finishedReport.set(undefined);
       fileRefreshKey.set(untracked(fileRefreshKey) + 1);
+      refreshSanitizerReport(slug);
       props.onRefreshPackage();
     }
   });
@@ -395,15 +497,20 @@ export function BuildConsole(props: {
           lastSeenSeq = next.seq;
           liveCells.set([]);
           if (next.reportJson && next.slug === untracked(() => props.problemId)) {
-            try {
-              const rep = JSON.parse(next.reportJson) as BuildReportData;
-              finishedReport.set(rep);
-              // Tier 3 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
-              if (!next.cancelled && !next.error && (rep.mode === "debug" || rep.subset)) {
-                quickRunDone.trigger();
+            if (next.mode === "sanitize") {
+              const san = parseSanitizerReport(next.reportJson);
+              if (san) sanitizerReport.set(san);
+            } else {
+              try {
+                const rep = JSON.parse(next.reportJson) as BuildReportData;
+                finishedReport.set(rep);
+                // Tier 3 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
+                if (!next.cancelled && !next.error && (rep.mode === "debug" || rep.subset)) {
+                  quickRunDone.trigger();
+                }
+              } catch {
+                // ignore
               }
-            } catch {
-              // ignore
             }
           }
           if (next.error) {
@@ -411,7 +518,11 @@ export function BuildConsole(props: {
           } else {
             notice.set(undefined);
           }
-          props.onRefreshPackage();
+          if (next.mode === "sanitize") {
+            refreshSanitizerReport(untracked(() => props.problemId));
+          } else {
+            props.onRefreshPackage();
+          }
         }
       }
     }, 120) as unknown as number;
@@ -437,6 +548,7 @@ export function BuildConsole(props: {
           index: et.index,
           name: et.name,
           tag: et.tag ?? rt?.tag ?? null,
+          subtask: et.subtask ?? rt?.subtask ?? null,
           is_sample: et.is_sample,
           size_bytes: rt?.size_bytes ?? 0,
           gen_cmd: et.gen_cmd ?? rt?.gen_cmd ?? null,
@@ -512,6 +624,22 @@ export function BuildConsole(props: {
     return rows.filter((r) => anom.has(r.index));
   });
 
+  const subtasks = computed<SubtaskSummaryData[]>(() => {
+    const ins = inspection()?.subtasks;
+    if (ins && ins.length > 0) return ins;
+    return activeReport()?.subtasks ?? [];
+  });
+
+  const totalSubtaskScore = computed<number | null>(() => {
+    if (inspection()?.total_score != null) return inspection()!.total_score!;
+    if (activeReport()?.total_score != null) return activeReport()!.total_score!;
+    const list = subtasks();
+    return list.length > 0 ? list.reduce((acc, s) => acc + s.score, 0) : null;
+  });
+
+  const modeBadges = computed(() => buildPackageModeBadges(inspection(), activeReport(), isZh()));
+  const matrixSubtaskGroups = computed(() => groupMatrixRowsBySubtask(displayedTableRows(), subtasks()));
+
   const selectedCellData = computed(() => {
     const sel = selectedCell();
     if (!sel) return undefined;
@@ -565,16 +693,20 @@ export function BuildConsole(props: {
     selection.set({ kind: "testGroup", groupId, testIndex });
   }
 
-  function startRun(mode: "debug" | "verify") {
+  function startRun(mode: "debug" | "verify" | "sanitize") {
     if (props.readOnly || isRunningThis()) return;
     notice.set(undefined);
     checksExpanded.set(false);
     filterOpen.set(false);
-    const hasFilter = filterTests().length > 0 || filterSolutions().length > 0;
-    const effectiveMode = hasFilter ? "debug" : mode;
+    const hasFilter = mode !== "sanitize" && (filterTests().length > 0 || filterSolutions().length > 0);
+    const effectiveMode = mode === "sanitize" ? "sanitize" : hasFilter ? "debug" : mode;
     const testsArg = hasFilter && filterTests().length > 0 ? filterTests() : null;
     const solsArg = hasFilter && filterSolutions().length > 0 ? filterSolutions() : null;
-    liveCells.set([]);
+    if (mode === "sanitize") {
+      selection.set({ kind: "sanitizer" });
+    } else {
+      liveCells.set([]);
+    }
     const res = preview.startPackageBuild(props.problemId, effectiveMode, testsArg, solsArg);
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("ctx.packageBuild") });
@@ -584,6 +716,70 @@ export function BuildConsole(props: {
     lastSeenSeq = next.seq - 1;
     buildStatus.set(next);
     startPolling();
+  }
+
+  async function pickAndRunExternal() {
+    if (externalRunning()) return;
+    notice.set(undefined);
+    checksExpanded.set(false);
+    filterOpen.set(false);
+    const picked = await preview.pickCppFiles({
+      title: t("build.external.pickerTitle"),
+      buttonLabel: t("build.external.pickerButton"),
+      filterLabel: t("build.external.pickerFilter"),
+    });
+    if (picked.cancelled) return;
+    if (picked.error) {
+      notice.set({ error: picked.error, context: t("build.external.button") });
+      return;
+    }
+    if (picked.paths.length === 0) return;
+    selection.set({ kind: "external" });
+    externalRunning.set(true);
+    const slug = props.problemId;
+    const res = await preview.runExternalProblemSolutions(slug, picked.paths, !props.readOnly);
+    externalRunning.set(false);
+    if (slug !== props.problemId) return;
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("build.external.button") });
+      return;
+    }
+    externalReport.set(parseExternalProblemReport(res.reportJson));
+    externalMarkdown.set(res.markdown ?? undefined);
+  }
+
+  async function exportExternalMarkdown() {
+    const md = externalMarkdown();
+    if (!md) return;
+    const res = await preview.saveMarkdownReport(`${props.problemId}-external-report.md`, md, {
+      title: t("readiness.exportExternalDialogTitle"),
+      buttonLabel: t("readiness.exportButton"),
+      filterLabel: t("readiness.exportFilter"),
+    });
+    if (res.cancelled) return;
+    if (!res.ok) {
+      notice.set({ error: res.error, context: t("build.external.exportMd") });
+      return;
+    }
+    externalExported.trigger();
+  }
+
+  function adoptExternal(sub: ExternalSubmissionResultData) {
+    if (props.readOnly) return;
+    const res = preview.adoptExternalSolution(
+      props.problemId,
+      sub.file_path,
+      null,
+      inferAdoptExpect(sub.verdict),
+      null,
+      false,
+    );
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("build.external.adopt") });
+      return;
+    }
+    adoptedExternalPaths.set({ ...adoptedExternalPaths(), [sub.file_path]: true });
+    props.onRefreshPackage();
   }
 
   function cancelRun() {
@@ -677,8 +873,12 @@ export function BuildConsole(props: {
       filterOpen.set(!filterOpen());
     },
     running: () => isRunningThis(),
+    runningSanitize: () => isRunningThis() && buildStatus().mode === "sanitize",
+    runningExternal: () => externalRunning(),
+    sanitizerStatus: () => sanitizerReport()?.status ?? "not_run",
     quickRunDone: () => quickRunDone.active(),
     startRun,
+    pickAndRunExternal: () => void pickAndRunExternal(),
     cancelRun,
   });
   cleanup(() => props.controller?.(undefined));
@@ -694,6 +894,10 @@ export function BuildConsole(props: {
     filterOpen.set(false);
     if (relPath === "validator.cpp" || relPath === inspection()?.files?.validator) {
       selection.set({ kind: "validator" });
+      return;
+    }
+    if (relPath === "interactor.cpp" || relPath === inspection()?.files?.interactor) {
+      selection.set({ kind: "interactor" });
       return;
     }
     if (relPath === "checker.cpp" || relPath === inspection()?.files?.custom_checker) {
@@ -829,6 +1033,45 @@ export function BuildConsole(props: {
     props.onRefreshPackage();
   }
 
+  function handleCreateInteractor() {
+    if (props.readOnly) return;
+    const res = preview.createPackageSource(props.problemId, "interactor", "interactor");
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      return;
+    }
+    finishedReport.set(undefined);
+    props.onRefreshPackage();
+    selection.set({ kind: "interactor" });
+  }
+
+  function handleSetRuns(runs: number) {
+    if (props.readOnly) return;
+    const res = preview.setPackageRuns(props.problemId, runs >= 2 ? runs : null);
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      return;
+    }
+    finishedReport.set(undefined);
+    props.onRefreshPackage();
+  }
+
+  function handleSetTestSubtask(ruleIndex: number, subtask: string | null) {
+    if (props.readOnly) return;
+    const res = preview.setTestSubtask(props.problemId, ruleIndex, subtask);
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      return;
+    }
+    finishedReport.set(undefined);
+    props.onRefreshPackage();
+  }
+
+  function toggleSubtaskCollapsed(key: string) {
+    const cur = collapsedSubtasks();
+    collapsedSubtasks.set({ ...cur, [key]: !cur[key] });
+  }
+
   function handleConfirmDeleteRule() {
     const idx = deleteRuleIndex();
     if (idx == null || props.readOnly) return;
@@ -897,6 +1140,22 @@ export function BuildConsole(props: {
       }
       finishedReport.set(undefined);
       selection.set({ kind: "selfTests", relPath: remaining[0] });
+      props.onRefreshPackage();
+    } else if (target.kind === "interactor") {
+      const res = preview.deleteInteractor(props.problemId);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
+      props.onRefreshPackage();
+    } else if (target.kind === "subtask") {
+      const res = preview.deleteSubtask(props.problemId, target.id, true);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
       props.onRefreshPackage();
     }
   }
@@ -1022,6 +1281,40 @@ export function BuildConsole(props: {
                   );
                 }}
               />
+              <TreeRow
+                testID="tree-item-interactor"
+                icon="bot"
+                label={t("build.tree.interactor")}
+                sub={
+                  (inspection()?.runs ?? 1) > 1
+                    ? `×${inspection()?.runs}`
+                    : inspection()?.files?.interactor
+                      ? undefined
+                      : t("build.tree.interactorOff")
+                }
+                active={selection().kind === "interactor"}
+                onPress={() => selection.set({ kind: "interactor" })}
+                onContextMenu={(e) => {
+                  const intFile = inspection()?.files?.interactor;
+                  void DesktopMenu.popup(
+                    [
+                      { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "interactor" }) },
+                      ...(intFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(intFile) }] : []),
+                      ...(intFile && !props.readOnly
+                        ? [
+                            { type: "separator" as const },
+                            {
+                              label: t("build.interactor.deleteTooltip"),
+                              destructive: true,
+                              onSelect: () => pendingDelete.set({ kind: "interactor" }),
+                            },
+                          ]
+                        : []),
+                    ],
+                    e.pagePosition,
+                  );
+                }}
+              />
             </View>
 
             {/* 3. Solutions (uniform `预期 WA` labels, small semantic dot, no ✓) */}
@@ -1053,7 +1346,9 @@ export function BuildConsole(props: {
                       sub={
                         role() === "main"
                           ? undefined
-                          : `${t("build.programs.expectPrefix")} ${spec().expected.join("/")}`
+                          : formatScoreExpect(spec().score)
+                            ? t("build.tree.subtasksPts", { score: formatScoreExpect(spec().score)! })
+                            : `${t("build.programs.expectPrefix")} ${spec().expected.join("/")}`
                       }
                       active={selection().kind === "solution" && (selection() as { kind: "solution"; name: string }).name === spec().name}
                       statusDot={sum() ? (sum()!.matched ? "ok" : "fail") : undefined}
@@ -1195,6 +1490,19 @@ export function BuildConsole(props: {
                 }
               />
 
+              <TreeRow
+                testID="tree-item-subtasks"
+                icon="listOrdered"
+                label={t("build.tree.subtasks")}
+                sub={
+                  totalSubtaskScore() != null
+                    ? t("build.tree.subtasksPts", { score: totalSubtaskScore()! })
+                    : undefined
+                }
+                active={selection().kind === "subtasks"}
+                onPress={() => selection.set({ kind: "subtasks" })}
+              />
+
               <Each of={testGroups()} key={(g) => g.id}>
                 {(grp) => {
                   const isActive = () =>
@@ -1294,6 +1602,32 @@ export function BuildConsole(props: {
                   );
                 }}
               />
+              <View style={{ height: 1, marginTop: 6, marginBottom: 6 }} class="bg-border" />
+              <TreeRow
+                testID="tree-item-sanitizer"
+                icon="shieldCheck"
+                label={t("build.sanitize.button")}
+                active={selection().kind === "sanitizer"}
+                statusDot={
+                  sanitizerReport()?.status === "failed"
+                    ? "fail"
+                    : sanitizerReport()?.status === "passed"
+                      ? "ok"
+                      : undefined
+                }
+                onPress={() => selection.set({ kind: "sanitizer" })}
+              />
+              <TreeRow
+                testID="tree-item-external"
+                icon="play"
+                label={
+                  externalReport()?.submissions.length
+                    ? `${t("build.external.button")} (${externalReport()!.submissions.length})`
+                    : t("build.external.button")
+                }
+                active={selection().kind === "external"}
+                onPress={() => selection.set({ kind: "external" })}
+              />
             </View>
           </Scroll>
 
@@ -1309,6 +1643,50 @@ export function BuildConsole(props: {
             {/* A. Results Overview — starts immediately at top of right pane */}
             <If when={selection().kind === "results"}>
               <View style={{ flex: 1, minHeight: 0 }}>
+                {/* Compact Phase 3C mode badges (interactive / multi-run / OI subtasks) — hidden for standard problems */}
+                <If when={modeBadges().length > 0}>
+                  <View
+                    testID="build-mode-badges-bar"
+                    style={{
+                      height: 32,
+                      paddingLeft: 16,
+                      paddingRight: 14,
+                      borderBottomWidth: 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                    class="border-b-border bg-background/25"
+                  >
+                    <Each of={modeBadges()} key={(b) => b.id}>
+                      {(badge) => (
+                        <View
+                          testID={`build-mode-badge-${badge().id}`}
+                          onPress={() => {
+                            if (badge().id === "subtasks") selection.set({ kind: "subtasks" });
+                            else selection.set({ kind: "interactor" });
+                          }}
+                          style={{
+                            height: 21,
+                            paddingLeft: 7,
+                            paddingRight: 7,
+                            borderRadius: 5,
+                            justifyContent: "center",
+                          }}
+                          class="bg-muted hover:bg-accent border border-border/60"
+                        >
+                          <Text
+                            style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                            class="text-secondary-foreground"
+                          >
+                            {badge().label}
+                          </Text>
+                        </View>
+                      )}
+                    </Each>
+                  </View>
+                </If>
+
                 {/* Dirty inputs notice + Undo (only when dirty inputs exist or just fixed) */}
                 <If when={dirtyInputs().length > 0}>
                   <View
@@ -1520,143 +1898,299 @@ export function BuildConsole(props: {
                       </Each>
                     </View>
 
-                    {/* Scrollable Compact Single-Line Test Rows (34px height) */}
-                    <Scroll style={{ flex: 1, minHeight: 0 }}>
-                      <Each of={displayedTableRows()} key={(r) => String(r.index)}>
-                        {(row) => (
-                          <View
-                            style={{
-                              height: 34,
-                              paddingLeft: 16,
-                              paddingRight: 16,
-                              borderBottomWidth: 1,
-                              flexDirection: "row",
-                              alignItems: "center",
-                            }}
-                            class="border-border/60 hover:bg-muted/30"
-                          >
-                            {/* Test case label cell */}
-                            <View
-                              onPress={() => selectTestByIndex(row().index)}
-                              style={{
-                                width: COL_TEST_W,
-                                flexShrink: 0,
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 6,
-                                paddingRight: 10,
-                              }}
-                            >
-                              <Text
-                                style={{ fontSize: 12, fontVariant: ["tabular-nums"], width: 20, flexShrink: 0 }}
-                                class="text-muted-foreground"
+                    {/* Sticky OI Total Score Row (only when subtasks are declared) */}
+                    <If when={subtasks().length > 0}>
+                      <View
+                        testID="build-total-score-row"
+                        style={{
+                          height: 28,
+                          paddingLeft: 16,
+                          paddingRight: 16,
+                          borderBottomWidth: 1,
+                          flexDirection: "row",
+                          alignItems: "center",
+                        }}
+                        class="border-border bg-muted/15"
+                      >
+                        <View style={{ width: COL_TEST_W, flexShrink: 0 }}>
+                          <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
+                            {t("build.table.totalScore")}
+                          </Text>
+                        </View>
+                        <Each of={solutionSpecs()} key={(s) => s.name}>
+                          {(spec) => {
+                            const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
+                            const scoreText = () => formatSolutionScoreSummary(sum());
+                            return (
+                              <View
+                                style={{
+                                  flex: 1,
+                                  minWidth: 120,
+                                  maxWidth: 180,
+                                  paddingRight: 10,
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                }}
                               >
-                                {String(row().index).padStart(2, "0")}
-                              </Text>
-                              <Text
-                                style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
-                                class="text-foreground"
-                              >
-                                {row().name}
-                              </Text>
-                              <If when={row().validator_ok === false}>
-                                <Icon name="triangleAlert" size={12} tone="destructive" />
-                              </If>
-                              <If when={row().size_bytes > 0}>
-                                <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
-                                  {formatBytesCompact(row().size_bytes)}
+                                <Text
+                                  style={{ fontSize: 11.5, fontWeight: 600, fontVariant: ["tabular-nums"] }}
+                                  class={sum() && !sum()!.matched ? "text-destructive" : "text-foreground"}
+                                >
+                                  {scoreText() ?? "-"}
                                 </Text>
-                              </If>
-                            </View>
+                              </View>
+                            );
+                          }}
+                        </Each>
+                      </View>
+                    </If>
 
-                            {/* P0-2 Quiet Solution Verdict Cells (fluid 120–180px, only anomalies have solid fill!) */}
-                            <Each of={solutionSpecs()} key={(s) => s.name}>
-                              {(spec) => {
-                                const cell = () => matrixLookup().get(matrixCellKey(row().index, spec().name));
-                                const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
-                                const isAnom = () => {
-                                  const c = cell();
-                                  if (!c) return false;
-                                  return isCellVerdictAnomaly(c.verdict, spec().expected, spec().is_main, sum()?.matched);
-                                };
-                                const isPicked = () => {
-                                  const s = selectedCell();
-                                  return s?.testIndex === row().index && s?.solution === spec().name;
-                                };
-                                return (
+                    {/* Scrollable Compact Single-Line Test Rows (with optional collapsible OI subtask headers) */}
+                    <Scroll style={{ flex: 1, minHeight: 0 }}>
+                      <Each of={matrixSubtaskGroups()} key={(g) => g.key}>
+                        {(group) => {
+                          const isGrouped = () => subtasks().length > 0;
+                          const isCollapsed = () => isGrouped() && Boolean(collapsedSubtasks()[group().key]);
+                          return (
+                            <View>
+                              <If when={isGrouped()}>
+                                <View
+                                  testID={`matrix-subtask-header-${group().subtaskId ?? "unassigned"}`}
+                                  style={{
+                                    height: 30,
+                                    paddingLeft: 16,
+                                    paddingRight: 16,
+                                    borderBottomWidth: 1,
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                  }}
+                                  class="border-border/80 bg-muted/30"
+                                >
                                   <View
-                                    onPress={() => {
-                                      if (cell()) {
-                                        checksExpanded.set(false);
-                                        filterOpen.set(false);
-                                        selectedCell.set({ testIndex: row().index, solution: spec().name });
-                                      }
-                                    }}
+                                    onPress={() => toggleSubtaskCollapsed(group().key)}
                                     style={{
-                                      flex: 1,
-                                      minWidth: 120,
-                                      maxWidth: 180,
+                                      width: COL_TEST_W,
+                                      flexShrink: 0,
+                                      flexDirection: "row",
+                                      alignItems: "center",
+                                      gap: 5,
                                       paddingRight: 10,
-                                      justifyContent: "center",
                                     }}
                                   >
-                                    <If
-                                      when={cell()}
-                                      else={
-                                        <Text style={{ fontSize: 12, paddingLeft: 6 }} class="text-muted-foreground">
-                                          {"-"}
-                                        </Text>
-                                      }
+                                    <Icon
+                                      name={isCollapsed() ? "chevronRight" : "chevronDown"}
+                                      size={12}
+                                      tone="secondary-foreground"
+                                    />
+                                    <Text
+                                      style={{ fontSize: 12, fontWeight: 600, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                      class="text-foreground"
                                     >
-                                      {(c) => {
-                                        const st = () => cellVisualStyle(c().verdict, isAnom(), colorScheme() === "dark");
-                                        return (
-                                          <View
-                                            style={{
-                                              height: 24,
-                                              paddingLeft: 7,
-                                              paddingRight: 7,
-                                              borderRadius: 5,
-                                              borderWidth: isPicked() ? 2 : 0,
-                                              backgroundColor: st().bg,
-                                              borderColor: isPicked() ? token("primary") : "transparent",
-                                              opacity: c().stale ? 0.5 : 1,
-                                              flexDirection: "row",
-                                              alignItems: "center",
-                                              justifyContent: "space-between",
-                                              gap: 6,
-                                            }}
-                                          >
-                                            <Text
-                                              style={{
-                                                fontSize: 11.5,
-                                                fontWeight: st().bold ? 600 : 500,
-                                                color: st().fg,
-                                                fontVariant: ["tabular-nums"],
-                                              }}
-                                            >
-                                              {c().verdict}
-                                            </Text>
-                                            <Text
-                                              style={{
-                                                fontSize: 11,
-                                                color: st().fg,
-                                                opacity: st().solid ? 0.9 : 0.72,
-                                                fontVariant: ["tabular-nums"],
-                                              }}
-                                            >
-                                              {`${c().cpu_time_ms} ms`}
-                                            </Text>
-                                          </View>
-                                        );
-                                      }}
+                                      {group().subtaskId
+                                        ? t("build.table.subtaskHeader", { id: group().subtaskId! })
+                                        : t("build.subtasks.unassigned")}
+                                    </Text>
+                                    <If when={group().summary}>
+                                      {(s) => (
+                                        <Text
+                                          style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                                          class="text-muted-foreground"
+                                        >
+                                          {t("build.tree.subtasksPts", { score: s().score })}
+                                        </Text>
+                                      )}
                                     </If>
                                   </View>
-                                );
-                              }}
-                            </Each>
-                          </View>
-                        )}
+
+                                  {/* Per-subtask score cells aligned with each solution column */}
+                                  <Each of={solutionSpecs()} key={(s) => s.name}>
+                                    {(spec) => {
+                                      const subScore = () => {
+                                        const sid = group().subtaskId;
+                                        if (!sid) return undefined;
+                                        const sum = summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
+                                        return sum?.subtask_scores?.find((ss) => ss.subtask_id === sid);
+                                      };
+                                      return (
+                                        <View
+                                          style={{
+                                            flex: 1,
+                                            minWidth: 120,
+                                            maxWidth: 180,
+                                            paddingRight: 10,
+                                            flexDirection: "row",
+                                            alignItems: "center",
+                                            gap: 6,
+                                          }}
+                                        >
+                                          <If when={subScore()}>
+                                            {(ss) => (
+                                              <Text
+                                                style={{ fontSize: 11, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                                                class={
+                                                  ss().matched === false
+                                                    ? "text-destructive"
+                                                    : ss().full_score
+                                                      ? "text-secondary-foreground"
+                                                      : "text-foreground"
+                                                }
+                                              >
+                                                {ss().full_score
+                                                  ? `${formatScoreValue(ss().score)} / ${ss().max_score}`
+                                                  : `${formatScoreValue(ss().score)} / ${ss().max_score}  ${ss().verdict}`}
+                                              </Text>
+                                            )}
+                                          </If>
+                                        </View>
+                                      );
+                                    }}
+                                  </Each>
+                                </View>
+                              </If>
+
+                              <If when={!isCollapsed()}>
+                                <Each of={group().rows} key={(r) => String(r.index)}>
+                                  {(row) => (
+                                    <View
+                                      style={{
+                                        height: 34,
+                                        paddingLeft: 16,
+                                        paddingRight: 16,
+                                        borderBottomWidth: 1,
+                                        flexDirection: "row",
+                                        alignItems: "center",
+                                      }}
+                                      class="border-border/60 hover:bg-muted/30"
+                                    >
+                                      {/* Test case label cell */}
+                                      <View
+                                        onPress={() => selectTestByIndex(row().index)}
+                                        style={{
+                                          width: COL_TEST_W,
+                                          flexShrink: 0,
+                                          flexDirection: "row",
+                                          alignItems: "center",
+                                          gap: 6,
+                                          paddingLeft: isGrouped() ? 10 : 0,
+                                          paddingRight: 10,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{ fontSize: 12, fontVariant: ["tabular-nums"], width: 20, flexShrink: 0 }}
+                                          class="text-muted-foreground"
+                                        >
+                                          {String(row().index).padStart(2, "0")}
+                                        </Text>
+                                        <Text
+                                          style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                          class="text-foreground"
+                                        >
+                                          {row().name}
+                                        </Text>
+                                        <If when={row().validator_ok === false}>
+                                          <Icon name="triangleAlert" size={12} tone="destructive" />
+                                        </If>
+                                        <If when={row().size_bytes > 0}>
+                                          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                                            {formatBytesCompact(row().size_bytes)}
+                                          </Text>
+                                        </If>
+                                      </View>
+
+                                      {/* P0-2 Quiet Solution Verdict Cells (fluid 120–180px, only anomalies have solid fill!) */}
+                                      <Each of={solutionSpecs()} key={(s) => s.name}>
+                                        {(spec) => {
+                                          const cell = () => matrixLookup().get(matrixCellKey(row().index, spec().name));
+                                          const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
+                                          const isAnom = () => {
+                                            const c = cell();
+                                            if (!c) return false;
+                                            return isCellVerdictAnomaly(c.verdict, spec().expected, spec().is_main, sum()?.matched);
+                                          };
+                                          const isPicked = () => {
+                                            const s = selectedCell();
+                                            return s?.testIndex === row().index && s?.solution === spec().name;
+                                          };
+                                          return (
+                                            <View
+                                              onPress={() => {
+                                                if (cell()) {
+                                                  checksExpanded.set(false);
+                                                  filterOpen.set(false);
+                                                  selectedCell.set({ testIndex: row().index, solution: spec().name });
+                                                }
+                                              }}
+                                              style={{
+                                                flex: 1,
+                                                minWidth: 120,
+                                                maxWidth: 180,
+                                                paddingRight: 10,
+                                                justifyContent: "center",
+                                              }}
+                                            >
+                                              <If
+                                                when={cell()}
+                                                else={
+                                                  <Text style={{ fontSize: 12, paddingLeft: 6 }} class="text-muted-foreground">
+                                                    {"-"}
+                                                  </Text>
+                                                }
+                                              >
+                                                {(c) => {
+                                                  const st = () => cellVisualStyle(c().verdict, isAnom(), colorScheme() === "dark");
+                                                  const partial = () => formatScoreRatioPercent(c().score_ratio, false);
+                                                  return (
+                                                    <View
+                                                      style={{
+                                                        height: 24,
+                                                        paddingLeft: 7,
+                                                        paddingRight: 7,
+                                                        borderRadius: 5,
+                                                        borderWidth: isPicked() ? 2 : 0,
+                                                        backgroundColor: st().bg,
+                                                        borderColor: isPicked() ? token("primary") : "transparent",
+                                                        opacity: c().stale ? 0.5 : 1,
+                                                        flexDirection: "row",
+                                                        alignItems: "center",
+                                                        justifyContent: "space-between",
+                                                        gap: 6,
+                                                      }}
+                                                    >
+                                                      <Text
+                                                        style={{
+                                                          fontSize: 11.5,
+                                                          fontWeight: st().bold ? 600 : 500,
+                                                          color: st().fg,
+                                                          fontVariant: ["tabular-nums"],
+                                                        }}
+                                                      >
+                                                        {partial() ? `${c().verdict} ${partial()!}` : c().verdict}
+                                                      </Text>
+                                                      <Text
+                                                        style={{
+                                                          fontSize: 11,
+                                                          color: st().fg,
+                                                          opacity: st().solid ? 0.9 : 0.72,
+                                                          fontVariant: ["tabular-nums"],
+                                                        }}
+                                                      >
+                                                        {`${c().cpu_time_ms} ms`}
+                                                      </Text>
+                                                    </View>
+                                                  );
+                                                }}
+                                              </If>
+                                            </View>
+                                          );
+                                        }}
+                                      </Each>
+                                    </View>
+                                  )}
+                                </Each>
+                              </If>
+                            </View>
+                          );
+                        }}
                       </Each>
                     </Scroll>
                   </View>
@@ -1897,6 +2431,47 @@ export function BuildConsole(props: {
                     />
                   ) : undefined;
 
+                const testSubtaskDropdown = () => {
+                  const rIdx = ruleIdx();
+                  if (props.readOnly || rIdx == null || subtasks().length === 0) return undefined;
+                  const curSub = activeGroup()?.subtask ?? row()?.subtask ?? null;
+                  return (
+                    <AppMenu
+                      align="end"
+                      minWidth={172}
+                      entries={[
+                        { id: "__none__", label: t("build.subtasks.assignNone"), checked: curSub == null },
+                        ...subtasks().map((s) => ({
+                          id: s.id,
+                          label: `${t("build.table.subtaskHeader", { id: s.id })}  (${s.score})`,
+                          checked: curSub === s.id,
+                        })),
+                      ]}
+                      onSelect={(id) => handleSetTestSubtask(rIdx, id === "__none__" ? null : id)}
+                      trigger={
+                        <View
+                          testID="test-subtask-dropdown"
+                          class="border border-border bg-card hover:bg-muted"
+                          style={{
+                            height: 28,
+                            paddingLeft: 9,
+                            paddingRight: 7,
+                            borderRadius: 6,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 5,
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                            {curSub ? t("build.table.subtaskHeader", { id: curSub }) : t("build.subtasks.assignNone")}
+                          </Text>
+                          <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                        </View>
+                      }
+                    />
+                  );
+                };
+
                 const deleteRuleBtn = () => {
                   if (props.readOnly) return undefined;
                   if (activeGroup()?.kind === "samples") {
@@ -2002,6 +2577,7 @@ export function BuildConsole(props: {
                             </View>
 
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                              {testSubtaskDropdown()}
                               {testDropdownSelector()}
                               <If when={paneItems().length > 1}>
                                 <Segmented
@@ -2158,6 +2734,7 @@ export function BuildConsole(props: {
                         icon={activeGroup()?.kind === "samples" ? "fileText" : "database"}
                         extraActions={
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            {testSubtaskDropdown()}
                             {testDropdownSelector()}
                             <If when={paneItems().length > 1}>
                               <Segmented
@@ -2303,6 +2880,281 @@ export function BuildConsole(props: {
                       onOpenExternal={openExternal}
                     />
                   )}
+                </If>
+              </View>
+            </If>
+
+            {/* D2. Interactor & Multi-run Detail View */}
+            <If when={selection().kind === "interactor"}>
+              {(() => {
+                const currentRuns = () => inspection()?.runs ?? 1;
+                const runsDropdown = () => (
+                  <AppMenu
+                    align="end"
+                    minWidth={160}
+                    entries={[1, 2, 3, 4].map((n) => ({
+                      id: String(n),
+                      label: n === 1 ? t("build.interactor.runsSingle") : t("build.interactor.runsMulti", { count: n }),
+                      checked: currentRuns() === n,
+                    }))}
+                    onSelect={(id) => handleSetRuns(Number.parseInt(id, 10) || 1)}
+                    trigger={
+                      <View
+                        testID="interactor-runs-trigger"
+                        class="border border-border bg-card hover:bg-muted"
+                        style={{
+                          height: 28,
+                          paddingLeft: 9,
+                          paddingRight: 7,
+                          borderRadius: 6,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 5,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                          {currentRuns() === 1
+                            ? t("build.interactor.runsSingle")
+                            : t("build.interactor.runsMulti", { count: currentRuns() })}
+                        </Text>
+                        <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                      </View>
+                    }
+                  />
+                );
+
+                return (
+                  <View style={{ flex: 1, minHeight: 0 }}>
+                    <If
+                      when={inspection()?.files?.interactor}
+                      else={
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                          <View
+                            style={{
+                              minHeight: 52,
+                              paddingLeft: 20,
+                              paddingRight: 16,
+                              paddingTop: 8,
+                              paddingBottom: 8,
+                              borderBottomWidth: 1,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                            }}
+                            class="border-border bg-background/30"
+                          >
+                            <View style={{ gap: 2 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                                <Icon name="bot" size={14.5} tone="secondary-foreground" />
+                                <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                                  {t("build.interactor.title")}
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                {t("build.interactor.runsHint")}
+                              </Text>
+                            </View>
+                            <If when={!props.readOnly}>{runsDropdown()}</If>
+                          </View>
+                          <EmptyState
+                            icon="bot"
+                            title={t("build.interactor.emptyTitle")}
+                            hint={t("build.interactor.emptyHint")}
+                            action={
+                              !props.readOnly ? (
+                                <Btn
+                                  testID="create-interactor-btn"
+                                  label={t("build.interactor.create")}
+                                  icon="plus"
+                                  variant="primary"
+                                  size="md"
+                                  onPress={handleCreateInteractor}
+                                />
+                              ) : undefined
+                            }
+                          />
+                        </View>
+                      }
+                    >
+                      {(rel) => (
+                        <InlineFileEditor
+                          problemId={props.problemId}
+                          relPath={rel()}
+                          readOnly={props.readOnly}
+                          refreshKey={fileRefreshKey()}
+                          title={t("build.tree.interactor")}
+                          icon="bot"
+                          extraActions={
+                            !props.readOnly ? (
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                {runsDropdown()}
+                                <IconBtn
+                                  testID="interactor-delete-btn"
+                                  icon="trash"
+                                  tone="muted-foreground"
+                                  tooltip={tip(t("build.interactor.deleteTooltip"))}
+                                  onPress={() => pendingDelete.set({ kind: "interactor" })}
+                                />
+                              </View>
+                            ) : undefined
+                          }
+                          onSaved={() => {
+                            finishedReport.set(undefined);
+                            props.onRefreshPackage();
+                          }}
+                          onOpenExternal={openExternal}
+                        />
+                      )}
+                    </If>
+                  </View>
+                );
+              })()}
+            </If>
+
+            {/* D3. OI Subtasks Management View */}
+            <If when={selection().kind === "subtasks"}>
+              <View style={{ flex: 1, minHeight: 0 }}>
+                <View
+                  style={{
+                    minHeight: 52,
+                    paddingLeft: 20,
+                    paddingRight: 16,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    borderBottomWidth: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                  class="border-border bg-background/30"
+                >
+                  <View style={{ gap: 2 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Icon name="listOrdered" size={14.5} tone="secondary-foreground" />
+                      <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                        {t("build.subtasks.title")}
+                      </Text>
+                      <If when={totalSubtaskScore() != null}>
+                        <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                          {t("build.subtasks.totalScore", { score: totalSubtaskScore()! })}
+                        </Text>
+                      </If>
+                      <If when={totalSubtaskScore() != null && totalSubtaskScore() !== 100}>
+                        <Text style={{ fontSize: 11.5 }} class="text-chart-4">
+                          {t("build.subtasks.scoreNot100")}
+                        </Text>
+                      </If>
+                    </View>
+                  </View>
+                  <If when={!props.readOnly}>
+                    <Btn
+                      testID="add-subtask-btn"
+                      label={t("build.subtasks.add")}
+                      icon="plus"
+                      variant="primary"
+                      onPress={() => {
+                        editingSubtask.set(undefined);
+                        subtaskModalOpen.set(true);
+                      }}
+                    />
+                  </If>
+                </View>
+
+                <If
+                  when={subtasks().length > 0}
+                  else={
+                    <EmptyState
+                      icon="listOrdered"
+                      title={t("build.subtasks.emptyTitle")}
+                      hint={t("build.subtasks.emptyHint")}
+                      action={
+                        !props.readOnly ? (
+                          <Btn
+                            testID="empty-add-subtask-btn"
+                            label={t("build.subtasks.add")}
+                            icon="plus"
+                            variant="primary"
+                            size="md"
+                            onPress={() => {
+                              editingSubtask.set(undefined);
+                              subtaskModalOpen.set(true);
+                            }}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  }
+                >
+                  <Scroll style={{ flex: 1 }} contentStyle={{ padding: 20, gap: 8 }}>
+                    <Each of={subtasks()} key={(s) => s.id}>
+                      {(sub) => (
+                        <View
+                          testID={`subtask-row-${sub().id}`}
+                          style={{
+                            paddingLeft: 14,
+                            paddingRight: 10,
+                            paddingTop: 10,
+                            paddingBottom: 10,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                          }}
+                          class="border-border bg-card"
+                        >
+                          <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                              <Text style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                                {t("build.table.subtaskHeader", { id: sub().id })}
+                              </Text>
+                              <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }} class="bg-muted">
+                                <Text style={{ fontSize: 11.5, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                                  {t("build.tree.subtasksPts", { score: sub().score })}
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                                {sub().scoring === "sum" ? t("build.subtasks.scoringSum") : t("build.subtasks.scoringMin")}
+                              </Text>
+                            </View>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                {t("build.subtasks.testCount", { count: sub().test_count })}
+                              </Text>
+                              <If when={(sub().depends?.length ?? 0) > 0}>
+                                <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  {`${t("build.subtasks.dependsLabel")}: ${sub().depends!.join(", ")}`}
+                                </Text>
+                              </If>
+                            </View>
+                          </View>
+
+                          <If when={!props.readOnly}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                              <IconBtn
+                                testID={`edit-subtask-${sub().id}`}
+                                icon="pencil"
+                                tone="muted-foreground"
+                                onPress={() => {
+                                  editingSubtask.set(sub());
+                                  subtaskModalOpen.set(true);
+                                }}
+                              />
+                              <IconBtn
+                                testID={`delete-subtask-${sub().id}`}
+                                icon="trash"
+                                tone="muted-foreground"
+                                onPress={() => pendingDelete.set({ kind: "subtask", id: sub().id })}
+                              />
+                            </View>
+                          </If>
+                        </View>
+                      )}
+                    </Each>
+                  </Scroll>
                 </If>
               </View>
             </If>
@@ -2531,6 +3383,19 @@ export function BuildConsole(props: {
                                     </View>
                                   }
                                 />
+                                <If when={subtasks().length > 0 && !spec()!.is_main}>
+                                  <Btn
+                                    testID={`solution-scoring-btn-${solName()}`}
+                                    label={
+                                      formatScoreExpect(spec()!.score)
+                                        ? t("build.scoring.buttonValue", { score: formatScoreExpect(spec()!.score)! })
+                                        : t("build.scoring.button")
+                                    }
+                                    icon="scale"
+                                    variant="outline"
+                                    onPress={() => scoringModalSolution.set(solName())}
+                                  />
+                                </If>
                                 <IconBtn
                                   testID="solution-delete-btn"
                                   icon="trash"
@@ -2552,6 +3417,409 @@ export function BuildConsole(props: {
                   </View>
                 );
               })()}
+            </If>
+
+            {/* Phase 3D: Isolated Sanitizer (ASan/UBSan) UB Check View */}
+            <If when={selection().kind === "sanitizer"}>
+              <View testID="build-sanitizer-view" style={{ flex: 1, minHeight: 0 }}>
+                <View
+                  style={{
+                    height: 46,
+                    paddingLeft: 16,
+                    paddingRight: 16,
+                    borderBottomWidth: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    flexShrink: 0,
+                  }}
+                  class="border-border"
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                      {t("build.sanitize.panelTitle")}
+                    </Text>
+                    <If when={sanitizerReport()}>
+                      {(rep) => {
+                        const dark = () => colorScheme() === "dark";
+                        const st = () => rep().status;
+                        const bg = () =>
+                          st() === "passed"
+                            ? "rgba(16,185,129,0.12)"
+                            : st() === "failed"
+                              ? "rgba(244,63,94,0.12)"
+                              : "rgba(245,158,11,0.12)";
+                        const fg = () =>
+                          st() === "passed"
+                            ? dark()
+                              ? "#4ade80"
+                              : "#15803d"
+                            : st() === "failed"
+                              ? dark()
+                                ? "#f87171"
+                                : "#b91c1c"
+                              : dark()
+                                ? "#fbbf24"
+                                : "#b45309";
+                        const label = () =>
+                          st() === "passed"
+                            ? t("build.sanitize.passed")
+                            : st() === "failed"
+                              ? t("build.sanitize.failed", {
+                                  count: (rep().findings?.length ?? 0) + (rep().compile_failures?.length ?? 0),
+                                })
+                              : t("build.sanitize.unsupported");
+                        return (
+                          <View style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center", backgroundColor: bg() }}>
+                            <Text style={{ fontSize: 11.5, fontWeight: 500, color: fg(), fontVariant: ["tabular-nums"] }}>{label()}</Text>
+                          </View>
+                        );
+                      }}
+                    </If>
+                    <If when={sanitizerReport()}>
+                      {(rep) => (
+                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                          {t("build.sanitize.relaxedLimit", { ms: rep().relaxed_time_limit_ms })}
+                        </Text>
+                      )}
+                    </If>
+                  </View>
+                  <Btn
+                    testID="build-sanitize-rerun-btn"
+                    label={isRunningThis() && buildStatus().mode === "sanitize" ? t("build.sanitize.running") : t("build.sanitize.rerun")}
+                    icon="shieldCheck"
+                    variant="outline"
+                    disabled={props.readOnly || isRunningThis()}
+                    onPress={() => startRun("sanitize")}
+                  />
+                </View>
+
+                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 12 }}>
+                  <If
+                    when={sanitizerReport()}
+                    else={
+                      <View style={{ paddingTop: 28, alignItems: "center", gap: 10 }}>
+                        <Icon name="shieldCheck" size={24} tone="muted-foreground" />
+                        <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                          {isRunningThis() && buildStatus().mode === "sanitize"
+                            ? t("build.sanitize.running")
+                            : t("build.sanitize.notRun")}
+                        </Text>
+                        <If when={!props.readOnly && !isRunningThis()}>
+                          <Btn
+                            label={t("build.sanitize.button")}
+                            icon="shieldCheck"
+                            variant="primary"
+                            onPress={() => startRun("sanitize")}
+                          />
+                        </If>
+                      </View>
+                    }
+                  >
+                    {(rep) => (
+                      <View style={{ gap: 12 }}>
+                        <If when={rep().status === "unsupported" && rep().unsupported_reason}>
+                          <View style={{ padding: 12, borderRadius: 8, borderWidth: 1 }} class="bg-muted/50 border-border">
+                            <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+                              {rep().unsupported_reason!}
+                            </Text>
+                          </View>
+                        </If>
+
+                        <If when={(rep().compile_failures?.length ?? 0) > 0}>
+                          <View style={{ gap: 8 }}>
+                            <Each of={rep().compile_failures ?? []} key={(cf) => `${cf.target}:${cf.source}`}>
+                              {(cf) => (
+                                <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 6 }} class="bg-card border-border">
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                                    <Text style={{ fontSize: 12.5, fontWeight: 500, fontFamily: MONO }} class="text-destructive">
+                                      {cf().target}
+                                    </Text>
+                                    <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                      {t("build.sanitize.compileFailed")}
+                                    </Text>
+                                  </View>
+                                  <Text style={{ fontSize: 11.5, fontFamily: MONO, lineHeight: 16 }} class="text-secondary-foreground">
+                                    {cf().stderr.slice(0, 1200)}
+                                  </Text>
+                                </View>
+                              )}
+                            </Each>
+                          </View>
+                        </If>
+
+                        <If when={(rep().findings?.length ?? 0) > 0}>
+                          <View style={{ gap: 8 }}>
+                            <Each of={rep().findings ?? []} key={(f, i) => `${f.target}:${f.test_index ?? i}:${f.summary}`}>
+                              {(f) => (
+                                <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 6 }} class="bg-card border-border">
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    <Text style={{ fontSize: 12.5, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
+                                      {f().target}
+                                    </Text>
+                                    <If when={!!f().test_name}>
+                                      <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-muted-foreground">
+                                        {f().test_name!}
+                                      </Text>
+                                    </If>
+                                  </View>
+                                  <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-destructive">
+                                    {f().summary}
+                                  </Text>
+                                  <If when={(f().stack_summary?.length ?? 0) > 0}>
+                                    <View style={{ padding: 8, borderRadius: 6, gap: 2 }} class="bg-muted">
+                                      <Each of={f().stack_summary ?? []} key="index">
+                                        {(line) => (
+                                          <Text style={{ fontSize: 11.5, fontFamily: MONO, lineHeight: 16 }} class="text-secondary-foreground">
+                                            {line()}
+                                          </Text>
+                                        )}
+                                      </Each>
+                                    </View>
+                                  </If>
+                                </View>
+                              )}
+                            </Each>
+                          </View>
+                        </If>
+
+                        <If when={rep().status === "passed" && (rep().findings?.length ?? 0) === 0}>
+                          <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 4 }} class="bg-card border-border">
+                            <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                              {t("build.sanitize.noFindings")}
+                            </Text>
+                            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              {t("build.sanitize.targetsChecked", { count: rep().targets?.length ?? 0 })}
+                            </Text>
+                          </View>
+                        </If>
+
+                        <If when={(rep().targets?.length ?? 0) > 0}>
+                          <View style={{ borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+                            <Each of={rep().targets ?? []} key={(tr) => `${tr.kind}:${tr.target}`}>
+                              {(tr, idx) => (
+                                <View
+                                  style={{
+                                    height: 36,
+                                    paddingLeft: 12,
+                                    paddingRight: 12,
+                                    borderTopWidth: idx() > 0 ? 1 : 0,
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 10,
+                                  }}
+                                  class="border-border"
+                                >
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+                                    <View
+                                      style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: 3,
+                                        backgroundColor: tr().passed
+                                          ? colorScheme() === "dark"
+                                            ? "#4ade80"
+                                            : "#16a34a"
+                                          : colorScheme() === "dark"
+                                            ? "#f87171"
+                                            : "#dc2626",
+                                      }}
+                                    />
+                                    <Text style={{ fontSize: 12.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                                      {tr().target}
+                                    </Text>
+                                    <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                      {tr().kind}
+                                    </Text>
+                                  </View>
+                                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                    {tr().findings_count > 0 ? `${tr().findings_count} UB` : `${tr().checked_runs} runs`}
+                                  </Text>
+                                </View>
+                              )}
+                            </Each>
+                          </View>
+                        </If>
+                      </View>
+                    )}
+                  </If>
+                </Scroll>
+              </View>
+            </If>
+
+            {/* Phase 3D: Zero-Pollution External Solution Trial Run View */}
+            <If when={selection().kind === "external"}>
+              <View testID="build-external-view" style={{ flex: 1, minHeight: 0 }}>
+                <View
+                  style={{
+                    height: 46,
+                    paddingLeft: 16,
+                    paddingRight: 16,
+                    borderBottomWidth: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    flexShrink: 0,
+                  }}
+                  class="border-border"
+                >
+                  <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                    {t("build.external.panelTitle")}
+                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <If when={!!externalMarkdown()}>
+                      <Btn
+                        testID="build-external-export-md"
+                        label={externalExported.active() ? t("build.external.exported") : t("build.external.exportMd")}
+                        icon={externalExported.active() ? "check" : "fileDown"}
+                        variant="outline"
+                        onPress={() => void exportExternalMarkdown()}
+                      />
+                    </If>
+                    <Btn
+                      testID="build-external-pick-another"
+                      label={externalRunning() ? t("build.external.running") : t("build.external.pickAnother")}
+                      icon="play"
+                      variant="primary"
+                      disabled={externalRunning()}
+                      onPress={() => void pickAndRunExternal()}
+                    />
+                  </View>
+                </View>
+
+                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 12 }}>
+                  <If
+                    when={externalReport() && externalReport()!.submissions.length > 0}
+                    else={
+                      <View style={{ paddingTop: 28, alignItems: "center", gap: 10 }}>
+                        <Icon name="play" size={24} tone="muted-foreground" />
+                        <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                          {externalRunning() ? t("build.external.running") : t("build.external.empty")}
+                        </Text>
+                      </View>
+                    }
+                  >
+                    <View style={{ borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+                      {/* Table header */}
+                      <View
+                        style={{
+                          height: 34,
+                          paddingLeft: 12,
+                          paddingRight: 12,
+                          borderBottomWidth: 1,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                        class="border-border bg-muted/40"
+                      >
+                        <Text style={{ flex: 2, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colFile")}
+                        </Text>
+                        <Text style={{ width: 64, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colVerdict")}
+                        </Text>
+                        <Text style={{ width: 84, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colPassed")}
+                        </Text>
+                        <Text style={{ width: 72, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colTime")}
+                        </Text>
+                        <Text style={{ width: 82, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colRatio")}
+                        </Text>
+                        <Text style={{ flex: 2, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                          {t("build.external.colFailure")}
+                        </Text>
+                        <View style={{ width: 124 }} />
+                      </View>
+                      <Each of={externalReport()?.submissions ?? []} key={(s) => s.file_path}>
+                        {(sub, idx) => {
+                          const dark = () => colorScheme() === "dark";
+                          const v = () => sub().verdict;
+                          const vBg = () =>
+                            v() === "AC"
+                              ? "rgba(16,185,129,0.12)"
+                              : v() === "TLE" || v() === "MLE"
+                                ? "rgba(245,158,11,0.12)"
+                                : "rgba(244,63,94,0.12)";
+                          const vFg = () =>
+                            v() === "AC"
+                              ? dark()
+                                ? "#4ade80"
+                                : "#15803d"
+                              : v() === "TLE" || v() === "MLE"
+                                ? dark()
+                                  ? "#fbbf24"
+                                  : "#b45309"
+                                : dark()
+                                  ? "#f87171"
+                                  : "#b91c1c";
+                          const adopted = () => !!adoptedExternalPaths()[sub().file_path];
+                          const failText = () => {
+                            if (sub().compile_error) return t("build.sanitize.compileFailed");
+                            const ff = sub().first_failure;
+                            if (!ff) return "—";
+                            return `${ff.test_name} (${ff.verdict})${ff.message ? ` ${ff.message}` : ""}`;
+                          };
+                          return (
+                            <View
+                              style={{
+                                minHeight: 40,
+                                paddingLeft: 12,
+                                paddingRight: 12,
+                                paddingTop: 6,
+                                paddingBottom: 6,
+                                borderTopWidth: idx() > 0 ? 1 : 0,
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 10,
+                              }}
+                              class="border-border"
+                            >
+                              <Text style={{ flex: 2, fontSize: 12.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                                {sub().file_name}
+                              </Text>
+                              <View style={{ width: 64, flexDirection: "row" }}>
+                                <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", backgroundColor: vBg() }}>
+                                  <Text style={{ fontSize: 11.5, fontWeight: 600, color: vFg() }}>{v()}</Text>
+                                </View>
+                              </View>
+                              <Text style={{ width: 84, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                {sub().max_score != null
+                                  ? `${sub().total_score ?? 0}/${sub().max_score}`
+                                  : `${sub().passed_tests}/${sub().total_tests}`}
+                              </Text>
+                              <Text style={{ width: 72, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                {`${sub().max_time_ms}ms`}
+                              </Text>
+                              <Text style={{ width: 82, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                {formatExternalRatio(sub().ratio_vs_std)}
+                              </Text>
+                              <Text style={{ flex: 2, fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                {failText()}
+                              </Text>
+                              <View style={{ width: 124, flexDirection: "row", justifyContent: "flex-end" }}>
+                                <Btn
+                                  testID={`external-adopt-${idx()}`}
+                                  label={adopted() ? t("build.external.adopted") : t("build.external.adopt")}
+                                  icon={adopted() ? "check" : "plus"}
+                                  variant="outline"
+                                  disabled={props.readOnly || adopted()}
+                                  onPress={() => adoptExternal(sub())}
+                                />
+                              </View>
+                            </View>
+                          );
+                        }}
+                      </Each>
+                    </View>
+                  </If>
+                </Scroll>
+              </View>
             </If>
           </View>
         </View>
@@ -2656,6 +3924,8 @@ export function BuildConsole(props: {
                                     else if (a.kind === "select_cell") {
                                       selection.set({ kind: "results" });
                                       selectedCell.set({ testIndex: a.testIndex, solution: a.solution });
+                                    } else if (a.kind === "open_subtasks") {
+                                      selection.set({ kind: "subtasks" });
                                     } else if (a.kind === "open_file") openFileInTree(a.relPath);
                                   }}
                                   style={{ fontSize: 12, fontWeight: 500 }}
@@ -2814,12 +4084,40 @@ export function BuildConsole(props: {
           open={addGenModalOpen()}
           problemId={props.problemId}
           generators={inspection()?.files?.generators ?? []}
+          subtasks={subtasks()}
           initialGenerator={addGenInitial()}
           onClose={() => {
             addGenModalOpen.set(false);
             addGenInitial.set(undefined);
           }}
           onAdded={() => {
+            finishedReport.set(undefined);
+            props.onRefreshPackage();
+          }}
+        />
+        <SubtaskModal
+          open={subtaskModalOpen()}
+          problemId={props.problemId}
+          editing={editingSubtask()}
+          existingSubtasks={subtasks()}
+          onClose={() => {
+            subtaskModalOpen.set(false);
+            editingSubtask.set(undefined);
+          }}
+          onSaved={() => {
+            finishedReport.set(undefined);
+            props.onRefreshPackage();
+          }}
+        />
+        <SolutionScoringModal
+          open={scoringModalSolution() !== undefined}
+          problemId={props.problemId}
+          solutionName={scoringModalSolution() ?? ""}
+          initialScore={solutionSpecs().find((s) => s.name === scoringModalSolution())?.score}
+          initialSubtasks={solutionSpecs().find((s) => s.name === scoringModalSolution())?.subtasks}
+          subtasks={subtasks()}
+          onClose={() => scoringModalSolution.set(undefined)}
+          onSaved={() => {
             finishedReport.set(undefined);
             props.onRefreshPackage();
           }}

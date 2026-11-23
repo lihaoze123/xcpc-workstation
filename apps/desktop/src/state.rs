@@ -27,20 +27,21 @@ use crate::cache::{
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
 use crate::snapshot;
 use crate::types::{
-    ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, BatchDeleteResultJs,
-    BatchExportRequestJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
-    BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
-    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
-    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs, MathPreviewJs,
-    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
-    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs,
-    PolygonImportResultJs, PreviewDiagnostic, PreviewLocationJs, PreviewRequest, PreviewResult,
-    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
-    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs, SaveResult,
-    SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report, first_error,
-    limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
+    ActionResult, AddedTestResultJs, AdoptSolutionResultJs, AppPrefsJs, AssetReferenceJs,
+    BatchDeleteResultJs, BatchExportRequestJs, BatchMutationResultJs, BatchStartResultJs,
+    BatchTaskEventJs, BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs,
+    ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
+    ExportBookStatusJs, ExportOjResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs,
+    JsonReportResultJs, MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs,
+    PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs,
+    PackageInspectionResultJs, PdfFreshnessJs, PolygonImportResultJs, PreviewDiagnostic,
+    PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
+    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
+    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
+    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str,
+    extract_report, first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str,
+    source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -2907,6 +2908,8 @@ impl State {
                                         "is_main": s.is_main,
                                         "expect": s.expect,
                                         "tags": s.tags,
+                                        "score": s.score,
+                                        "subtasks": s.subtasks,
                                     })
                                 })
                                 .collect();
@@ -2939,6 +2942,16 @@ impl State {
     }
 
     pub(crate) fn init_package(&self, slug: &str) -> PackageInitResultJs {
+        self.init_package_with_options(slug, false, None, false)
+    }
+
+    pub(crate) fn init_package_with_options(
+        &self,
+        slug: &str,
+        interactive: bool,
+        runs: Option<u32>,
+        subtasks: bool,
+    ) -> PackageInitResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return PackageInitResultJs {
@@ -2956,7 +2969,12 @@ impl State {
                 ..Default::default()
             };
         }
-        match xcpc_judge::init_package(&ws, slug) {
+        let opts = xcpc_judge::InitPackageOptions {
+            interactive,
+            runs,
+            subtasks,
+        };
+        match xcpc_judge::init_package_with_options(&ws, slug, &opts) {
             Ok(res) => {
                 {
                     let mut core = self.core.lock().unwrap();
@@ -3008,14 +3026,19 @@ impl State {
             return ActionResult::err("invalid_id", e.to_string());
         }
 
+        let is_sanitize = mode.eq_ignore_ascii_case("sanitize");
         let build_mode = if mode.eq_ignore_ascii_case("verify") {
             xcpc_judge::BuildMode::Verify
         } else {
             xcpc_judge::BuildMode::Debug
         };
-        let mode_label = match build_mode {
-            xcpc_judge::BuildMode::Verify => "verify",
-            xcpc_judge::BuildMode::Debug => "debug",
+        let mode_label = if is_sanitize {
+            "sanitize"
+        } else {
+            match build_mode {
+                xcpc_judge::BuildMode::Verify => "verify",
+                xcpc_judge::BuildMode::Debug => "debug",
+            }
         };
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -3043,11 +3066,20 @@ impl State {
             next_seq
         };
 
+        let tests_vec = tests.unwrap_or_default();
+        let solutions_vec = solutions.unwrap_or_default();
+        let cxx_path = cxx_override.map(PathBuf::from);
         let opts = xcpc_judge::BuildOptions {
             mode: build_mode,
-            tests: tests.unwrap_or_default(),
-            solutions: solutions.unwrap_or_default(),
-            cxx_override: cxx_override.map(PathBuf::from),
+            tests: tests_vec.clone(),
+            solutions: solutions_vec.clone(),
+            cxx_override: cxx_path.clone(),
+            ..Default::default()
+        };
+        let sanitize_opts = xcpc_judge::SanitizeOptions {
+            tests: tests_vec,
+            solutions: solutions_vec,
+            cxx_override: cxx_path,
             ..Default::default()
         };
         let slot_arc = self.package_build.clone();
@@ -3134,32 +3166,49 @@ impl State {
                     }
                 };
 
-                let result = xcpc_judge::build_package(
-                    &ws,
-                    &slug_owned,
-                    &opts,
-                    Some(cancel_flag.clone()),
-                    Some(&progress_cb),
-                );
+                let serialized_result: std::result::Result<String, xcpc_judge::JudgeError> =
+                    if is_sanitize {
+                        xcpc_judge::sanitize_package(
+                            &ws,
+                            &slug_owned,
+                            &sanitize_opts,
+                            Some(cancel_flag.clone()),
+                            Some(&progress_cb),
+                        )
+                        .and_then(|report| {
+                            serde_json::to_string(&report).map_err(|e| {
+                                xcpc_judge::JudgeError::InvalidConfig(format!(
+                                    "serialize sanitizer report failed: {e}"
+                                ))
+                            })
+                        })
+                    } else {
+                        xcpc_judge::build_package(
+                            &ws,
+                            &slug_owned,
+                            &opts,
+                            Some(cancel_flag.clone()),
+                            Some(&progress_cb),
+                        )
+                        .and_then(|report| {
+                            serde_json::to_string(&report).map_err(|e| {
+                                xcpc_judge::JudgeError::InvalidConfig(format!(
+                                    "serialize build report failed: {e}"
+                                ))
+                            })
+                        })
+                    };
 
                 if let Ok(mut slot) = slot_arc.lock()
                     && slot.seq == my_seq
                 {
                     slot.running = false;
                     slot.cancel_flag = None;
-                    match result {
-                        Ok(report) => {
+                    match serialized_result {
+                        Ok(json) => {
                             slot.phase = Some("finished".to_owned());
-                            match serde_json::to_string(&report) {
-                                Ok(json) => {
-                                    slot.report_json = Some(json);
-                                    slot.error = None;
-                                }
-                                Err(e) => {
-                                    slot.error =
-                                        Some(format!("serialize build report failed: {e}"));
-                                }
-                            }
+                            slot.report_json = Some(json);
+                            slot.error = None;
                         }
                         Err(xcpc_judge::JudgeError::Cancelled) => {
                             slot.cancelled = true;
@@ -3391,6 +3440,7 @@ impl State {
             "solution" => xcpc_judge::PackageSourceKind::Solution,
             "generator" => xcpc_judge::PackageSourceKind::Generator,
             "validator" => xcpc_judge::PackageSourceKind::Validator,
+            "interactor" => xcpc_judge::PackageSourceKind::Interactor,
             "custom_checker" | "checker" => xcpc_judge::PackageSourceKind::CustomChecker,
             "validator_self_test_valid" => xcpc_judge::PackageSourceKind::ValidatorSelfTestValid,
             "validator_self_test_invalid" => {
@@ -3623,6 +3673,206 @@ impl State {
             return ActionResult::err("read_only", "workspace is read-only");
         }
         match xcpc_judge::delete_self_test(&ws, slug, rel_path) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn delete_interactor(&self, slug: &str) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::delete_interactor(&ws, slug) {
+            Ok(_) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn set_package_runs(&self, slug: &str, runs: Option<u32>) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::set_package_runs(&ws, slug, runs) {
+            Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn upsert_subtask(
+        &self,
+        slug: &str,
+        id: &str,
+        score: u32,
+        depends: Vec<String>,
+        scoring: &str,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        let parsed_scoring = match scoring.trim().to_ascii_lowercase().as_str() {
+            "" | "min" => xcpc_domain::SubtaskScoring::Min,
+            "sum" => xcpc_domain::SubtaskScoring::Sum,
+            other => {
+                return ActionResult::err(
+                    "invalid_config",
+                    format!("unknown subtask scoring mode: {other}"),
+                );
+            }
+        };
+        let spec = xcpc_domain::SubtaskSpec {
+            id: id.to_owned(),
+            score,
+            depends,
+            scoring: parsed_scoring,
+        };
+        match xcpc_judge::upsert_subtask(&ws, slug, &spec) {
+            Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn delete_subtask(
+        &self,
+        slug: &str,
+        subtask_id: &str,
+        clear_references: bool,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::delete_subtask(&ws, slug, subtask_id, clear_references) {
+            Ok(_) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn set_test_subtask(
+        &self,
+        slug: &str,
+        rule_index: u32,
+        subtask: Option<&str>,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::set_test_subtask(&ws, slug, rule_index as usize, subtask) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn set_solution_scoring(
+        &self,
+        slug: &str,
+        name: &str,
+        score_json: Option<&str>,
+        subtasks_json: Option<&str>,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        let parsed_score: Option<Option<xcpc_domain::ScoreExpect>> = match score_json {
+            None => None,
+            Some(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() || trimmed == "null" {
+                    Some(None)
+                } else {
+                    match serde_json::from_str::<xcpc_domain::ScoreExpect>(trimmed) {
+                        Ok(exp) => Some(Some(exp)),
+                        Err(e) => {
+                            return ActionResult::err(
+                                "invalid_config",
+                                format!("invalid score expectation: {e}"),
+                            );
+                        }
+                    }
+                }
+            }
+        };
+        let parsed_subtasks: Option<BTreeMap<String, xcpc_domain::ExpectVerdict>> =
+            match subtasks_json {
+                None => None,
+                Some(raw) => {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty() || trimmed == "null" {
+                        Some(BTreeMap::new())
+                    } else {
+                        match serde_json::from_str::<BTreeMap<String, xcpc_domain::ExpectVerdict>>(
+                            trimmed,
+                        ) {
+                            Ok(map) => Some(map),
+                            Err(e) => {
+                                return ActionResult::err(
+                                    "invalid_config",
+                                    format!("invalid subtask expectations: {e}"),
+                                );
+                            }
+                        }
+                    }
+                }
+            };
+        match xcpc_judge::set_solution_scoring(&ws, slug, name, parsed_score, parsed_subtasks) {
             Ok(()) => {
                 self.invalidate_cache();
                 ActionResult::ok()
@@ -4145,14 +4395,17 @@ impl State {
         if unique_ids.is_empty() {
             return BatchStartResultJs::err("invalid_argument", "请至少选择一道题目。");
         }
-        let (build_mode, kind) = if mode.eq_ignore_ascii_case("verify") {
+        let is_sanitize = mode.eq_ignore_ascii_case("sanitize");
+        let (build_mode, kind) = if is_sanitize {
+            (xcpc_judge::BuildMode::Verify, "build_sanitize")
+        } else if mode.eq_ignore_ascii_case("verify") {
             (xcpc_judge::BuildMode::Verify, "build_verify")
         } else if mode.eq_ignore_ascii_case("debug") {
             (xcpc_judge::BuildMode::Debug, "build_debug")
         } else {
             return BatchStartResultJs::err(
                 "invalid_mode",
-                format!("不支持的构建模式：{mode}（期望 verify 或 debug）"),
+                format!("不支持的构建模式：{mode}（期望 verify、debug 或 sanitize）"),
             );
         };
 
@@ -4211,9 +4464,14 @@ impl State {
             next_id
         };
 
+        let cxx_path = cxx_override.map(PathBuf::from);
         let opts = xcpc_judge::BuildOptions {
             mode: build_mode,
-            cxx_override: cxx_override.map(PathBuf::from),
+            cxx_override: cxx_path.clone(),
+            ..Default::default()
+        };
+        let sanitize_opts = xcpc_judge::SanitizeOptions {
+            cxx_override: cxx_path,
             ..Default::default()
         };
         let slot_arc = self.batch_task.clone();
@@ -4356,13 +4614,23 @@ impl State {
                     }
                 };
 
-                let result = xcpc_judge::build_packages_batch(
-                    &ws,
-                    &unique_ids,
-                    &opts,
-                    Some(cancel_flag.clone()),
-                    Some(&progress_cb),
-                );
+                let result = if is_sanitize {
+                    xcpc_judge::sanitize_packages_batch(
+                        &ws,
+                        &unique_ids,
+                        &sanitize_opts,
+                        Some(cancel_flag.clone()),
+                        Some(&progress_cb),
+                    )
+                } else {
+                    xcpc_judge::build_packages_batch(
+                        &ws,
+                        &unique_ids,
+                        &opts,
+                        Some(cancel_flag.clone()),
+                        Some(&progress_cb),
+                    )
+                };
 
                 // Refresh index before emitting the terminal event so UI reads are fresh.
                 if let Some(state) = weak_state.upgrade() {
@@ -5390,6 +5658,242 @@ fn interpolate_anchor(anchors: &[SourceAnchor], line: u32) -> Option<PreviewLoca
                     exact: true,
                 })
             }
+        }
+    }
+}
+
+impl State {
+    // ---- Phase 3D: Sanitizer, external trial run, adopt & contest readiness audit ------
+
+    pub(crate) fn load_sanitizer_report(&self, slug: &str) -> JsonReportResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        if let Err(e) = check_id(slug) {
+            return JsonReportResultJs::err("invalid_id", e.to_string());
+        }
+        match xcpc_judge::load_sanitizer_report(&ws, slug) {
+            Some(report) => match serde_json::to_string(&report) {
+                Ok(json) => JsonReportResultJs::ok(Some(json), None),
+                Err(e) => {
+                    JsonReportResultJs::err("io", format!("serialize sanitizer report failed: {e}"))
+                }
+            },
+            None => JsonReportResultJs::ok(None, None),
+        }
+    }
+
+    pub(crate) fn sanitize_problem(
+        &self,
+        slug: &str,
+        tests: Option<Vec<String>>,
+        solutions: Option<Vec<String>>,
+    ) -> JsonReportResultJs {
+        let (ws, cxx_override) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.prefs.app.cxx_override.clone())
+        };
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return JsonReportResultJs::err(
+                "read_only",
+                xcpc_storage::Error::ReadOnly.human_message(),
+            );
+        }
+        if let Err(e) = check_id(slug) {
+            return JsonReportResultJs::err("invalid_id", e.to_string());
+        }
+        let opts = xcpc_judge::SanitizeOptions {
+            tests: tests.unwrap_or_default(),
+            solutions: solutions.unwrap_or_default(),
+            cxx_override: cxx_override.map(PathBuf::from),
+            ..Default::default()
+        };
+        match xcpc_judge::sanitize_package(&ws, slug, &opts, None, None) {
+            Ok(report) => {
+                self.revision.fetch_add(1, Ordering::AcqRel);
+                match serde_json::to_string(&report) {
+                    Ok(json) => JsonReportResultJs::ok(Some(json), None),
+                    Err(e) => JsonReportResultJs::err(
+                        "io",
+                        format!("serialize sanitizer report failed: {e}"),
+                    ),
+                }
+            }
+            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn run_external_problem_solutions(
+        &self,
+        slug: &str,
+        files: &[PathBuf],
+        auto_build: bool,
+    ) -> JsonReportResultJs {
+        let (ws, cxx_override) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.prefs.app.cxx_override.clone())
+        };
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        if let Err(e) = check_id(slug) {
+            return JsonReportResultJs::err("invalid_id", e.to_string());
+        }
+        let opts = xcpc_judge::ExternalRunOptions {
+            auto_build: auto_build && !ws.is_read_only(),
+            cxx_override: cxx_override.map(PathBuf::from),
+            ..Default::default()
+        };
+        match xcpc_judge::run_external_solutions_for_problem(&ws, slug, files, &opts, None) {
+            Ok(report) => {
+                let md = xcpc_judge::render_external_problem_markdown(&report);
+                match serde_json::to_string(&report) {
+                    Ok(json) => JsonReportResultJs::ok(Some(json), Some(md)),
+                    Err(e) => JsonReportResultJs::err(
+                        "io",
+                        format!("serialize external report failed: {e}"),
+                    ),
+                }
+            }
+            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn run_external_contest_solutions(
+        &self,
+        contest_id: &str,
+        dir: &Path,
+        auto_build: bool,
+    ) -> JsonReportResultJs {
+        let (ws, cxx_override) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.prefs.app.cxx_override.clone())
+        };
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        if let Err(e) = check_id(contest_id) {
+            return JsonReportResultJs::err("invalid_id", e.to_string());
+        }
+        let opts = xcpc_judge::ExternalRunOptions {
+            auto_build: auto_build && !ws.is_read_only(),
+            cxx_override: cxx_override.map(PathBuf::from),
+            ..Default::default()
+        };
+        match xcpc_judge::run_external_solutions_for_contest(&ws, contest_id, dir, &opts, None) {
+            Ok(report) => {
+                let md = xcpc_judge::render_external_contest_markdown(&report);
+                match serde_json::to_string(&report) {
+                    Ok(json) => JsonReportResultJs::ok(Some(json), Some(md)),
+                    Err(e) => JsonReportResultJs::err(
+                        "io",
+                        format!("serialize external contest report failed: {e}"),
+                    ),
+                }
+            }
+            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn adopt_external_solution(
+        &self,
+        slug: &str,
+        source_file: &Path,
+        name: Option<String>,
+        expect: Option<Vec<String>>,
+        tags: Option<Vec<String>>,
+        is_main: Option<bool>,
+    ) -> AdoptSolutionResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return AdoptSolutionResultJs::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return AdoptSolutionResultJs::err(
+                "read_only",
+                xcpc_storage::Error::ReadOnly.human_message(),
+            );
+        }
+        if let Err(e) = check_id(slug) {
+            return AdoptSolutionResultJs::err("invalid_id", e.to_string());
+        }
+        let opts = xcpc_judge::AdoptSolutionOptions {
+            name,
+            expect: expect.unwrap_or_default(),
+            tags: tags.unwrap_or_default(),
+            is_main: is_main.unwrap_or(false),
+        };
+        match xcpc_judge::adopt_external_solution(&ws, slug, source_file, &opts) {
+            Ok(res) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
+                self.invalidate_cache();
+                AdoptSolutionResultJs {
+                    ok: true,
+                    problem_id: res.problem_id,
+                    solution_name: res.solution_name,
+                    target_rel_path: res.dest_rel,
+                    updated_problem_toml: res.updated_problem_toml,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => AdoptSolutionResultJs::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn audit_contest(&self, contest_id: &str) -> JsonReportResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        if let Err(e) = check_id(contest_id) {
+            return JsonReportResultJs::err("invalid_id", e.to_string());
+        }
+        let mut opts = xcpc_judge::AuditOptions::default();
+        if let Ok(contest) = ws.load_contest(contest_id) {
+            let lint_opts = xcpc_lint::LintOptions::default();
+            for item in &contest.meta.problems {
+                if let Ok(findings) = xcpc_lint::lint_problem(&ws, &item.id, &lint_opts) {
+                    let mut summary = xcpc_judge::ProblemLintSummary::default();
+                    for f in findings {
+                        if f.code.starts_with("package_") {
+                            continue;
+                        }
+                        if f.is_error() {
+                            summary.error_count += 1;
+                        } else {
+                            summary.warning_count += 1;
+                        }
+                        summary.findings.push(xcpc_judge::AuditLintFinding {
+                            severity: f.severity.as_str().to_owned(),
+                            code: f.code,
+                            message: f.message,
+                            file: f.file,
+                        });
+                    }
+                    opts.lint_by_problem.insert(item.id.clone(), summary);
+                }
+            }
+        }
+        match xcpc_judge::audit_contest(&ws, contest_id, &opts) {
+            Ok(report) => {
+                let md = xcpc_judge::render_contest_audit_markdown(&report);
+                match serde_json::to_string(&report) {
+                    Ok(json) => JsonReportResultJs::ok(Some(json), Some(md)),
+                    Err(e) => JsonReportResultJs::err(
+                        "io",
+                        format!("serialize contest audit report failed: {e}"),
+                    ),
+                }
+            }
+            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
         }
     }
 }

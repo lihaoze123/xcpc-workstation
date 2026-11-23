@@ -54,18 +54,20 @@ import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { AuthoringTitleBarControls, BuildConsole, type BuildConsoleController } from "./BuildConsole";
+import { ContestReadinessView } from "./ContestReadinessView";
 import { problemSlugFromDiagnosticFile, shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
+import { InitPackageModal } from "./PackageModals";
 import type { VimMode } from "./vim";
 import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
-type StudioMode = "statement" | "authoring";
+type StudioMode = "statement" | "authoring" | "readiness";
 type Tab = "statement" | "samples" | "editorial";
-const lastStudioModeByProblem = new Map<string, StudioMode>();
+const lastStudioModeByProblem = new Map<string, "statement" | "authoring">();
 const SAVE_AFTER = 500;
 const TAB_DEFS: readonly { value: Tab; labelKey: MessageKey; keys: string }[] = [
   { value: "statement", labelKey: "studio.tab.statement", keys: "alt+1" },
@@ -96,6 +98,8 @@ export function StudioView(props: { active: boolean }) {
   const target = computed<StudioTarget | undefined>((prev) => studio() ?? prev);
   const studioMode = signal<StudioMode>("statement");
   const isAuthoring = computed(() => target()?.target === "problem" && studioMode() === "authoring");
+  const isReadiness = computed(() => target()?.target === "contest" && studioMode() === "readiness");
+  const isFullConsole = computed(() => isAuthoring() || isReadiness());
   const tab = signal<Tab>(storeBook() === "editorial" ? "editorial" : "statement");
   const book = computed<Book>(() => (tab() === "editorial" ? "editorial" : "statements"));
   const initialWinWidth = untracked(windowSize).width;
@@ -116,7 +120,7 @@ export function StudioView(props: { active: boolean }) {
   const assetsHasTypstBlock = signal(false);
   const previewCollapsed = signal(false);
   const focusMode = signal(false);
-  const previewHidden = computed(() => focusMode() || previewCollapsed() || isAuthoring());
+  const previewHidden = computed(() => focusMode() || previewCollapsed() || isFullConsole());
 
   // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).
@@ -129,7 +133,7 @@ export function StudioView(props: { active: boolean }) {
   let layoutMotionInit = false;
 
   effect(() => {
-    const showOutline = !focusMode();
+    const showOutline = !focusMode() && !isReadiness();
     if (outlineRaf !== undefined) {
       cancelAnimationFrame(outlineRaf);
       outlineRaf = undefined;
@@ -252,25 +256,26 @@ export function StudioView(props: { active: boolean }) {
     });
   });
 
-  // Apply optional `initialTab` when navigating directly to Authoring or a Statement tab.
+  // Apply optional `initialTab` when navigating directly to Authoring, Readiness, or a Statement tab.
   effect(() => {
     const s = studio();
     if (!s) return;
     const want = s.initialTab;
     untracked(() => {
-      if (s.target !== "problem") {
-        studioMode.set("statement");
-      }
-      if (want === "build" && s.target === "problem") {
+      if (want === "readiness" && s.target === "contest") {
+        studioMode.set("readiness");
+      } else if (want === "build" && s.target === "problem") {
         packageRefreshSeq.set(packageRefreshSeq() + 1);
         studioMode.set("authoring");
         lastStudioModeByProblem.set(s.id, "authoring");
-      } else if (want && want !== "build") {
+      } else if (want && want !== "build" && want !== "readiness") {
         studioMode.set("statement");
         if (s.target === "problem") lastStudioModeByProblem.set(s.id, "statement");
         tab.set(want);
       } else if (s.target === "problem" && !want) {
         studioMode.set(lastStudioModeByProblem.get(s.id) ?? "statement");
+      } else {
+        studioMode.set("statement");
       }
     });
   });
@@ -536,9 +541,13 @@ export function StudioView(props: { active: boolean }) {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
-  function setTab(next: Tab | "build") {
+  function setTab(next: Tab | "build" | "readiness") {
     if (next === "build") {
       if (target()?.target === "problem") studioMode.set("authoring");
+      return;
+    }
+    if (next === "readiness") {
+      if (target()?.target === "contest") studioMode.set("readiness");
       return;
     }
     if (studioMode() !== "statement") studioMode.set("statement");
@@ -553,18 +562,32 @@ export function StudioView(props: { active: boolean }) {
 
   function setStudioMode(next: StudioMode) {
     const t = target();
-    if (t?.target !== "problem") return;
-    if (next === "authoring") {
-      packageRefreshSeq.set(packageRefreshSeq() + 1);
+    if (!t) return;
+    if (t.target === "problem") {
+      if (next === "readiness") return;
+      if (next === "authoring") {
+        packageRefreshSeq.set(packageRefreshSeq() + 1);
+      }
+      lastStudioModeByProblem.set(t.id, next);
+      studioMode.set(next);
+    } else if (t.target === "contest") {
+      if (next === "authoring") return;
+      studioMode.set(next);
     }
-    lastStudioModeByProblem.set(t.id, next);
-    studioMode.set(next);
   }
+
+  const initPackageModalOpen = signal(false);
 
   function initPackageScaffold() {
     const tTarget = untracked(target);
     if (!tTarget || tTarget.target !== "problem" || info().readOnly) return;
-    const res = preview.initPackage(tTarget.id);
+    initPackageModalOpen.set(true);
+  }
+
+  function confirmInitPackageScaffold(opts: { interactive: boolean; runs: number | null; subtasks: boolean }) {
+    const tTarget = untracked(target);
+    if (!tTarget || tTarget.target !== "problem" || info().readOnly) return;
+    const res = preview.initPackageWithOptions(tTarget.id, opts.interactive, opts.runs, opts.subtasks);
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("ctx.initPackage") });
       return;
@@ -941,6 +964,11 @@ export function StudioView(props: { active: boolean }) {
         },
         unfreeze: () => target() && unfreezeFor.set(target()!.id),
         setTab,
+        runSanitize: () => {
+          if (target()?.target !== "problem") return;
+          setStudioMode("authoring");
+          setTimeout(() => buildConsole()?.startRun("sanitize"), 0);
+        },
         toggleInspector,
         openAssets,
         hasAssets: () => hasAssets(),
@@ -973,7 +1001,7 @@ export function StudioView(props: { active: boolean }) {
     return it ? `${it.label}. ${it.title}` : "";
   };
   const readOnly = () => !!file()?.readOnly || frozen() || archived();
-  const isMarkdownTab = () => !isAuthoring() && (tab() === "statement" || tab() === "editorial");
+  const isMarkdownTab = () => !isFullConsole() && (tab() === "statement" || tab() === "editorial");
   const tabs = computed(() =>
     TAB_DEFS.map((d) => ({
       value: d.value,
@@ -984,6 +1012,10 @@ export function StudioView(props: { active: boolean }) {
   const modeItems = computed(() => [
     { value: "statement" as StudioMode, label: t("studio.mode.statement") },
     { value: "authoring" as StudioMode, label: t("studio.mode.authoring") },
+  ]);
+  const contestModeItems = computed(() => [
+    { value: "statement" as StudioMode, label: t("studio.mode.statement") },
+    { value: "readiness" as StudioMode, label: t("studio.mode.readiness") },
   ]);
   const editorPlaceholder = () =>
     tab() === "editorial"
@@ -998,18 +1030,26 @@ export function StudioView(props: { active: boolean }) {
     <View style={{ flex: 1 }} class="bg-background">
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
             <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
-            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500, flexShrink: 1 }} class="text-foreground">
-              {headerTitle()}
-            </Text>
-            <If when={!!headerSubtitle()}>
-              <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, marginLeft: 4 }} class="text-muted-foreground">
-                {headerSubtitle()}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
+              <Text
+                style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500, flexShrink: 1, minWidth: 0 }}
+                class="text-foreground"
+              >
+                {headerTitle()}
               </Text>
-            </If>
+              <If when={!!headerSubtitle() && (windowSize().width === 0 || windowSize().width >= 1120)}>
+                <Text
+                  style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, flexShrink: 2, minWidth: 0 }}
+                  class="text-muted-foreground"
+                >
+                  {headerSubtitle()}
+                </Text>
+              </If>
+            </View>
             <If when={target()?.target === "problem"}>
-              <View style={{ marginLeft: 8, flexShrink: 0 }}>
+              <View style={{ marginLeft: 4, flexShrink: 0 }}>
                 <Segmented
                   items={modeItems()}
                   value={studioMode()}
@@ -1018,8 +1058,20 @@ export function StudioView(props: { active: boolean }) {
                 />
               </View>
             </If>
+            <If when={target()?.target === "contest"}>
+              <View testID="contest-studio-mode-switch" style={{ marginLeft: 4, flexShrink: 0 }}>
+                <Segmented
+                  items={contestModeItems()}
+                  value={studioMode() === "readiness" ? "readiness" : "statement"}
+                  onChange={setStudioMode}
+                  itemWidth={locale() === "en" ? 84 : 76}
+                />
+              </View>
+            </If>
             <If when={target()?.target === "contest" && frozen()}>
-              <Lock closed size={13} />
+              <View style={{ flexShrink: 0 }}>
+                <Lock closed size={13} />
+              </View>
             </If>
             <If when={target()?.target === "contest" && archived()}>
               <View
@@ -1035,8 +1087,8 @@ export function StudioView(props: { active: boolean }) {
           </View>
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <If when={!isAuthoring()}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <If when={!isFullConsole()}>
               <Btn
                 label={t("studio.preview")}
                 icon="fileText"
@@ -1123,7 +1175,7 @@ export function StudioView(props: { active: boolean }) {
             <ResizablePanel size={initialRatio * 1000} minSize={320}>
               <View style={{ flex: 1 }} class="bg-card">
                 {/* Single merged 38pt bar (Statement mode only): 3 crisp tabs on the left, 4 compact insert icons on the right */}
-                <If when={!isAuthoring()}>
+                <If when={!isFullConsole()}>
                   <View
                     style={{
                       height: 38,
@@ -1332,7 +1384,7 @@ export function StudioView(props: { active: boolean }) {
                   </View>
                 </View>
 
-                <If when={!isAuthoring() && tab() === "samples" ? problemId() : undefined}>
+                <If when={!isFullConsole() && tab() === "samples" ? problemId() : undefined}>
                   {(id) => (
                     <View style={{ flex: 1, flexDirection: "row", justifyContent: "center" }}>
                       <View
@@ -1368,6 +1420,16 @@ export function StudioView(props: { active: boolean }) {
                         compileNow();
                       }}
                       onSwitchToStatement={() => setStudioMode("statement")}
+                    />
+                  )}
+                </If>
+
+                <If when={isReadiness() && target()?.target === "contest" ? target()!.id : undefined}>
+                  {(cid) => (
+                    <ContestReadinessView
+                      contestId={cid()}
+                      readOnly={info().readOnly || frozen() || archived()}
+                      onRefreshWorkspace={() => refresh()}
                     />
                   )}
                 </If>
@@ -1479,6 +1541,11 @@ export function StudioView(props: { active: boolean }) {
               onLocateReference={(refFile, refLine) => locate({ file: refFile, line: refLine, column: 1 })}
             />
           </If>
+          <InitPackageModal
+            open={initPackageModalOpen()}
+            onClose={() => initPackageModalOpen.set(false)}
+            onConfirm={confirmInitPackageScaffold}
+          />
         </View>
       </View>
     </View>

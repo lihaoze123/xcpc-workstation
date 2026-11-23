@@ -1,6 +1,7 @@
 import { describe, expect, test } from "nsh/test";
 import {
   buildMatrixLookup,
+  buildPackageModeBadges,
   canInlineEditTest,
   cellVisualStyle,
   computeOnboardingChecklist,
@@ -11,8 +12,13 @@ import {
   formatBytesCompact,
   formatCellConclusion,
   formatMemoryKib,
+  formatScoreExpect,
+  formatScoreRatioPercent,
+  formatScoreValue,
   formatSolutionConclusion,
+  formatSolutionScoreSummary,
   formatStdTimeRatio,
+  groupMatrixRowsBySubtask,
   groupTestRows,
   hasInvalidCxxOverride,
   humanizeCheckText,
@@ -26,6 +32,7 @@ import {
   middleTruncatePath,
   nextActionForCheck,
   normalizeCxxOverrideInput,
+  parseScoreExpectInput,
   partitionGates,
   problemSlugFromDiagnosticFile,
   resolveEffectiveSafetyMargin,
@@ -623,5 +630,100 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
       { id: "rule:0", label: "hand-01", count: 1, fail: false },
       { id: "rule:1", label: "gen_random (small) ×3", count: 3, fail: false },
     ]);
+  });
+});
+
+describe("Phase 3C interactive, multi-run, and OI subtask helpers", () => {
+  test("builds compact mode badges only when features are active", () => {
+    expect(buildPackageModeBadges({ interactive: false, runs: 1, subtasks: [], total_score: null }, undefined, true)).toEqual([]);
+    expect(
+      buildPackageModeBadges(
+        {
+          interactive: true,
+          runs: 2,
+          subtasks: [
+            { id: "1", score: 30, scoring: "min", test_count: 2 },
+            { id: "2", score: 70, scoring: "sum", depends: ["1"], test_count: 4 },
+          ],
+          total_score: 100,
+        },
+        undefined,
+        true,
+      ),
+    ).toEqual([
+      { id: "interactive", label: "交互题" },
+      { id: "runs", label: "多轮通信（×2）" },
+      { id: "subtasks", label: "OI 子任务（总分 100）" },
+    ]);
+    expect(
+      buildPackageModeBadges({ interactive: true, runs: 3, subtasks: [{ id: "1", score: 100, scoring: "min", test_count: 1 }], total_score: 100 }, undefined, false),
+    ).toEqual([
+      { id: "interactive", label: "Interactive" },
+      { id: "runs", label: "Multi-run (×3)" },
+      { id: "subtasks", label: "OI Subtasks (100 pts)" },
+    ]);
+  });
+
+  test("formats scores, quitp partial ratios, and parses score expectations", () => {
+    expect(formatScoreValue(30)).toBe("30");
+    expect(formatScoreValue(33.33)).toBe("33.3");
+    expect(formatScoreRatioPercent(0.5)).toBe("50%");
+    expect(formatScoreRatioPercent(1.0)).toBeUndefined();
+    expect(formatScoreRatioPercent(0.0)).toBeUndefined();
+    expect(formatScoreRatioPercent(1.0, true)).toBe("100%");
+    expect(formatScoreExpect(30)).toBe("30");
+    expect(formatScoreExpect([20, 40])).toBe("20–40");
+    expect(formatScoreExpect(null)).toBeUndefined();
+    expect(formatSolutionScoreSummary({ total_score: 30, max_score: 100 })).toBe("30 / 100");
+    expect(formatSolutionScoreSummary({ total_score: null, max_score: null })).toBeUndefined();
+
+    expect(parseScoreExpectInput("")).toEqual({ ok: true, value: null });
+    expect(parseScoreExpectInput("30")).toEqual({ ok: true, value: 30 });
+    expect(parseScoreExpectInput("20-40")).toEqual({ ok: true, value: [20, 40] });
+    expect(parseScoreExpectInput("20..40")).toEqual({ ok: true, value: [20, 40] });
+    expect(parseScoreExpectInput("50-20").ok).toBe(false);
+    expect(parseScoreExpectInput("abc").ok).toBe(false);
+  });
+
+  test("groups matrix rows by subtask with trailing unassigned bucket", () => {
+    const rows = [
+      { index: 1, name: "s1", is_sample: false, size_bytes: 10, subtask: "1" },
+      { index: 2, name: "s2", is_sample: false, size_bytes: 10, subtask: "2" },
+      { index: 3, name: "s3", is_sample: false, size_bytes: 10, subtask: "1" },
+      { index: 4, name: "orphan", is_sample: false, size_bytes: 10, subtask: null },
+    ];
+    const subtasks = [
+      { id: "1", score: 30, scoring: "min" as const, test_count: 2 },
+      { id: "2", score: 70, scoring: "sum" as const, test_count: 1 },
+    ];
+    const grouped = groupMatrixRowsBySubtask(rows, subtasks);
+    expect(grouped.map((g) => ({ key: g.key, ids: g.rows.map((r) => r.index) }))).toEqual([
+      { key: "subtask:1", ids: [1, 3] },
+      { key: "subtask:2", ids: [2] },
+      { key: "__unassigned__", ids: [4] },
+    ]);
+    expect(groupMatrixRowsBySubtask(rows, [])).toEqual([{ key: "__all__", subtaskId: null, rows }]);
+  });
+
+  test("supports ILE verdict badge and interactor/subtask check actions", () => {
+    const ileDark = verdictBadgeStyle("ILE", true);
+    const ileLight = verdictBadgeStyle("ILE", false);
+    expect(ileDark.fg).not.toBe(verdictBadgeStyle("TLE", true).fg);
+    expect(ileLight.fg).not.toBe(verdictBadgeStyle("WA", false).fg);
+
+    expect(
+      nextActionForCheck(
+        { id: "subtask_coverage", title: "Subtask", status: "fail", message: "empty subtask" },
+        undefined,
+        undefined,
+      ),
+    ).toEqual({ kind: "open_subtasks" });
+    expect(
+      nextActionForCheck(
+        { id: "interactor_compile", title: "Interactor", status: "fail", message: "compile failed" },
+        undefined,
+        { interactor: "interactor.cpp" },
+      ),
+    ).toEqual({ kind: "open_file", relPath: "interactor.cpp" });
   });
 });

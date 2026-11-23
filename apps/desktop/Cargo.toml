@@ -13,6 +13,7 @@ xcpc-storage.workspace = true
 xcpc-convert.workspace = true
 xcpc-domain.workspace = true
 xcpc-judge.workspace = true
+xcpc-lint.workspace = true
 xcpc-packages.workspace = true
 png.workspace = true
 serde_json.workspace = true
