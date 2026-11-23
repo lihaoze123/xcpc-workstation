@@ -188,37 +188,44 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 | **QOJ / 通用 Markdown 包** | 支持 | 支持 | Markdown 题面 + 题解 + 静态资源 |
 | **PDF** | — | 完整 | 整本题册（封面、题表、补白）、单题、A4 题解册、TRD |
 
-## 7. 本地 Polygon：可复现的题目包（Phase 3）
+## 7. 本地 Polygon：原生题目包与严格验收（Phase 3）
 
-设计参考 [`rindag-devs/hull`](https://hull.aberter0x3f.top/)，但**不依赖 Nix，也不与 Hull 工程互通**。可复现性做到 mise 那一层：工具链按版本加哈希锁定，用到时自动下载，不追求 Nix 级的封闭构建。
+详细规格见 [specs/local-polygon.md](./specs/local-polygon.md)（2026-11-23 调整并确认）。Phase 3 拆分为 **3A（本地传统题 XCPC 完整闭环）** 与 **3B（stdio 交互题 + Polygon 导入 + DOMjudge/Hydro 导出）**。
 
-### 7.1 可复现契约
+### 7.1 执行引擎与可复现边界
 
-**同一个 xcpc 版本、同一份 `xcpc.lock`** 下：生成的测试数据逐字节相同，validator、checker 和各解法的判定相同，**tick 数也相同**，与机器和操作系统无关。
+采用**本机原生 `g++` / `clang++` + 原生执行**（放弃 Wasm / fuel 路线），追求 100% 真实竞赛 C++ 兼容（`<bits/stdc++.h>`、64 位 `long`、PBDS、大栈与异常）、极速造数/对拍与贴近真实 OJ 的时限校准：
 
-- 所有程序用锁定的 wasi-sdk 编译为 WASI p1 的 wasm32，在 xcpc 内嵌的 wasmtime 中运行：时钟固定为 0，没有真实随机源。
-- **时间只用 tick**（wasmtime fuel），不测真实耗时。tick 上限 = `limits.time` × 1e10（与 Hull 相同），内存上限 = `limits.memory`（线性内存，栈与堆共享）。构建报告把 tick 换算成「≈ 秒」展示，用于判断标程占时限的比例。
-- 跨 xcpc 版本升级 wasmtime 后 fuel 计价可能变化，构建报告里记录运行器的计价版本，漂移时给提示，不做兼容。
+- **可复现边界**：`testlib` PRNG 保证相同参数生成的测试数据逐字节一致、validator/checker 逻辑判定一致；不强求跨机器的 CPU 耗时逐位一致。
+- **轻量进程监控**：Linux 用 `rlimit` + `wait4 rusage`（CPU 时间 + 峰值 RSS）+ wall-clock 兜底强杀；Windows 用 Job Object。不做 OS 强安全沙箱（仅面向出题人本地可信代码）。
+- **阶段差异化并发**：编译、数据生成、validator、checker 默认多核并行；**解法运行默认串行（`-j 1`）** 以防多核争抢导致计时失真，允许 `--jobs` 显式覆盖。
 - 比赛对 `limits` 的覆写只影响题面，不影响题目包的判定。
 
-### 7.2 工具链
+### 7.2 工具链与语言
 
-- `Toolchain`：名字 + 版本 + 各平台 url/sha256 + 解包规则，锁在**工作区级**的 `xcpc.lock`，下载到 `~/.cache/xcpc/toolchains/`。第一次用到时，如果没有锁文件，就写入当前 xcpc 推荐的版本。
-- `Language`：用某个工具链把源码变成「wasm 模块 + 预打开目录」。现在只有 C/C++（wasi-sdk 加锁定版本的 `testlib.h`）。语言标准由后缀决定（`.17.cpp` / `.20.cpp` / `.23.cpp`，默认 C++20），固定 `-O2`。工具链提供 `bits/stdc++.h` shim；影子栈大小等于内存上限；开启 wasm 异常。
-- wasm32 是 ILP32，`long` 只有 32 位。这一点不消除：构建时打开转换警告，lint 对单独的 `long` 给 warning。
-- 以后加 Python（CPython 的 wasi 构建）时，只加一个 `Language` 和一个工具链条目，再给时限乘一个语言倍率。选手本机的开发调试环境（g++、clangd、gdb）也可以复用 `Toolchain` 层，但不在可复现契约之内（见路线图「待定」）。
+- 自动探测本机 `g++` / `clang++`（支持 `XCPC_CXX` 与桌面端「设置 → 工具链」覆写路径，缺失时给出平台安装指引）；不再使用 `xcpc.lock`。
+- 固定 `-O2`，标准由后缀决定（`.17.cpp` / `.20.cpp` / `.23.cpp`，默认 C++20）。内置最新版 `testlib.h`（规避 GCC 15 + `-O2` 下旧版 `ncmp` 误报；工作区自带时优先）。
+- Core 预留极薄的 `Language` 抽象层，Phase 3A 专注 C/C++，多语言（Python / Rust / Java 等）留待后续讨论。
 
-### 7.3 题目包
+### 7.3 题目包结构与声明
 
-- **路径约定**：`checker.cpp`（缺省时用内置的逐 token 比较）、`validator.cpp`、`interactor.cpp`（有它就是交互题）、`generators/<name>.cpp`、`solutions/<name>.cpp`、`tests/<name>.in`（手写测试）。
-- **`problem.toml` 只声明** `[[test]]`（`gen` + `args` 或 `file`，不支持循环和模板；`sample = true` 的测试构建后写回 `samples/`）和 `[solutions.<name>]`（`main = true` 表示标程；`expect` 是整题结论或结论列表）。**没有子任务和部分分**：整题结论取按测试顺序第一个非 AC 的结论，checker 返回部分分按 FAIL 处理。
-- **协议按 testlib**：checker 用 `checker <in> <out> <ans>` 加退出码；validator 只看退出码；generator 的随机数由参数决定。不专门支持 CPLib，也不做结构化输出。
-- **交互**：只支持 stdio 交互，interactor 按 testlib 的 `interactor <in> <out>` 约定。选手程序和 interactor 在同一个运行器里通过两条有界管道连接，按 fuel 让出、轮转调度，所以交互过程逐位可复现；双方互相等待判为 TLE。tick 和内存上限只算选手程序。不做文件交互、通信题、提交答案题和自定义 judger。
+- **路径约定**：`checker.cpp`（可选）、`validator.cpp`、`interactor.cpp`（Phase 3B：存在即交互题）、`generators/<name>.cpp`、`solutions/<name>.cpp`、`tests/*.in`（手写测试与对拍反例）、`tests/validator/{valid,invalid}/*.in`（Validator 自测）、`tests/checker/{ok,wa,pe}-*/{in,out,ans}`（自定义 Checker 自测）。
+- **内置标准 Checker 家族**：`wcmp`（默认）、`ncmp`、`fcmp`、`lcmp`、`rcmp4`、`rcmp6`、`rcmp9`、`yesno`、`nyesno`（`[package].checker` 指定，存在 `checker.cpp` 时优先使用）。
+- **`problem.toml` 声明**：`[[test]]`（`file` 或 `gen` + `args`，支持声明式 `repeat = N` 与展示/过滤标签 `tag`、`name`、`sample = true`）和 `[solutions.<name>]`（`main = true` 表示标程；`expect` 为结论或结论列表；可选 `tags` 过滤供暴力参考解交叉验证小数据）。Phase 3A 不做子任务与部分分。
+- **样例衔接**：`samples/` 默认自动作为前序测试点纳入构建（过 validator，已有手工 `.ans` 不静默覆盖，同时验证手工 `.ans` 与 `std` 均过 checker，天然兼容构造题）；仅显式标记 `sample = true` 的 `[[test]]` 写入 `samples/`。自动检测手写数据的 CRLF、UTF-8 BOM 与缺尾换行。
+- **交互（Phase 3B）**：只支持 stdio 交互，interactor 按 testlib `interactor <in> <out>` 约定，通过两条原生 OS pipe 并发连接，双方互相等待由超时判 TLE。
 
-### 7.4 操作
+### 7.4 双档门禁、操作与 Agent 协同
 
-- **构建** `xcpc package build <id>`：编译 → 生成 → validator 校验全部测试（含样例）→ 标程生成 `.ans` → 全部解法跑全部测试 → 对照 `expect`。任何一步不符合预期都算失败。标程最大 tick 超过时限的 50% 时给 warning。
-- **对拍** `xcpc package stress <id> --gen <name> --args "…" [--solutions a,b]`：把递增的种子追加为 generator 的最后一个参数，与标程比较，不一致时写出 `tests/stress-<n>.in`。
-- 产物放在 `build/problems/<slug>/`（测试数据、wasm、报告），不进 Git。缓存按内容哈希放在 `~/.cache/xcpc/`，编译、生成、运行三级缓存，跨工作区共享。
-- GUI：出版工作室单题上下文有第 4 个 Tab「构建报告」（行是测试，列是解法，单元格是判定和 tick），只在有 `solutions/` 时出现；失败汇入 Preflight 徽章。对拍只走 CLI 和 MCP。
-- **Polygon 导入**和本地 Polygon 同期做：testlib 程序落到约定路径，测试脚本展开成 `[[test]]`，解法 tag 映射为 `expect`，题面 LaTeX 用 `tylax` 转换。导入后跑一次构建即可验证。
+- **双档门禁**：
+  - 开发态（默认 `xcpc package build` / MCP `debug`）：支持 `--tests` / `--solutions` 子集局部运行（Invocation），缺 validator 只报 warning，**绝不签发整题 `verified` 状态**；
+  - 严格验收态（`--strict` / MCP `verify` / 比赛冻结 / 导出 OJ 包）：强制要求 `validator.cpp` 存在且至少通过 1 组 `valid` + 1 组 `invalid` 自测、自定义 `checker.cpp` 至少通过 1 组 `OK` + 1 组 `WA` 自测、全量测试过 validator、全部解法符合 `expect`、标程最慢耗时 `≤ 50%` 时限；缺独立参考解或错解报 warning。
+- **动静分离**：`xcpc check` 与比赛冻结不暗中编译跑数，仅核对最近一次验收构建报告的内容哈希（纯出版题跳过）。
+- **操作**：
+  - `xcpc package init <id>`：生成带 `testlib.h` 最佳实践的脚手架；
+  - `xcpc package build <id> [--strict] [--tests …] [--solutions …] [--jobs N]`：编译 → 自测 → 生成 → validator → 标程 → 全解法 → 安全边际摘要与单步复现命令；
+  - `xcpc package stress <id> --gen <name> --args "…" [--solutions a,b]`：递增种子对拍，反例写出 `tests/stress-<n>.in`。
+- 产物放在 `build/problems/<slug>/`（不进 Git）；编译、生成、运行三级内容哈希缓存放在 `~/.cache/xcpc/`，跨工作区共享。
+- **GUI**：出版工作室单题第 4 个 Tab「构建」（轻量出题控制台：构建/严格验收/局部运行、测试×解法矩阵、点击单元格看 checker/stderr 诊断、一键脚手架、跳转外部编辑器；失败汇入 Preflight 徽章）+「设置 → 工具链」。
+- **Agent / Skill 协同**：提供 5 个 MCP 工具（`inspect_package`、`inspect_test_case`、`init_package`、`build_package`、`stress_package`），仓库内建 `skills/xcpc-problem-creator/`（支持 `xcpc init --with-skills` 安装至工作区）并同步升级 `AGENTS.md`。
+- **生态包（Phase 3B）**：Polygon ZIP 导入（启用 `tylax` 转换 LaTeX）与 DOMjudge / Hydro 最小集合数据包 ZIP 导出（剔除内部文件）。

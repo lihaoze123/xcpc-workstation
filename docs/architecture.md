@@ -14,7 +14,7 @@
 | 凭据 | 系统钥匙串（`keyring`） |
 | Agent 接口 | `xcpc mcp`（stdio）+ `xcpc <subcommand> --json` |
 | 视觉基准 | `tectonic` 编译参考模板，生成基准 PDF |
-| 题目包（Phase 3） | 内嵌 `wasmtime`（fuel 计 tick）；wasi-sdk + `testlib.h` 由 `xcpc.lock` 锁定、按需下载 |
+| 题目包（Phase 3） | 本机原生 `g++` / `clang++`（自动探测，可覆写）+ 内置最新版 `testlib.h`；轻量进程监控（Linux `rlimit`/`rusage`、Windows Job Object） |
 
 ## 2. 总体结构
 
@@ -47,7 +47,7 @@ flowchart TD
         Engine["xcpc-engine: typst + comemo + fontdb"]
         Render["typst-render (像素缓冲 / PNG) & typst-pdf"]
         Pkg["xcpc-packages: Polygon / Companion / ..."]
-        Judge["xcpc-judge: 工具链 + wasm 运行器 + 构建 / 对拍"]
+        Judge["xcpc-judge: 原生工具链 + 运行器 + 验收门禁 / 对拍"]
         Sync["xcpc-sync: 外部 OJ 同步"]
     end
 
@@ -77,8 +77,8 @@ crates/
                   # publish 模块：读工作区 → 转换 → 编译 → 诊断映射回 Markdown，GUI / CLI / MCP 共用
   xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
   xcpc-lint       # 题面检查与印刷前预检（Phase 2）
-  xcpc-judge      # 本地 Polygon（Phase 3）：Toolchain / Language、wasmtime 运行器、build / stress、缓存
-  xcpc-packages   # Polygon 导入（Phase 3）、Competitive Companion 等
+  xcpc-judge      # 本地 Polygon（Phase 3A）：本机原生编译器、内置 testlib.h、轻量运行器、双档门禁、build / stress、三级缓存
+  xcpc-packages   # 生态数据包（Phase 3B）：Polygon ZIP 导入、DOMjudge / Hydro 最小集合导出、Competitive Companion 等
   xcpc-sync       # 外部 OJ 同步（后续阶段）
   xcpc-mcp        # `xcpc` 二进制：CLI 子命令 + `xcpc mcp`
 apps/
@@ -161,7 +161,6 @@ erDiagram
 xcpc-workspace/
 ├── .xcpc/                    # 纯本地派生目录，固定写入 .gitignore，绝不进 Git
 │   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存（Phase 4）
-├── xcpc.lock                 # 工具链锁定（Phase 3，进 Git）
 ├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典（不含个人 OJ 账号）
 ├── AGENTS.md                 # 工作区级 Agent 指南（`xcpc init` 时写入的静态文本，之后归用户）
 ├── templates/                # 工作区 Typst 模板（`<name>.typ`，初始化时按所选预设落盘，进 Git，全部可自由编辑）
@@ -236,7 +235,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | 出版与视觉自检 | `compile_and_diagnose`（结构化诊断：错误位置、总页数、溢出警告；Phase 2 起并入 lint 结果）、`render_page_png`、`export_pdf`（单题 / 整本 / 题解册）、`list_templates`（列出内置与自定义模板及其 schema） | Phase 1 / 2.5 |
 | 题库与组卷 | `search_problems`、`get_problem`、`get_contest`、`write_problem`、`compose_contest`、`set_override`（支持单题级模板参数覆写）、`set_template_options`（更新工作区/比赛/单题的模板选择与参数）、`freeze_contest` | Phase 2 / 2.5 |
-| 题目包 | `build_package`（结构化报告）、`stress_package`（反例种子与输入）；`--read-only` 下不可用 | Phase 3 |
+| 题目包 | `inspect_package`、`inspect_test_case`（只读，`--read-only` 可用）、`init_package`、`build_package`（`verify`/`debug` 双模式、结构化报告与门禁）、`stress_package`（有界对拍与反例摘要）；后三者在 `--read-only` 下不可用 | Phase 3A |
 | 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 4 |
 
 **MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。

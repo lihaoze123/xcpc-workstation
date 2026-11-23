@@ -155,23 +155,66 @@
 
 **不做**：轮播引导、每次启动的启动页、slogan、常驻版本底栏、toast、行为触发的主动提示、改键、特定日期彩蛋、里程碑动效、icon 上的字母、ICPC 官方三色块组合、应用内 Typst IDE。
 
-## Phase 3：本地 Polygon（可复现的题目包）
+## Phase 3：本地 Polygon（原生题目包、严格验收与 Agent 协同）
 
-规格见 [product.md §7](./product.md#7-本地-polygon可复现的题目包phase-3)（2026-11-20 讨论确认）。
+详细规格见 [specs/local-polygon.md](./specs/local-polygon.md) 与 [product.md §7](./product.md#7-本地-polygon原生题目包与严格验收phase-3)（2026-11-23 调整确认，放弃 `wasi-sdk` / `wasmtime` fuel，改用本机原生 `g++` / `clang++` + 轻量进程监控）。
 
-1. **PoC 先行**，任何一项不过都回头重新讨论：
-   1. wasi-sdk 编译 testlib 和常见选手代码（`bits/stdc++.h` shim、`__int128`、wasm 异常）；
-   2. 同一个 wasm 在 x86_64 / aarch64、Linux / Windows 上的 tick 逐位相同；
-   3. 影子栈设为内存上限后，10^6 层递归能跑通；
-   4. fuel 计量相对原生的减速倍数（目标：生成 10^6 规模的数据在几秒之内）；
-   5. 交互调度的确定性。
-2. `Toolchain`（`xcpc.lock`、下载、校验、缓存）与 C/C++ `Language`。
-3. 运行器：wasmtime + fuel tick、内存上限、testlib 协议的 checker / validator、stdio 交互。
-4. `xcpc package build` / `stress`，三级内容哈希缓存，样例写回 `samples/`；lint 加入「标程超过时限 50%」和单独 `long` 的 warning。
-5. Polygon 导入（同时启用 `tylax` 处理 LaTeX 输入）。
-6. GUI 构建报告 Tab；MCP `build_package` / `stress_package`（`--read-only` 下不可用）。
+### Phase 3A：本地传统题（XCPC）完整闭环
 
-**不做**：Nix / Hull 互通、子任务与部分分、CPLib 专门支持、文件交互 / 通信题 / 提交答案题、自定义 judger、单独的 compile / run 子命令、判外部提交、wasm64。
+1. **工具链与原生运行器（`crates/xcpc-judge`）**：
+   - 自动探测本机 `g++` / `clang++`（支持 `XCPC_CXX` 与设置页路径覆写），固定 `-O2` 与后缀标准（默认 C++20），内置最新版 `testlib.h`（工作区自带优先），预留 `Language` 抽象层（多语言留待后续讨论）；
+   - 轻量原生进程监控（Linux `rlimit` + `wait4 rusage` + wall-clock 强杀；Windows Job Object）；阶段差异化并发（编译/生成/Validator/Checker 多核并行，解法运行默认串行 `-j 1` 防计时失真）；
+   - 编译 / 生成 / 运行三级内容哈希缓存（`~/.cache/xcpc/` 跨工作区共享），产物落盘 `build/problems/<slug>/`。
+2. **完整传统题链路与双档门禁**：
+   - `problem.toml` 支持 `[package].checker`（内置标准 Checker 家族 `wcmp`/`ncmp`/`fcmp`/`lcmp`/`rcmp4`/`rcmp6`/`rcmp9`/`yesno`/`nyesno` + 自定义 `checker.cpp`）、声明式 `[[test]]`（含 `repeat = N`、`tag`、`name`、`sample = true`）与 `[solutions.<name>]`（`main`、`expect`、`tags` 过滤）；
+   - `samples/` 自动纳入前序测试点且不静默覆盖手工 `.ans`（天然兼容构造题）；自动检测手写数据 CRLF / UTF-8 BOM / 缺尾换行；
+   - 目录约定自测：`tests/validator/{valid,invalid}/*.in` 与 `tests/checker/{ok,wa,pe}-*/{in,out,ans}`；
+   - **双档门禁 + 动静分离**：默认开发态支持子集局部运行（Invocation），绝不签发 `verified`；`--strict` / MCP `verify` / 冻结 / 导出强制 Validator 自测（≥1 valid + ≥1 invalid）、自定义 Checker 自测（≥1 OK + ≥1 WA）、全量过检与标程 `≤ 50%` 时限（缺独立参考解/错解报 warning）；`xcpc check` 与冻结仅核对验收报告哈希，不暗中跑数据；
+   - 报告含安全边际摘要与单步复现命令；CLI 提供 `xcpc package init|build|stress`。
+3. **Agent / MCP 与官方出题 Skill**：
+   - 5 个 MCP 工具：`inspect_package`、`inspect_test_case`（只读，`--read-only` 可用）、`init_package`、`build_package`（`verify`/`debug` 双模式）、`stress_package`；
+   - 升级 `xcpc init` 内嵌的 `AGENTS.md`，并在仓库内建 `skills/xcpc-problem-creator/`（主 Skill + 3 个子 Skill + `mistake-taxonomy.md`，围绕 5 个 MCP 工具编写），`xcpc init --with-skills` 可一键装入工作区。
+4. **桌面端轻量出题控制台与工具链设置**：
+   - 出版工作室单题第 4 个 Tab「构建」（构建 / 严格验收 / 局部运行 / 测试×解法矩阵 / 点击单元格看诊断 / 一键脚手架 / 跳转外部编辑器；失败汇入 Preflight 徽章）；
+   - 「设置 → 工具链」（检测编译器、路径覆写与缺失平台安装指引）。
+
+### Phase 3B：交互题与生态数据包（`crates/xcpc-packages`）
+
+1. **stdio 交互题**：`interactor.cpp` + 本机双 OS pipe 并发运行与死锁超时判定。
+2. **Polygon ZIP 导入**：启用 `tylax` 转换 LaTeX 题面，导入 `validator` / `checker` / `generators` / `solutions` 与测试脚本。
+3. **外部 OJ 数据包导出**：导出 DOMjudge / Hydro 最小集合 ZIP（严格剔除 `validator`、`solutions`、`wrong`、`editorial` 等内部文件）。
+4. OI 子任务与部分分按需评估。
+
+### Phase 3B+（Phase 3C 前置）：题库界面全面升级与命令面板优化
+
+2026-11-23 讨论确认，排在 Phase 3B 之后、Phase 3C 之前，围绕大规模题库（几十至数百题）的组织、批量运维、视觉密排与快捷检索做一次集中升级：
+
+1. **持久化单层分组 + 动态视图分组（两者结合）**：
+   - **数据模型**：`problem.toml` 新增可选字段 `group = "<名称>"`（不移动 `problems/<slug>/` 目录，不破坏比赛活引用，多人 Git 协同零冲突）；`workspace.toml` 新增可选 `groups = [...]` 维护分组顺序与空分组。Core 提供分组的创建、重命名、删除、排序与批量归组原子写回。
+   - **Polygon 导入联动**：Polygon 整场导入（`contest.xml`）默认以比赛名自动创建并归入同名分组。
+   - **UI 布局**：题库表格左侧新增可折叠「分组侧栏」（约 `180pt`，窄窗可收起），顶置「全部题目」「未分组」，下接自定义分组与题数，支持右键重命名/删除与新建分组；表格工具栏同时支持「按维度临时分组折叠」（无 / 分组 / 难度 / 来源 / 比赛 / 数据状态）。
+2. **多选与四类批量操作**：
+   - **多选交互**：表格最左侧增加勾选框列（表头全选当前筛选结果），支持 `Shift+点击` 连续区间选、`Ctrl+点击` 逐项增减、`Ctrl+A` 全选、`Esc` 退出多选；多选态右键任意选中行直接弹出批量菜单。
+   - **操作入口与右侧面板联动**：选中 ≥2 题时，表格底部浮出紧凑操作条（已选 N 题 + 高频动作 + 取消），右侧面板同步切换为「批量摘要 / 任务面板」（选中概览、全量批量动作，以及批量构建/导出时的实时逐题进度与结果汇总，零弹窗打断）。
+   - **批量操作范围**（全部下沉 Core，遵循原子写入与只读/引用守卫）：
+     - 组织与元数据：批量加入比赛（遵守 26 题上限与非冻结/非归档守卫）、批量移入/移出分组、批量增删标签、批量设置难度；
+     - 批量删除题目：二次确认，被未冻结比赛引用的题由 Core 拦截并逐题列出拒绝/跳过原因；
+     - 批量构建 / 严格验收题目包：顺序执行并在右侧任务面板实时汇总通过/失败/耗时；
+     - 批量导出：批量导出 DOMjudge / Hydro 包（遵循「动静分离」验收门禁）或合并导出为 PDF。
+3. **题库表格视觉与排版重构**：
+   - 修复 ID 列与来源列超长文本硬截断无省略号的问题（补齐 `flexShrink: 1, minWidth: 0`）；
+   - 将「数据未验 / 数据过期 / 验收失败」从标题文字末尾彻底拆离，与「题解」「代码」合并为紧凑的「状态」图标列（悬停显示详情，减少视觉噪音并释放宽度）；
+   - 精简高信息密度列结构（勾选框 | 标题 / 紧凑 ID | 难度 | 标签 | 状态 | 宽屏来源），优化表头排序指示器对齐与加侧栏后的响应式降级。
+4. **`Ctrl+K` 命令面板配额与排序优化**：
+   - 取消空查询下最多 30 条对象铺顶导致动作需长距离滚动的问题；
+   - **空查询**：只展示「最近访问」最多 5 条对象（比赛工作室内保留本场题号），紧接着展示常用上下文操作；
+   - **有输入查询**：按分组设上限（题目最多 8 条、比赛最多 4 条、操作不截断）；
+   - 支持 **`>` 前缀**仅过滤并检索操作。
+5. **CLI / MCP 最小闭环**：
+   - `search_problems` / `upsert_problem` 支持 `group` 字段筛选与写入；
+   - 补齐 `xcpc group` 与批量元数据/删除操作的 Core 语义接口、CLI 与 MCP 入口。
+
+**不做**：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、OS 强安全沙箱与判外部提交、Nix / Hull 互通、CPLib 专门支持、通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
 
 ## Phase 4：训练与生态
 
