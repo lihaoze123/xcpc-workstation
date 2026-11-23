@@ -47,9 +47,9 @@ pub use crate::types::{
     PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
     PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
     ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
+    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1311,6 +1311,11 @@ impl Preview {
         self.state.normalize_dirty_inputs(&slug)
     }
 
+    /// Restores the original bytes from the most recent `normalizeDirtyInputs` call for `slug`.
+    pub fn undo_normalize_dirty_inputs(&self, slug: String) -> ActionResult {
+        self.state.undo_normalize_dirty_inputs(&slug)
+    }
+
     /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor
     /// (enforces a strict 256 KiB cap).
     pub fn read_package_file(&self, slug: String, rel_path: String) -> PackageFileContentJs {
@@ -1318,14 +1323,16 @@ impl Preview {
     }
 
     /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
-    /// watcher self-write suppressed).
+    /// conflict-checked against `expectedHash`, watcher self-write suppressed).
     pub fn save_package_file(
         &self,
         slug: String,
         rel_path: String,
         content: String,
-    ) -> ActionResult {
-        self.state.save_package_file(&slug, &rel_path, &content)
+        expected_hash: Option<String>,
+    ) -> SavePackageFileResultJs {
+        self.state
+            .save_package_file(&slug, &rel_path, &content, expected_hash.as_deref())
     }
 }
 

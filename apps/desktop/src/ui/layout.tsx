@@ -47,7 +47,7 @@ export function DetailHeader(props: { title: string; badge?: JSX.Element; second
       }
     >
       <View style={{ height: 28, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" }}>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: lg ? 19 : 17, lineHeight: 26, fontWeight: 600 }}>
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: lg ? 19 : 17, lineHeight: 26, fontWeight: 600 }} class="text-foreground">
           {props.title}
         </Text>
         {props.badge && <View style={{ flexShrink: 0 }}>{props.badge}</View>}
@@ -72,7 +72,7 @@ export function EmptyState(props: { icon: IconName; title: string; hint?: string
         <Icon name={props.icon} size={20} tone="muted-foreground" />
       </View>
       <View style={{ alignItems: "center", gap: 4 }}>
-        <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: 500 }}>{props.title}</Text>
+        <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: 500 }} class="text-foreground">{props.title}</Text>
         {props.hint && (
           <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
             {props.hint}
@@ -90,7 +90,7 @@ export function Section(props: { title: string; description?: string; trailing?:
     <View style={[{ gap: 8 }, props.style]}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
         <View style={{ flex: 1, gap: 2 }}>
-          <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 600 }}>{props.title}</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 600 }} class="text-foreground">{props.title}</Text>
           {props.description && (
             <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
               {props.description}

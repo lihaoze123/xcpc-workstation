@@ -82,6 +82,7 @@ import {
   customOverrideInputValue,
   dedupDetectedCompilers,
   hasInvalidCxxOverride,
+  middleTruncatePath,
   normalizeCxxOverrideInput,
   verdictBadgeStyle,
 } from "./studio/buildLogic";
@@ -100,7 +101,7 @@ const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: Ico
   { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
   { id: "toolchain", labelKey: "settings.nav.toolchain", icon: "squareCode" },
   { id: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
-  { id: "shortcuts", labelKey: "settings.nav.shortcuts", icon: "code" },
+  { id: "shortcuts", labelKey: "settings.nav.shortcuts", icon: "keyboard" },
   { id: "about", labelKey: "settings.nav.about", icon: "info" },
 ];
 
@@ -749,7 +750,7 @@ function ToolchainPane() {
                       style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
                       class="text-muted-foreground"
                     >
-                      {compiler().path}
+                      {middleTruncatePath(compiler().path, 42)}
                     </Text>
                   </View>
                 </SectionRow>
@@ -796,9 +797,9 @@ function ToolchainPane() {
                 />
               </If>
             </View>
-            <If when={invalidOverride()}>
+            <If when={Boolean(status().error) || invalidOverride()}>
               <Text testID="toolchain-override-invalid" style={{ fontSize: 12, lineHeight: 16 }} class="text-destructive">
-                {t("settings.toolchain.overrideInvalid", { path: status().overridePath ?? "" })}
+                {status().error ?? t("settings.toolchain.overrideInvalid", { path: status().overridePath ?? "" })}
               </Text>
             </If>
             <If when={Boolean(status().envOverride) && !status().overridePath}>

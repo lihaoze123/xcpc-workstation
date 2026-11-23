@@ -36,6 +36,8 @@ export interface MatrixCellData {
   cache_hit: boolean;
   checker_message?: string;
   stderr?: string;
+  output_preview?: string | null;
+  stale?: boolean;
   repro_cmd?: string | null;
 }
 
@@ -418,8 +420,10 @@ function normalizeExpected(spec: PackageSolutionSpecData): string[] {
 }
 
 /**
- * Resolves solution column headers with accurate `is_main`, `expected`, `source_rel`, and `tags`
- * both before and after the first build runs.
+ * Resolves solution column headers with accurate `is_main`, `expected`, `source_rel`, and `tags`.
+ *
+ * P0-2 / Fix A-2: Structure ALWAYS comes from live disk `inspection` so adding/removing
+ * solutions or editing `expect` updates immediately without waiting for a rebuild.
  */
 export function resolveSolutionHeaderSpecs(
   inspection: PackageInspectionData | undefined,
@@ -434,15 +438,6 @@ export function resolveSolutionHeaderSpecs(
     if (stem && !sourceByName.has(stem)) sourceByName.set(stem, `solutions/${file}`);
   }
 
-  if (report?.solutions && report.solutions.length > 0) {
-    return report.solutions.map((s) => ({
-      name: s.name,
-      source_rel: sourceByName.get(s.name),
-      is_main: s.is_main,
-      expected: s.expected.length > 0 ? s.expected : ["AC"],
-      tags: s.tags ?? null,
-    }));
-  }
   if (inspection?.solutions && inspection.solutions.length > 0) {
     return inspection.solutions.map((s) => ({
       name: s.name,
@@ -452,18 +447,30 @@ export function resolveSolutionHeaderSpecs(
       tags: s.tags ?? null,
     }));
   }
-  const names: string[] = [];
-  for (const file of inspection?.files?.solutions ?? []) {
-    const stem = logicalSolutionName(file);
-    if (stem && !names.includes(stem)) names.push(stem);
+  if (inspection?.files?.solutions && inspection.files.solutions.length > 0) {
+    const names: string[] = [];
+    for (const file of inspection.files.solutions) {
+      const stem = logicalSolutionName(file);
+      if (stem && !names.includes(stem)) names.push(stem);
+    }
+    return names.map((name) => ({
+      name,
+      source_rel: sourceByName.get(name),
+      is_main: name === "std",
+      expected: ["AC"],
+      tags: null,
+    }));
   }
-  return names.map((name) => ({
-    name,
-    source_rel: sourceByName.get(name),
-    is_main: name === "std",
-    expected: ["AC"],
-    tags: null,
-  }));
+  if (report?.solutions && report.solutions.length > 0) {
+    return report.solutions.map((s) => ({
+      name: s.name,
+      source_rel: sourceByName.get(s.name),
+      is_main: s.is_main,
+      expected: s.expected.length > 0 ? s.expected : ["AC"],
+      tags: s.tags ?? null,
+    }));
+  }
+  return [];
 }
 
 /** Classifies a solution's role for badge display (`main` | `alt` | `wrong`). */
@@ -474,7 +481,7 @@ export function solutionRole(spec: Pick<SolutionHeaderSpec, "is_main" | "expecte
   return "wrong";
 }
 
-/** Splits gates into `failed`, `warn`, and `passed` buckets for the compact summary bar. */
+/** Splits gates into `failed`, `warn`, and `passed` buckets, with `attention` strictly ordered Failed → Warn. */
 export function partitionGates(gates: readonly GateResultData[]): {
   failed: GateResultData[];
   warn: GateResultData[];
@@ -483,20 +490,17 @@ export function partitionGates(gates: readonly GateResultData[]): {
 } {
   const failed: GateResultData[] = [];
   const warn: GateResultData[] = [];
-  const attention: GateResultData[] = [];
   const passed: GateResultData[] = [];
   for (const g of gates) {
     if (g.status === "fail") {
       failed.push(g);
-      attention.push(g);
     } else if (g.status === "warn") {
       warn.push(g);
-      attention.push(g);
     } else {
       passed.push(g);
     }
   }
-  return { failed, warn, attention, passed };
+  return { failed, warn, attention: [...failed, ...warn], passed };
 }
 
 /** Humanizes Core gate titles/messages in Chinese so no raw `validator`/`expect`/`门禁` jargon or awkward spaces leak. */
@@ -662,4 +666,170 @@ export function dedupDetectedCompilers(
     out.unshift(active);
   }
   return out;
+}
+
+/** Middle-truncates long filesystem paths (e.g. Nix store paths) keeping the leading prefix and binary tail. */
+export function middleTruncatePath(path: string, maxLen = 40): string {
+  if (path.length <= maxLen) return path;
+  const parts = path.split("/");
+  if (parts.length >= 4) {
+    const tail = parts.slice(-2).join("/");
+    const head = parts.slice(0, 2).join("/");
+    const candidate = `${head}/…/${tail}`;
+    if (candidate.length <= maxLen) return candidate;
+  }
+  const keepTail = Math.max(12, Math.floor(maxLen * 0.55));
+  const keepHead = Math.max(8, maxLen - keepTail - 1);
+  return `${path.slice(0, keepHead)}…${path.slice(path.length - keepTail)}`;
+}
+
+/**
+ * Merges persisted `report.matrix` cells with streaming `liveCells` from an active run
+ * (live cells take precedence so results populate in real time without wiping untouched cells).
+ */
+export function mergeLiveMatrixCells(
+  reportCells: readonly MatrixCellData[] | undefined,
+  liveCells: readonly MatrixCellData[] | undefined,
+): Map<string, MatrixCellData> {
+  const map = new Map<string, MatrixCellData>();
+  if (reportCells) {
+    for (const c of reportCells) {
+      map.set(matrixCellKey(c.test_index, c.solution), c);
+    }
+  }
+  if (liveCells) {
+    for (const c of liveCells) {
+      map.set(matrixCellKey(c.test_index, c.solution), { ...c, stale: false });
+    }
+  }
+  return map;
+}
+
+/**
+ * P1-6 Visual Coding:
+ * - Expected-match cells (including wrong solutions getting expected WA/TLE) use calm, muted neutral styling.
+ * - ONLY unexpected / mismatch cells pop with high-contrast semantic tint + border.
+ */
+export function cellVisualStyle(
+  verdict: string,
+  isAnomaly: boolean,
+  dark: boolean,
+): { bg: string; fg: string; border: string } {
+  if (!isAnomaly) {
+    // Calm, low-saturation neutral pill for expected verdicts.
+    return dark
+      ? { bg: "rgba(255, 255, 255, 0.04)", fg: "#a1a1aa", border: "rgba(255, 255, 255, 0.07)" }
+      : { bg: "rgba(24, 24, 27, 0.035)", fg: "#52525b", border: "rgba(24, 24, 27, 0.07)" };
+  }
+  const base = verdictBadgeStyle(verdict, dark);
+  return {
+    bg: base.bg,
+    fg: base.fg,
+    border: base.fg,
+  };
+}
+
+/**
+ * P1-6 Human-readable solution summary conclusion (never confusing `0/6` ratios for wrong solutions).
+ */
+export function formatSolutionConclusion(
+  summary: SolutionSummaryData | undefined,
+  cellsForSolution: readonly MatrixCellData[],
+  isZh: boolean,
+): { text: string; tone: "ok" | "fail" | "muted" } {
+  if (!summary && cellsForSolution.length === 0) {
+    return { text: isZh ? "未运行" : "Not run", tone: "muted" };
+  }
+  if (summary?.matched) {
+    return { text: isZh ? "符合预期" : "Expected", tone: "ok" };
+  }
+  // Count non-AC or unexpected verdicts for a clear conclusion like "WA ×1".
+  const primary = summary?.actual_verdict ?? cellsForSolution[0]?.verdict ?? "ERR";
+  const count = cellsForSolution.filter((c) => c.verdict.toUpperCase() === primary.toUpperCase()).length;
+  if (summary && !summary.matched) {
+    return {
+      text: count > 0 ? `${primary} ×${count}` : primary,
+      tone: "fail",
+    };
+  }
+  return { text: isZh ? "运行中" : "Running", tone: "muted" };
+}
+
+export type SingleStatusKind = "ready" | "needs_reverify" | "issues" | "unverified";
+
+/**
+ * P0-2 Single Status Model: collapses all freshness + gate + compile failure signals into ONE
+ * top-bar status pill ("可用于比赛" / "需要重新验证" / "N 项问题" / "尚未验证").
+ */
+export function resolveSingleStatusBadge(
+  freshness: string | undefined,
+  failedGateCount: number,
+  compileFailureCount: number,
+  hasReport: boolean,
+): { kind: SingleStatusKind; issueCount: number } {
+  const issues = failedGateCount + compileFailureCount;
+  if (freshness === "verified_fresh" && issues === 0) {
+    return { kind: "ready", issueCount: 0 };
+  }
+  if (freshness === "failed" || issues > 0) {
+    return { kind: "issues", issueCount: Math.max(1, issues) };
+  }
+  if (freshness === "stale" || hasReport) {
+    return { kind: "needs_reverify", issueCount: 0 };
+  }
+  return { kind: "unverified", issueCount: 0 };
+}
+
+export interface OnboardingStep {
+  id: "validator" | "std" | "tests" | "wrong";
+  done: boolean;
+  targetFile?: string;
+}
+
+/**
+ * Computes the 4-step onboarding checklist for a problem package:
+ * 1. Validator present & self-tested (or exists)
+ * 2. Main solution (`std`) exists and passes AC (or exists when unbuilt)
+ * 3. Non-sample tests (generator or hand tests) configured
+ * 4. At least one non-main (wrong/alt) solution added
+ * Auto-hides once all 4 steps are done and the package is verified.
+ */
+export function computeOnboardingChecklist(
+  inspection: PackageInspectionData | undefined,
+  report: BuildReportData | undefined,
+): { show: boolean; steps: OnboardingStep[] } {
+  if (!inspection?.has_package) return { show: false, steps: [] };
+  const hasValidator = Boolean(inspection.files?.validator);
+  const selfTestsOk =
+    (report?.self_tests?.length ?? 0) > 0 && report!.self_tests!.every((s) => s.passed);
+  const validatorDone = hasValidator && (report ? selfTestsOk : false);
+
+  const sols = resolveSolutionHeaderSpecs(inspection, report);
+  const mainSol = sols.find((s) => s.is_main);
+  const mainReport = report?.solutions?.find((s) => s.is_main);
+  const stdDone = Boolean(mainSol && mainReport?.matched);
+
+  const nonSampleTests = (inspection.expanded_tests ?? []).filter((t) => !t.is_sample);
+  const testsDone = nonSampleTests.length > 0 && Boolean(report?.tests?.some((t) => !t.is_sample && t.validator_ok));
+
+  const wrongSol = sols.find((s) => !s.is_main);
+  const wrongDone = Boolean(wrongSol && report?.solutions?.some((s) => !s.is_main && s.matched));
+
+  const steps: OnboardingStep[] = [
+    { id: "validator", done: validatorDone, targetFile: inspection.files?.validator ?? undefined },
+    { id: "std", done: stdDone, targetFile: mainSol?.source_rel },
+    { id: "tests", done: testsDone, targetFile: inspection.files?.generators?.[0] ? `generators/${inspection.files.generators[0]}` : undefined },
+    { id: "wrong", done: wrongDone, targetFile: wrongSol?.source_rel },
+  ];
+  const allDone = steps.every((s) => s.done) && report?.verified === true;
+  return { show: !allDone, steps };
+}
+
+/** Counts how many expanded test cases belong to a given 0-based `[[test]]` rule index. */
+export function countTestsInRule(
+  expandedTests: readonly ExpandedTestData[] | undefined,
+  ruleIndex: number | null | undefined,
+): number {
+  if (!expandedTests || ruleIndex == null) return 0;
+  return expandedTests.filter((t) => t.rule_index === ruleIndex).length;
 }

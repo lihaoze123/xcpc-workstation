@@ -1,19 +1,41 @@
-// Compact modals for structured package authoring:
+// Compact modals for structured package authoring (following design-system §9.1-6):
 // - CreateSourceModal: new solution (`solutions/<name>.cpp`) or generator (`generators/<name>.cpp`)
 // - AddGeneratorBatchModal: compact 4-field generator `[[test]]` batch creator
-// - ConfirmDeleteRuleModal: confirm removing a `[[test]]` rule from `problem.toml`
+// - ConfirmDeleteRuleModal: confirm removing a `[[test]]` rule stating exact test count
 
 import { effect, signal, Text, untracked, View } from "nsh";
 import { Input } from "nsh/base";
-import { ErrorDisplay } from "../ErrorDisplay";
-import { Icon } from "../Icon";
+import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
 import { Btn, FieldLabel } from "../kit";
 import { AppMenu } from "../Menu";
 import { Modal } from "../Modal";
-import { preview, type UiError } from "../store";
+import { preview } from "../store";
 import { MONO } from "../theme";
 import { logicalSolutionName } from "./buildLogic";
+
+const SAFE_STEM_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+function ModalHeader(props: { icon: IconName; title: string; subtitle: string }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+      <View
+        style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+        class="bg-muted"
+      >
+        <Icon name={props.icon} size={16} tone="foreground" />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
+          {props.title}
+        </Text>
+        <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+          {props.subtitle}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
 export function CreateSourceModal(props: {
   open: boolean;
@@ -23,13 +45,13 @@ export function CreateSourceModal(props: {
   onCreated: (relPath: string) => void;
 }) {
   const name = signal("");
-  const err = signal<UiError | undefined>(undefined);
+  const inlineError = signal<string | undefined>(undefined);
 
   effect(() => {
     if (props.open) {
       untracked(() => {
         name.set("");
-        err.set(undefined);
+        inlineError.set(undefined);
       });
     }
   });
@@ -37,9 +59,13 @@ export function CreateSourceModal(props: {
   function submit() {
     const cleaned = name().trim();
     if (!cleaned) return;
+    if (!SAFE_STEM_RE.test(cleaned) || cleaned.includes("..")) {
+      inlineError.set(t("build.programs.nameHint"));
+      return;
+    }
     const res = preview.createPackageSource(props.problemId, props.kind, cleaned);
     if (!res.ok) {
-      err.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      inlineError.set(res.error ?? t("build.programs.nameHint"));
       return;
     }
     props.onClose();
@@ -47,13 +73,21 @@ export function CreateSourceModal(props: {
   }
 
   return (
-    <Modal open={props.open} onClose={props.onClose} width={400} testID="create-source-modal">
+    <Modal open={props.open} onClose={props.onClose} width={412} testID="create-source-modal">
       <View style={{ padding: 18, gap: 14 }}>
-        <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
-          {props.kind === "solution"
-            ? t("build.programs.createSolutionTitle")
-            : t("build.programs.createGeneratorTitle")}
-        </Text>
+        <ModalHeader
+          icon={props.kind === "solution" ? "code" : "sparkles"}
+          title={
+            props.kind === "solution"
+              ? t("build.programs.createSolutionTitle")
+              : t("build.programs.createGeneratorTitle")
+          }
+          subtitle={
+            props.kind === "solution"
+              ? t("build.programs.createSolutionSubtitle")
+              : t("build.programs.createGeneratorSubtitle")
+          }
+        />
 
         <View style={{ gap: 6 }}>
           <FieldLabel label={t("build.programs.nameLabel")} />
@@ -68,19 +102,26 @@ export function CreateSourceModal(props: {
                 ? t("build.programs.solutionNamePlaceholder")
                 : t("build.programs.generatorNamePlaceholder")
             }
-            onChange={(e) => name.set(e.value)}
+            onChange={(e) => {
+              name.set(e.value);
+              if (inlineError()) inlineError.set(undefined);
+            }}
             onSubmit={submit}
-            class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+            class={
+              inlineError()
+                ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] placeholder:text-muted-foreground focus:border-destructive focus:ring-1 focus:ring-inset focus:ring-destructive"
+                : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+            }
             style={{ fontFamily: MONO }}
           />
-          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-            {t("build.programs.nameHint")}
+          {/* Fixed single-slot constraint / error line — turns red in-place with zero dialog height jump */}
+          <Text
+            style={{ fontSize: 12, numberOfLines: 1, textOverflow: "ellipsis" }}
+            class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
+          >
+            {inlineError() ?? t("build.programs.nameHint")}
           </Text>
         </View>
-
-        <If when={err()}>
-          <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
-        </If>
 
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
@@ -109,7 +150,7 @@ export function AddGeneratorBatchModal(props: {
   const args = signal("-n 100 {i}");
   const repeat = signal("5");
   const tag = signal("random");
-  const err = signal<UiError | undefined>(undefined);
+  const inlineError = signal<string | undefined>(undefined);
 
   effect(() => {
     if (props.open) {
@@ -119,7 +160,7 @@ export function AddGeneratorBatchModal(props: {
         args.set("-n 100 {i}");
         repeat.set("5");
         tag.set("random");
-        err.set(undefined);
+        inlineError.set(undefined);
       });
     }
   });
@@ -131,7 +172,7 @@ export function AddGeneratorBatchModal(props: {
     const tg = tag().trim() || null;
     const res = preview.addGeneratorTest(props.problemId, gen, args().trim(), rep, tg, null);
     if (!res.ok) {
-      err.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      inlineError.set(res.error ?? t("ctx.updatePackage"));
       return;
     }
     props.onClose();
@@ -141,9 +182,11 @@ export function AddGeneratorBatchModal(props: {
   return (
     <Modal open={props.open} onClose={props.onClose} width={440} testID="add-gen-batch-modal">
       <View style={{ padding: 18, gap: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
-          {t("build.tests.genModalTitle")}
-        </Text>
+        <ModalHeader
+          icon="sparkles"
+          title={t("build.tests.genModalTitle")}
+          subtitle={t("build.tests.genModalSubtitle")}
+        />
 
         <View style={{ gap: 5 }}>
           <FieldLabel label={t("build.tests.genModalGenerator")} />
@@ -155,7 +198,10 @@ export function AddGeneratorBatchModal(props: {
               label: g,
               checked: g === selectedGen(),
             }))}
-            onSelect={(id) => selectedGen.set(id)}
+            onSelect={(id) => {
+              selectedGen.set(id);
+              inlineError.set(undefined);
+            }}
             trigger={
               <View
                 class="border border-border bg-card hover:bg-muted"
@@ -169,7 +215,7 @@ export function AddGeneratorBatchModal(props: {
                   justifyContent: "space-between",
                 }}
               >
-                <Text style={{ fontSize: 13, fontFamily: MONO }} class="text-foreground">
+                <Text style={{ fontSize: 13 }} class="text-foreground">
                   {selectedGen() || t("build.programs.generatorsEmpty")}
                 </Text>
                 <Icon name="chevronDown" size={14} tone="muted-foreground" />
@@ -215,11 +261,14 @@ export function AddGeneratorBatchModal(props: {
           </View>
         </View>
 
-        <If when={err()}>
-          <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
-        </If>
+        <Text
+          style={{ fontSize: 12, minHeight: 16 }}
+          class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
+        >
+          {inlineError() ?? t("build.tests.genModalHint")}
+        </Text>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="add-gen-batch-submit"
@@ -236,23 +285,31 @@ export function AddGeneratorBatchModal(props: {
 
 export function ConfirmDeleteRuleModal(props: {
   open: boolean;
+  testCount: number;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <Modal open={props.open} onClose={props.onClose} width={380} testID="confirm-delete-rule-modal">
+    <Modal open={props.open} onClose={props.onClose} width={390} testID="confirm-delete-rule-modal">
       <View style={{ padding: 18, gap: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
-          {t("build.tests.confirmDeleteTitle")}
-        </Text>
-        <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
-          {t("build.tests.confirmDeleteDesc")}
-        </Text>
+        <ModalHeader
+          icon="trash"
+          title={
+            props.testCount > 1
+              ? t("build.tests.confirmDeleteBatchTitle", { count: props.testCount })
+              : t("build.tests.confirmDeleteTitle")
+          }
+          subtitle={t("build.tests.confirmDeleteDesc")}
+        />
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="confirm-delete-rule-btn"
-            label={t("build.tests.deleteRule")}
+            label={
+              props.testCount > 1
+                ? t("build.tests.deleteBatchAction", { count: props.testCount })
+                : t("build.tests.deleteRule")
+            }
             variant="danger"
             onPress={props.onConfirm}
           />

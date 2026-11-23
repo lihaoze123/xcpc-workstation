@@ -33,10 +33,11 @@ use crate::types::{
     PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PreviewDiagnostic,
     PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report,
-    first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
+    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
+    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str,
+    extract_report, first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str,
+    source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -130,6 +131,7 @@ pub(crate) struct PackageBuildSlot {
     pub(crate) detail: Option<String>,
     pub(crate) completed: u32,
     pub(crate) total: u32,
+    pub(crate) live_cells: Vec<xcpc_judge::MatrixCell>,
     pub(crate) report_json: Option<String>,
     pub(crate) error: Option<String>,
 }
@@ -148,6 +150,8 @@ pub(crate) struct State {
     pub(crate) math_engine: Mutex<Engine>,
     /// Background local Polygon package build slot.
     pub(crate) package_build: Arc<Mutex<PackageBuildSlot>>,
+    /// In-memory byte backup of the last `normalize_dirty_inputs` call for single-click undo.
+    pub(crate) dirty_inputs_backup: Mutex<Option<(String, Vec<(String, Vec<u8>)>)>>,
 }
 
 impl Drop for State {
@@ -223,6 +227,7 @@ impl State {
             }),
             math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
             package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
+            dirty_inputs_backup: Mutex::new(None),
         };
 
         if let Some(ws) = workspace {
@@ -948,18 +953,23 @@ impl State {
             platform: query.platform,
         };
         let core = self.core.lock().unwrap();
+        let ws = core.workspace.as_ref();
         core.index
             .search_problems(&core_query)
             .into_iter()
-            .map(|p| ProblemSummaryJs {
-                id: p.id,
-                title: p.title,
-                rating: p.rating,
-                tags: p.tags,
-                sources: p.sources.iter().map(source_to_js).collect(),
-                has_editorial: p.has_editorial,
-                has_solutions: p.has_solutions,
-                statement_path: p.statement_path,
+            .map(|p| {
+                let package_status = ws.and_then(|w| package_status_opt(w, &p.id));
+                ProblemSummaryJs {
+                    id: p.id,
+                    title: p.title,
+                    rating: p.rating,
+                    tags: p.tags,
+                    sources: p.sources.iter().map(source_to_js).collect(),
+                    has_editorial: p.has_editorial,
+                    has_solutions: p.has_solutions,
+                    statement_path: p.statement_path,
+                    package_status,
+                }
             })
             .collect()
     }
@@ -1404,6 +1414,7 @@ impl State {
                             options_json: opts_json.clone(),
                             original_options_json: opts_json,
                             override_options_json: "{}".into(),
+                            package_status: None,
                         }
                     })
                     .collect(),
@@ -1459,6 +1470,7 @@ impl State {
                                 options_json,
                                 original_options_json,
                                 override_options_json,
+                                package_status: package_status_opt(&ws, &item.id),
                             }
                         }
                         Err(_) => {
@@ -1486,6 +1498,7 @@ impl State {
                                 options_json: override_options_json.clone(),
                                 original_options_json: "{}".into(),
                                 override_options_json,
+                                package_status: None,
                             }
                         }
                     }
@@ -2534,9 +2547,26 @@ impl State {
     }
 
     pub(crate) fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
+        let trimmed = path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        if let Some(ref candidate) = trimmed
+            && let Err(e) = xcpc_judge::validate_compiler_path(Path::new(candidate))
+        {
+            let existing = {
+                let core = self.core.lock().unwrap();
+                core.prefs.app.cxx_override.clone()
+            };
+            let mut status: ToolchainStatusJs =
+                xcpc_judge::detect_toolchain(existing.as_deref().map(Path::new)).into();
+            status.error = Some(e.to_string());
+            return status;
+        }
         let override_path = {
             let mut core = self.core.lock().unwrap();
-            core.prefs.set_cxx_override(path.as_deref());
+            core.prefs.set_cxx_override(trimmed.as_deref());
             core.prefs.persist(self.data_dir.as_deref());
             core.prefs.app.cxx_override.clone()
         };
@@ -2702,6 +2732,7 @@ impl State {
                 detail: None,
                 completed: 0,
                 total: 0,
+                live_cells: Vec::new(),
                 report_json: None,
                 error: None,
             };
@@ -2774,13 +2805,24 @@ impl State {
                             cpu_time_ms,
                             completed,
                             total,
+                            cell,
                         } => {
                             slot.phase = Some("running".to_owned());
                             slot.detail = Some(format!(
-                                "{solution} · {test_name} ({verdict} {cpu_time_ms}ms)"
+                                "{solution} {test_name} ({verdict} {cpu_time_ms}ms)"
                             ));
                             slot.completed = completed as u32;
                             slot.total = total as u32;
+                            if let Some(c) = cell {
+                                let c = *c;
+                                if let Some(existing) = slot.live_cells.iter_mut().find(|x| {
+                                    x.test_index == c.test_index && x.solution == c.solution
+                                }) {
+                                    *existing = c;
+                                } else {
+                                    slot.live_cells.push(c);
+                                }
+                            }
                         }
                         xcpc_judge::ProgressEvent::Finished { .. } => {
                             slot.phase = Some("finished".to_owned());
@@ -2853,6 +2895,11 @@ impl State {
 
     pub(crate) fn package_build_status(&self) -> PackageBuildStatusJs {
         let slot = self.package_build.lock().unwrap();
+        let live_cells_json = if slot.live_cells.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&slot.live_cells).ok()
+        };
         PackageBuildStatusJs {
             seq: slot.seq,
             running: slot.running,
@@ -2864,6 +2911,7 @@ impl State {
             completed: slot.completed,
             total: slot.total,
             report_json: slot.report_json.clone(),
+            live_cells_json,
             error: slot.error.clone(),
         }
     }
@@ -2945,15 +2993,23 @@ impl State {
                 available_on_disk: p.available_on_disk,
                 size_bytes: p.size_bytes as f64,
                 total_lines: p.total_lines as u32,
+                total_lines_exact: p.total_lines_exact.map(|n| n as u32),
+                omitted_bytes: p.omitted_bytes.map(|n| n as f64),
                 head: p.head,
                 tail: p.tail,
                 truncated: p.truncated,
                 ans_available: p.ans_available,
+                ans_source: p.ans_source,
                 ans_size_bytes: p.ans_size_bytes as f64,
                 ans_head: p.ans_head,
                 ans_tail: p.ans_tail,
                 ans_truncated: p.ans_truncated,
                 ans_total_lines: p.ans_total_lines.map(|n| n as u32),
+                std_output_available: p.std_output_available,
+                std_output_size_bytes: p.std_output_size_bytes as f64,
+                std_output_head: p.std_output_head,
+                std_output_tail: p.std_output_tail,
+                std_output_truncated: p.std_output_truncated,
                 rule_index: p.rule_index.map(|n| n as u32),
                 file_rel: p.file_rel,
                 error: None,
@@ -3189,8 +3245,25 @@ impl State {
                 ..Default::default()
             };
         }
+        // Snapshot original bytes of dirty inputs so user can undo the normalization in one click.
+        let mut backups: Vec<(String, Vec<u8>)> = Vec::new();
+        if let Ok(problem) = ws.load_problem(slug)
+            && let Ok(prob_dir) = ws.resolve(&problem.dir)
+        {
+            for issue in xcpc_judge::check_dirty_inputs(&prob_dir) {
+                let ws_rel = format!("problems/{slug}/{}", issue.path);
+                if let Ok(resolved) = ws.resolve(&ws_rel)
+                    && let Ok(raw) = std::fs::read(&resolved)
+                {
+                    backups.push((ws_rel, raw));
+                }
+            }
+        }
         match xcpc_judge::normalize_dirty_inputs(&ws, slug) {
             Ok(fixed) => {
+                if !fixed.is_empty() && !backups.is_empty() {
+                    *self.dirty_inputs_backup.lock().unwrap() = Some((slug.to_owned(), backups));
+                }
                 self.invalidate_cache();
                 NormalizeDirtyResultJs {
                     ok: true,
@@ -3206,6 +3279,33 @@ impl State {
                 ..Default::default()
             },
         }
+    }
+
+    /// Restores the original bytes from the most recent `normalize_dirty_inputs` call for `slug`.
+    pub(crate) fn undo_normalize_dirty_inputs(&self, slug: &str) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        let backup = {
+            let mut guard = self.dirty_inputs_backup.lock().unwrap();
+            match guard.as_ref() {
+                Some((s, _)) if s == slug => guard.take().map(|(_, files)| files),
+                _ => None,
+            }
+        };
+        let Some(files) = backup else {
+            return ActionResult::err("not_found", "nothing to undo");
+        };
+        for (ws_rel, raw) in &files {
+            if let Err(e) = ws.write(ws_rel, raw) {
+                return ActionResult::from_storage_err(e);
+            }
+        }
+        self.invalidate_cache();
+        ActionResult::ok()
     }
 
     /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor.
@@ -3247,6 +3347,7 @@ impl State {
             return PackageFileContentJs {
                 ok: true,
                 content: String::new(),
+                content_hash: String::new(),
                 size_bytes: size as f64,
                 too_large: true,
                 error: None,
@@ -3256,6 +3357,7 @@ impl State {
         match std::fs::read(&canonical) {
             Ok(bytes) => PackageFileContentJs {
                 ok: true,
+                content_hash: content_hash(&bytes),
                 content: String::from_utf8_lossy(&bytes).into_owned(),
                 size_bytes: bytes.len() as f64,
                 too_large: false,
@@ -3272,54 +3374,80 @@ impl State {
     }
 
     /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
-    /// wired through `Workspace::write` for watcher self-write suppression).
+    /// conflict-checked against `expected_hash`, watcher self-write suppressed).
     pub(crate) fn save_package_file(
         &self,
         slug: &str,
         rel_path: &str,
         content: &str,
-    ) -> ActionResult {
+        expected_hash: Option<&str>,
+    ) -> SavePackageFileResultJs {
         const MAX_QUICK_EDIT_BYTES: usize = 256 * 1024;
+        let err_res = |code: &str, msg: String| SavePackageFileResultJs {
+            ok: false,
+            conflict: false,
+            content_hash: None,
+            error: Some(msg),
+            code: Some(code.to_owned()),
+        };
         if content.len() > MAX_QUICK_EDIT_BYTES {
-            return ActionResult::err(
+            return err_res(
                 "too_large",
-                "file exceeds 256 KiB quick-edit limit; open in external editor",
+                "file exceeds 256 KiB quick-edit limit; open in external editor".into(),
             );
         }
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
-            return ActionResult::err("no_workspace", "no workspace open");
+            return err_res("no_workspace", "no workspace open".into());
         };
         if ws.is_read_only() {
-            return ActionResult::err("read_only", "workspace is read-only");
+            return err_res("read_only", "workspace is read-only".into());
         }
         if let Err(e) = check_id(slug) {
-            return ActionResult::err("invalid_id", e.to_string());
+            return err_res("invalid_id", e.to_string());
         }
         let cleaned = rel_path.trim().trim_start_matches('/');
         if cleaned.is_empty() || cleaned.contains("..") {
-            return ActionResult::err("path_escape", "invalid package file path");
+            return err_res("path_escape", "invalid package file path".into());
         }
         let prob_dir_rel = format!("problems/{slug}");
         let prob_dir = match ws.resolve(&prob_dir_rel) {
             Ok(p) => p,
-            Err(e) => return ActionResult::from_storage_err(e),
+            Err(e) => {
+                let a = ActionResult::from_storage_err(e);
+                return SavePackageFileResultJs {
+                    ok: false,
+                    conflict: false,
+                    content_hash: None,
+                    error: a.error,
+                    code: a.code,
+                };
+            }
         };
         let canonical_prob = match prob_dir.canonicalize() {
             Ok(p) => p,
-            Err(e) => return ActionResult::err("not_found", format!("{prob_dir_rel}: {e}")),
+            Err(e) => return err_res("not_found", format!("{prob_dir_rel}: {e}")),
         };
         let ws_rel = format!("{prob_dir_rel}/{cleaned}");
         let target = match ws.resolve(&ws_rel) {
             Ok(p) => p,
-            Err(e) => return ActionResult::from_storage_err(e),
+            Err(e) => {
+                let a = ActionResult::from_storage_err(e);
+                return SavePackageFileResultJs {
+                    ok: false,
+                    conflict: false,
+                    content_hash: None,
+                    error: a.error,
+                    code: a.code,
+                };
+            }
         };
         // Reject symlink escape if target or its parent already exists.
         if target.exists() {
             let Ok(canonical) = target.canonicalize() else {
-                return ActionResult::err("io", format!("cannot resolve {cleaned}"));
+                return err_res("io", format!("cannot resolve {cleaned}"));
             };
             if !canonical.starts_with(ws.root()) || !canonical.starts_with(&canonical_prob) {
-                return ActionResult::err(
+                return err_res(
                     "path_escape",
                     format!("path {cleaned:?} is outside problem directory"),
                 );
@@ -3329,23 +3457,54 @@ impl State {
             && let Ok(canon_parent) = parent.canonicalize()
             && (!canon_parent.starts_with(ws.root()) || !canon_parent.starts_with(&canonical_prob))
         {
-            return ActionResult::err(
+            return err_res(
                 "path_escape",
                 format!("path {cleaned:?} is outside problem directory"),
             );
         }
 
-        match ws.write(&ws_rel, content.as_bytes()) {
-            Ok(()) => {
+        let expected = expected_hash.map(str::trim).filter(|s| !s.is_empty());
+        match ws.write_checked(&ws_rel, content.as_bytes(), expected) {
+            Ok(new_hash) => {
                 {
                     let mut core = self.core.lock().unwrap();
                     let _ = core.index.refresh_path(&ws, &ws_rel);
                 }
                 self.invalidate_cache();
-                ActionResult::ok()
+                SavePackageFileResultJs {
+                    ok: true,
+                    conflict: false,
+                    content_hash: Some(new_hash),
+                    error: None,
+                    code: None,
+                }
             }
-            Err(e) => ActionResult::from_storage_err(e),
+            Err(xcpc_storage::Error::Conflict { .. }) => SavePackageFileResultJs {
+                ok: false,
+                conflict: true,
+                content_hash: None,
+                error: Some("file was modified externally since it was opened".into()),
+                code: Some("conflict".into()),
+            },
+            Err(e) => {
+                let a = ActionResult::from_storage_err(e);
+                SavePackageFileResultJs {
+                    ok: false,
+                    conflict: false,
+                    content_hash: None,
+                    error: a.error,
+                    code: a.code,
+                }
+            }
         }
+    }
+}
+
+fn package_status_opt(ws: &Workspace, slug: &str) -> Option<String> {
+    let freshness = xcpc_judge::check_package_freshness(ws, slug).ok()?;
+    match freshness {
+        xcpc_judge::PackageFreshness::NotAPackage => None,
+        other => Some(freshness_status_str(&other).to_owned()),
     }
 }
 

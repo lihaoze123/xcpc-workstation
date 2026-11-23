@@ -399,6 +399,10 @@ pub struct ProblemSummaryJs {
     pub has_solutions: bool,
     #[prop(skip_none)]
     pub statement_path: Option<String>,
+    /// Static package freshness status (`"verified_fresh" | "stale" | "unverified" | "failed"`),
+    /// or omitted for pure publishing problems without a package.
+    #[prop(skip_none)]
+    pub package_status: Option<String>,
 }
 
 /// Distinct tags and external platforms across the workspace problem library, sorted.
@@ -490,6 +494,10 @@ pub struct ContestItemDetailJs {
     pub original_options_json: String,
     /// JSON-serialized contest item `[problem.options.<tpl>]` overrides.
     pub override_options_json: String,
+    /// Static package freshness status (`"verified_fresh" | "stale" | "unverified" | "failed"`),
+    /// or omitted for pure publishing problems / frozen snapshots.
+    #[prop(skip_none)]
+    pub package_status: Option<String>,
 }
 
 /// Full contest details for the contest composer and studio inspector.
@@ -1302,6 +1310,8 @@ pub struct ToolchainStatusJs {
     #[prop(skip_none)]
     pub env_override: Option<String>,
     pub install_guide: String,
+    #[prop(skip_none)]
+    pub error: Option<String>,
 }
 
 /// Read-only inspection result for a problem package (`inspectPackage`).
@@ -1354,6 +1364,9 @@ pub struct PackageBuildStatusJs {
     /// JSON-serialized `xcpc_judge::BuildReport` once finished.
     #[prop(skip_none)]
     pub report_json: Option<String>,
+    /// JSON-serialized array of `xcpc_judge::MatrixCell` completed so far during an active run.
+    #[prop(skip_none)]
+    pub live_cells_json: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }
@@ -1372,16 +1385,27 @@ pub struct TestCasePreviewJs {
     pub available_on_disk: bool,
     pub size_bytes: f64,
     pub total_lines: u32,
+    #[prop(skip_none)]
+    pub total_lines_exact: Option<u32>,
+    #[prop(skip_none)]
+    pub omitted_bytes: Option<f64>,
     pub head: String,
     pub tail: String,
     pub truncated: bool,
     pub ans_available: bool,
+    #[prop(skip_none)]
+    pub ans_source: Option<String>,
     pub ans_size_bytes: f64,
     pub ans_head: String,
     pub ans_tail: String,
     pub ans_truncated: bool,
     #[prop(skip_none)]
     pub ans_total_lines: Option<u32>,
+    pub std_output_available: bool,
+    pub std_output_size_bytes: f64,
+    pub std_output_head: String,
+    pub std_output_tail: String,
+    pub std_output_truncated: bool,
     #[prop(skip_none)]
     pub rule_index: Option<u32>,
     #[prop(skip_none)]
@@ -1395,8 +1419,22 @@ pub struct TestCasePreviewJs {
 pub struct PackageFileContentJs {
     pub ok: bool,
     pub content: String,
+    pub content_hash: String,
     pub size_bytes: f64,
     pub too_large: bool,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Result of conflict-checked atomic save for a package file (`savePackageFile`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct SavePackageFileResultJs {
+    pub ok: bool,
+    pub conflict: bool,
+    #[prop(skip_none)]
+    pub content_hash: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
     #[prop(skip_none)]
@@ -1466,6 +1504,7 @@ impl From<xcpc_judge::ToolchainStatus> for ToolchainStatusJs {
             override_path: s.override_path,
             env_override: s.env_override,
             install_guide: s.install_guide,
+            error: None,
         }
     }
 }

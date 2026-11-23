@@ -2,11 +2,15 @@ import { describe, expect, test } from "nsh/test";
 import {
   buildMatrixLookup,
   canInlineEditTest,
+  cellVisualStyle,
+  computeOnboardingChecklist,
+  countTestsInRule,
   customOverrideInputValue,
   dedupDetectedCompilers,
   formatAcVsTleMargin,
   formatBytesCompact,
   formatMemoryKib,
+  formatSolutionConclusion,
   formatStdTimeRatio,
   hasInvalidCxxOverride,
   humanizeCheckText,
@@ -16,10 +20,13 @@ import {
   isRowAnomalous,
   matchSelfTestResult,
   matrixCellKey,
+  mergeLiveMatrixCells,
+  middleTruncatePath,
   nextActionForCheck,
   normalizeCxxOverrideInput,
   partitionGates,
   problemSlugFromDiagnosticFile,
+  resolveSingleStatusBadge,
   resolveSolutionHeaderSpecs,
   selectMatrixCell,
   shouldShowBuildTab,
@@ -207,7 +214,8 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     ]);
     expect(failed.map((g) => g.id)).toEqual(["wa"]);
     expect(warn.map((g) => g.id)).toEqual(["std"]);
-    expect(attention.map((g) => g.id)).toEqual(["std", "wa"]);
+    // Attention is strictly ordered Failed -> Warn.
+    expect(attention.map((g) => g.id)).toEqual(["wa", "std"]);
     expect(passed.map((g) => g.id)).toEqual(["val", "chk"]);
 
     expect(humanizeCheckText("validator 存在与自测", true)).toBe("校验器存在与自测");
@@ -450,5 +458,116 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     expect(matchSelfTestResult("tests/validator/valid/01-min.in", selfTests)?.passed).toBe(true);
     expect(matchSelfTestResult("tests/validator/invalid/02-oob.in", selfTests)?.passed).toBe(false);
     expect(matchSelfTestResult("tests/validator/valid/missing.in", selfTests)).toBeUndefined();
+  });
+
+  test("Phase 3B single state model, visual coding, live cell merge, onboarding, and path truncation", () => {
+    // Middle-truncation keeps leading prefix and tail binary name.
+    expect(middleTruncatePath("/usr/bin/g++", 40)).toBe("/usr/bin/g++");
+    const nixPath = "/nix/store/abcdefghijklmno1234567890-gcc-wrapper-16.2.0/bin/g++";
+    const trunc = middleTruncatePath(nixPath, 36);
+    expect(trunc.length).toBeLessThanOrEqual(36);
+    expect(trunc).toContain("…");
+    expect(trunc.endsWith("bin/g++")).toBe(true);
+
+    // Live cells override stale report cells while preserving untouched cells.
+    const merged = mergeLiveMatrixCells(
+      [
+        {
+          test_index: 1,
+          test_name: "01",
+          solution: "std",
+          verdict: "WA",
+          cpu_time_ms: 5,
+          wall_time_ms: 6,
+          peak_memory_kib: 1024,
+          cache_hit: false,
+          stale: true,
+        },
+        {
+          test_index: 2,
+          test_name: "02",
+          solution: "std",
+          verdict: "AC",
+          cpu_time_ms: 4,
+          wall_time_ms: 5,
+          peak_memory_kib: 1024,
+          cache_hit: false,
+          stale: true,
+        },
+      ],
+      [
+        {
+          test_index: 1,
+          test_name: "01",
+          solution: "std",
+          verdict: "AC",
+          cpu_time_ms: 3,
+          wall_time_ms: 4,
+          peak_memory_kib: 1024,
+          cache_hit: false,
+        },
+      ],
+    );
+    expect(merged.get(matrixCellKey(1, "std"))?.verdict).toBe("AC");
+    expect(merged.get(matrixCellKey(1, "std"))?.stale).toBe(false);
+    expect(merged.get(matrixCellKey(2, "std"))?.stale).toBe(true);
+
+    // Expected-match cells use calm muted styling; anomalies pop with vivid border.
+    const calm = cellVisualStyle("WA", false, false);
+    const pop = cellVisualStyle("WA", true, false);
+    expect(calm.fg).not.toBe(pop.fg);
+    expect(pop.border).toBe(pop.fg);
+
+    // Human-readable solution conclusions.
+    expect(formatSolutionConclusion(undefined, [], true).text).toBe("未运行");
+    expect(
+      formatSolutionConclusion(
+        {
+          name: "wrong_wa",
+          is_main: false,
+          expected: ["WA"],
+          actual_verdict: "WA",
+          matched: true,
+          max_time_ms: 10,
+          max_memory_kib: 1024,
+          passed_tests: 1,
+          total_tests: 5,
+        },
+        [],
+        true,
+      ).text,
+    ).toBe("符合预期");
+
+    // Single status badge collapses freshness + issues cleanly.
+    expect(resolveSingleStatusBadge("verified_fresh", 0, 0, true)).toEqual({ kind: "ready", issueCount: 0 });
+    expect(resolveSingleStatusBadge("failed", 2, 1, true)).toEqual({ kind: "issues", issueCount: 3 });
+    expect(resolveSingleStatusBadge("stale", 0, 0, true)).toEqual({ kind: "needs_reverify", issueCount: 0 });
+    expect(resolveSingleStatusBadge("unverified", 0, 0, false)).toEqual({ kind: "unverified", issueCount: 0 });
+
+    // Batch rule test counter & onboarding checklist.
+    expect(
+      countTestsInRule(
+        [
+          { index: 1, name: "s1", is_sample: true, rule_index: null },
+          { index: 2, name: "g1", is_sample: false, rule_index: 0 },
+          { index: 3, name: "g2", is_sample: false, rule_index: 0 },
+        ],
+        0,
+      ),
+    ).toBe(2);
+    const checklist = computeOnboardingChecklist(
+      {
+        problem_id: "sum",
+        has_package: true,
+        package_hash: "h",
+        freshness: { status: "unverified" },
+        checker: "wcmp",
+        files: { validator: "validator.cpp", solutions: ["std.cpp"] },
+        expanded_tests: [],
+      },
+      undefined,
+    );
+    expect(checklist.show).toBe(true);
+    expect(checklist.steps.length).toBe(4);
   });
 });

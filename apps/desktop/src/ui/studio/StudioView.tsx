@@ -21,7 +21,7 @@ import type {
 } from "xcpc-workstation/native";
 import { createFreeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
-import { t, type MessageKey } from "../i18n";
+import { locale, t, type MessageKey } from "../i18n";
 import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
@@ -62,9 +62,10 @@ import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
-type Tab = "statement" | "samples" | "editorial" | "build";
+type StudioMode = "statement" | "authoring";
+type Tab = "statement" | "samples" | "editorial";
 const SAVE_AFTER = 500;
-const TAB_DEFS: readonly { value: Exclude<Tab, "build">; labelKey: MessageKey; keys: string }[] = [
+const TAB_DEFS: readonly { value: Tab; labelKey: MessageKey; keys: string }[] = [
   { value: "statement", labelKey: "studio.tab.statement", keys: "alt+1" },
   { value: "samples", labelKey: "studio.tab.samples", keys: "alt+2" },
   { value: "editorial", labelKey: "studio.tab.editorial", keys: "alt+3" },
@@ -91,6 +92,8 @@ function diagnosticRange(lineStr: string, line: number, column: number) {
 export function StudioView(props: { active: boolean }) {
   // The studio keeps what it showed while hidden, so coming back is instant.
   const target = computed<StudioTarget | undefined>((prev) => studio() ?? prev);
+  const studioMode = signal<StudioMode>("statement");
+  const isAuthoring = computed(() => target()?.target === "problem" && studioMode() === "authoring");
   const tab = signal<Tab>(storeBook() === "editorial" ? "editorial" : "statement");
   const book = computed<Book>(() => (tab() === "editorial" ? "editorial" : "statements"));
   const initialWinWidth = untracked(windowSize).width;
@@ -111,7 +114,7 @@ export function StudioView(props: { active: boolean }) {
   const assetsHasTypstBlock = signal(false);
   const previewCollapsed = signal(false);
   const focusMode = signal(false);
-  const previewHidden = computed(() => focusMode() || previewCollapsed() || tab() === "build");
+  const previewHidden = computed(() => focusMode() || previewCollapsed() || isAuthoring());
 
   // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).
@@ -245,26 +248,24 @@ export function StudioView(props: { active: boolean }) {
     });
   });
 
-  // Apply optional `initialTab` when navigating directly to a tab (e.g. "build" from Library or contest Preflight).
+  // Apply optional `initialTab` when navigating directly to Authoring or a Statement tab.
   effect(() => {
     const s = studio();
-    const want = s?.initialTab;
-    if (!want) return;
+    if (!s) return;
+    const want = s.initialTab;
     untracked(() => {
+      if (s.target !== "problem") {
+        studioMode.set("statement");
+      }
       if (want === "build" && s.target === "problem") {
         packageRefreshSeq.set(packageRefreshSeq() + 1);
-        tab.set("build");
-      } else if (want !== "build") {
+        studioMode.set("authoring");
+      } else if (want && want !== "build") {
+        studioMode.set("statement");
         tab.set(want);
+      } else if (s.target === "problem" && !want) {
+        studioMode.set("statement");
       }
-    });
-  });
-
-  // Fall back from Build tab if switching to a contest or a problem without a package.
-  effect(() => {
-    const pkg = hasPackage();
-    untracked(() => {
-      if (tab() === "build" && !pkg) tab.set("statement");
     });
   });
 
@@ -501,16 +502,27 @@ export function StudioView(props: { active: boolean }) {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
-  function setTab(next: Tab) {
-    if (next === "build" && !hasPackage()) return;
+  function setTab(next: Tab | "build") {
+    if (next === "build") {
+      if (target()?.target === "problem") studioMode.set("authoring");
+      return;
+    }
+    if (studioMode() !== "statement") studioMode.set("statement");
     if (next === tab()) return;
     tab.set(next);
-    if (next === "build") return;
     const b: Book = next === "editorial" ? "editorial" : "statements";
     if (storeBook() !== b) {
       storeBook.set(b);
       savePrefs({ lastBook: b });
     }
+  }
+
+  function setStudioMode(next: StudioMode) {
+    if (target()?.target !== "problem") return;
+    if (next === "authoring") {
+      packageRefreshSeq.set(packageRefreshSeq() + 1);
+    }
+    studioMode.set(next);
   }
 
   function initPackageScaffold() {
@@ -525,7 +537,7 @@ export function StudioView(props: { active: boolean }) {
     packageRefreshSeq.set(packageRefreshSeq() + 1);
     refresh();
     compileNow();
-    tab.set("build");
+    studioMode.set("authoring");
   }
 
   function selectLabel(next: string, jump = true) {
@@ -565,7 +577,7 @@ export function StudioView(props: { active: boolean }) {
   async function locatePreview() {
     const f = untracked(file);
     const curTab = untracked(tab);
-    if (!f || curTab === "samples" || curTab === "build") return;
+    if (!f || curTab === "samples" || untracked(isAuthoring)) return;
     const line = (await editorActions?.currentLine()) ?? 1;
     const loc = preview.locateSource(f.path, line);
     if (loc) canvas?.scrollToLocation(loc.page, loc.yPt, true);
@@ -579,8 +591,8 @@ export function StudioView(props: { active: boolean }) {
           openStudio({ target: "problem", id: slug, initialTab: "build" });
           return;
         }
-      } else if (hasPackage()) {
-        setTab("build");
+      } else {
+        setStudioMode("authoring");
         return;
       }
     }
@@ -827,10 +839,10 @@ export function StudioView(props: { active: boolean }) {
       "alt+2": on(() => setTab("samples")),
       "alt+3": on(() => setTab("editorial")),
       "alt+4": on(() => {
-        if (hasPackage()) setTab("build");
+        if (target()?.target === "problem") setStudioMode("authoring");
       }),
       "mod+b": on(() => {
-        if (tab() === "build") buildConsole?.triggerPrimaryRun();
+        if (isAuthoring()) buildConsole?.triggerPrimaryRun();
       }),
       "mod+i": on(toggleInspector),
       "mod+s": on(save),
@@ -923,18 +935,18 @@ export function StudioView(props: { active: boolean }) {
     return it ? `${it.label}. ${it.title}` : "";
   };
   const readOnly = () => !!file()?.readOnly || frozen() || archived();
-  const isMarkdownTab = () => tab() === "statement" || tab() === "editorial";
-  const tabs = computed(() => {
-    const base: { value: Tab; label: string; keys: string }[] = TAB_DEFS.map((d) => ({
+  const isMarkdownTab = () => !isAuthoring() && (tab() === "statement" || tab() === "editorial");
+  const tabs = computed(() =>
+    TAB_DEFS.map((d) => ({
       value: d.value,
       label: t(d.labelKey),
       keys: d.keys,
-    }));
-    if (hasPackage()) {
-      base.push({ value: "build", label: t("studio.tab.build"), keys: "alt+4" });
-    }
-    return base;
-  });
+    })),
+  );
+  const modeItems = computed(() => [
+    { value: "statement" as StudioMode, label: t("studio.mode.statement") },
+    { value: "authoring" as StudioMode, label: t("studio.mode.authoring") },
+  ]);
   const editorPlaceholder = () =>
     tab() === "editorial"
       ? t("studio.placeholder.editorial")
@@ -950,13 +962,23 @@ export function StudioView(props: { active: boolean }) {
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
             <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
-            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500 }}>
+            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500, flexShrink: 1 }} class="text-foreground">
               {headerTitle()}
             </Text>
             <If when={!!headerSubtitle()}>
               <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, marginLeft: 4 }} class="text-muted-foreground">
                 {headerSubtitle()}
               </Text>
+            </If>
+            <If when={target()?.target === "problem"}>
+              <View style={{ marginLeft: 8, flexShrink: 0 }}>
+                <Segmented
+                  items={modeItems()}
+                  value={studioMode()}
+                  onChange={setStudioMode}
+                  itemWidth={locale() === "en" ? 88 : 60}
+                />
+              </View>
             </If>
             <If when={target()?.target === "contest" && frozen()}>
               <Lock closed size={13} />
@@ -976,7 +998,7 @@ export function StudioView(props: { active: boolean }) {
         }
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <If when={tab() !== "build"}>
+            <If when={!isAuthoring()}>
               <Btn
                 label={t("studio.preview")}
                 icon="fileText"
@@ -995,16 +1017,15 @@ export function StudioView(props: { active: boolean }) {
                 onPress={toggleFocusMode}
                 style={focusMode() ? { backgroundColor: token("accent") } : undefined}
               />
+              <ExportButton
+                status={status()}
+                book={book()}
+                busy={exporting()}
+                exportedSeq={exportedSeq()}
+                onExport={(b) => void exportBook(b)}
+                onReveal={(b) => void reveal(b)}
+              />
             </If>
-            <ExportButton
-              status={status()}
-              book={book()}
-              busy={exporting()}
-              exportedSeq={exportedSeq()}
-              secondary={tab() === "build"}
-              onExport={(b) => void exportBook(b)}
-              onReveal={(b) => void reveal(b)}
-            />
             <IconBtn
               icon="panelRight"
               testID="toggle-inspector"
@@ -1058,127 +1079,94 @@ export function StudioView(props: { active: boolean }) {
           >
             <ResizablePanel size={initialRatio * 1000} minSize={320}>
               <View style={{ flex: 1 }} class="bg-card">
-                {/* Single merged 38pt bar: tabs on the left, compact insert icons (or dropdown when 4 tabs) on the right */}
-                <View
-                  style={{
-                    height: 38,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    paddingLeft: 6,
-                    paddingRight: 6,
-                    gap: 4,
-                    borderBottomWidth: 1,
-                  }}
-                  class="border-border"
-                >
-                  <Segmented items={tabs()} value={tab()} onChange={setTab} itemWidth={hasPackage() ? 60 : 72} underline />
-                  <If
-                    when={readOnly()}
-                    else={
-                      <If when={isMarkdownTab() && !!file()}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                          <If when={vimMode()}>
-                            {(m) => (
-                              <View
-                                testID="vim-mode-badge"
-                                class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
-                                style={{
-                                  height: 20,
-                                  paddingLeft: 6,
-                                  paddingRight: 6,
-                                  marginRight: 4,
-                                  borderRadius: 4,
-                                  justifyContent: "center",
-                                }}
-                              >
-                                <Text
-                                  style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
-                                  class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
-                                >
-                                  {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
-                                </Text>
-                              </View>
-                            )}
-                          </If>
-                          <If
-                            when={hasPackage()}
-                            else={
-                              <>
-                                <IconBtn
-                                  icon="sigma"
-                                  size={26}
-                                  iconSize={14.5}
-                                  tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
-                                  onPress={() => editorActions?.inlineMath()}
-                                />
-                                <IconBtn
-                                  icon="squareCode"
-                                  size={26}
-                                  iconSize={14.5}
-                                  tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
-                                  onPress={() => editorActions?.displayMath()}
-                                />
-                                <IconBtn
-                                  icon="table"
-                                  size={26}
-                                  iconSize={14.5}
-                                  tooltip={tip(t("studio.toolbar.table"))}
-                                  onPress={() => editorActions?.table()}
-                                />
-                                <IconBtn
-                                  icon="image"
-                                  size={26}
-                                  iconSize={14.5}
-                                  tooltip={tip(t("studio.toolbar.insertImage"))}
-                                  onPress={openAssets}
-                                />
-                              </>
-                            }
-                          >
-                            <AppMenu
-                              align="end"
-                              minWidth={172}
-                              entries={
-                                [
-                                  { id: "inlineMath", label: t("studio.toolbar.inlineMath"), icon: "sigma", keys: "mod+m" },
-                                  { id: "displayMath", label: t("studio.toolbar.displayMath"), icon: "squareCode", keys: "mod+shift+m" },
-                                  { id: "table", label: t("studio.toolbar.table"), icon: "table" },
-                                  { id: "image", label: t("studio.toolbar.insertImage"), icon: "image" },
-                                ] as MenuEntry[]
-                              }
-                              onSelect={(id) => {
-                                if (id === "inlineMath") editorActions?.inlineMath();
-                                else if (id === "displayMath") editorActions?.displayMath();
-                                else if (id === "table") editorActions?.table();
-                                else if (id === "image") openAssets();
-                              }}
-                              trigger={
-                                <IconBtn
-                                  testID="studio-insert-menu"
-                                  icon="plus"
-                                  size={26}
-                                  iconSize={14.5}
-                                  tooltip={tip(t("studio.toolbar.insert"))}
-                                />
-                              }
-                            />
-                          </If>
-                        </View>
-                      </If>
-                    }
+                {/* Single merged 38pt bar (Statement mode only): 3 crisp tabs on the left, 4 compact insert icons on the right */}
+                <If when={!isAuthoring()}>
+                  <View
+                    style={{
+                      height: 38,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      paddingLeft: 6,
+                      paddingRight: 6,
+                      gap: 4,
+                      borderBottomWidth: 1,
+                    }}
+                    class="border-border"
                   >
-                    <View
-                      testID="studio-readonly-badge"
-                      class="bg-muted"
-                      style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+                    <Segmented items={tabs()} value={tab()} onChange={setTab} itemWidth={locale() === "en" ? 86 : 72} underline />
+                    <If
+                      when={readOnly()}
+                      else={
+                        <If when={isMarkdownTab() && !!file()}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                            <If when={vimMode()}>
+                              {(m) => (
+                                <View
+                                  testID="vim-mode-badge"
+                                  class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
+                                  style={{
+                                    height: 20,
+                                    paddingLeft: 6,
+                                    paddingRight: 6,
+                                    marginRight: 4,
+                                    borderRadius: 4,
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  <Text
+                                    style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
+                                    class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
+                                  >
+                                    {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
+                                  </Text>
+                                </View>
+                              )}
+                            </If>
+                            <IconBtn
+                              icon="sigma"
+                              size={26}
+                              iconSize={14.5}
+                              tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
+                              onPress={() => editorActions?.inlineMath()}
+                            />
+                            <IconBtn
+                              icon="squareCode"
+                              size={26}
+                              iconSize={14.5}
+                              tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
+                              onPress={() => editorActions?.displayMath()}
+                            />
+                            <IconBtn
+                              icon="table"
+                              size={26}
+                              iconSize={14.5}
+                              tooltip={tip(t("studio.toolbar.table"))}
+                              onPress={() => editorActions?.table()}
+                            />
+                            <IconBtn
+                              icon="image"
+                              size={26}
+                              iconSize={14.5}
+                              tooltip={tip(t("studio.toolbar.insertImage"))}
+                              onPress={openAssets}
+                            />
+                          </View>
+                        </If>
+                      }
                     >
-                      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                        {archived() ? t("contests.archived") : frozen() ? t("contests.finalized") : t("common.readOnlyWorkspace")}
-                      </Text>
-                    </View>
-                  </If>
-                </View>
+                      <View
+                        testID="studio-readonly-badge"
+                        class="bg-muted"
+                        style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+                      >
+                        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                          {archived() ? t("contests.archived") : frozen() ? t("contests.finalized") : t("common.readOnlyWorkspace")}
+                        </Text>
+                      </View>
+                    </If>
+                  </View>
+                </If>
 
                 {/* Conflict banner in normal document flow so it never covers line 1 */}
                 <If when={conflict() && isMarkdownTab()}>
@@ -1301,7 +1289,7 @@ export function StudioView(props: { active: boolean }) {
                   </View>
                 </View>
 
-                <If when={tab() === "samples" ? problemId() : undefined}>
+                <If when={!isAuthoring() && tab() === "samples" ? problemId() : undefined}>
                   {(id) => (
                     <View style={{ flex: 1, flexDirection: "row", justifyContent: "center" }}>
                       <View
@@ -1317,13 +1305,14 @@ export function StudioView(props: { active: boolean }) {
                   )}
                 </If>
 
-                <If when={tab() === "build" && hasPackage() ? problemId() : undefined}>
+                <If when={isAuthoring() ? problemId() : undefined}>
                   {(id) => (
                     <BuildConsole
                       problemId={id()}
                       readOnly={info().readOnly}
                       inspectionResult={packageInspection()}
                       controller={(c) => (buildConsole = c)}
+                      onInitPackage={initPackageScaffold}
                       onCollapseInspector={() => {
                         if (inspectorOpen()) {
                           userToggledInspector = true;
@@ -1396,10 +1385,10 @@ export function StudioView(props: { active: boolean }) {
                 freeze={freeze}
                 assetsRefreshSeq={assetsRefreshSeq()}
                 hasPackage={hasPackage()}
-                hideBuildEntry={tab() === "build"}
+                hideBuildEntry={isAuthoring()}
                 packageFreshness={packageInspection()?.freshnessStatus}
                 onInitPackage={initPackageScaffold}
-                onOpenBuild={() => setTab("build")}
+                onOpenBuild={() => setStudioMode("authoring")}
                 onOpenAssets={openAssets}
                 onChanged={() => {
                   compileNow();

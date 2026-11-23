@@ -281,6 +281,35 @@ export function LibraryView(props: { active: boolean }) {
     if (key === "editorialMark" || key === "codeMark") {
       return value ? <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-primary" /> : null;
     }
+    if (key === "title") {
+      const st = r?.packageStatus;
+      const badgeLabel =
+        st === "unverified"
+          ? t("inspector.package.unverified")
+          : st === "stale"
+            ? t("inspector.package.stale")
+            : st === "failed"
+              ? t("inspector.package.failed")
+              : undefined;
+      return (
+        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <Text
+            style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, lineHeight: LINE, flexShrink: 1 }}
+            class="text-foreground"
+          >
+            {value}
+          </Text>
+          {badgeLabel && (
+            <Text
+              style={{ fontSize: 11, flexShrink: 0 }}
+              class={st === "failed" ? "text-destructive" : "text-muted-foreground"}
+            >
+              {badgeLabel}
+            </Text>
+          )}
+        </View>
+      );
+    }
     return (
       <Text
         style={{
@@ -290,7 +319,7 @@ export function LibraryView(props: { active: boolean }) {
           lineHeight: LINE,
           fontFamily: key === "id" ? MONO : undefined,
         }}
-        class={key === "title" ? "text-foreground" : key === "id" ? "text-muted-foreground" : "text-secondary-foreground"}
+        class={key === "id" ? "text-muted-foreground" : "text-secondary-foreground"}
       >
         {value}
       </Text>

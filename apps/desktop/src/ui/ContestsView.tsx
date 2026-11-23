@@ -510,8 +510,21 @@ function ContestPanel(props: { id: string }) {
             locate={
               f.error()
                 ? f.findings().slice(0, 4).map((d) => ({
-                    label: d.file ? `${d.file}${d.line ? `:${d.line}` : ""}` : d.message,
-                    onPress: () => open(detail().items.find((i) => d.file?.startsWith(`problems/${i.id}/`))?.label),
+                    label: d.code?.startsWith("package_")
+                      ? d.message
+                      : d.file
+                        ? `${d.file}${d.line ? `:${d.line}` : ""}`
+                        : d.message,
+                    onPress: () => {
+                      if (d.code?.startsWith("package_") && d.file) {
+                        const m = d.file.match(/^problems\/([^/]+)\//);
+                        if (m) {
+                          openStudio({ target: "problem", id: m[1], initialTab: "build" });
+                          return;
+                        }
+                      }
+                      open(detail().items.find((i) => d.file?.startsWith(`problems/${i.id}/`))?.label);
+                    },
                   }))
                 : undefined
             }
@@ -611,10 +624,22 @@ function ContestPanel(props: { id: string }) {
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Text style={{ width: 28, fontSize: 13.5, fontWeight: 600, fontVariant: ["tabular-nums"] }}>{item().label}</Text>
-                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13.5 }} class={item().missing ? "text-destructive" : ""}>
+                    <Text style={{ width: 28, fontSize: 13.5, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">{item().label}</Text>
+                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13.5 }} class={item().missing ? "text-destructive" : "text-foreground"}>
                       {item().missing ? t("contests.missingSuffix", { title: item().title }) : item().title}
                     </Text>
+                    <If when={item().packageStatus && item().packageStatus !== "verified_fresh"}>
+                      <Text
+                        style={{ fontSize: 11, flexShrink: 0 }}
+                        class={item().packageStatus === "failed" ? "text-destructive" : "text-muted-foreground"}
+                      >
+                        {item().packageStatus === "failed"
+                          ? t("inspector.package.failed")
+                          : item().packageStatus === "stale"
+                            ? t("inspector.package.stale")
+                            : t("inspector.package.unverified")}
+                      </Text>
+                    </If>
                     <Text style={{ width: 110, fontSize: 12.5, textAlign: "right", fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                       {[item().limits.time, item().limits.memory].filter(Boolean).join(" / ")}
                     </Text>

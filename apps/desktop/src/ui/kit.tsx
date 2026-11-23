@@ -133,7 +133,7 @@ export function Btn(props: {
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
-          opacity: props.disabled ? 0.5 : 1,
+          opacity: props.disabled ? 0.6 : 1,
           ...(isPrimary ? { transform: "scale(1)", ...pressTransition(140) } : colorTransition(140)),
         },
         props.style,

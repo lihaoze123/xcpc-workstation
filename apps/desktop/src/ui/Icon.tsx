@@ -15,6 +15,8 @@ import circleAlert from "./icons/circle-alert.svg";
 import code from "./icons/code.svg";
 import copy from "./icons/copy.svg";
 import cornerDownLeft from "./icons/corner-down-left.svg";
+import crown from "./icons/crown.svg";
+import database from "./icons/database.svg";
 import ellipsis from "./icons/ellipsis.svg";
 import fileDown from "./icons/file-down.svg";
 import filePenLine from "./icons/file-pen-line.svg";
@@ -28,6 +30,7 @@ import heading from "./icons/heading.svg";
 import image from "./icons/image.svg";
 import info from "./icons/info.svg";
 import italic from "./icons/italic.svg";
+import keyboard from "./icons/keyboard.svg";
 import libraryBig from "./icons/library-big.svg";
 import link from "./icons/link.svg";
 import list from "./icons/list.svg";
@@ -39,12 +42,16 @@ import lockOpen from "./icons/lock-open.svg";
 import palette from "./icons/palette.svg";
 import panelRight from "./icons/panel-right.svg";
 import pencil from "./icons/pencil.svg";
+import play from "./icons/play.svg";
 import plus from "./icons/plus.svg";
 import rotateCcw from "./icons/rotate-ccw.svg";
+import scale from "./icons/scale.svg";
 import search from "./icons/search.svg";
 import searchX from "./icons/search-x.svg";
 import settings from "./icons/settings.svg";
+import shieldCheck from "./icons/shield-check.svg";
 import sigma from "./icons/sigma.svg";
+import sparkles from "./icons/sparkles.svg";
 import squareCode from "./icons/square-code.svg";
 import stamp from "./icons/stamp.svg";
 import table from "./icons/table.svg";
@@ -57,9 +64,9 @@ import zoomOut from "./icons/zoom-out.svg";
 
 const ICONS = {
   arrowLeft, arrowRight, bold, bot, check, chevronDown, chevronLeft, chevronRight, minus, chevronsUpDown, circleAlert, code, copy,
-  cornerDownLeft, ellipsis, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
-  gripVertical, heading, image, info, italic, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
-  palette, panelRight, pencil, plus, rotateCcw, search, searchX, settings, sigma, squareCode, stamp, table,
+  cornerDownLeft, crown, database, ellipsis, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
+  gripVertical, heading, image, info, italic, keyboard, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
+  palette, panelRight, pencil, play, plus, rotateCcw, scale, search, searchX, settings, shieldCheck, sigma, sparkles, squareCode, stamp, table,
   trash, triangleAlert, trophy, x, zoomIn, zoomOut,
 };
 

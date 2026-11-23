@@ -1160,26 +1160,32 @@ export function MarkdownEditor(props: {
   };
   props.onActions?.(actions);
 
-  // Formatting shortcuts strictly scoped to when this editor is visible and focused.
+  // Formatting shortcuts strictly scoped to when this editor is active and visible.
+  // Dynamically unbinding when hidden ensures shortcuts like `mod+b` are never stolen
+  // from Authoring mode (Fix A-4).
   const canFormat = () => props.active() && !props.hidden && focused() && !props.readOnly;
-  keymap.bind(
-    {
-      "mod+1": () => canFormat() && void toggleHeading(1),
-      "mod+2": () => canFormat() && void toggleHeading(2),
-      "mod+3": () => canFormat() && void toggleHeading(3),
-      "mod+4": () => canFormat() && void toggleHeading(4),
-      "mod+b": () => canFormat() && void wrap("**"),
-      "mod+shift+i": () => canFormat() && void wrap("*"),
-      "mod+`": () => canFormat() && void wrap("`"),
-      "mod+m": () => canFormat() && void wrap("$"),
-      "mod+shift+m": () => canFormat() && void block("$$\n\n$$", { line: 1, column: 0 }),
-      "mod+shift+8": () => canFormat() && void toggleLinePrefix("ul"),
-      "mod+shift+7": () => canFormat() && void toggleLinePrefix("ol"),
-      "mod+shift+.": () => canFormat() && void toggleLinePrefix("quote"),
-      "mod+f": () => props.active() && !props.hidden && openFind(),
-    },
-    { when: "always" },
-  );
+  effect(() => {
+    if (!props.active() || props.hidden) return;
+    const unbind = keymap.bind(
+      {
+        "mod+1": () => canFormat() && void toggleHeading(1),
+        "mod+2": () => canFormat() && void toggleHeading(2),
+        "mod+3": () => canFormat() && void toggleHeading(3),
+        "mod+4": () => canFormat() && void toggleHeading(4),
+        "mod+b": () => canFormat() && void wrap("**"),
+        "mod+shift+i": () => canFormat() && void wrap("*"),
+        "mod+`": () => canFormat() && void wrap("`"),
+        "mod+m": () => canFormat() && void wrap("$"),
+        "mod+shift+m": () => canFormat() && void block("$$\n\n$$", { line: 1, column: 0 }),
+        "mod+shift+8": () => canFormat() && void toggleLinePrefix("ul"),
+        "mod+shift+7": () => canFormat() && void toggleLinePrefix("ol"),
+        "mod+shift+.": () => canFormat() && void toggleLinePrefix("quote"),
+        "mod+f": () => props.active() && !props.hidden && openFind(),
+      },
+      { when: "always" },
+    );
+    cleanup(unbind);
+  });
 
   // Bind typing ergonomics and clipboard image paste after `Editor`'s own focus keymap flushes,
   // so these handlers cleanly take precedence while this editor is focused and editable.

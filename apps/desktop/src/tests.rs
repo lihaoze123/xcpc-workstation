@@ -2527,29 +2527,38 @@ fn toolchain_override_persists_in_prefs_and_refreshes_status() {
     let initial = state.toolchain_status();
     assert!(initial.override_path.is_none());
 
-    let updated = state.set_cxx_override(Some("  /nonexistent/custom-g++  ".into()));
-    assert_eq!(
-        updated.override_path.as_deref(),
-        Some("/nonexistent/custom-g++")
-    );
-    assert!(updated.active.is_none());
+    // Fix A-5: invalid compiler path is rejected and never persisted to prefs.json.
+    let rejected = state.set_cxx_override(Some("  /nonexistent/custom-g++  ".into()));
+    assert!(rejected.error.is_some());
+    assert!(rejected.override_path.is_none());
+    assert!(state.load_prefs().cxx_override.is_none());
 
-    // Reload from disk to verify persistence in prefs.json.
-    let reloaded =
-        crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
-    assert_eq!(
-        reloaded.load_prefs().cxx_override.as_deref(),
-        Some("/nonexistent/custom-g++")
-    );
-    assert_eq!(
-        reloaded.toolchain_status().override_path.as_deref(),
-        Some("/nonexistent/custom-g++")
-    );
+    // Valid compiler path (if present on host) persists across reload and clears cleanly.
+    if let Some(valid) = initial.compilers.first() {
+        let updated = state.set_cxx_override(Some(format!("  {}  ", valid.path)));
+        assert!(updated.error.is_none());
+        assert_eq!(updated.override_path.as_deref(), Some(valid.path.as_str()));
+        assert_eq!(
+            updated.active.as_ref().map(|c| c.path.as_str()),
+            Some(valid.path.as_str())
+        );
 
-    // Clearing override restores auto-detection.
-    let cleared = reloaded.set_cxx_override(Some("   ".into()));
-    assert!(cleared.override_path.is_none());
-    assert!(reloaded.load_prefs().cxx_override.is_none());
+        let reloaded =
+            crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
+        assert_eq!(
+            reloaded.load_prefs().cxx_override.as_deref(),
+            Some(valid.path.as_str())
+        );
+        assert_eq!(
+            reloaded.toolchain_status().override_path.as_deref(),
+            Some(valid.path.as_str())
+        );
+
+        let cleared = reloaded.set_cxx_override(Some("   ".into()));
+        assert!(cleared.error.is_none());
+        assert!(cleared.override_path.is_none());
+        assert!(reloaded.load_prefs().cxx_override.is_none());
+    }
 }
 
 #[test]
@@ -2627,14 +2636,36 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert!(hand.ok, "add_hand_test failed: {:?}", hand.error);
     let hand_rel = hand.file_rel.clone().unwrap();
 
-    // Quick-editor read & save round-trip + dirty input normalization.
+    // Quick-editor read & conflict-checked save round-trip + dirty input normalization + undo.
     let read_back = state.read_package_file("sum", &hand_rel);
-    assert!(read_back.ok && !read_back.too_large);
-    assert!(state.save_package_file("sum", &hand_rel, "3 4\r\n").ok);
+    assert!(read_back.ok && !read_back.too_large && !read_back.content_hash.is_empty());
+    let saved = state.save_package_file("sum", &hand_rel, "3 4\r\n", Some(&read_back.content_hash));
+    assert!(saved.ok && !saved.conflict && saved.content_hash.is_some());
+
+    // Fix A-3: stale hash returns conflict=true without overwriting.
+    let conflict =
+        state.save_package_file("sum", &hand_rel, "9 9\n", Some(&read_back.content_hash));
+    assert!(!conflict.ok && conflict.conflict);
+    assert_eq!(state.read_package_file("sum", &hand_rel).content, "3 4\r\n");
+
     let norm = state.normalize_dirty_inputs("sum");
-    assert!(norm.ok);
+    assert!(norm.ok && !norm.fixed.is_empty());
     let after_norm = state.read_package_file("sum", &hand_rel);
     assert_eq!(after_norm.content, "3 4\n");
+
+    // P0-3: Undo restores original CRLF bytes.
+    assert!(state.undo_normalize_dirty_inputs("sum").ok);
+    assert_eq!(state.read_package_file("sum", &hand_rel).content, "3 4\r\n");
+
+    // Fix A-5: Invalid compiler override is rejected and NOT persisted.
+    let bad_cc = state.set_cxx_override(Some("/nonexistent/definitely-not-a-compiler".into()));
+    assert!(bad_cc.error.is_some());
+    assert!(bad_cc.override_path.is_none());
+
+    // P1-14: Library search reports static package_status for package problems.
+    let probs = state.search_problems(ProblemSearchQuery::default());
+    let sum_row = probs.iter().find(|p| p.id == "sum").unwrap();
+    assert_eq!(sum_row.package_status.as_deref(), Some("unverified"));
 
     // 256 KiB cap rejects loading oversized files into JS.
     let big_path = ws_dir.0.join("problems/sum/tests/big.in");
@@ -2643,7 +2674,7 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert!(too_big.ok && too_big.too_large && too_big.content.is_empty());
 
     // Sandbox rejects path traversal on save.
-    let save_escape = state.save_package_file("sum", "../../evil.txt", "nope");
+    let save_escape = state.save_package_file("sum", "../../evil.txt", "nope", None);
     assert!(!save_escape.ok);
     assert_eq!(save_escape.code.as_deref(), Some("path_escape"));
 
