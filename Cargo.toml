@@ -14,6 +14,7 @@ xcpc-storage = { path = "crates/xcpc-storage" }
 xcpc-lint = { path = "crates/xcpc-lint" }
 xcpc-convert = { path = "crates/xcpc-convert" }
 xcpc-engine = { path = "crates/xcpc-engine" }
+xcpc-judge = { path = "crates/xcpc-judge" }
 
 nsh-core = "0.6.0"
 nsh-base = { version = "0.6.0", default-features = false }

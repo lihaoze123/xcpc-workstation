@@ -300,6 +300,109 @@ pub struct TemplateInfo {
 /// Partial update for one template's option keys (`Set` writes, `Clear` removes).
 pub type TemplateOptionsPatch = BTreeMap<String, Patch<TemplateOptionValue>>;
 
+/// `[package]` section in `problem.toml` (Phase 3 local Polygon).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PackageConfig {
+    /// Checker name (`wcmp`, `ncmp`, `fcmp`, `lcmp`, `rcmp4`, `rcmp6`, `rcmp9`, `yesno`,
+    /// `nyesno`, or `"checker.cpp"`). When omitted, `checker.cpp` is used if present,
+    /// otherwise `wcmp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checker: Option<String>,
+}
+
+/// One `[[test]]` entry in `problem.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TestSpec {
+    /// Hand-written input file relative to the problem directory (e.g. `"tests/hand-01.in"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Generator stem under `generators/` (e.g. `"gen_tree"` -> `generators/gen_tree.cpp`).
+    #[serde(default, rename = "gen", skip_serializing_if = "Option::is_none")]
+    pub generator: Option<String>,
+    /// Command-line arguments passed to the generator (`{i}` expands to `1..=repeat`).
+    /// Accepts either a single shell-like string or a legacy list of strings in TOML.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_opt_args"
+    )]
+    pub args: Option<String>,
+    /// Number of generated cases to expand from this spec (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<u32>,
+    /// Optional display and filtering tag (e.g. `"edge"`, `"small"`, `"max"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// Optional human-readable name for the test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// When `true`, write the generated input/answer back into `samples/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<bool>,
+}
+
+fn deserialize_opt_args<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        Str(String),
+        Vec(Vec<String>),
+    }
+    let val = Option::<StringOrVec>::deserialize(deserializer)?;
+    Ok(val.map(|v| match v {
+        StringOrVec::Str(s) => s,
+        StringOrVec::Vec(list) => list.join(" "),
+    }))
+}
+
+/// Expected verdict(s) for a solution (`"AC"` or `["WA", "TLE"]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExpectVerdict {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl ExpectVerdict {
+    /// Returns all expected verdicts normalized to uppercase ASCII.
+    pub fn normalized(&self) -> Vec<String> {
+        match self {
+            ExpectVerdict::Single(s) => vec![s.trim().to_ascii_uppercase()],
+            ExpectVerdict::Multiple(v) => v
+                .iter()
+                .map(|s| s.trim().to_ascii_uppercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        }
+    }
+
+    /// Returns `true` if `actual` (e.g. `"AC"`, `"WA"`, `"TLE"`) satisfies this expectation.
+    pub fn matches(&self, actual: &str) -> bool {
+        let actual = actual.trim().to_ascii_uppercase();
+        self.normalized().iter().any(|e| e == "ANY" || e == &actual)
+    }
+}
+
+/// One `[solutions.<name>]` entry in `problem.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SolutionSpec {
+    /// Marks the main/reference solution (`std`). Exactly one solution should have `main = true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main: Option<bool>,
+    /// Expected overall verdict(s) across the tests this solution runs on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<ExpectVerdict>,
+    /// Optional tag filter: run this solution only on tests whose tag is in `tags`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+}
+
 /// `problem.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -319,7 +422,16 @@ pub struct ProblemMeta {
     /// Problem-scoped template options, namespaced by template ID (`[template-options.<tpl>]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub template_options: TemplateOptionsMap,
-    /// Phase 5 (a declarative local Polygon): parsed and kept, not used yet.
+    /// Local Polygon package configuration (`[package]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<PackageConfig>,
+    /// Ordered test specifications (`[[test]]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test: Vec<TestSpec>,
+    /// Declared solutions (`[solutions.<name>]`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub solutions: BTreeMap<String, SolutionSpec>,
+    /// Reserved for future extensions: parsed and kept, not used yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtasks: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -328,8 +440,39 @@ pub struct ProblemMeta {
     pub validators: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkers: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub solutions: Option<toml::Value>,
+}
+
+impl ProblemMeta {
+    /// Returns `true` if this problem is a Polygon package (either `solutions/` contains files,
+    /// or `problem.toml` declares `[[test]]` or `[solutions.*]`).
+    pub fn has_package(&self, has_solution_files: bool) -> bool {
+        has_solution_files || !self.test.is_empty() || !self.solutions.is_empty()
+    }
+
+    /// Checks on disk whether `problem_dir` has a Polygon package (`solutions/` directory
+    /// containing at least one file, or `!self.test.is_empty()`, or `!self.solutions.is_empty()`).
+    pub fn has_package_in_dir(&self, problem_dir: &std::path::Path) -> bool {
+        if !self.test.is_empty() || !self.solutions.is_empty() {
+            return true;
+        }
+        has_solution_files_in_dir(problem_dir)
+    }
+}
+
+/// Returns `true` if `problem_dir/solutions` exists and contains at least one file.
+pub fn has_solution_files_in_dir(problem_dir: &std::path::Path) -> bool {
+    let sol_dir = problem_dir.join("solutions");
+    let Ok(entries) = std::fs::read_dir(sol_dir) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .any(|e| e.file_type().is_ok_and(|ft| ft.is_file()))
+}
+
+/// Checks whether a problem at `problem_dir` with parsed `meta` has a Polygon package.
+pub fn has_package(problem_dir: &std::path::Path, meta: &ProblemMeta) -> bool {
+    meta.has_package_in_dir(problem_dir)
 }
 
 /// Time and memory limits and file names, as written (`"1s"`, `"256MB"`). Empty or
@@ -1173,5 +1316,82 @@ custom_limit = true
             ("zh".to_owned(), String::new()),
         ]));
         assert_eq!(all_empty.resolve("en"), "");
+    }
+
+    #[test]
+    fn package_toml_round_trip_and_expect_verdict() {
+        let text = r#"
+title = "Tree Query"
+
+[limits]
+time = "2s"
+memory = "256MB"
+
+[package]
+checker = "ncmp"
+
+[[test]]
+file = "tests/hand-01.in"
+tag = "edge"
+name = "min-bound"
+
+[[test]]
+gen = "gen_tree"
+args = "-n 200000 -w 5 {i}"
+repeat = 10
+tag = "max"
+sample = false
+
+[solutions.std]
+main = true
+
+[solutions.brute]
+expect = "AC"
+tags = ["sample", "small"]
+
+[solutions.greedy_wa]
+expect = ["WA", "TLE"]
+"#;
+        let meta: ProblemMeta = toml::from_str(text).unwrap();
+        assert_eq!(
+            meta.package.as_ref().and_then(|p| p.checker.as_deref()),
+            Some("ncmp")
+        );
+        assert_eq!(meta.test.len(), 2);
+        assert_eq!(meta.test[0].file.as_deref(), Some("tests/hand-01.in"));
+        assert_eq!(meta.test[0].tag.as_deref(), Some("edge"));
+        assert_eq!(meta.test[0].name.as_deref(), Some("min-bound"));
+        assert_eq!(meta.test[1].generator.as_deref(), Some("gen_tree"));
+        assert_eq!(meta.test[1].args.as_deref(), Some("-n 200000 -w 5 {i}"));
+        assert_eq!(meta.test[1].repeat, Some(10));
+        assert_eq!(meta.test[1].sample, Some(false));
+
+        assert_eq!(meta.solutions.len(), 3);
+        assert_eq!(meta.solutions["std"].main, Some(true));
+        assert_eq!(
+            meta.solutions["brute"].expect,
+            Some(ExpectVerdict::Single("AC".into()))
+        );
+        assert_eq!(
+            meta.solutions["brute"].tags.as_deref(),
+            Some(&["sample".to_string(), "small".to_string()][..])
+        );
+        let greedy_expect = meta.solutions["greedy_wa"].expect.as_ref().unwrap();
+        assert!(greedy_expect.matches("wa"));
+        assert!(greedy_expect.matches("TLE"));
+        assert!(!greedy_expect.matches("AC"));
+
+        let any_expect = ExpectVerdict::Single("any".into());
+        assert!(any_expect.matches("RE"));
+        assert!(any_expect.matches("AC"));
+
+        assert!(meta.has_package(false));
+        let empty = ProblemMeta::default();
+        assert!(!empty.has_package(false));
+        assert!(empty.has_package(true));
+
+        let serialized = toml::to_string(&meta).unwrap();
+        let again: ProblemMeta = toml::from_str(&serialized).unwrap();
+        assert_eq!(meta, again);
     }
 }

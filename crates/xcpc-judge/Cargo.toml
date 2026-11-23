@@ -1,0 +1,31 @@
+[package]
+name = "xcpc-judge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+xcpc-domain.workspace = true
+xcpc-storage.workspace = true
+
+dirs = "6"
+rayon = "1"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+shlex = "2"
+tempfile.workspace = true
+thiserror.workspace = true
+toml_edit.workspace = true
+walkdir = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
