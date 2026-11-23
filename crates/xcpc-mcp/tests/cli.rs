@@ -485,9 +485,29 @@ fn contest_freeze_and_unfreeze_confirmation_and_diffs() {
     assert_eq!(bf_j["frozen"], false);
     assert!(!dir.path().join("contests/cup/snapshot").exists());
 
-    // Fix the image -> freeze succeeds with exit code 0 (even with p2 missing editorial warning).
+    // Fix the image -> p1 still has an unverified `solutions/std.cpp`, so freeze must be rejected!
     fs::create_dir_all(dir.path().join("problems/p1/assets")).unwrap();
     fs::write(dir.path().join("problems/p1/assets/missing.png"), TINY_PNG).unwrap();
+
+    let unverified_freeze = run_xcpc(
+        Some(dir.path()),
+        &["--json", "contest", "freeze", "cup"],
+        None,
+    );
+    assert_eq!(unverified_freeze.status.code(), Some(1));
+    let uf_j = parse_json_stdout(&unverified_freeze);
+    assert_eq!(uf_j["frozen"], false);
+    assert!(
+        uf_j["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "package_unverified"),
+        "expected package_unverified diagnostic: {uf_j}"
+    );
+
+    // Seed a fresh strict-verified report for p1 -> freeze succeeds with exit code 0.
+    seed_verified_report(dir.path(), "p1");
 
     let ok_freeze = run_xcpc(
         Some(dir.path()),
@@ -891,4 +911,223 @@ fn problem_duplicate_and_contest_archive_cli_and_read_only() {
     let uj = parse_json_stdout(&unarch);
     assert_eq!(uj["ok"], true);
     assert_eq!(uj["archived"], false);
+}
+
+fn seed_verified_report(ws_root: &std::path::Path, slug: &str) {
+    let ws = xcpc_storage::Workspace::open(ws_root, false).unwrap();
+    let hash = xcpc_judge::compute_package_hash(&ws, slug).unwrap();
+    let path = xcpc_judge::verified_report_path_for(&ws, slug);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let report = xcpc_judge::BuildReport {
+        problem_id: slug.to_owned(),
+        package_hash: hash,
+        mode: xcpc_judge::BuildMode::Verify,
+        verified: true,
+        ok: true,
+        subset: false,
+        built_at_epoch_secs: 1_700_000_000,
+        compiler: None,
+        checker: "wcmp".to_owned(),
+        compile_failures: Vec::new(),
+        dirty_inputs: Vec::new(),
+        self_tests: Vec::new(),
+        tests: Vec::new(),
+        solutions: Vec::new(),
+        matrix: Vec::new(),
+        gates: Vec::new(),
+        safety_margin: xcpc_judge::SafetyMargin::default(),
+        diagnostics: Vec::new(),
+        repro_commands: Vec::new(),
+        next_steps: Vec::new(),
+    };
+    fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+}
+
+#[test]
+fn init_with_skills_installs_problem_creator_and_upgraded_agents_md() {
+    let parent = tempfile::tempdir().unwrap();
+    let target = parent.path().join("skills-ws");
+
+    let out = run_xcpc(
+        None,
+        &["--json", "init", "--with-skills", target.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let j = parse_json_stdout(&out);
+    assert_eq!(j["ok"], true);
+    assert_eq!(j["with_skills"], true);
+    assert_eq!(j["skills"].as_array().unwrap().len(), 5);
+
+    for rel in [
+        ".agents/skills/xcpc-problem-creator/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/mistake-taxonomy.md",
+        ".agents/skills/xcpc-problem-creator/judge-validator/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/solutions-tutorial/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/wrong-gen/SKILL.md",
+    ] {
+        assert!(target.join(rel).is_file(), "missing {rel}");
+    }
+
+    let agents = fs::read_to_string(target.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("xcpc-problem-creator"));
+    assert!(agents.contains("inspect_package"));
+    assert!(agents.contains("stress_package"));
+}
+
+#[test]
+fn package_cli_init_build_strict_and_stress_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("aplusb", "A + B").unwrap();
+    fs::write(
+        dir.path().join("problems/aplusb/statement.md"),
+        "Compute $a + b$.\n\n## 输入格式\n\n两个整数。\n\n## 输出格式\n\n输出和。\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("problems/aplusb/samples/01.in"), "1 2\n").unwrap();
+    fs::write(dir.path().join("problems/aplusb/samples/01.ans"), "3\n").unwrap();
+
+    // 1. `xcpc package init aplusb --json`
+    let init_out = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "init", "aplusb"],
+        None,
+    );
+    assert_eq!(
+        init_out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&init_out.stderr)
+    );
+    let init_j = parse_json_stdout(&init_out);
+    assert_eq!(init_j["ok"], true);
+    assert_eq!(init_j["updated_problem_toml"], true);
+    assert!(dir.path().join("problems/aplusb/validator.cpp").is_file());
+    assert!(
+        dir.path()
+            .join("problems/aplusb/solutions/std.cpp")
+            .is_file()
+    );
+
+    // Read-only blocks package init / build / stress.
+    let ro_build = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "--json", "package", "build", "aplusb"],
+        None,
+    );
+    assert_eq!(ro_build.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_build)["error"]["code"], "read_only");
+
+    // 2. Before strict verify, `xcpc check problem aplusb` fails statically with `package_unverified`.
+    let pre_check = run_xcpc(
+        Some(dir.path()),
+        &["--json", "check", "problem", "aplusb"],
+        None,
+    );
+    assert_eq!(pre_check.status.code(), Some(1));
+    let pre_j = parse_json_stdout(&pre_check);
+    assert!(
+        pre_j["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "package_unverified"),
+        "{pre_j}"
+    );
+
+    // 3. `xcpc package build aplusb --strict --json` compiles & verifies the scaffolded A+B package!
+    let verify_out = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "aplusb", "--strict"],
+        None,
+    );
+    assert_eq!(
+        verify_out.status.code(),
+        Some(0),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&verify_out.stdout),
+        String::from_utf8_lossy(&verify_out.stderr)
+    );
+    let vj = parse_json_stdout(&verify_out);
+    assert_eq!(vj["ok"], true);
+    assert_eq!(vj["verified"], true);
+    assert_eq!(vj["mode"], "verify");
+
+    // Human-readable output also works cleanly.
+    let human_out = run_xcpc(
+        Some(dir.path()),
+        &[
+            "package",
+            "build",
+            "aplusb",
+            "--tests",
+            "sample-01",
+            "--solutions",
+            "std",
+        ],
+        None,
+    );
+    assert_eq!(human_out.status.code(), Some(0));
+    let human_stdout = String::from_utf8_lossy(&human_out.stdout);
+    assert!(
+        human_stdout.contains("package aplusb: OK"),
+        "{human_stdout}"
+    );
+    assert!(human_stdout.contains("margin:"), "{human_stdout}");
+
+    // 4. After strict verify, `xcpc check problem aplusb` passes statically!
+    let post_check = run_xcpc(
+        Some(dir.path()),
+        &["--json", "check", "problem", "aplusb"],
+        None,
+    );
+    assert_eq!(post_check.status.code(), Some(0));
+
+    // 5. Add a wrong solution and run `xcpc package stress` -> finds counterexample and saves `tests/stress-1.in`.
+    fs::write(
+        dir.path().join("problems/aplusb/solutions/wa.cpp"),
+        "#include <iostream>\nint main() { long long a, b; std::cin >> a >> b; std::cout << (a - b) << '\\n'; }\n",
+    )
+    .unwrap();
+    let stress_out = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "package",
+            "stress",
+            "aplusb",
+            "--gen",
+            "gen_random",
+            "--args",
+            "-n 10 {i}",
+            "--solutions",
+            "wa",
+            "--max-iter",
+            "10",
+            "--timeout",
+            "15",
+        ],
+        None,
+    );
+    assert_eq!(
+        stress_out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&stress_out.stderr)
+    );
+    let sj = parse_json_stdout(&stress_out);
+    assert_eq!(sj["found_counterexample"], true);
+    assert_eq!(sj["failing_solution"], "wa");
+    assert_eq!(sj["saved_test_path"], "tests/stress-1.in");
+    assert!(
+        dir.path()
+            .join("problems/aplusb/tests/stress-1.in")
+            .is_file()
+    );
 }

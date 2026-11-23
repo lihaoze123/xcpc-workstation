@@ -61,6 +61,9 @@ enum Command {
         /// Language for `--example` (`chinese`/`zh` or `english`/`en`; defaults to `chinese`).
         #[arg(long, alias = "language")]
         lang: Option<Lang>,
+        /// Copy built-in problem authoring skills into `.agents/skills/xcpc-problem-creator/`.
+        #[arg(long)]
+        with_skills: bool,
         /// Target directory (defaults to current directory `.`).
         dir: Option<PathBuf>,
     },
@@ -125,6 +128,11 @@ enum Command {
         #[command(subcommand)]
         action: ContestCommand,
     },
+    /// Manage local Polygon problem packages (scaffold, build/verify, stress test).
+    Package {
+        #[command(subcommand)]
+        action: PackageCommand,
+    },
     /// Inspect built-in and custom Typst templates and their declarative schemas.
     Template {
         #[command(subcommand)]
@@ -149,6 +157,52 @@ enum ProblemCommand {
         /// Optional new title (defaults to source problem's title).
         #[arg(long)]
         title: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackageCommand {
+    /// Scaffold a local Polygon package (validator, generator, std, validator self-tests) without overwriting existing files.
+    Init {
+        /// Problem ID (slug under problems/).
+        id: String,
+    },
+    /// Compile, generate tests, validate, and run solutions against the checker.
+    Build {
+        /// Problem ID (slug under problems/).
+        id: String,
+        /// Run full strict acceptance verification (all tests × all solutions, all hard gates).
+        #[arg(long)]
+        strict: bool,
+        /// Subset of tests to run (1-based index, name, or tag; comma-separated or repeatable; debug mode only).
+        #[arg(long, value_delimiter = ',')]
+        tests: Vec<String>,
+        /// Subset of solution names to run (comma-separated or repeatable; debug mode only).
+        #[arg(long, value_delimiter = ',')]
+        solutions: Vec<String>,
+        /// Parallel worker count (overrides both tool and solution concurrency).
+        #[arg(long, short = 'j')]
+        jobs: Option<usize>,
+    },
+    /// Run bounded differential stress testing against `std` and save the first counterexample to `tests/stress-<n>.in`.
+    Stress {
+        /// Problem ID (slug under problems/).
+        id: String,
+        /// Generator name under `generators/<name>.cpp`.
+        #[arg(long = "gen")]
+        generator: String,
+        /// Generator arguments template (`{i}` or `{seed}` replaced by iteration number).
+        #[arg(long, default_value = "", allow_hyphen_values = true)]
+        args: String,
+        /// Target solution names to compare against `std` (comma-separated or repeatable; defaults to all non-main solutions).
+        #[arg(long, value_delimiter = ',')]
+        solutions: Vec<String>,
+        /// Maximum number of iterations.
+        #[arg(long, default_value_t = 100)]
+        max_iter: u32,
+        /// Time budget in seconds.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
     },
 }
 
@@ -356,6 +410,16 @@ impl From<xcpc_storage::Error> for Fatal {
     }
 }
 
+impl From<xcpc_judge::JudgeError> for Fatal {
+    fn from(e: xcpc_judge::JudgeError) -> Self {
+        Fatal {
+            code: e.code(),
+            message: e.to_string(),
+            human: Some(e.human_message()),
+        }
+    }
+}
+
 impl From<anyhow::Error> for Fatal {
     fn from(e: anyhow::Error) -> Self {
         match e.downcast::<xcpc_storage::Error>() {
@@ -442,7 +506,12 @@ fn dir_has_entries(dir: &std::path::Path) -> Result<bool, Fatal> {
 
 fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
     match &cli.command {
-        Command::Init { example, lang, dir } => {
+        Command::Init {
+            example,
+            lang,
+            with_skills,
+            dir,
+        } => {
             if cli.read_only {
                 return Err(xcpc_storage::Error::ReadOnly.into());
             }
@@ -466,19 +535,40 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             } else {
                 xcpc_storage::init_workspace(&target_dir)?
             };
+            let installed_skills = if *with_skills {
+                xcpc_storage::install_workspace_skills(ws.root())?
+            } else {
+                Vec::new()
+            };
             let root = ws.root().display().to_string();
             if cli.json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(
-                        &json!({ "ok": true, "root": root, "example": example })
-                    )
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "root": root,
+                        "example": example,
+                        "with_skills": with_skills,
+                        "skills": installed_skills,
+                    }))
                     .expect("serializable")
                 );
             } else if *example {
                 println!("initialized example workspace at {root}");
+                if !installed_skills.is_empty() {
+                    println!(
+                        "installed {} skill file(s) into .agents/skills/xcpc-problem-creator/",
+                        installed_skills.len()
+                    );
+                }
             } else {
                 println!("initialized workspace at {root}");
+                if !installed_skills.is_empty() {
+                    println!(
+                        "installed {} skill file(s) into .agents/skills/xcpc-problem-creator/",
+                        installed_skills.len()
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -719,7 +809,308 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         }
         Command::Problem { action } => run_problem(cli, action),
         Command::Contest { action } => run_contest(cli, action),
+        Command::Package { action } => run_package(cli, action),
         Command::Template { action } => run_template(cli, action),
+    }
+}
+
+fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    if ws.is_read_only() {
+        return Err(xcpc_storage::Error::ReadOnly.into());
+    }
+    match action {
+        PackageCommand::Init { id } => {
+            let res = xcpc_judge::init_package(&ws, id)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "problem_id": res.problem_id,
+                        "created_files": res.created_files,
+                        "skipped_files": res.skipped_files,
+                        "updated_problem_toml": res.updated_problem_toml,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "initialized package scaffold for problem {}",
+                    res.problem_id
+                );
+                for f in &res.created_files {
+                    println!("  created: {f}");
+                }
+                for f in &res.skipped_files {
+                    println!("  skipped (exists): {f}");
+                }
+                if res.updated_problem_toml {
+                    println!("  updated: problem.toml");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PackageCommand::Build {
+            id,
+            strict,
+            tests,
+            solutions,
+            jobs,
+        } => {
+            let opts = xcpc_judge::BuildOptions {
+                mode: if *strict {
+                    xcpc_judge::BuildMode::Verify
+                } else {
+                    xcpc_judge::BuildMode::Debug
+                },
+                tests: tests.clone(),
+                solutions: solutions.clone(),
+                jobs: *jobs,
+                solution_jobs: *jobs,
+                ..Default::default()
+            };
+            let report = xcpc_judge::build_package(&ws, id, &opts, None, None)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).expect("serializable")
+                );
+            } else {
+                print_build_report(&report);
+            }
+            let passed = if *strict {
+                report.ok && report.verified
+            } else {
+                report.ok
+            };
+            if passed {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::from(1))
+            }
+        }
+        PackageCommand::Stress {
+            id,
+            generator,
+            args,
+            solutions,
+            max_iter,
+            timeout,
+        } => {
+            let opts = xcpc_judge::StressOptions {
+                generator: generator.clone(),
+                args: args.clone(),
+                solutions: solutions.clone(),
+                max_iter: *max_iter,
+                timeout_secs: *timeout,
+                ..Default::default()
+            };
+            let res = xcpc_judge::stress_package(&ws, id, &opts, None)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&res).expect("serializable")
+                );
+            } else {
+                print_stress_result(&res);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.2} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn print_build_report(report: &xcpc_judge::BuildReport) {
+    let mode_str = match report.mode {
+        xcpc_judge::BuildMode::Debug => "debug",
+        xcpc_judge::BuildMode::Verify => "verify",
+    };
+    let status_str = if report.verified {
+        "VERIFIED"
+    } else if report.ok {
+        "OK"
+    } else {
+        "FAILED"
+    };
+    println!(
+        "package {}: {} [mode={}{}, checker={}]",
+        report.problem_id,
+        status_str,
+        mode_str,
+        if report.subset { ", subset" } else { "" },
+        report.checker
+    );
+    if let Some(ref c) = report.compiler {
+        println!("  compiler: {} ({})", c.name, c.version);
+    }
+
+    // Safety margin summary
+    let sm = &report.safety_margin;
+    let std_sec = sm.std_max_time_ms as f64 / 1000.0;
+    let lim_sec = sm.time_limit_ms as f64 / 1000.0;
+    let pct = sm.std_time_ratio * 100.0;
+    println!(
+        "  margin: max_input={}, std={:.3}s / {:.2}s ({:.1}%), std_mem={:.1} MiB / {:.0} MiB",
+        format_bytes(sm.max_input_bytes),
+        std_sec,
+        lim_sec,
+        pct,
+        sm.std_max_memory_kib as f64 / 1024.0,
+        sm.memory_limit_kib as f64 / 1024.0,
+    );
+    if let (Some(ac_sol), Some(ac_ms), Some(tle_sol), Some(tle_ms)) = (
+        &sm.slowest_ac_solution,
+        sm.slowest_ac_time_ms,
+        &sm.fastest_tle_solution,
+        sm.fastest_tle_time_ms,
+    ) {
+        println!(
+            "  ac_vs_tle: slowest AC `{ac_sol}` ({:.3}s) vs fastest TLE `{tle_sol}` ({:.3}s)",
+            ac_ms as f64 / 1000.0,
+            tle_ms as f64 / 1000.0
+        );
+    }
+
+    if !report.compile_failures.is_empty() {
+        println!("\ncompile failures:");
+        for cf in &report.compile_failures {
+            println!("  {} ({}):", cf.target, cf.source_path);
+            for line in cf.stderr.lines().take(20) {
+                println!("    {line}");
+            }
+        }
+    }
+
+    if !report.dirty_inputs.is_empty() {
+        println!("\ndirty inputs:");
+        for d in &report.dirty_inputs {
+            let mut flags = Vec::new();
+            if d.has_crlf {
+                flags.push("CRLF");
+            }
+            if d.has_bom {
+                flags.push("UTF-8 BOM");
+            }
+            if d.missing_trailing_newline {
+                flags.push("missing trailing newline");
+            }
+            println!("  {}: {}", d.path, flags.join(", "));
+        }
+    }
+
+    if !report.solutions.is_empty() {
+        println!("\nsolutions:");
+        for s in &report.solutions {
+            let mark = if s.matched { "OK" } else { "MISMATCH" };
+            let role = if s.is_main { " [main]" } else { "" };
+            println!(
+                "  {mark:<8} {}{role}: actual={}, expect=[{}], {}/{} passed, max={}ms, {:.1} MiB",
+                s.name,
+                s.actual_verdict,
+                s.expected.join("|"),
+                s.passed_tests,
+                s.total_tests,
+                s.max_time_ms,
+                s.max_memory_kib as f64 / 1024.0,
+            );
+        }
+    }
+
+    let failing_cells: Vec<_> = report
+        .matrix
+        .iter()
+        .filter(|c| c.verdict != xcpc_judge::Verdict::AC)
+        .collect();
+    if !failing_cells.is_empty() {
+        println!("\nnon-AC cells (showing up to 20):");
+        for c in failing_cells.iter().take(20) {
+            let detail = if !c.checker_message.is_empty() {
+                format!(" — {}", c.checker_message.trim())
+            } else if !c.stderr.is_empty() {
+                format!(" — {}", c.stderr.lines().next().unwrap_or("").trim())
+            } else {
+                String::new()
+            };
+            println!(
+                "  #{} {} × {}: {} ({}ms){detail}",
+                c.test_index, c.test_name, c.solution, c.verdict, c.cpu_time_ms
+            );
+        }
+    }
+
+    if !report.gates.is_empty() {
+        println!("\ngates:");
+        for g in &report.gates {
+            let tag = match g.status {
+                xcpc_judge::GateStatus::Pass => "PASS",
+                xcpc_judge::GateStatus::Fail => "FAIL",
+                xcpc_judge::GateStatus::Warn => "WARN",
+                xcpc_judge::GateStatus::Skip => "SKIP",
+            };
+            println!("  [{tag}] {}: {}", g.title, g.message);
+        }
+    }
+
+    if !report.repro_commands.is_empty() {
+        println!("\nrepro:");
+        for cmd in &report.repro_commands {
+            println!("  {cmd}");
+        }
+    }
+
+    if !report.next_steps.is_empty() {
+        println!("\nnext steps:");
+        for step in &report.next_steps {
+            println!("  - {step}");
+        }
+    }
+}
+
+fn print_stress_result(res: &xcpc_judge::StressResult) {
+    if res.found_counterexample {
+        println!(
+            "stress {}: COUNTEREXAMPLE found after {} iteration(s) ({} ms)",
+            res.problem_id, res.iterations_run, res.elapsed_ms
+        );
+        if let Some(seed) = res.seed {
+            println!("  seed: {seed}");
+        }
+        if let Some(ref cmd) = res.gen_cmd {
+            println!("  gen_cmd: {cmd}");
+        }
+        if let Some(ref path) = res.saved_test_path {
+            println!("  saved: {path}");
+        }
+        if let (Some(sol), Some(v)) = (&res.failing_solution, res.verdict) {
+            println!("  failing: {sol} ({v})");
+        }
+        if let Some(ref msg) = res.checker_message {
+            println!("  checker: {}", msg.trim());
+        }
+        if let Some(ref inp) = res.input_preview {
+            println!("--- input preview ---\n{inp}");
+        }
+        if let Some(ref out) = res.std_output_preview {
+            println!("--- std output ---\n{out}");
+        }
+        if let Some(ref out) = res.solution_output_preview {
+            println!("--- solution output ---\n{out}");
+        }
+    } else {
+        println!(
+            "stress {}: PASS ({} iteration(s) in {} ms, no counterexample found)",
+            res.problem_id, res.iterations_run, res.elapsed_ms
+        );
     }
 }
 

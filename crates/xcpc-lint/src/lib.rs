@@ -24,6 +24,7 @@ use std::fs;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use xcpc_domain::{Language, SectionKind, recognize_section};
+use xcpc_judge::PackageFreshness;
 use xcpc_storage::{Error, Workspace};
 
 /// Stable machine-readable lint rule codes.
@@ -34,6 +35,9 @@ pub mod code {
     pub const SAMPLE_NON_CONTIGUOUS: &str = "sample_non_contiguous";
     pub const MISSING_IO_SECTION: &str = "missing_io_section";
     pub const MISSING_EDITORIAL: &str = "missing_editorial";
+    pub const PACKAGE_UNVERIFIED: &str = "package_unverified";
+    pub const PACKAGE_STALE: &str = "package_stale";
+    pub const PACKAGE_FAILED: &str = "package_failed";
 }
 
 /// Diagnostic severity for a lint [`Finding`].
@@ -144,7 +148,15 @@ pub fn lint_problem(
 ) -> Result<Vec<Finding>, Error> {
     let problem = ws.load_problem(id)?;
     let mut findings = Vec::new();
-    lint_problem_dir(ws, &problem.id, None, &problem.dir, opts, &mut findings)?;
+    lint_problem_dir(
+        ws,
+        &problem.id,
+        None,
+        &problem.dir,
+        false,
+        opts,
+        &mut findings,
+    )?;
     Ok(findings)
 }
 
@@ -188,6 +200,7 @@ pub fn lint_contest(
                     &item.id,
                     Some(&item.label),
                     &snap_dir,
+                    true,
                     opts,
                     &mut findings,
                 )?;
@@ -201,6 +214,7 @@ pub fn lint_contest(
                             &problem.id,
                             Some(&item.label),
                             &problem.dir,
+                            false,
                             opts,
                             &mut findings,
                         )?;
@@ -232,6 +246,7 @@ fn lint_problem_dir(
     problem_id: &str,
     label: Option<&str>,
     dir: &str,
+    is_snapshot: bool,
     opts: &LintOptions<'_>,
     findings: &mut Vec<Finding>,
 ) -> Result<(), Error> {
@@ -272,7 +287,78 @@ fn lint_problem_dir(
         None => {}
     }
 
+    // 4. Static package freshness check (never compiles or executes anything).
+    //    Frozen contest snapshots exclude package files and are already frozen.
+    if !is_snapshot {
+        lint_package_freshness(ws, problem_id, label, dir, findings);
+    }
+
     Ok(())
+}
+
+fn lint_package_freshness(
+    ws: &Workspace,
+    problem_id: &str,
+    label: Option<&str>,
+    dir: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let prefix = match label {
+        Some(lbl) => format!("problem {lbl} ({problem_id})"),
+        None => format!("problem {problem_id:?}"),
+    };
+    let meta_rel = format!("{dir}/problem.toml");
+    match xcpc_judge::check_package_freshness(ws, problem_id) {
+        Ok(PackageFreshness::NotAPackage | PackageFreshness::VerifiedFresh { .. }) => {}
+        Ok(PackageFreshness::Unverified { .. }) => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                code: code::PACKAGE_UNVERIFIED.to_owned(),
+                message: format!(
+                    "{prefix} has a package that has not been strictly verified; run `xcpc package build {problem_id} --strict`"
+                ),
+                file: Some(meta_rel),
+                line: None,
+                column: None,
+            });
+        }
+        Ok(PackageFreshness::Stale { .. }) => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                code: code::PACKAGE_STALE.to_owned(),
+                message: format!(
+                    "{prefix} package files changed since last strict verification; run `xcpc package build {problem_id} --strict`"
+                ),
+                file: Some(meta_rel),
+                line: None,
+                column: None,
+            });
+        }
+        Ok(PackageFreshness::Failed { summary, .. }) => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                code: code::PACKAGE_FAILED.to_owned(),
+                message: format!(
+                    "{prefix} package verification failed ({summary}); fix failures and run `xcpc package build {problem_id} --strict`"
+                ),
+                file: Some(meta_rel),
+                line: None,
+                column: None,
+            });
+        }
+        Err(err) => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                code: code::PACKAGE_FAILED.to_owned(),
+                message: format!(
+                    "{prefix} package check failed: {err}; run `xcpc package build {problem_id} --strict`"
+                ),
+                file: Some(meta_rel),
+                line: None,
+                column: None,
+            });
+        }
+    }
 }
 
 /// Reads `rel` from disk, applying `unsaved` if it matches `rel`.
@@ -932,5 +1018,124 @@ mod tests {
         assert!(frozen_findings[0].is_error());
         assert_eq!(frozen_findings[0].code, code::MISSING_PROBLEM);
         assert!(frozen_findings[0].message.contains("snapshot/B"));
+    }
+
+    fn write_synthetic_report(
+        ws: &Workspace,
+        slug: &str,
+        package_hash: &str,
+        ok: bool,
+        verified: bool,
+        filename: &str,
+    ) {
+        let dir = xcpc_judge::build_dir_for(ws, slug);
+        fs::create_dir_all(&dir).unwrap();
+        let report = xcpc_judge::BuildReport {
+            problem_id: slug.to_owned(),
+            package_hash: package_hash.to_owned(),
+            mode: if verified {
+                xcpc_judge::BuildMode::Verify
+            } else {
+                xcpc_judge::BuildMode::Debug
+            },
+            verified,
+            ok,
+            subset: false,
+            built_at_epoch_secs: 1_700_000_000,
+            compiler: None,
+            checker: "wcmp".to_owned(),
+            compile_failures: Vec::new(),
+            dirty_inputs: Vec::new(),
+            self_tests: Vec::new(),
+            tests: Vec::new(),
+            solutions: Vec::new(),
+            matrix: Vec::new(),
+            gates: Vec::new(),
+            safety_margin: xcpc_judge::SafetyMargin::default(),
+            diagnostics: Vec::new(),
+            repro_commands: Vec::new(),
+            next_steps: Vec::new(),
+        };
+        fs::write(
+            dir.join(filename),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn static_package_freshness_diagnostics_for_problem_and_contest() {
+        let (dir, ws) = scratch_ws();
+        // Pure publishing problem -> NotAPackage -> no findings.
+        write_problem(dir.path(), "pure", "## Input\nx\n## Output\ny\n", None);
+        assert!(
+            lint_problem(&ws, "pure", &LintOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+
+        // Package problem without verified report -> PACKAGE_UNVERIFIED error.
+        write_problem(dir.path(), "pkg", "## Input\nx\n## Output\ny\n", None);
+        fs::create_dir_all(dir.path().join("problems/pkg/solutions")).unwrap();
+        fs::write(
+            dir.path().join("problems/pkg/solutions/std.cpp"),
+            "int main() { return 0; }\n",
+        )
+        .unwrap();
+
+        let unverified = lint_problem(&ws, "pkg", &LintOptions::default()).unwrap();
+        assert_eq!(unverified.len(), 1, "{unverified:#?}");
+        assert!(unverified[0].is_error());
+        assert_eq!(unverified[0].code, code::PACKAGE_UNVERIFIED);
+        assert!(
+            unverified[0]
+                .message
+                .contains("xcpc package build pkg --strict")
+        );
+
+        // Contest referencing unverified package problem also gets PACKAGE_UNVERIFIED.
+        let cdir = dir.path().join("contests/c-pkg");
+        fs::create_dir_all(&cdir).unwrap();
+        fs::write(
+            cdir.join("contest.toml"),
+            "name = \"C\"\n[[problem]]\nid = \"pure\"\nlabel = \"A\"\n[[problem]]\nid = \"pkg\"\nlabel = \"B\"\n",
+        )
+        .unwrap();
+        let contest_unverified = lint_contest(&ws, "c-pkg", &LintOptions::default()).unwrap();
+        assert_eq!(contest_unverified.len(), 1, "{contest_unverified:#?}");
+        assert_eq!(contest_unverified[0].code, code::PACKAGE_UNVERIFIED);
+
+        // Latest failed build report for current hash -> PACKAGE_FAILED error.
+        let hash1 = xcpc_judge::compute_package_hash(&ws, "pkg").unwrap();
+        write_synthetic_report(&ws, "pkg", &hash1, false, false, "report.json");
+        let failed = lint_problem(&ws, "pkg", &LintOptions::default()).unwrap();
+        assert_eq!(failed.len(), 1, "{failed:#?}");
+        assert_eq!(failed[0].code, code::PACKAGE_FAILED);
+
+        // Fresh verified report matching current hash -> clean!
+        write_synthetic_report(&ws, "pkg", &hash1, true, true, "verified_report.json");
+        write_synthetic_report(&ws, "pkg", &hash1, true, true, "report.json");
+        assert!(
+            lint_problem(&ws, "pkg", &LintOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            lint_contest(&ws, "c-pkg", &LintOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+
+        // Modifying a package file makes verified report stale -> PACKAGE_STALE error.
+        fs::write(
+            dir.path().join("problems/pkg/solutions/std.cpp"),
+            "int main() { return 1; }\n",
+        )
+        .unwrap();
+        let stale = lint_problem(&ws, "pkg", &LintOptions::default()).unwrap();
+        assert_eq!(stale.len(), 1, "{stale:#?}");
+        assert!(stale[0].is_error());
+        assert_eq!(stale[0].code, code::PACKAGE_STALE);
+        assert!(stale[0].message.contains("xcpc package build pkg --strict"));
     }
 }

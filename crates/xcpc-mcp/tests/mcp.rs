@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 21);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -188,6 +188,8 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "search_problems",
         "get_problem",
         "get_contest",
+        "inspect_package",
+        "inspect_test_case",
     ] {
         assert_eq!(
             read_only_map.get(read_tool),
@@ -206,6 +208,9 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "freeze_contest",
         "archive_contest",
         "unarchive_contest",
+        "init_package",
+        "build_package",
+        "stress_package",
     ] {
         assert_eq!(
             read_only_map.get(write_tool),
@@ -611,9 +616,24 @@ fn contest_compose_override_pages_lint_freeze_and_frozen_guard() {
     assert_eq!(blocked_freeze["structuredContent"]["frozen"], false);
     assert!(!dir.path().join("contests/regional-2026/snapshot").exists());
 
-    // 8. Fix the missing image -> freeze_contest succeeds even though beta lacks editorial (warning only)!
+    // 8. Fix the missing image -> alpha still has an unverified `solutions/std.cpp`, so freeze_contest rejects!
     fs::create_dir_all(dir.path().join("problems/alpha/assets")).unwrap();
     fs::write(dir.path().join("problems/alpha/assets/fig.png"), TINY_PNG).unwrap();
+
+    let unverified_freeze = client.call_tool("freeze_contest", json!({ "id": "regional-2026" }));
+    assert_eq!(unverified_freeze["isError"], true);
+    assert_eq!(unverified_freeze["structuredContent"]["frozen"], false);
+    assert!(
+        unverified_freeze["structuredContent"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "package_unverified"),
+        "expected package_unverified: {unverified_freeze}"
+    );
+
+    // Seed a fresh strict-verified report for alpha -> freeze_contest succeeds even though beta lacks editorial (warning only)!
+    seed_verified_report(dir.path(), "alpha");
 
     let frozen = client.call_tool("freeze_contest", json!({ "id": "regional-2026" }));
     assert_ne!(frozen["isError"], true, "freeze failed: {frozen}");
@@ -709,15 +729,16 @@ fn contest_compose_override_pages_lint_freeze_and_frozen_guard() {
 #[test]
 fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
     let dir = setup_workspace();
-    // Create a contest before launching read-only MCP.
+    // Create a contest and seed verified report for alpha before launching read-only MCP.
     {
         let ws = xcpc_storage::Workspace::open(dir.path(), false).unwrap();
         ws.compose_contest("c1", &["alpha".into()], None).unwrap();
     }
+    seed_verified_report(dir.path(), "alpha");
 
     let mut client = McpClient::spawn(dir.path(), true);
 
-    // All 5 read tools succeed.
+    // All read tools (including inspect_package & inspect_test_case) succeed under --read-only.
     assert_ne!(
         client.call_tool("search_problems", json!({}))["isError"],
         true
@@ -742,6 +763,14 @@ fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
             "render_page_png",
             json!({ "target": "problem", "id": "alpha", "page": 1 })
         )["isError"],
+        true
+    );
+    assert_ne!(
+        client.call_tool("inspect_package", json!({ "id": "alpha" }))["isError"],
+        true
+    );
+    assert_ne!(
+        client.call_tool("inspect_test_case", json!({ "id": "alpha", "test": 1 }))["isError"],
         true
     );
 
@@ -784,6 +813,18 @@ fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
 
     let w9 = client.call_tool("unarchive_contest", json!({ "id": "c1" }));
     assert_eq!(err_code(&w9), "read_only");
+
+    let w10 = client.call_tool("init_package", json!({ "id": "alpha" }));
+    assert_eq!(err_code(&w10), "read_only");
+
+    let w11 = client.call_tool("build_package", json!({ "id": "alpha", "mode": "debug" }));
+    assert_eq!(err_code(&w11), "read_only");
+
+    let w12 = client.call_tool(
+        "stress_package",
+        json!({ "id": "alpha", "gen": "gen_random", "args": "-n 5 {i}" }),
+    );
+    assert_eq!(err_code(&w12), "read_only");
 }
 
 #[test]
@@ -894,4 +935,127 @@ fn duplicate_problem_and_archive_contest_mcp_tools() {
         json!({ "id": "arch-cup", "problems": ["alpha", "alpha-copy"] }),
     );
     assert_ne!(ok_compose["isError"], true);
+}
+
+fn seed_verified_report(ws_root: &std::path::Path, slug: &str) {
+    let ws = xcpc_storage::Workspace::open(ws_root, false).unwrap();
+    let hash = xcpc_judge::compute_package_hash(&ws, slug).unwrap();
+    let path = xcpc_judge::verified_report_path_for(&ws, slug);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let report = xcpc_judge::BuildReport {
+        problem_id: slug.to_owned(),
+        package_hash: hash,
+        mode: xcpc_judge::BuildMode::Verify,
+        verified: true,
+        ok: true,
+        subset: false,
+        built_at_epoch_secs: 1_700_000_000,
+        compiler: None,
+        checker: "wcmp".to_owned(),
+        compile_failures: Vec::new(),
+        dirty_inputs: Vec::new(),
+        self_tests: Vec::new(),
+        tests: Vec::new(),
+        solutions: Vec::new(),
+        matrix: Vec::new(),
+        gates: Vec::new(),
+        safety_margin: xcpc_judge::SafetyMargin::default(),
+        diagnostics: Vec::new(),
+        repro_commands: Vec::new(),
+        next_steps: Vec::new(),
+    };
+    fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+}
+
+#[test]
+fn package_mcp_tools_inspect_init_build_stress_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("sum", "Sum").unwrap();
+    fs::write(
+        dir.path().join("problems/sum/statement.md"),
+        "Compute $a + b$.\n\n## Input\n\nTwo integers.\n\n## Output\n\nSum.\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("problems/sum/samples/01.in"), "1 2\n").unwrap();
+    fs::write(dir.path().join("problems/sum/samples/01.ans"), "3\n").unwrap();
+
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // 1. inspect_package on pure publishing problem -> has_package=false, freshness=not_a_package.
+    let insp0 = client.call_tool("inspect_package", json!({ "id": "sum" }));
+    assert_ne!(insp0["isError"], true, "{insp0}");
+    assert_eq!(insp0["structuredContent"]["has_package"], false);
+    assert_eq!(
+        insp0["structuredContent"]["freshness"]["status"],
+        "not_a_package"
+    );
+
+    // 2. init_package scaffolds files and updates problem.toml.
+    let init = client.call_tool("init_package", json!({ "id": "sum" }));
+    assert_ne!(init["isError"], true, "{init}");
+    assert_eq!(init["structuredContent"]["updated_problem_toml"], true);
+
+    // 3. inspect_test_case safely previews sample 1 (by index and by name).
+    let tc = client.call_tool(
+        "inspect_test_case",
+        json!({ "id": "sum", "test": "sample-01", "head_lines": 5, "tail_lines": 5 }),
+    );
+    assert_ne!(tc["isError"], true, "{tc}");
+    assert_eq!(tc["structuredContent"]["available_on_disk"], true);
+    assert_eq!(tc["structuredContent"]["head"], "1 2");
+
+    // 4. build_package(mode: "debug") with subset runs cleanly without issuing verified=true.
+    let dbg = client.call_tool(
+        "build_package",
+        json!({ "id": "sum", "mode": "debug", "tests": ["sample-01"], "solutions": ["std"] }),
+    );
+    assert_ne!(dbg["isError"], true, "{dbg}");
+    assert_eq!(dbg["structuredContent"]["ok"], true);
+    assert_eq!(dbg["structuredContent"]["verified"], false);
+    assert_eq!(dbg["structuredContent"]["subset"], true);
+
+    // 5. build_package(mode: "verify") issues verified=true and makes inspect_package report verified_fresh.
+    let ver = client.call_tool("build_package", json!({ "id": "sum", "mode": "verify" }));
+    assert_ne!(ver["isError"], true, "{ver}");
+    assert_eq!(ver["structuredContent"]["ok"], true);
+    assert_eq!(ver["structuredContent"]["verified"], true);
+
+    let insp1 = client.call_tool("inspect_package", json!({ "id": "sum" }));
+    assert_eq!(
+        insp1["structuredContent"]["freshness"]["status"],
+        "verified_fresh"
+    );
+
+    // 6. Add a wrong solution via write_problem and run stress_package -> finds counterexample.
+    let wp = client.call_tool(
+        "write_problem",
+        json!({
+            "id": "sum",
+            "files": {
+                "solutions/wa.cpp": "#include <iostream>\nint main(){ long long a,b; std::cin>>a>>b; std::cout<<(a-b)<<'\\n'; }\n"
+            }
+        }),
+    );
+    assert_ne!(wp["isError"], true, "{wp}");
+
+    let stress = client.call_tool(
+        "stress_package",
+        json!({
+            "id": "sum",
+            "gen": "gen_random",
+            "args": "-n 10 {i}",
+            "solutions": ["wa"],
+            "max_iter": 10,
+            "timeout": 15
+        }),
+    );
+    assert_ne!(stress["isError"], true, "{stress}");
+    assert_eq!(stress["structuredContent"]["found_counterexample"], true);
+    assert_eq!(stress["structuredContent"]["failing_solution"], "wa");
+    assert_eq!(
+        stress["structuredContent"]["saved_test_path"],
+        "tests/stress-1.in"
+    );
+    assert!(dir.path().join("problems/sum/tests/stress-1.in").is_file());
 }

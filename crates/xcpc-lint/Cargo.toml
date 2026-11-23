@@ -8,8 +8,10 @@ publish.workspace = true
 [dependencies]
 xcpc-domain.workspace = true
 xcpc-storage.workspace = true
+xcpc-judge.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true

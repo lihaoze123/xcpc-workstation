@@ -14,6 +14,7 @@ xcpc-domain.workspace = true
 xcpc-storage.workspace = true
 xcpc-convert.workspace = true
 xcpc-engine.workspace = true
+xcpc-judge.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

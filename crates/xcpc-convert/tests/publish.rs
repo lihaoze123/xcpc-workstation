@@ -948,6 +948,55 @@ fn freeze_contest_succeeds_with_warnings_outputs_pdfs_excludes_package_files_and
     .unwrap();
 
     let mut engine = publish::engine(&ws, &FontOptions::from_env());
+
+    // Static/dynamic separation: problem `a` has `solutions/std.cpp` and no verified report yet,
+    // so freeze_contest must reject without touching disk (never compiling/running silently).
+    let unverified = publish::freeze_contest(&ws, &mut engine, "with-ed").unwrap();
+    assert!(!unverified.frozen);
+    assert!(!unverified.report.ok);
+    assert!(
+        unverified
+            .report
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_deref() == Some(xcpc_lint::code::PACKAGE_UNVERIFIED)),
+        "{:#?}",
+        unverified.report.diagnostics
+    );
+    assert!(!cdir.join("snapshot").exists());
+
+    // Seed a fresh strict-verified report matching `a`'s package hash, then freeze succeeds.
+    let pkg_hash = xcpc_judge::compute_package_hash(&ws, "a").unwrap();
+    let verified_path = xcpc_judge::verified_report_path_for(&ws, "a");
+    fs::create_dir_all(verified_path.parent().unwrap()).unwrap();
+    let verified_report = xcpc_judge::BuildReport {
+        problem_id: "a".to_owned(),
+        package_hash: pkg_hash,
+        mode: xcpc_judge::BuildMode::Verify,
+        verified: true,
+        ok: true,
+        subset: false,
+        built_at_epoch_secs: 1_700_000_000,
+        compiler: None,
+        checker: "wcmp".to_owned(),
+        compile_failures: Vec::new(),
+        dirty_inputs: Vec::new(),
+        self_tests: Vec::new(),
+        tests: Vec::new(),
+        solutions: Vec::new(),
+        matrix: Vec::new(),
+        gates: Vec::new(),
+        safety_margin: xcpc_judge::SafetyMargin::default(),
+        diagnostics: Vec::new(),
+        repro_commands: Vec::new(),
+        next_steps: Vec::new(),
+    };
+    fs::write(
+        &verified_path,
+        serde_json::to_vec_pretty(&verified_report).unwrap(),
+    )
+    .unwrap();
+
     let outcome = publish::freeze_contest(&ws, &mut engine, "with-ed").unwrap();
     assert!(outcome.frozen, "{:#?}", outcome.report.diagnostics);
     assert!(outcome.report.ok);

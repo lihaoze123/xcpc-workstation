@@ -58,18 +58,28 @@ This directory is an **XCPC Workstation** workspace (`workspace.toml` marks the 
 ```text
 workspace.toml           # Workspace root marker & settings
 problems/<slug>/         # One directory per problem (slug = immutable ID)
-  problem.toml           # Metadata, [limits], [[source]] (never store training status here)
+  problem.toml           # Metadata, [limits], [[source]], [package], [[test]], [solutions.*]
   statement.md           # Or statement.zh.md / statement.en.md (Markdown + $LaTeX$)
   editorial.md           # Optional A4 editorial
-  samples/               # 01.in, 01.ans, 02.in, 02.ans, ... (do not paste samples into statement.md)
+  samples/               # 01.in, 01.ans, ... (single source of truth; auto-included as leading tests)
   assets/                # Figures referenced by relative path: ![](assets/fig.png)
+  validator.cpp          # Input validator (required for strict verify)
+  checker.cpp            # Optional custom checker (default: wcmp, or builtin ncmp/fcmp/lcmp/rcmp4/rcmp6/rcmp9/yesno/nyesno)
+  generators/<name>.cpp  # Deterministic testlib.h generators
+  solutions/<name>.cpp   # std (main = true), brute/alt solutions, targeted wrong solutions
+  tests/
+    *.in                 # Hand-written tests & stress counterexamples (stress-<n>.in)
+    validator/valid/*.in # Validator self-tests that must pass
+    validator/invalid/*.in # Validator self-tests that must fail
+    checker/{ok,wa,pe}-*/{in,out,ans} # Custom checker self-tests
 contests/<id>/
   contest.toml           # Contest metadata, ordered [[problem]] live refs + metadata overrides
   snapshot/              # Created when frozen (read-only archive, committed to Git)
 templates/               # Workspace Typst templates (committed to Git)
   preamble.typ           # Optional workspace-level Typst preamble injected after template show rule
-build/                   # Generated PDFs & temporary outputs (gitignored)
+build/                   # Generated PDFs & package build reports (gitignored)
 .xcpc/                   # Strictly local caches & derived data (gitignored, never committed)
+.agents/skills/          # Optional workspace skills (installed via `xcpc init --with-skills`)
 ```
 
 ## Authoring Rules
@@ -78,15 +88,77 @@ build/                   # Generated PDFs & temporary outputs (gitignored)
 - **Statements**: use level-2 Markdown headings (`## 输入格式` / `## Input`, `## 输出格式` / `## Output`, `## 交互` / `## Interaction`, `## 提示` / `## Note`). Samples are rendered automatically from `samples/`.
 - **Contests**: live references with metadata-only overrides (`title`, `[problem.limits]`, `show-metadata`). Labels `A`–`Z` (max 26 problems) follow the order in `contest.toml`.
 - **Frozen contests**: strictly read-only (including `snapshot/`). Unfreezing requires human confirmation via the GUI or `xcpc contest unfreeze` and is not available over MCP.
+- **Static/dynamic separation**: `xcpc check` and `xcpc contest freeze` never compile or execute C++ silently. Problems with packages must pass `xcpc package build <slug> --strict` (producing a fresh verified report) before checking or freezing succeeds.
+
+## Local Polygon Workflow & Anti-Cheating Discipline
+
+Follow the built-in **`xcpc-problem-creator`** skill (install into `.agents/skills/xcpc-problem-creator/` with `xcpc init --with-skills`) for end-to-end problem authoring: statement & samples → `validator.cpp` + self-tests → `std.cpp` + independent `brute.cpp` + `stress_package` → adversarial generators & wrong solutions → `build_package(mode: "verify")` → editorial & PDF visual self-check.
+
+**Non-negotiable discipline** (when verification fails, fix the root cause — never bypass the gate):
+1. **Never relax `[limits]`** (`time` / `memory`) without explicit user approval just to make `std` pass the `<= 50%` time-limit margin or avoid TLE/MLE.
+2. **Never delete or skip failing test cases** from `[[test]]` to make the build green.
+3. **Never loosen `expect`** (e.g. changing `expect = "WA"` to `["AC", "WA"]`, or allowing a reference AC solution to fail).
+4. **Never write an empty `validator.cpp` or fake `checker.cpp`**: both must have genuine passing and failing self-tests.
+5. **Never silently overwrite manual `samples/NN.ans`**; manual sample answers are validated alongside `std` output.
+6. **Never treat `mode: "debug"` as acceptance**: only a full `build_package(mode: "verify")` / `xcpc package build <id> --strict` issues `verified = true`.
 
 ## CLI & MCP
 
-- `xcpc check <problem|contest> <id> [--editorial] [--json]`
-- `xcpc build <problem|contest> <id> [--editorial]`
-- `xcpc render <problem|contest> <id> [--page N]`
-- `xcpc search` / `xcpc show` / `xcpc contest compose|override|freeze|unfreeze`
-- `xcpc mcp [--read-only]`
+- Publishing & Contests:
+  - `xcpc init [dir] [--example] [--with-skills]`
+  - `xcpc check <problem|contest> <id> [--editorial] [--json]`
+  - `xcpc build <problem|contest> <id> [--editorial]`
+  - `xcpc render <problem|contest> <id> [--page N]`
+  - `xcpc search` / `xcpc show` / `xcpc contest compose|override|freeze|unfreeze`
+- Local Polygon Packages:
+  - `xcpc package init <id> [--json]`
+  - `xcpc package build <id> [--strict] [--tests <list>] [--solutions <list>] [--jobs N] [--json]`
+  - `xcpc package stress <id> --gen <name> --args "<args>" [--solutions <list>] [--max-iter N] [--timeout S] [--json]`
+- MCP Server (`xcpc mcp [--read-only]`):
+  - Package tools: `inspect_package`, `inspect_test_case` (read-only); `init_package` (write); `build_package`, `stress_package` (exec, blocked under `--read-only`).
+  - Publishing tools: `compile_and_diagnose`, `render_page_png`, `export_pdf`, `search_problems`, `get_problem`, `get_contest`, `write_problem`, `duplicate_problem`, `compose_contest`, `set_override`, `freeze_contest`.
 "#;
+
+/// Built-in `xcpc-problem-creator` skill files embedded into the binary for `xcpc init --with-skills`.
+pub const BUILTIN_PROBLEM_CREATOR_SKILLS: &[(&str, &str)] = &[
+    (
+        ".agents/skills/xcpc-problem-creator/SKILL.md",
+        include_str!("../../../skills/xcpc-problem-creator/SKILL.md"),
+    ),
+    (
+        ".agents/skills/xcpc-problem-creator/mistake-taxonomy.md",
+        include_str!("../../../skills/xcpc-problem-creator/mistake-taxonomy.md"),
+    ),
+    (
+        ".agents/skills/xcpc-problem-creator/judge-validator/SKILL.md",
+        include_str!("../../../skills/xcpc-problem-creator/judge-validator/SKILL.md"),
+    ),
+    (
+        ".agents/skills/xcpc-problem-creator/solutions-tutorial/SKILL.md",
+        include_str!("../../../skills/xcpc-problem-creator/solutions-tutorial/SKILL.md"),
+    ),
+    (
+        ".agents/skills/xcpc-problem-creator/wrong-gen/SKILL.md",
+        include_str!("../../../skills/xcpc-problem-creator/wrong-gen/SKILL.md"),
+    ),
+];
+
+/// Copies the built-in `xcpc-problem-creator` skill files into
+/// `<root>/.agents/skills/xcpc-problem-creator/`, creating parent directories and writing
+/// atomically. Returns the workspace-relative paths written.
+pub fn install_workspace_skills(root: impl AsRef<Path>) -> Result<Vec<String>> {
+    let root = root.as_ref();
+    let mut written = Vec::with_capacity(BUILTIN_PROBLEM_CREATOR_SKILLS.len());
+    for (rel, content) in BUILTIN_PROBLEM_CREATOR_SKILLS {
+        let dest = root.join(rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| io(parent.display(), e))?;
+        }
+        write_atomic(&dest, content.as_bytes()).map_err(|e| io(dest.display(), e))?;
+        written.push((*rel).to_owned());
+    }
+    Ok(written)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

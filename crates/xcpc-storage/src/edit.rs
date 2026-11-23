@@ -29,7 +29,13 @@ const ALLOWED_PROBLEM_ROOT_FILES: &[&str] = &[
     "statement.en.md",
     "editorial.md",
     "checker.cpp",
+    "checker.17.cpp",
+    "checker.20.cpp",
+    "checker.23.cpp",
     "validator.cpp",
+    "validator.17.cpp",
+    "validator.20.cpp",
+    "validator.23.cpp",
     "interactor.cpp",
 ];
 
@@ -1132,6 +1138,9 @@ fn is_allowed_problem_file(rel: &str) -> bool {
     match parts.as_slice() {
         [file] => ALLOWED_PROBLEM_ROOT_FILES.contains(file),
         [dir, file] => ALLOWED_PROBLEM_SUBDIRS.contains(dir) && is_safe_single_filename(file),
+        ["tests", rest @ ..] if !rest.is_empty() && rest.len() <= 3 => {
+            rest.iter().all(|part| is_safe_single_filename(part))
+        }
         _ => false,
     }
 }

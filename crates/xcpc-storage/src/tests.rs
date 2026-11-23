@@ -1823,3 +1823,101 @@ fn preamble_lives_in_templates_and_is_reserved() {
     assert!(watcher::should_ignore(".xcpc/theme.toml"));
     assert!(!watcher::should_ignore("templates/preamble.typ"));
 }
+
+#[test]
+fn install_workspace_skills_and_upgraded_agents_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    // Upgraded AGENTS.md documents Phase 3A workflow, anti-cheating discipline, and 5 MCP tools.
+    let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("xcpc-problem-creator"));
+    assert!(agents.contains("inspect_package"));
+    assert!(agents.contains("inspect_test_case"));
+    assert!(agents.contains("init_package"));
+    assert!(agents.contains("build_package"));
+    assert!(agents.contains("stress_package"));
+    assert!(agents.contains("Never relax `[limits]`"));
+    assert!(agents.contains("xcpc package build"));
+
+    // install_workspace_skills writes all 5 embedded files atomically.
+    let written = install_workspace_skills(ws.root()).unwrap();
+    assert_eq!(written.len(), 5);
+    for rel in [
+        ".agents/skills/xcpc-problem-creator/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/mistake-taxonomy.md",
+        ".agents/skills/xcpc-problem-creator/judge-validator/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/solutions-tutorial/SKILL.md",
+        ".agents/skills/xcpc-problem-creator/wrong-gen/SKILL.md",
+    ] {
+        assert!(
+            written.iter().any(|p| p == rel),
+            "missing {rel} in {written:?}"
+        );
+        let content = fs::read_to_string(dir.path().join(rel)).unwrap();
+        assert!(!content.trim().is_empty(), "empty skill file {rel}");
+    }
+}
+
+#[test]
+fn watcher_and_problem_whitelist_cover_phase3a_package_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.create_problem("pkg", "Package Problem").unwrap();
+
+    // Package paths must not be ignored by the watcher.
+    for rel in [
+        "problems/pkg/validator.cpp",
+        "problems/pkg/checker.cpp",
+        "problems/pkg/generators/gen_random.cpp",
+        "problems/pkg/solutions/std.cpp",
+        "problems/pkg/tests/hand-01.in",
+        "problems/pkg/tests/validator/valid/01.in",
+        "problems/pkg/tests/validator/invalid/01.in",
+        "problems/pkg/tests/checker/ok-01/in",
+    ] {
+        assert!(!watcher::should_ignore(rel), "should watch {rel}");
+    }
+
+    // write_problem_files accepts nested tests/ self-tests and versioned validator/checker files.
+    let mut files = BTreeMap::new();
+    files.insert("validator.20.cpp".into(), "int main(){}\n".into());
+    files.insert("tests/validator/valid/01.in".into(), "1 2\n".into());
+    files.insert("tests/checker/ok-01/in".into(), "1 2\n".into());
+    let hashes = ws.write_problem_files("pkg", &files, None).unwrap();
+    assert_eq!(hashes.len(), 3);
+
+    // Still rejects path traversal and hidden files inside tests/.
+    let mut bad = BTreeMap::new();
+    bad.insert("tests/../escape.in".into(), "x".into());
+    assert_eq!(
+        ws.write_problem_files("pkg", &bad, None)
+            .unwrap_err()
+            .code(),
+        "disallowed_path"
+    );
+
+    // Live watcher emits Changed events for external edits inside package directories.
+    fs::create_dir_all(dir.path().join("problems/pkg/solutions")).unwrap();
+    let (_tracked, _watcher, rx) = ws.watch().unwrap();
+    fs::write(
+        dir.path().join("problems/pkg/solutions/std.cpp"),
+        "int main() { return 0; }\n",
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut saw_solution = false;
+    while std::time::Instant::now() < deadline {
+        if let Ok(WatchEvent::Changed(paths)) =
+            rx.recv_timeout(std::time::Duration::from_millis(200))
+            && paths.iter().any(|p| p == "problems/pkg/solutions/std.cpp")
+        {
+            saw_solution = true;
+            break;
+        }
+    }
+    assert!(
+        saw_solution,
+        "expected watcher event for problems/pkg/solutions/std.cpp"
+    );
+}

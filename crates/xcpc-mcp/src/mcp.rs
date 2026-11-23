@@ -151,6 +151,11 @@ impl Server {
             "freeze_contest" => self.tool_freeze_contest(obj),
             "archive_contest" => self.tool_set_contest_archived(obj, true),
             "unarchive_contest" => self.tool_set_contest_archived(obj, false),
+            "inspect_package" => self.tool_inspect_package(obj),
+            "inspect_test_case" => self.tool_inspect_test_case(obj),
+            "init_package" => self.tool_init_package(obj),
+            "build_package" => self.tool_build_package(obj),
+            "stress_package" => self.tool_stress_package(obj),
             _ => Err(None),
         }
     }
@@ -678,6 +683,147 @@ impl Server {
         value["ok"] = json!(outcome.frozen);
         Ok(structured(value))
     }
+
+    fn tool_inspect_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(args, &["id"], "inspect_package")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let insp = xcpc_judge::inspect_package(&self.ws, &id)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&insp).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_inspect_test_case(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["id", "test", "head_lines", "tail_lines"],
+            "inspect_test_case",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let selector = match args.get("test") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) if n.as_u64().is_some() => n.as_u64().unwrap().to_string(),
+            _ => {
+                return Err(fail(
+                    "invalid_arguments",
+                    "`test` is required and must be a test name or 1-based index",
+                ));
+            }
+        };
+        let head_lines = opt_u32(args, "head_lines")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(20) as usize;
+        let tail_lines = opt_u32(args, "tail_lines")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(20) as usize;
+        let preview =
+            xcpc_judge::inspect_test_case(&self.ws, &id, &selector, head_lines, tail_lines)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&preview).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_init_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(args, &["id"], "init_package")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let res =
+            xcpc_judge::init_package(&self.ws, &id).map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_build_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &["id", "mode", "tests", "solutions", "jobs"],
+            "build_package",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let mode = match opt_str(args, "mode")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .as_deref()
+        {
+            None | Some("debug") => xcpc_judge::BuildMode::Debug,
+            Some("verify") => xcpc_judge::BuildMode::Verify,
+            Some(other) => {
+                return Err(fail(
+                    "invalid_arguments",
+                    format!("unknown mode {other:?}: expected \"debug\" or \"verify\""),
+                ));
+            }
+        };
+        let tests = opt_str_vec(args, "tests").map_err(|m| fail("invalid_arguments", m))?;
+        let solutions = opt_str_vec(args, "solutions").map_err(|m| fail("invalid_arguments", m))?;
+        let jobs = opt_u32(args, "jobs")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .map(|n| n.max(1) as usize);
+
+        let opts = xcpc_judge::BuildOptions {
+            mode,
+            tests,
+            solutions,
+            jobs,
+            solution_jobs: jobs,
+            ..Default::default()
+        };
+        let report = xcpc_judge::build_package(&self.ws, &id, &opts, None, None)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(
+            serde_json::to_value(&report).expect("serializable"),
+        ))
+    }
+
+    fn tool_stress_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &["id", "gen", "args", "solutions", "max_iter", "timeout"],
+            "stress_package",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let generator = req_str(args, "gen").map_err(|m| fail("invalid_arguments", m))?;
+        let gen_args = opt_str(args, "args")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or_default();
+        let solutions = opt_str_vec(args, "solutions").map_err(|m| fail("invalid_arguments", m))?;
+        let max_iter = opt_u32(args, "max_iter")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(100);
+        let timeout_secs = opt_u32(args, "timeout")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .map(u64::from)
+            .unwrap_or(30);
+
+        let opts = xcpc_judge::StressOptions {
+            generator,
+            args: gen_args,
+            solutions,
+            max_iter,
+            timeout_secs,
+            ..Default::default()
+        };
+        let res = xcpc_judge::stress_package(&self.ws, &id, &opts, None)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
 }
 
 fn is_known_tool(name: &str) -> bool {
@@ -699,6 +845,11 @@ fn is_known_tool(name: &str) -> bool {
             | "freeze_contest"
             | "archive_contest"
             | "unarchive_contest"
+            | "inspect_package"
+            | "inspect_test_case"
+            | "init_package"
+            | "build_package"
+            | "stress_package"
     )
 }
 
@@ -933,7 +1084,7 @@ fn tools() -> Value {
             .extend(extra.as_object().unwrap().clone());
         json!({ "type": "object", "properties": props, "required": ["target", "id"], "additionalProperties": false })
     };
-    json!([
+    let base = json!([
         {
             "name": "compile_and_diagnose",
             "title": "Compile and diagnose",
@@ -1207,6 +1358,106 @@ fn tools() -> Value {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
         },
+    ]);
+    let mut all = base.as_array().cloned().unwrap_or_default();
+    if let Some(pkg) = package_tools().as_array() {
+        all.extend(pkg.iter().cloned());
+    }
+    Value::Array(all)
+}
+
+fn package_tools() -> Value {
+    json!([
+        {
+            "name": "inspect_package",
+            "title": "Inspect problem package",
+            "description": "Read-only overview of a problem's local Polygon package: file inventory, statically expanded tests, \
+                package content hash, static freshness status (not_a_package / verified_fresh / stale / unverified / failed), \
+                dirty-input issues, latest build report, per-gate status, and dynamic next_steps. Never compiles or executes code.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "inspect_test_case",
+            "title": "Inspect test case preview",
+            "description": "Safely inspect one expanded test case's generator command, file size, line count, and bounded head/tail preview \
+                without overflowing context. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                    "test": { "type": ["string", "integer"], "description": "Test selector: 1-based test index or test name (e.g. \"sample-01\" or 1)." },
+                    "head_lines": { "type": "integer", "minimum": 1, "description": "Maximum leading lines to include (default 20)." },
+                    "tail_lines": { "type": "integer", "minimum": 1, "description": "Maximum trailing lines to include (default 20)." },
+                },
+                "required": ["id", "test"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "init_package",
+            "title": "Initialize problem package scaffold",
+            "description": "Scaffold a local Polygon package inside problems/<id>/ (validator.cpp, generators/gen_random.cpp, \
+                solutions/std.cpp, validator self-tests, and initial [[test]] / [solutions.std] in problem.toml) without overwriting existing files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "build_package",
+            "title": "Build and verify problem package",
+            "description": "Compile validator/checker/generators/solutions, run self-tests, generate and validate tests, and execute the \
+                tests × solutions matrix. Supports mode \"debug\" (default, allows subset filtering via tests/solutions, never issues verified=true) \
+                and mode \"verify\" (full strict acceptance; issues verified=true only when all hard gates pass).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                    "mode": { "type": "string", "enum": ["debug", "verify"], "description": "Build mode: \"debug\" (default) or \"verify\" (strict full acceptance)." },
+                    "tests": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of tests (1-based index, name, or tag); debug mode only." },
+                    "solutions": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of solution names; debug mode only." },
+                    "jobs": { "type": "integer", "minimum": 1, "description": "Optional parallel worker count override." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "stress_package",
+            "title": "Stress test problem package",
+            "description": "Run bounded differential stress testing with a generator against std and one or more target solutions. \
+                Saves the first counterexample to tests/stress-<n>.in without modifying problem.toml, and returns seed, gen_cmd, \
+                truncated input/outputs, and checker diagnostic.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                    "gen": { "type": "string", "description": "Generator name under generators/<name>.cpp." },
+                    "args": { "type": "string", "description": "Generator arguments template ({i} or {seed} replaced by iteration number)." },
+                    "solutions": { "type": "array", "items": { "type": "string" }, "description": "Target solution names to compare against std (default: all non-main solutions)." },
+                    "max_iter": { "type": "integer", "minimum": 1, "description": "Maximum iterations to run (default 100)." },
+                    "timeout": { "type": "integer", "minimum": 1, "description": "Time budget in seconds (default 30)." },
+                },
+                "required": ["id", "gen"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
     ])
 }
 
@@ -1270,6 +1521,11 @@ mod tests {
                 "freeze_contest",
                 "archive_contest",
                 "unarchive_contest",
+                "inspect_package",
+                "inspect_test_case",
+                "init_package",
+                "build_package",
+                "stress_package",
             ]
         );
         assert!(
