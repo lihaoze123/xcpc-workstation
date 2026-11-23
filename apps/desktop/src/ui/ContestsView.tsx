@@ -634,10 +634,10 @@ function ContestPanel(props: { id: string }) {
                         class={item().packageStatus === "failed" ? "text-destructive" : "text-muted-foreground"}
                       >
                         {item().packageStatus === "failed"
-                          ? t("inspector.package.failed")
+                          ? t("library.package.failed")
                           : item().packageStatus === "stale"
-                            ? t("inspector.package.stale")
-                            : t("inspector.package.unverified")}
+                            ? t("library.package.stale")
+                            : t("library.package.unverified")}
                       </Text>
                     </If>
                     <Text style={{ width: 110, fontSize: 12.5, textAlign: "right", fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">

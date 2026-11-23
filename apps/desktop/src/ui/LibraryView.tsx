@@ -285,11 +285,11 @@ export function LibraryView(props: { active: boolean }) {
       const st = r?.packageStatus;
       const badgeLabel =
         st === "unverified"
-          ? t("inspector.package.unverified")
+          ? t("library.package.unverified")
           : st === "stale"
-            ? t("inspector.package.stale")
+            ? t("library.package.stale")
             : st === "failed"
-              ? t("inspector.package.failed")
+              ? t("library.package.failed")
               : undefined;
       return (
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>

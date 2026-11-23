@@ -685,6 +685,9 @@ export const en: Record<MessageKey, string> = {
   "inspector.package.stale": "Needs re-verify",
   "inspector.package.unverified": "Unverified",
   "inspector.package.failed": "Failed",
+  "library.package.unverified": "Data unverified",
+  "library.package.stale": "Data stale",
+  "library.package.failed": "Data issue",
 
   "build.subtab.matrix": "Results",
   "build.subtab.tests": "Tests",

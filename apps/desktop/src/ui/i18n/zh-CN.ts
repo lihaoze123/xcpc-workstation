@@ -683,6 +683,9 @@ export const zhCN = {
   "inspector.package.stale": "待重验",
   "inspector.package.unverified": "未验证",
   "inspector.package.failed": "未通过",
+  "library.package.unverified": "数据未验",
+  "library.package.stale": "数据待重验",
+  "library.package.failed": "数据异常",
 
   "build.subtab.matrix": "结果",
   "build.subtab.tests": "数据",
