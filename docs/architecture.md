@@ -214,7 +214,7 @@ flowchart LR
 - **Polygon LaTeX 导入（Phase 3B）**：在 `xcpc-packages` 导入 Polygon ZIP 时，将 `statement-sections/<lang>/*.tex`（回退 `statements/<lang>/problem.tex`）**一次性转换**为 `statement(.zh/.en).md`（保留原生 `$LaTeX$` 数学公式，将复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块，并将配图拷贝至 `assets/`），保持 `.md` 为工作区唯一题面事实源。
 - **模板 Schema 与单入口渲染**：所有生效模板均为磁盘上的 `.typ` 文件（`contests/<id>/template.typ` 优先于 `templates/<name>.typ`；预设 `olymp-classic` / `cnoi-classic` / `minimal` 仅作初始化与添加模板的种子，不做内置回退）。`xcpc-engine` 对模板轻量求值导出 `#let schema`（规范见 [statement-style.md §2.3](./statement-style.md#23-模板声明式-schemalet-schema)）。转换管线按「模板默认 → `workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`」合并参数，生成单入口 `#render(doc)` 调用，并为模板未导出的 `section` / `samples` / `subsection` / `runin` 自动回退到 `/xcpc/defaults.typ`。
 - 数学定界符：LaTeX 里的普通括号（`(`、`[`、`\lceil` 等）不会缩放，转换成 Typst 时要写成转义或符号形式（`\(`、`\[`、`#sym.ceil.l`），避免 Typst 自动配对放大；只有 `\left…\right` 才转换成 `lr()`。
-- **OJ 数据包导出（Phase 3B）**：导出 DOMjudge 包时由 `xcpc-engine` 直接编译 `problem.pdf`；导出 Hydro 包时由工作区 `statement(.zh/.en).md` 与 `samples/` 组装 `problem_zh.md` / `problem_en.md` / `problem.md`（嵌入 Hydro ```` ```input1 / ```output1 ```` 样例块并将 `assets/` 迁入 `additional_file/` 改写为 `file://` 链接）。后续导出 QOJ 等格式时按需使用 `typlite` / `tylax`。
+- **OJ 数据包导出（Phase 3B）**：导出 DOMjudge 与 Hydro 包时均由 `xcpc-engine` 直接编译单题 `problem.pdf`；DOMjudge 置于包根目录，Hydro 置于 `additional_file/problem.pdf` 并在 `problem_zh.md` / `problem_en.md` 中以 `@[pdf](file://problem.pdf?noDisposition=1)` 嵌入展示。后续导出 QOJ 等格式时按需使用 `typlite` / `tylax`。
 - **PDF 元数据与书签（Phase 2.5）**：导出 PDF 时由 Core 统一写入文档元数据，并复用 `olymp-classic.typ` 中已有的书签（`bookmarked: true`）：
   - `Title`：`春季训练赛 试题册` / `春季训练赛 题解` / `A. Two Sum`（按比赛试题册、比赛题解或单题标题生成）；
   - `Author`：比赛的作者字段，没有就不写；

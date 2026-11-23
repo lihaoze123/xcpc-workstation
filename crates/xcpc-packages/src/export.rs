@@ -44,9 +44,8 @@ pub fn export_oj_package(
             } else {
                 opts.output_path.clone()
             };
-            let mut engine = (opts.format == OjFormat::Domjudge)
-                .then(|| Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf())));
-            let artifact = write_oj_zip(ws, &prepared, &zip_path, opts, engine.as_mut())?;
+            let mut engine = Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf()));
+            let artifact = write_oj_zip(ws, &prepared, &zip_path, opts, &mut engine)?;
             Ok(ExportOjResult {
                 format: opts.format,
                 artifacts: vec![artifact],
@@ -86,15 +85,14 @@ pub fn export_oj_package(
                 )
             })?;
 
-            let mut engine = (opts.format == OjFormat::Domjudge)
-                .then(|| Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf())));
+            let mut engine = Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf()));
             let mut artifacts = Vec::with_capacity(prepared_list.len());
             for prepared in &prepared_list {
                 let label = prepared.label.as_deref().unwrap_or("P");
                 let zip_path = opts
                     .output_path
                     .join(format!("{label}-{}.zip", prepared.problem.id));
-                let artifact = write_oj_zip(ws, prepared, &zip_path, opts, engine.as_mut())?;
+                let artifact = write_oj_zip(ws, prepared, &zip_path, opts, &mut engine)?;
                 artifacts.push(artifact);
             }
 
@@ -244,14 +242,14 @@ fn write_oj_zip(
     prep: &PreparedExport,
     zip_path: &Path,
     opts: &ExportOjOptions,
-    engine: Option<&mut Engine>,
+    engine: &mut Engine,
 ) -> Result<ExportedArtifact> {
     let sample_count = prep.tests.iter().filter(|t| t.is_sample).count();
     let secret_count = prep.tests.len() - sample_count;
 
     let size_bytes = match opts.format {
-        OjFormat::Domjudge => write_domjudge_zip(ws, prep, zip_path, engine.expect("engine"))?,
-        OjFormat::Hydro => write_hydro_zip(prep, zip_path)?,
+        OjFormat::Domjudge => write_domjudge_zip(ws, prep, zip_path, engine)?,
+        OjFormat::Hydro => write_hydro_zip(ws, prep, zip_path, engine)?,
     };
 
     Ok(ExportedArtifact {
@@ -496,7 +494,12 @@ fn read_effective_testlib(ws: &Workspace, prob_dir: &Path) -> Vec<u8> {
 // Hydro OJ Export
 // ---------------------------------------------------------------------------
 
-fn write_hydro_zip(prep: &PreparedExport, zip_path: &Path) -> Result<u64> {
+fn write_hydro_zip(
+    ws: &Workspace,
+    prep: &PreparedExport,
+    zip_path: &Path,
+    engine: &mut Engine,
+) -> Result<u64> {
     let mut zip = AtomicZipWriter::create(zip_path)?;
 
     // 1. `problem.yaml`
@@ -509,62 +512,18 @@ fn write_hydro_zip(prep: &PreparedExport, zip_path: &Path) -> Result<u64> {
     }
     zip.add_file("problem.yaml", prob_yaml.as_bytes())?;
 
-    // 2. Statements (`problem_zh.md` / `problem_en.md` / `problem.md`)
-    let sample_pairs: Vec<(String, String)> = if !prep.problem.samples.is_empty() {
-        prep.problem
-            .samples
-            .iter()
-            .map(|s| (s.input.clone(), s.output.clone()))
-            .collect()
-    } else {
-        prep.tests
-            .iter()
-            .filter(|t| t.is_sample)
-            .map(|t| {
-                (
-                    String::from_utf8_lossy(&t.input_bytes).into_owned(),
-                    String::from_utf8_lossy(&t.answer_bytes).into_owned(),
-                )
-            })
-            .collect()
+    // 2. Compiled PDF statement (`additional_file/problem.pdf`) + Hydro PDF embed Markdown
+    let pdf_bytes = compile_problem_pdf(ws, engine, prep)?;
+    zip.add_file("additional_file/problem.pdf", &pdf_bytes)?;
+
+    let stmt_filename = match prep.language {
+        Language::Chinese => "problem_zh.md",
+        Language::English => "problem_en.md",
     };
+    let stmt_md = "@[pdf](file://problem.pdf?noDisposition=1)\n";
+    zip.add_file(stmt_filename, stmt_md.as_bytes())?;
 
-    if prep.problem.statements.is_empty() {
-        let md = render_hydro_statement("", &sample_pairs, prep.language);
-        zip.add_file("problem.md", md.as_bytes())?;
-    } else {
-        for stmt in &prep.problem.statements {
-            let (filename, lang) = match stmt.language {
-                Some(Language::Chinese) => ("problem_zh.md", Language::Chinese),
-                Some(Language::English) => ("problem_en.md", Language::English),
-                None => ("problem.md", prep.language),
-            };
-            let md = render_hydro_statement(&stmt.file.text, &sample_pairs, lang);
-            zip.add_file(filename, md.as_bytes())?;
-        }
-    }
-
-    // 3. `additional_file/` (ONLY if `assets/` has files)
-    let assets_dir = prep.prob_dir.join("assets");
-    if assets_dir.is_dir() {
-        let mut entries: Vec<PathBuf> = fs::read_dir(&assets_dir)
-            .map_err(|e| io_err(format!("read {}", assets_dir.display()), e))?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file())
-            .collect();
-        entries.sort();
-        for p in entries {
-            if let Some(name) = p.file_name().and_then(|n| n.to_str())
-                && !name.starts_with('.')
-            {
-                let bytes = fs::read(&p).map_err(|e| io_err(format!("read {}", p.display()), e))?;
-                zip.add_file(&format!("additional_file/{name}"), &bytes)?;
-            }
-        }
-    }
-
-    // 4. `testdata/config.yaml` and optional `testdata/checker.cpp` (NEVER bundle `testlib.h`)
+    // 3. `testdata/config.yaml` and optional `testdata/checker.cpp` (NEVER bundle `testlib.h`)
     let memory_mib = prep.limits.memory_limit_kib.div_ceil(1024).max(1);
     let mut cfg = format!(
         "type: default\ntime: {}ms\nmemory: {memory_mib}m\n",
@@ -590,7 +549,7 @@ fn write_hydro_zip(prep: &PreparedExport, zip_path: &Path) -> Result<u64> {
     }
     zip.add_file("testdata/config.yaml", cfg.as_bytes())?;
 
-    // 5. `testdata/01.in`, `testdata/01.out`, ... (all built tests: samples + secret)
+    // 4. `testdata/01.in`, `testdata/01.out`, ... (all built tests: samples + secret)
     let width = prep.tests.len().to_string().len().max(2);
     for (i, t) in prep.tests.iter().enumerate() {
         let idx = i + 1;
@@ -599,68 +558,6 @@ fn write_hydro_zip(prep: &PreparedExport, zip_path: &Path) -> Result<u64> {
     }
 
     zip.finish()
-}
-
-/// Rewrites `assets/<file>` links to `file://<file>` and embeds Hydro ` ```inputN / ```outputN ` sample blocks.
-fn render_hydro_statement(markdown: &str, samples: &[(String, String)], lang: Language) -> String {
-    let rewritten = rewrite_assets_to_file_uri(markdown);
-    if samples.is_empty() {
-        return rewritten;
-    }
-
-    let mut samples_block = String::new();
-    for (idx, (inp, out)) in samples.iter().enumerate() {
-        let n = idx + 1;
-        if idx > 0 {
-            samples_block.push('\n');
-        }
-        samples_block.push_str(&format!("```input{n}\n"));
-        samples_block.push_str(inp.trim_end_matches('\n'));
-        samples_block.push_str("\n```\n\n");
-        samples_block.push_str(&format!("```output{n}\n"));
-        samples_block.push_str(out.trim_end_matches('\n'));
-        samples_block.push_str("\n```\n");
-    }
-
-    let heading = match lang {
-        Language::Chinese => "## 样例",
-        Language::English => "## Samples",
-    };
-
-    // If the statement already has an explicit `## 样例` / `## Samples` heading, inject right after it.
-    let lines: Vec<&str> = rewritten.lines().collect();
-    for (idx, line) in lines.iter().enumerate() {
-        if let Some(title) = line.strip_prefix("## ")
-            && xcpc_domain::recognize_section(title) == Some(xcpc_domain::SectionKind::Samples)
-        {
-            let before = lines[..=idx].join("\n");
-            let after = lines[idx + 1..].join("\n");
-            let mut result = format!("{before}\n\n{samples_block}");
-            if !after.trim().is_empty() {
-                result.push('\n');
-                result.push_str(after.trim_start_matches('\n'));
-                result.push('\n');
-            }
-            return result;
-        }
-    }
-
-    // Otherwise append a `## 样例` / `## Samples` section at the end.
-    let mut result = rewritten.trim_end().to_owned();
-    if !result.is_empty() {
-        result.push_str("\n\n");
-    }
-    result.push_str(heading);
-    result.push_str("\n\n");
-    result.push_str(&samples_block);
-    result
-}
-
-fn rewrite_assets_to_file_uri(markdown: &str) -> String {
-    // Replace Markdown image/link targets `(assets/<file>)` and `(./assets/<file>)` with `(file://<file>)`.
-    markdown
-        .replace("(./assets/", "(file://")
-        .replace("(assets/", "(file://")
 }
 
 /// Formats a YAML scalar safely (double-quoted with proper escaping if it contains special chars).

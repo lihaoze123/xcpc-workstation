@@ -191,7 +191,7 @@
    - 支持单题 ZIP 与整场比赛批量导出（`A-<slug>.zip`、`B-<slug>.zip`……）。
    - **最小集合**：严格剔除 `validator.cpp`、`solutions/`、`generators/`、`editorial.md` 与 `tests/` 自测等内部文件。
    - **DOMjudge**（对齐 `cn-xcpc-tools/Polygon2DOMjudge`）：`domjudge-problem.ini`（比赛导出带 `short-name`，无气球颜色）、`problem.yaml`、`data/sample/`、`data/secret/`、`problem.pdf`（由 `xcpc-engine` 编译）、标准 Checker 映射至 `validation: default` + `validator_flags`、自定义 `checker.cpp` 打包进 `output_validators/`（附内置 `testlib.h` 与 Kattis 42/43 适配层）。
-   - **Hydro**：`problem.yaml`、`problem_zh.md` / `problem_en.md` / `problem.md`（含 Hydro `input1` / `output1` 样例块与 `additional_file/` + `file://` 配图链接）、`testdata/config.yaml`、`testdata/*.in/.out`、自定义 `checker.cpp`（`checker_type: testlib`）。
+   - **Hydro**：`problem.yaml`、`additional_file/problem.pdf`（`xcpc-engine` 编译）与 `problem_zh.md` / `problem_en.md`（`@[pdf](file://problem.pdf?noDisposition=1)` 嵌入）、`testdata/config.yaml`、`testdata/*.in/.out`、自定义 `checker.cpp`（`checker_type: testlib`）。
    - **门禁（「动静分离」）**：核对最近一次严格构建报告（`verified == true` 且当前内容哈希未过期），直接打包 `build/problems/<slug>/` 已有数据，不暗中编译或跑数；未验收或已过期时拒绝导出，CLI `--force` 仅跳过门禁（仍要求已构建测试数据）。
 3. **CLI、MCP 与轻量 GUI 入口**：
    - CLI：`xcpc import polygon <zip> [--id <slug>] [--json]`、`xcpc export <domjudge|hydro> <problem|contest> <id> [-o <path>] [--force] [--json]`；

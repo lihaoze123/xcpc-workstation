@@ -182,7 +182,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 | :--- | :---: | :---: | :--- |
 | **Codeforces Polygon（ZIP）** | 完整（Phase 3B） | — | 单题（`problem.xml`）与整场（`contest.xml` 展开子题并生成 `contest.toml`）；多语言 LaTeX 题面一次性转 `.md`（复杂环境经 `tylax` 转 ```` ```typst ```` 块）；全量导入样例、配图、`validator`/`checker`/`generators`/`solutions` 与自测；交互/非 C++/子任务保留文件并输出 `warnings` |
 | **DOMjudge（ICPC Package）** | 后续阶段 | 支持（Phase 3B） | 对齐 `Polygon2DOMjudge` 的最小集合 ZIP（单题 / 整场 `A-<slug>.zip`…）：`domjudge-problem.ini`（无气球颜色）、`problem.yaml`、`data/sample|secret/`、`problem.pdf`、标准/自定义 `output_validators/`（Kattis 42/43 适配），严格剔除内部源码与解法 |
-| **Hydro OJ** | 后续阶段 | 支持（Phase 3B） | 最小集合 ZIP（单题 / 整场批量）：`problem.yaml`、`problem_zh/en.md`（含 `input1`/`output1` 样例块与 `additional_file/` `file://` 配图）、`testdata/config.yaml` 与 `.in/.out`、自定义 `testlib` checker |
+| **Hydro OJ** | 后续阶段 | 支持（Phase 3B） | 最小集合 ZIP（单题 / 整场批量）：`problem.yaml`、`additional_file/problem.pdf` + `problem_zh/en.md`（`@[pdf](file://problem.pdf?noDisposition=1)`）、`testdata/config.yaml` 与 `.in/.out`、自定义 `testlib` checker |
 | **Competitive Companion（`:10043`）** | 实时抓取（Phase 4） | — | 浏览器插件一键把题目元数据、样例、限制和链接收入题库 |
 | **FPS（XML）** | 后续阶段 | 后续阶段 | 题面、样例、Base64 图片、标程 |
 | **QOJ / 通用 Markdown 包** | 后续阶段 | 后续阶段 | Markdown 题面 + 题解 + 静态资源 |
@@ -230,5 +230,5 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 - **Agent / Skill 协同**：提供 5 个 MCP 工具（`inspect_package`、`inspect_test_case`、`init_package`、`build_package`、`stress_package`），仓库内建 `skills/xcpc-problem-creator/`（支持 `xcpc init --with-skills` 安装至工作区）并同步升级 `AGENTS.md`。
 - **生态包（Phase 3B，`crates/xcpc-packages`）**：
   - **Polygon ZIP 导入**：支持单题（`problem.xml`）与整场（`contest.xml`，展开全部子题并生成 `contest.toml`）；题面一次性转为 `statement(.zh/.en).md`（复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块，配图入 `assets/`）；全量导入 `samples/`、声明式 `[[test]]` 生成器（手写 / `from-file` 多测 / 缺源码时回退静态 `tests/*.in`）、`validator.cpp`、`checker.cpp`（标准 `std::*` 映射到 `[package].checker`）、`solutions/*` 与自测；slug 冲突拒绝（支持指定目标 `id`），交互 / 非 C++ / 子任务保留文件并输出 `warnings`；含 Zip Slip 防护与原子暂存。
-  - **DOMjudge / Hydro 最小集合 ZIP 导出**：支持单题与整场批量导出（`A-<slug>.zip`、`B-<slug>.zip`……），严格剔除 `validator.cpp`、`solutions/`、`generators/`、`editorial.md` 与 `tests/` 自测；遵守「动静分离」门禁（核对最新严格构建报告 `verified == true` 且哈希未过期，直接打包 `build/problems/<slug>/` 既有数据，CLI `--force` 仅跳过门禁）。DOMjudge 对齐 `Polygon2DOMjudge`（无气球颜色，内置 `problem.pdf`、标准 checker 映射与自定义 `output_validators/` Kattis 42/43 适配层）；Hydro 生成含 `input1`/`output1` 样例块与 `additional_file/` `file://` 配图的 Markdown 及 `testdata/config.yaml`。
+  - **DOMjudge / Hydro 最小集合 ZIP 导出**：支持单题与整场批量导出（`A-<slug>.zip`、`B-<slug>.zip`……），严格剔除 `validator.cpp`、`solutions/`、`generators/`、`editorial.md` 与 `tests/` 自测；遵守「动静分离」门禁（核对最新严格构建报告 `verified == true` 且哈希未过期，直接打包 `build/problems/<slug>/` 既有数据，CLI `--force` 仅跳过门禁）。DOMjudge 对齐 `Polygon2DOMjudge`（无气球颜色，内置 `problem.pdf`、标准 checker 映射与自定义 `output_validators/` Kattis 42/43 适配层）；Hydro 内置 `additional_file/problem.pdf` 并在 `problem_zh/en.md` 中以 `@[pdf](file://problem.pdf?noDisposition=1)` 嵌入展示，附 `testdata/config.yaml`。
   - **入口**：CLI（`xcpc import polygon`、`xcpc export <domjudge|hydro>`）、MCP（`import_polygon`、`export_oj_package`）与桌面端轻量入口（`Cmd+K`、题库/比赛顶栏「导入 Polygon」、出版工作室导出分体按钮菜单）。

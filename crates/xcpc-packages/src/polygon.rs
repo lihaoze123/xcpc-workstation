@@ -108,9 +108,14 @@ fn import_polygon_contest(
         .or_else(|| parsed_contest.name_attr.clone())
         .unwrap_or_else(|| fallback_stem.to_owned());
 
+    let preferred_contest_slug = if contest_name.chars().any(|c| c.is_ascii_alphabetic()) {
+        Some(contest_name.as_str())
+    } else {
+        None
+    };
     let contest_id = resolve_target_id(
         opts.target_id.as_deref(),
-        Some(&contest_name),
+        preferred_contest_slug,
         fallback_stem,
     )?;
     ensure_contest_not_exists(ws, &contest_id)?;
@@ -127,6 +132,7 @@ fn import_polygon_contest(
             .index
             .clone()
             .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_ascii_uppercase())
             .or_else(|| label_for_index(idx))
             .unwrap_or_else(|| format!("P{}", idx + 1));
 
@@ -223,12 +229,32 @@ fn locate_contest_subproblem_dir(
         candidates.push(format!("problems/{sn}"));
         candidates.push(sn.clone());
     }
+    if let Some(url) = &pref.url
+        && let Some(slug) = url.trim_end_matches('/').rsplit('/').next()
+        && !slug.is_empty()
+    {
+        candidates.push(format!("problems/{slug}"));
+        candidates.push(slug.to_owned());
+    }
     candidates.push(format!("problems/{}", label.to_ascii_lowercase()));
     candidates.push(format!("problems/{label}"));
 
     for cand in candidates {
         if zip.files.contains_key(&format!("{cand}/problem.xml")) {
             return Some(cand);
+        }
+    }
+
+    // Fallback: match `<problem url="...">` inside any `*/problem.xml` in the archive.
+    if let Some(target_url) = pref.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        for (path, bytes) in &zip.files {
+            if let Some(dir) = path.strip_suffix("/problem.xml")
+                && let Ok(text) = std::str::from_utf8(bytes)
+                && let Ok(parsed) = parse_problem_xml(text)
+                && parsed.url.as_deref().map(str::trim) == Some(target_url)
+            {
+                return Some(dir.to_owned());
+            }
         }
     }
     None
@@ -1150,6 +1176,7 @@ struct ContestProblemRef {
     index: Option<String>,
     path: Option<String>,
     short_name: Option<String>,
+    url: Option<String>,
 }
 
 fn attr_str(e: &BytesStart<'_>, name: &[u8]) -> Option<String> {
@@ -1573,6 +1600,7 @@ fn handle_contest_open_tag(
                 index: attr_str(e, b"index"),
                 path: attr_str(e, b"path"),
                 short_name: attr_str(e, b"short-name"),
+                url: attr_str(e, b"url"),
             });
         }
         _ => {}

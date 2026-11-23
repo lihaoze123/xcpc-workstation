@@ -711,10 +711,13 @@ fn export_strict_gate_and_domjudge_hydro_formats() {
     assert!(h_pyaml.contains("title: Sum Problem sum-std\n"));
     assert!(h_pyaml.contains("  - math\n"));
     let h_md = String::from_utf8(h_entries["problem_zh.md"].0.clone()).unwrap();
-    assert!(h_md.contains("![fig](file://fig.png)"));
-    assert!(h_md.contains("```input1\n1 2\n```"));
-    assert!(h_md.contains("```output1\n3\n```"));
-    assert!(h_entries.contains_key("additional_file/fig.png"));
+    assert_eq!(h_md, "@[pdf](file://problem.pdf?noDisposition=1)\n");
+    assert!(
+        h_entries
+            .get("additional_file/problem.pdf")
+            .is_some_and(|(b, _)| b.starts_with(b"%PDF-")),
+        "Hydro ZIP must contain compiled additional_file/problem.pdf"
+    );
     let h_cfg = String::from_utf8(h_entries["testdata/config.yaml"].0.clone()).unwrap();
     assert!(h_cfg.contains("type: default\n"));
     assert!(h_cfg.contains("time: 1000ms\n"));
@@ -942,4 +945,47 @@ fn polygon_std_checker_without_cpp_suffix_maps_to_builtin() {
             .exists(),
         "standard checker without .cpp suffix should map to builtin, not copy checker.cpp"
     );
+}
+
+#[test]
+fn polygon_contest_xml_resolves_problems_by_url_slug() {
+    let tmp = TempDir::new().unwrap();
+    let ws = init_workspace(tmp.path().join("ws")).unwrap();
+    let zip_path = tmp.path().join("contest-57383.zip");
+
+    let contest_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<contest url="https://polygon.codeforces.com/c/57383">
+  <names>
+    <name language="chinese" value="2026 选拔赛"/>
+  </names>
+  <problems>
+    <problem index="a" url="https://polygon.codeforces.com/p90Lvc2/user/spiral-matrix"/>
+  </problems>
+</contest>
+"#;
+    let prob_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<problem short-name="spiral-matrix" url="https://polygon.codeforces.com/p90Lvc2/user/spiral-matrix">
+  <names><name language="chinese" value="回形矩阵"/></names>
+  <judging><testset name="tests"><time-limit>1000</time-limit><memory-limit>268435456</memory-limit><tests/></testset></judging>
+</problem>
+"#;
+
+    create_zip(
+        &zip_path,
+        &[
+            ("contest.xml", contest_xml.as_bytes()),
+            ("problems/spiral-matrix/problem.xml", prob_xml.as_bytes()),
+            (
+                "problems/spiral-matrix/statement-sections/chinese/legend.tex",
+                "输出回形矩阵。".as_bytes(),
+            ),
+        ],
+    );
+
+    let res = import_polygon(&ws, &zip_path, &PolygonImportOptions::default()).unwrap();
+    assert_eq!(res.kind, PolygonImportKind::Contest);
+    assert_eq!(res.contest_id.as_deref(), Some("contest-57383"));
+    assert_eq!(res.problems.len(), 1);
+    assert_eq!(res.problems[0].id, "spiral-matrix");
+    assert_eq!(res.problems[0].label.as_deref(), Some("A"));
 }
