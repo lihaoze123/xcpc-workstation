@@ -92,8 +92,14 @@ impl StoredPrefs {
             next.last_book = "statements".to_owned();
         }
         next.language = normalize_language_pref(next.language.as_deref());
+        next.cxx_override = normalize_cxx_override(next.cxx_override.as_deref());
         next.recent_workspaces = dedup_recent(next.recent_workspaces);
         self.app = next;
+    }
+
+    /// Updates the persisted C++ compiler path override (empty string clears it).
+    pub(crate) fn set_cxx_override(&mut self, path: Option<&str>) {
+        self.app.cxx_override = normalize_cxx_override(path);
     }
 
     /// Records a visit to `key` at the current wall-clock time.
@@ -179,6 +185,12 @@ fn normalize_language_pref(raw: Option<&str>) -> Option<String> {
     }
 }
 
+fn normalize_cxx_override(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
 fn dedup_recent(list: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(list.len().min(MAX_RECENT_WORKSPACES));
     for item in list {
@@ -241,6 +253,7 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
         app.props_open = props_open;
     }
     app.language = normalize_language_pref(obj.get("language").and_then(JsonValue::as_str));
+    app.cxx_override = normalize_cxx_override(obj.get("cxxOverride").and_then(JsonValue::as_str));
 
     let mut frecency = HashMap::new();
     if let Some(frec_obj) = obj.get("frecency").and_then(JsonValue::as_object) {
@@ -302,6 +315,9 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     root["propsOpen"] = JsonValue::from(prefs.app.props_open);
     if let Some(ref lang) = prefs.app.language {
         root["language"] = JsonValue::from(lang.as_str());
+    }
+    if let Some(ref cxx) = prefs.app.cxx_override {
+        root["cxxOverride"] = JsonValue::from(cxx.as_str());
     }
     if let Some(ref window_state) = prefs.window_state {
         root["windowState"] = window_state.clone();

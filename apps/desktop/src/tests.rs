@@ -2515,3 +2515,75 @@ fn preset_schemas_emit_bilingual_localized_text() {
             .all(|f| f["label"]["zh"].is_string() && f["label"]["en"].is_string())
     );
 }
+
+#[test]
+fn toolchain_override_persists_in_prefs_and_refreshes_status() {
+    let data = TempDir::new("toolchain-prefs");
+    let ws_dir = TempDir::new("toolchain-ws");
+    xcpc_storage::init_workspace(&ws_dir.0).unwrap();
+
+    let state =
+        crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
+    let initial = state.toolchain_status();
+    assert!(initial.override_path.is_none());
+
+    let updated = state.set_cxx_override(Some("  /nonexistent/custom-g++  ".into()));
+    assert_eq!(
+        updated.override_path.as_deref(),
+        Some("/nonexistent/custom-g++")
+    );
+    assert!(updated.active.is_none());
+
+    // Reload from disk to verify persistence in prefs.json.
+    let reloaded =
+        crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
+    assert_eq!(
+        reloaded.load_prefs().cxx_override.as_deref(),
+        Some("/nonexistent/custom-g++")
+    );
+    assert_eq!(
+        reloaded.toolchain_status().override_path.as_deref(),
+        Some("/nonexistent/custom-g++")
+    );
+
+    // Clearing override restores auto-detection.
+    let cleared = reloaded.set_cxx_override(Some("   ".into()));
+    assert!(cleared.override_path.is_none());
+    assert!(reloaded.load_prefs().cxx_override.is_none());
+}
+
+#[test]
+fn package_inspect_init_and_sandboxed_file_resolution() {
+    let ws_dir = TempDir::new("pkg-ops");
+    xcpc_storage::init_workspace(&ws_dir.0).unwrap();
+    let state = crate::state::State::new_with_sources(None, Some(&ws_dir.0), &ws_dir.0);
+
+    assert!(state.create_problem("sum", "A + B").ok);
+
+    // Before init: not a package.
+    let before = state.inspect_package("sum");
+    assert!(before.ok);
+    assert!(!before.has_package);
+    assert_eq!(before.freshness_status, "not_a_package");
+
+    // Init package scaffolds files and refreshes inspection.
+    let init = state.init_package("sum");
+    assert!(init.ok, "init_package failed: {:?}", init.error);
+    assert!(init.created_files.iter().any(|f| f == "validator.cpp"));
+    assert!(init.created_files.iter().any(|f| f == "solutions/std.cpp"));
+    assert!(init.inspection_json.is_some());
+
+    let after = state.inspect_package("sum");
+    assert!(after.ok);
+    assert!(after.has_package);
+    assert_eq!(after.freshness_status, "unverified");
+
+    // Valid file inside problem directory resolves.
+    let resolved = state.resolve_package_file("sum", "solutions/std.cpp");
+    assert!(resolved.is_ok(), "expected valid path, got {resolved:?}");
+
+    // Path traversal outside problem directory is rejected.
+    let escape = state.resolve_package_file("sum", "../../workspace.toml");
+    assert!(escape.is_err());
+    assert_eq!(escape.unwrap_err().code.as_deref(), Some("path_escape"));
+}

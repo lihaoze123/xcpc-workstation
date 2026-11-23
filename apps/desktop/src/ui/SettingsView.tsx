@@ -5,6 +5,7 @@ import {
   Animated,
   cleanup,
   Clipboard,
+  colorScheme,
   computed,
   createAnimatedValue,
   effect,
@@ -17,7 +18,7 @@ import {
   type CompositeAnimation,
   type JSX,
 } from "nsh";
-import { Progress, Switch } from "nsh/base";
+import { Input, Progress, Switch } from "nsh/base";
 import {
   checkForUpdate,
   downloadUpdate,
@@ -27,7 +28,7 @@ import {
   type AppUpdate,
   type UpdateProgress,
 } from "nsh/updater";
-import { Preview, type AboutInfoJs } from "xcpc-workstation/native";
+import { Preview, type AboutInfoJs, type ToolchainStatusJs } from "xcpc-workstation/native";
 import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
@@ -78,6 +79,11 @@ import {
   type AppearanceMode,
 } from "./theme";
 import {
+  hasInvalidCxxOverride,
+  normalizeCxxOverrideInput,
+  verdictBadgeStyle,
+} from "./studio/buildLogic";
+import {
   formatUpdateSummary,
   parseUpdateNotes,
   resolveReleasePageUrl,
@@ -90,6 +96,7 @@ import {
 const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: IconName }[] = [
   { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
   { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
+  { id: "toolchain", labelKey: "settings.nav.toolchain", icon: "squareCode" },
   { id: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
   { id: "shortcuts", labelKey: "settings.nav.shortcuts", icon: "code" },
   { id: "about", labelKey: "settings.nav.about", icon: "info" },
@@ -613,6 +620,201 @@ function LayoutPane() {
         onInstalled={(installedId) => apply(preview.updateWorkspaceTemplate(installedId, false, null), t("ctx.switchDefaultTemplate"))}
         onClose={() => presetOpen.set(false)}
       />
+    </View>
+  );
+}
+
+function ToolchainPane() {
+  const status = signal<ToolchainStatusJs>(preview.toolchainStatus());
+  const draft = signal(status().overridePath ?? "");
+
+  const redetect = () => {
+    const next = preview.toolchainStatus();
+    status.set(next);
+    draft.set(next.overridePath ?? "");
+  };
+
+  const applyOverride = () => {
+    const normalized = normalizeCxxOverrideInput(draft());
+    const next = preview.setCxxOverride(normalized);
+    status.set(next);
+    draft.set(next.overridePath ?? "");
+  };
+
+  const clearOverride = () => {
+    const next = preview.setCxxOverride(null);
+    status.set(next);
+    draft.set("");
+  };
+
+  const dark = () => colorScheme() === "dark";
+  const invalidOverride = () => hasInvalidCxxOverride(status());
+  const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== (status().overridePath ?? "");
+
+  return (
+    <View testID="settings-toolchain-pane" style={{ gap: 24 }}>
+      <Section
+        title={t("settings.toolchain.title")}
+        description={t("settings.toolchain.desc")}
+        trailing={
+          <Btn
+            testID="toolchain-redetect-btn"
+            label={t("settings.toolchain.redetect")}
+            icon="rotateCcw"
+            onPress={redetect}
+          />
+        }
+      >
+        <SectionRow first>
+          <If
+            when={status().active}
+            else={
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Icon name="triangleAlert" size={16} tone="destructive" />
+                <Text testID="toolchain-not-found" style={{ fontSize: 13.5, fontWeight: 500 }} class="text-destructive">
+                  {t("settings.toolchain.notFound")}
+                </Text>
+              </View>
+            }
+          >
+            {(active) => {
+              const badge = () => verdictBadgeStyle("AC", dark());
+              return (
+                <View style={{ gap: 4 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Text testID="toolchain-active-name" style={{ fontSize: 13.5, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
+                      {active().name}
+                    </Text>
+                    <View
+                      style={{
+                        height: 20,
+                        paddingLeft: 7,
+                        paddingRight: 7,
+                        borderRadius: 9999,
+                        justifyContent: "center",
+                        backgroundColor: badge().bg,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: 600, color: badge().fg }}>
+                        {t("settings.toolchain.active")}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
+                    {active().version}
+                  </Text>
+                  <Text style={{ fontSize: 12, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+                    {active().path}
+                  </Text>
+                </View>
+              );
+            }}
+          </If>
+        </SectionRow>
+
+        <SectionRow>
+          <View style={{ gap: 8 }}>
+            <View style={{ gap: 2 }}>
+              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                {t("settings.toolchain.overrideTitle")}
+              </Text>
+              <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+                {t("settings.toolchain.overrideDesc")}
+              </Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Input
+                testID="toolchain-override-input"
+                value={draft()}
+                placeholder={t("settings.toolchain.overridePlaceholder")}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChange={(e) => draft.set(e.value)}
+                onSubmit={applyOverride}
+                class="flex-1 h-8 px-2.5 rounded-md border border-border bg-card text-[12.5px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+                style={{ fontFamily: MONO }}
+              />
+              <Btn
+                testID="toolchain-override-save"
+                label={t("settings.toolchain.saveOverride")}
+                variant="primary"
+                disabled={!dirtyDraft()}
+                onPress={applyOverride}
+              />
+              <If when={Boolean(status().overridePath)}>
+                <Btn
+                  testID="toolchain-override-clear"
+                  label={t("settings.toolchain.clearOverride")}
+                  onPress={clearOverride}
+                />
+              </If>
+            </View>
+            <If when={invalidOverride()}>
+              <Text testID="toolchain-override-invalid" style={{ fontSize: 12, lineHeight: 16 }} class="text-destructive">
+                {t("settings.toolchain.overrideInvalid", { path: status().overridePath ?? "" })}
+              </Text>
+            </If>
+            <If when={Boolean(status().envOverride) && !status().overridePath}>
+              <Text style={{ fontSize: 12, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+                {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
+              </Text>
+            </If>
+          </View>
+        </SectionRow>
+      </Section>
+
+      <Section title={t("settings.toolchain.detectedTitle")}>
+        <If
+          when={status().compilers.length > 0}
+          else={
+            <SectionRow first>
+              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                {t("settings.toolchain.noDetected")}
+              </Text>
+            </SectionRow>
+          }
+        >
+          <Each of={status().compilers} key={(c) => c.path}>
+            {(compiler, idx) => {
+              const isActive = () => status().active?.path === compiler().path;
+              return (
+                <SectionRow
+                  first={idx() === 0}
+                  trailing={
+                    isActive() ? (
+                      <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-primary">
+                        {t("settings.toolchain.active")}
+                      </Text>
+                    ) : undefined
+                  }
+                >
+                  <View style={{ gap: 2 }}>
+                    <Text style={{ fontSize: 13, fontWeight: 500, fontFamily: MONO }} class="text-foreground">
+                      {compiler().name}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
+                      {compiler().version}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+                      {compiler().path}
+                    </Text>
+                  </View>
+                </SectionRow>
+              );
+            }}
+          </Each>
+        </If>
+      </Section>
+
+      <If when={!status().active}>
+        <Section title={t("settings.toolchain.installTitle")}>
+          <SectionRow first>
+            <Text style={{ fontSize: 12.5, lineHeight: 19 }} class="text-secondary-foreground">
+              {status().installGuide}
+            </Text>
+          </SectionRow>
+        </Section>
+      </If>
     </View>
   );
 }
@@ -1326,6 +1528,9 @@ export function SettingsView() {
           </If>
           <If when={active() === "layout"}>
             <LayoutPane />
+          </If>
+          <If when={active() === "toolchain"}>
+            <ToolchainPane />
           </If>
           <If when={active() === "appearance"}>
             <AppearancePane />

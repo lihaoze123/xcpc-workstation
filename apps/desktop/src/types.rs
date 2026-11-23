@@ -651,6 +651,9 @@ pub struct AppPrefsJs {
     /// UI language preference (`"system"`, `"zh-CN"`, or `"en"`).
     #[prop(skip_none)]
     pub language: Option<String>,
+    /// Optional explicit C++ compiler path override for local Polygon builds.
+    #[prop(skip_none)]
+    pub cxx_override: Option<String>,
 }
 
 impl Default for AppPrefsJs {
@@ -665,6 +668,7 @@ impl Default for AppPrefsJs {
             last_book: "statements".to_owned(),
             props_open: true,
             language: None,
+            cxx_override: None,
         }
     }
 }
@@ -1273,4 +1277,111 @@ pub struct AboutInfoJs {
     pub os: String,
     pub arch: String,
     pub font_source: String,
+}
+
+// ---- Phase 3A: Local Polygon toolchain & package build ---------------------------------
+
+/// One detected C++ compiler binary on the host.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct DetectedCompilerJs {
+    pub name: String,
+    pub path: String,
+    pub version: String,
+    /// `"gpp"`, `"clangpp"`, or `"other"`.
+    pub kind: String,
+}
+
+/// Structured host C++ toolchain detection result for Settings -> Toolchain.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ToolchainStatusJs {
+    pub compilers: Vec<DetectedCompilerJs>,
+    #[prop(skip_none)]
+    pub active: Option<DetectedCompilerJs>,
+    #[prop(skip_none)]
+    pub override_path: Option<String>,
+    #[prop(skip_none)]
+    pub env_override: Option<String>,
+    pub install_guide: String,
+}
+
+/// Read-only inspection result for a problem package (`inspectPackage`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PackageInspectionResultJs {
+    pub ok: bool,
+    pub has_package: bool,
+    /// `"not_a_package"`, `"verified_fresh"`, `"stale"`, `"unverified"`, or `"failed"`.
+    pub freshness_status: String,
+    /// JSON-serialized `xcpc_judge::PackageInspection` payload (empty on error).
+    pub inspection_json: String,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of scaffolding a problem package (`initPackage`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PackageInitResultJs {
+    pub ok: bool,
+    pub created_files: Vec<String>,
+    pub skipped_files: Vec<String>,
+    pub updated_problem_toml: bool,
+    /// Refreshed JSON-serialized `xcpc_judge::PackageInspection` when `ok` is true.
+    #[prop(skip_none)]
+    pub inspection_json: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Snapshot of the background package build runner (`packageBuildStatus`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PackageBuildStatusJs {
+    pub seq: u32,
+    pub running: bool,
+    #[prop(skip_none)]
+    pub slug: Option<String>,
+    /// `"debug"` or `"verify"`.
+    #[prop(skip_none)]
+    pub mode: Option<String>,
+    pub cancelled: bool,
+    /// `"compiling"`, `"self_testing"`, `"generating"`, `"validating"`, `"running"`, or `"finished"`.
+    #[prop(skip_none)]
+    pub phase: Option<String>,
+    #[prop(skip_none)]
+    pub detail: Option<String>,
+    pub completed: u32,
+    pub total: u32,
+    /// JSON-serialized `xcpc_judge::BuildReport` once finished.
+    #[prop(skip_none)]
+    pub report_json: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+impl From<xcpc_judge::DetectedCompiler> for DetectedCompilerJs {
+    fn from(c: xcpc_judge::DetectedCompiler) -> Self {
+        let kind = match c.kind {
+            xcpc_judge::CompilerKind::Gpp => "gpp",
+            xcpc_judge::CompilerKind::Clangpp => "clangpp",
+            xcpc_judge::CompilerKind::Other => "other",
+        };
+        Self {
+            name: c.name,
+            path: c.path,
+            version: c.version,
+            kind: kind.to_owned(),
+        }
+    }
+}
+
+impl From<xcpc_judge::ToolchainStatus> for ToolchainStatusJs {
+    fn from(s: xcpc_judge::ToolchainStatus) -> Self {
+        Self {
+            compilers: s.compilers.into_iter().map(Into::into).collect(),
+            active: s.active.map(Into::into),
+            override_path: s.override_path,
+            env_override: s.env_override,
+            install_guide: s.install_guide,
+        }
+    }
 }

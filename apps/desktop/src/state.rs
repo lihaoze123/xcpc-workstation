@@ -28,13 +28,14 @@ use crate::snapshot;
 use crate::types::{
     ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
     ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
-    FreezeResultJs, FuzzyHitJs, MathPreviewJs, OverridePatchJs, PdfFreshnessJs, PreviewLocationJs,
-    PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
+    FreezeResultJs, FuzzyHitJs, MathPreviewJs, OverridePatchJs, PackageBuildStatusJs,
+    PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PreviewDiagnostic,
+    PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js,
-    parse_namespaced_options_json, rating_tier_str, source_to_js,
+    SaveResult, SourceLocationJs, TagCountJs, ToolchainStatusJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
+    WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report, first_error,
+    limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -115,22 +116,47 @@ impl CompilerState {
     }
 }
 
+/// Background package build runner state shared between UI polling and worker thread.
+#[derive(Default)]
+pub(crate) struct PackageBuildSlot {
+    pub(crate) seq: u32,
+    pub(crate) running: bool,
+    pub(crate) slug: Option<String>,
+    pub(crate) mode: Option<String>,
+    pub(crate) cancel_flag: Option<Arc<AtomicBool>>,
+    pub(crate) cancelled: bool,
+    pub(crate) phase: Option<String>,
+    pub(crate) detail: Option<String>,
+    pub(crate) completed: u32,
+    pub(crate) total: u32,
+    pub(crate) report_json: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
 pub(crate) struct State {
     pub(crate) id: u64,
     /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
     pub(crate) data_dir: Option<PathBuf>,
     /// Bumped on workspace mutations, switches, and external watch events to invalidate `cached`.
-    pub(crate) revision: AtomicU64,
+    pub(crate) revision: Arc<AtomicU64>,
     pub(crate) core: Mutex<CoreState>,
     /// Lightweight UI-accessible snapshot of the latest compiled preview.
     pub(crate) snapshot: Mutex<Option<Arc<CachedSnapshot>>>,
     pub(crate) compiler: Mutex<CompilerState>,
     /// Dedicated lightweight Typst engine for inline floating math previews (never contends with `compiler`).
     pub(crate) math_engine: Mutex<Engine>,
+    /// Background local Polygon package build slot.
+    pub(crate) package_build: Arc<Mutex<PackageBuildSlot>>,
 }
 
 impl Drop for State {
     fn drop(&mut self) {
+        if let Ok(mut build) = self.package_build.lock()
+            && let Some(ref flag) = build.cancel_flag
+        {
+            flag.store(true, Ordering::Relaxed);
+            build.cancelled = true;
+        }
         if let Ok(mut core) = self.core.lock() {
             core.watch_session = None;
             drop(core.watcher.take());
@@ -176,7 +202,7 @@ impl State {
         let state = Self {
             id: NEXT_PREVIEW_ID.fetch_add(1, Ordering::Relaxed),
             data_dir,
-            revision: AtomicU64::new(0),
+            revision: Arc::new(AtomicU64::new(0)),
             core: Mutex::new(CoreState {
                 workspace: None,
                 last_workspace_missing,
@@ -195,6 +221,7 @@ impl State {
                 active: HashSet::new(),
             }),
             math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
+            package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
         };
 
         if let Some(ws) = workspace {
@@ -244,6 +271,15 @@ impl State {
         let new_index = WorkspaceIndex::scan(&tracked_ws).unwrap_or_default();
 
         let old_watcher = {
+            if let Ok(mut build) = self.package_build.lock() {
+                if let Some(ref flag) = build.cancel_flag {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                *build = PackageBuildSlot {
+                    seq: build.seq.wrapping_add(1),
+                    ..Default::default()
+                };
+            }
             let mut core = self.core.lock().unwrap();
             let new_session = new_session_rx.map(|rx| {
                 core.watch_seq = core.watch_seq.wrapping_add(1);
@@ -647,7 +683,10 @@ impl State {
         if cancelled {
             return result;
         }
-        let (error, diagnostics, starts) = extract_report(&cached.report);
+        let (error, mut diagnostics, starts) = extract_report(&cached.report);
+        if let Target::Problem(slug) = request.target() {
+            append_package_preflight_diagnostics(&ws, &slug, &mut diagnostics);
+        }
         result.error = error;
         result.diagnostics = diagnostics;
         result.starts = starts;
@@ -2480,6 +2519,469 @@ impl State {
     pub(crate) fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
         let ws = self.core.lock().unwrap().workspace.clone();
         snapshot::load_cold_start_snapshot(self.data_dir.as_deref(), ws.as_ref(), self.id)
+    }
+
+    // ---- Phase 3A: Local Polygon toolchain & package build -----------------------------
+
+    pub(crate) fn toolchain_status(&self) -> ToolchainStatusJs {
+        let override_path = {
+            let core = self.core.lock().unwrap();
+            core.prefs.app.cxx_override.clone()
+        };
+        let status = xcpc_judge::detect_toolchain(override_path.as_deref().map(Path::new));
+        status.into()
+    }
+
+    pub(crate) fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
+        let override_path = {
+            let mut core = self.core.lock().unwrap();
+            core.prefs.set_cxx_override(path.as_deref());
+            core.prefs.persist(self.data_dir.as_deref());
+            core.prefs.app.cxx_override.clone()
+        };
+        xcpc_judge::detect_toolchain(override_path.as_deref().map(Path::new)).into()
+    }
+
+    pub(crate) fn inspect_package(&self, slug: &str) -> PackageInspectionResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return PackageInspectionResultJs {
+                ok: false,
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        match xcpc_judge::inspect_package(&ws, slug) {
+            Ok(insp) => {
+                let freshness_status = freshness_status_str(&insp.freshness).to_owned();
+                let has_package = insp.has_package;
+                match serde_json::to_string(&insp) {
+                    Ok(inspection_json) => PackageInspectionResultJs {
+                        ok: true,
+                        has_package,
+                        freshness_status,
+                        inspection_json,
+                        error: None,
+                    },
+                    Err(e) => PackageInspectionResultJs {
+                        ok: false,
+                        has_package,
+                        freshness_status,
+                        inspection_json: String::new(),
+                        error: Some(format!("serialize inspection failed: {e}")),
+                    },
+                }
+            }
+            Err(e) => PackageInspectionResultJs {
+                ok: false,
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn init_package(&self, slug: &str) -> PackageInitResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return PackageInitResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return PackageInitResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+        match xcpc_judge::init_package(&ws, slug) {
+            Ok(res) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                let inspection_json = xcpc_judge::inspect_package(&ws, slug)
+                    .ok()
+                    .and_then(|insp| serde_json::to_string(&insp).ok());
+                PackageInitResultJs {
+                    ok: true,
+                    created_files: res.created_files,
+                    skipped_files: res.skipped_files,
+                    updated_problem_toml: res.updated_problem_toml,
+                    inspection_json,
+                    error: None,
+                    code: None,
+                }
+            }
+            Err(e) => PackageInitResultJs {
+                ok: false,
+                code: Some(e.code().to_owned()),
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn start_package_build(
+        &self,
+        slug: &str,
+        mode: &str,
+        tests: Option<Vec<String>>,
+        solutions: Option<Vec<String>>,
+    ) -> ActionResult {
+        let (ws, cxx_override) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.prefs.app.cxx_override.clone())
+        };
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        if let Err(e) = check_id(slug) {
+            return ActionResult::err("invalid_id", e.to_string());
+        }
+
+        let build_mode = if mode.eq_ignore_ascii_case("verify") {
+            xcpc_judge::BuildMode::Verify
+        } else {
+            xcpc_judge::BuildMode::Debug
+        };
+        let mode_label = match build_mode {
+            xcpc_judge::BuildMode::Verify => "verify",
+            xcpc_judge::BuildMode::Debug => "debug",
+        };
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let my_seq = {
+            let mut slot = self.package_build.lock().unwrap();
+            if slot.running {
+                return ActionResult::err("build_in_progress", "package build already running");
+            }
+            let next_seq = slot.seq.wrapping_add(1);
+            *slot = PackageBuildSlot {
+                seq: next_seq,
+                running: true,
+                slug: Some(slug.to_owned()),
+                mode: Some(mode_label.to_owned()),
+                cancel_flag: Some(cancel_flag.clone()),
+                cancelled: false,
+                phase: Some("compiling".to_owned()),
+                detail: None,
+                completed: 0,
+                total: 0,
+                report_json: None,
+                error: None,
+            };
+            next_seq
+        };
+
+        let opts = xcpc_judge::BuildOptions {
+            mode: build_mode,
+            tests: tests.unwrap_or_default(),
+            solutions: solutions.unwrap_or_default(),
+            cxx_override: cxx_override.map(PathBuf::from),
+            ..Default::default()
+        };
+        let slot_arc = self.package_build.clone();
+        let revision_arc = self.revision.clone();
+        let slug_owned = slug.to_owned();
+
+        let spawned = std::thread::Builder::new()
+            .name("xcpc-pkg-build".into())
+            .spawn(move || {
+                let slot_for_cb = slot_arc.clone();
+                let progress_cb = move |ev: xcpc_judge::ProgressEvent| {
+                    let Ok(mut slot) = slot_for_cb.lock() else {
+                        return;
+                    };
+                    if slot.seq != my_seq {
+                        return;
+                    }
+                    match ev {
+                        xcpc_judge::ProgressEvent::Compiling {
+                            target,
+                            completed,
+                            total,
+                        } => {
+                            slot.phase = Some("compiling".to_owned());
+                            slot.detail = Some(target);
+                            slot.completed = completed as u32;
+                            slot.total = total as u32;
+                        }
+                        xcpc_judge::ProgressEvent::SelfTesting { completed, total } => {
+                            slot.phase = Some("self_testing".to_owned());
+                            slot.detail = None;
+                            slot.completed = completed as u32;
+                            slot.total = total as u32;
+                        }
+                        xcpc_judge::ProgressEvent::Generating {
+                            test_name,
+                            completed,
+                            total,
+                        } => {
+                            slot.phase = Some("generating".to_owned());
+                            slot.detail = Some(test_name);
+                            slot.completed = completed as u32;
+                            slot.total = total as u32;
+                        }
+                        xcpc_judge::ProgressEvent::Validating {
+                            test_name,
+                            completed,
+                            total,
+                        } => {
+                            slot.phase = Some("validating".to_owned());
+                            slot.detail = Some(test_name);
+                            slot.completed = completed as u32;
+                            slot.total = total as u32;
+                        }
+                        xcpc_judge::ProgressEvent::Running {
+                            solution,
+                            test_name,
+                            verdict,
+                            cpu_time_ms,
+                            completed,
+                            total,
+                        } => {
+                            slot.phase = Some("running".to_owned());
+                            slot.detail = Some(format!(
+                                "{solution} · {test_name} ({verdict} {cpu_time_ms}ms)"
+                            ));
+                            slot.completed = completed as u32;
+                            slot.total = total as u32;
+                        }
+                        xcpc_judge::ProgressEvent::Finished { .. } => {
+                            slot.phase = Some("finished".to_owned());
+                        }
+                    }
+                };
+
+                let result = xcpc_judge::build_package(
+                    &ws,
+                    &slug_owned,
+                    &opts,
+                    Some(cancel_flag.clone()),
+                    Some(&progress_cb),
+                );
+
+                if let Ok(mut slot) = slot_arc.lock()
+                    && slot.seq == my_seq
+                {
+                    slot.running = false;
+                    slot.cancel_flag = None;
+                    match result {
+                        Ok(report) => {
+                            slot.phase = Some("finished".to_owned());
+                            match serde_json::to_string(&report) {
+                                Ok(json) => {
+                                    slot.report_json = Some(json);
+                                    slot.error = None;
+                                }
+                                Err(e) => {
+                                    slot.error =
+                                        Some(format!("serialize build report failed: {e}"));
+                                }
+                            }
+                        }
+                        Err(xcpc_judge::JudgeError::Cancelled) => {
+                            slot.cancelled = true;
+                            slot.phase = Some("finished".to_owned());
+                            slot.error = None;
+                        }
+                        Err(e) => {
+                            slot.phase = Some("finished".to_owned());
+                            slot.error = Some(e.to_string());
+                        }
+                    }
+                }
+                revision_arc.fetch_add(1, Ordering::AcqRel);
+            });
+
+        if let Err(e) = spawned {
+            let mut slot = self.package_build.lock().unwrap();
+            if slot.seq == my_seq {
+                slot.running = false;
+                slot.cancel_flag = None;
+                slot.error = Some(format!("spawn build thread failed: {e}"));
+            }
+            return ActionResult::err("io", format!("spawn build thread failed: {e}"));
+        }
+
+        ActionResult::ok()
+    }
+
+    pub(crate) fn cancel_package_build(&self) -> ActionResult {
+        let mut slot = self.package_build.lock().unwrap();
+        if let Some(ref flag) = slot.cancel_flag {
+            flag.store(true, Ordering::Relaxed);
+            slot.cancelled = true;
+        }
+        ActionResult::ok()
+    }
+
+    pub(crate) fn package_build_status(&self) -> PackageBuildStatusJs {
+        let slot = self.package_build.lock().unwrap();
+        PackageBuildStatusJs {
+            seq: slot.seq,
+            running: slot.running,
+            slug: slot.slug.clone(),
+            mode: slot.mode.clone(),
+            cancelled: slot.cancelled,
+            phase: slot.phase.clone(),
+            detail: slot.detail.clone(),
+            completed: slot.completed,
+            total: slot.total,
+            report_json: slot.report_json.clone(),
+            error: slot.error.clone(),
+        }
+    }
+
+    pub(crate) fn resolve_package_file(
+        &self,
+        slug: &str,
+        rel_path: &str,
+    ) -> Result<PathBuf, ActionResult> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err(ActionResult::err("no_workspace", "no workspace open"));
+        };
+        if let Err(e) = check_id(slug) {
+            return Err(ActionResult::err("invalid_id", e.to_string()));
+        }
+        let cleaned = rel_path.trim().trim_start_matches('/');
+        if cleaned.is_empty() || cleaned.contains("..") {
+            return Err(ActionResult::err(
+                "path_escape",
+                "invalid package file path",
+            ));
+        }
+        let prob_dir_rel = format!("problems/{slug}");
+        let prob_dir = ws
+            .resolve(&prob_dir_rel)
+            .map_err(ActionResult::from_storage_err)?;
+        let canonical_prob = prob_dir
+            .canonicalize()
+            .map_err(|e| ActionResult::err("not_found", format!("{prob_dir_rel}: {e}")))?;
+
+        let ws_rel = format!("{prob_dir_rel}/{cleaned}");
+        let resolved = ws
+            .resolve(&ws_rel)
+            .map_err(ActionResult::from_storage_err)?;
+        if !resolved.is_file() {
+            return Err(ActionResult::err(
+                "not_found",
+                format!("{cleaned} not found"),
+            ));
+        }
+        let canonical = resolved
+            .canonicalize()
+            .map_err(|e| ActionResult::err("io", format!("{cleaned}: {e}")))?;
+        if !canonical.starts_with(ws.root()) || !canonical.starts_with(&canonical_prob) {
+            return Err(ActionResult::err(
+                "path_escape",
+                format!("path {cleaned:?} is outside problem directory"),
+            ));
+        }
+        Ok(canonical)
+    }
+}
+
+fn freshness_status_str(f: &xcpc_judge::PackageFreshness) -> &'static str {
+    match f {
+        xcpc_judge::PackageFreshness::NotAPackage => "not_a_package",
+        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => "verified_fresh",
+        xcpc_judge::PackageFreshness::Stale { .. } => "stale",
+        xcpc_judge::PackageFreshness::Unverified { .. } => "unverified",
+        xcpc_judge::PackageFreshness::Failed { .. } => "failed",
+    }
+}
+
+fn append_package_preflight_diagnostics(
+    ws: &Workspace,
+    slug: &str,
+    diagnostics: &mut Vec<PreviewDiagnostic>,
+) {
+    // Avoid duplicating package freshness findings already emitted by `xcpc-lint`.
+    if diagnostics
+        .iter()
+        .any(|d| d.code.as_deref().is_some_and(|c| c.starts_with("package_")))
+    {
+        return;
+    }
+    let Ok(freshness) = xcpc_judge::check_package_freshness(ws, slug) else {
+        return;
+    };
+    match freshness {
+        xcpc_judge::PackageFreshness::NotAPackage
+        | xcpc_judge::PackageFreshness::VerifiedFresh { .. } => {}
+        xcpc_judge::PackageFreshness::Unverified { .. } => {
+            diagnostics.push(PreviewDiagnostic {
+                severity: "warning".to_owned(),
+                code: Some("package_unverified".to_owned()),
+                message: "题目包尚未通过严格验收".to_owned(),
+                file: None,
+                line: None,
+                column: None,
+                page: None,
+            });
+        }
+        xcpc_judge::PackageFreshness::Stale { .. } => {
+            diagnostics.push(PreviewDiagnostic {
+                severity: "warning".to_owned(),
+                code: Some("package_stale".to_owned()),
+                message: "题目包文件已变更，需重新严格验收".to_owned(),
+                file: None,
+                line: None,
+                column: None,
+                page: None,
+            });
+        }
+        xcpc_judge::PackageFreshness::Failed { summary, .. } => {
+            let mut emitted_gates = 0usize;
+            if let Some(report) = xcpc_judge::load_latest_report(ws, slug) {
+                for gate in report
+                    .gates
+                    .into_iter()
+                    .filter(|g| g.status == xcpc_judge::GateStatus::Fail)
+                    .take(3)
+                {
+                    diagnostics.push(PreviewDiagnostic {
+                        severity: "error".to_owned(),
+                        code: Some(format!("package_gate:{}", gate.id)),
+                        message: format!("{}：{}", gate.title, gate.message),
+                        file: None,
+                        line: None,
+                        column: None,
+                        page: None,
+                    });
+                    emitted_gates += 1;
+                }
+            }
+            if emitted_gates == 0 {
+                let message = if summary.trim().is_empty() {
+                    "题目包验收未通过".to_owned()
+                } else {
+                    format!("题目包验收未通过：{summary}")
+                };
+                diagnostics.push(PreviewDiagnostic {
+                    severity: "error".to_owned(),
+                    code: Some("package_failed".to_owned()),
+                    message,
+                    file: None,
+                    line: None,
+                    column: None,
+                    page: None,
+                });
+            }
+        }
     }
 }
 

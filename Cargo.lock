@@ -5083,6 +5083,7 @@ dependencies = [
  "typst",
  "xcpc-domain",
  "xcpc-engine",
+ "xcpc-judge",
  "xcpc-lint",
  "xcpc-storage",
 ]
@@ -5099,6 +5100,7 @@ dependencies = [
  "xcpc-convert",
  "xcpc-domain",
  "xcpc-engine",
+ "xcpc-judge",
  "xcpc-storage",
 ]
 
@@ -5133,13 +5135,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "xcpc-judge"
+version = "0.2.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shlex",
+ "tempfile",
+ "thiserror",
+ "toml_edit",
+ "walkdir",
+ "windows-sys 0.59.0",
+ "xcpc-domain",
+ "xcpc-storage",
+]
+
+[[package]]
 name = "xcpc-lint"
 version = "0.2.0"
 dependencies = [
  "pulldown-cmark",
  "serde",
+ "serde_json",
  "tempfile",
  "xcpc-domain",
+ "xcpc-judge",
  "xcpc-storage",
 ]
 
@@ -5156,6 +5180,7 @@ dependencies = [
  "xcpc-convert",
  "xcpc-domain",
  "xcpc-engine",
+ "xcpc-judge",
  "xcpc-storage",
 ]
 

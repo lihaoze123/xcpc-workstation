@@ -154,7 +154,7 @@ function initialSpace(): Space {
 }
 
 export const space = signal<Space>(initialSpace());
-export type SettingsSection = "workspace" | "layout" | "appearance" | "shortcuts" | "about";
+export type SettingsSection = "workspace" | "layout" | "toolchain" | "appearance" | "shortcuts" | "about";
 export const settingsSection = signal<SettingsSection>("workspace");
 export const brandReplayOpen = signal(false);
 export const newWorkspaceModalOpen = signal(false);
@@ -417,10 +417,12 @@ export type StudioActions = {
   reveal(): void;
   freeze(): void;
   unfreeze(): void;
-  setTab(tab: "statement" | "samples" | "editorial"): void;
+  setTab(tab: "statement" | "samples" | "editorial" | "build"): void;
   toggleInspector(): void;
   openAssets(): void;
   hasAssets(): boolean;
+  hasPackage(): boolean;
+  initPackage(): void;
   frozen(): boolean;
   archived(): boolean;
   isContest(): boolean;

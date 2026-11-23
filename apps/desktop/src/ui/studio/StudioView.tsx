@@ -51,6 +51,8 @@ import { panelTransition } from "../motion";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
+import { BuildConsole } from "./BuildConsole";
+import { shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
@@ -59,9 +61,9 @@ import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
-type Tab = "statement" | "samples" | "editorial";
+type Tab = "statement" | "samples" | "editorial" | "build";
 const SAVE_AFTER = 500;
-const TAB_DEFS: readonly { value: Tab; labelKey: MessageKey; keys: string }[] = [
+const TAB_DEFS: readonly { value: Exclude<Tab, "build">; labelKey: MessageKey; keys: string }[] = [
   { value: "statement", labelKey: "studio.tab.statement", keys: "alt+1" },
   { value: "samples", labelKey: "studio.tab.samples", keys: "alt+2" },
   { value: "editorial", labelKey: "studio.tab.editorial", keys: "alt+3" },
@@ -174,6 +176,7 @@ export function StudioView(props: { active: boolean }) {
     if (previewRaf !== undefined) cancelAnimationFrame(previewRaf);
   });
   const assetsRefreshSeq = signal(0);
+  const packageRefreshSeq = signal(0);
   const coverActive = signal(false);
   const starts = signal<PreviewStart[]>([]);
   const diagnostics = signal<PreviewDiagnostic[]>([]);
@@ -199,6 +202,13 @@ export function StudioView(props: { active: boolean }) {
   });
   const item = computed(() => contest()?.items.find((i) => i.label === label()));
   const problemId = computed(() => (target()?.target === "problem" ? target()!.id : item()?.id));
+  const packageInspection = computed(() => {
+    void revision();
+    void packageRefreshSeq();
+    const t = target();
+    return t?.target === "problem" ? preview.inspectPackage(t.id) : undefined;
+  });
+  const hasPackage = computed(() => shouldShowBuildTab(target()?.target, !!packageInspection()?.hasPackage));
   const frozen = computed(() => !!contest()?.frozen);
   const archived = computed(() => !!contest()?.archived);
   const paths = computed(() => {
@@ -230,6 +240,14 @@ export function StudioView(props: { active: boolean }) {
         freeze.reset();
       }
       if (t?.target !== "contest") coverActive.set(false);
+    });
+  });
+
+  // Fall back from Build tab if switching to a contest or a problem without a package.
+  effect(() => {
+    const pkg = hasPackage();
+    untracked(() => {
+      if (tab() === "build" && !pkg) tab.set("statement");
     });
   });
 
@@ -350,6 +368,7 @@ export function StudioView(props: { active: boolean }) {
     }
     compileNow();
     assetsRefreshSeq.set(assetsRefreshSeq() + 1);
+    packageRefreshSeq.set(packageRefreshSeq() + 1);
     scheduleStatus();
   });
   cleanup(unwatch);
@@ -466,13 +485,30 @@ export function StudioView(props: { active: boolean }) {
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   function setTab(next: Tab) {
+    if (next === "build" && !hasPackage()) return;
     if (next === tab()) return;
     tab.set(next);
+    if (next === "build") return;
     const b: Book = next === "editorial" ? "editorial" : "statements";
     if (storeBook() !== b) {
       storeBook.set(b);
       savePrefs({ lastBook: b });
     }
+  }
+
+  function initPackageScaffold() {
+    const tTarget = untracked(target);
+    if (!tTarget || tTarget.target !== "problem" || info().readOnly) return;
+    const res = preview.initPackage(tTarget.id);
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("ctx.initPackage") });
+      return;
+    }
+    notice.set(undefined);
+    packageRefreshSeq.set(packageRefreshSeq() + 1);
+    refresh();
+    compileNow();
+    tab.set("build");
   }
 
   function selectLabel(next: string, jump = true) {
@@ -511,13 +547,18 @@ export function StudioView(props: { active: boolean }) {
   /** Scrolls the preview smoothly to the current caret's line in the active Markdown file. */
   async function locatePreview() {
     const f = untracked(file);
-    if (!f || untracked(tab) === "samples") return;
+    const curTab = untracked(tab);
+    if (!f || curTab === "samples" || curTab === "build") return;
     const line = (await editorActions?.currentLine()) ?? 1;
     const loc = preview.locateSource(f.path, line);
     if (loc) canvas?.scrollToLocation(loc.page, loc.yPt, true);
   }
 
   function finding(d: PreviewDiagnostic) {
+    if (d.code?.startsWith("package_") && hasPackage()) {
+      setTab("build");
+      return;
+    }
     if (d.file && d.line != null) locate({ file: d.file, line: d.line, column: d.column ?? 1 });
     else if (d.page != null) canvas?.goPage(d.page);
   }
@@ -760,6 +801,9 @@ export function StudioView(props: { active: boolean }) {
       "alt+1": on(() => setTab("statement")),
       "alt+2": on(() => setTab("samples")),
       "alt+3": on(() => setTab("editorial")),
+      "alt+4": on(() => {
+        if (hasPackage()) setTab("build");
+      }),
       "mod+i": on(toggleInspector),
       "mod+s": on(save),
       "mod+e": on(() => void exportBook(book())),
@@ -822,6 +866,8 @@ export function StudioView(props: { active: boolean }) {
         toggleInspector,
         openAssets,
         hasAssets: () => hasAssets(),
+        hasPackage: () => hasPackage(),
+        initPackage: initPackageScaffold,
         togglePreview,
         toggleFocusMode,
         focusMode: () => focusMode(),
@@ -849,7 +895,18 @@ export function StudioView(props: { active: boolean }) {
     return it ? `${it.label}. ${it.title}` : "";
   };
   const readOnly = () => !!file()?.readOnly || frozen() || archived();
-  const tabs = computed(() => TAB_DEFS.map((d) => ({ value: d.value, label: t(d.labelKey), keys: d.keys })));
+  const isMarkdownTab = () => tab() === "statement" || tab() === "editorial";
+  const tabs = computed(() => {
+    const base: { value: Tab; label: string; keys: string }[] = TAB_DEFS.map((d) => ({
+      value: d.value,
+      label: t(d.labelKey),
+      keys: d.keys,
+    }));
+    if (hasPackage()) {
+      base.push({ value: "build", label: t("studio.tab.build"), keys: "alt+4" });
+    }
+    return base;
+  });
   const editorPlaceholder = () =>
     tab() === "editorial"
       ? t("studio.placeholder.editorial")
@@ -987,7 +1044,7 @@ export function StudioView(props: { active: boolean }) {
                   <If
                     when={readOnly()}
                     else={
-                      <If when={tab() !== "samples" && !!file()}>
+                      <If when={isMarkdownTab() && !!file()}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
                           <If when={vimMode()}>
                             {(m) => (
@@ -1057,7 +1114,7 @@ export function StudioView(props: { active: boolean }) {
                 </View>
 
                 {/* Conflict banner in normal document flow so it never covers line 1 */}
-                <If when={conflict() && tab() !== "samples"}>
+                <If when={conflict() && isMarkdownTab()}>
                   <View
                     testID="conflict-bar"
                     style={{
@@ -1079,8 +1136,8 @@ export function StudioView(props: { active: boolean }) {
                   </View>
                 </If>
 
-                {/* Keep MarkdownEditor alive across 样例 tab switches to preserve undo stack, caret, and scroll */}
-                <View style={{ flex: 1, flexDirection: "row", justifyContent: "center", display: tab() === "samples" ? "none" : "flex" }}>
+                {/* Keep MarkdownEditor alive across 样例/构建 tab switches to preserve undo stack, caret, and scroll */}
+                <View style={{ flex: 1, flexDirection: "row", justifyContent: "center", display: isMarkdownTab() ? "flex" : "none" }}>
                   <View
                     style={{
                       flex: 1,
@@ -1092,7 +1149,7 @@ export function StudioView(props: { active: boolean }) {
                       {(f) => (
                         <MarkdownEditor
                           active={() => props.active}
-                          hidden={tab() === "samples"}
+                          hidden={!isMarkdownTab()}
                           previewHidden={previewHidden()}
                           typewriter={focusMode()}
                           publishLanguage={publishLanguage()}
@@ -1193,6 +1250,21 @@ export function StudioView(props: { active: boolean }) {
                   )}
                 </If>
 
+                <If when={tab() === "build" && hasPackage() ? problemId() : undefined}>
+                  {(id) => (
+                    <BuildConsole
+                      problemId={id()}
+                      readOnly={info().readOnly}
+                      inspectionResult={packageInspection()}
+                      onRefreshPackage={() => {
+                        refresh();
+                        packageRefreshSeq.set(packageRefreshSeq() + 1);
+                        compileNow();
+                      }}
+                    />
+                  )}
+                </If>
+
                 <If when={notice()}>
                   <View
                     style={{
@@ -1249,6 +1321,10 @@ export function StudioView(props: { active: boolean }) {
                 item={item()}
                 freeze={freeze}
                 assetsRefreshSeq={assetsRefreshSeq()}
+                hasPackage={hasPackage()}
+                packageFreshness={packageInspection()?.freshnessStatus}
+                onInitPackage={initPackageScaffold}
+                onOpenBuild={() => setTab("build")}
                 onOpenAssets={openAssets}
                 onChanged={() => {
                   compileNow();

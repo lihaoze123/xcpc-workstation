@@ -39,6 +39,10 @@ export function Inspector(props: {
   item?: ContestItemDetailJs;
   freeze: Freeze;
   assetsRefreshSeq?: number;
+  hasPackage?: boolean;
+  packageFreshness?: string;
+  onInitPackage?: () => void;
+  onOpenBuild?: () => void;
   onOpenAssets?: () => void;
   onChanged: () => void;
   onFinding: (d: PreviewDiagnostic) => void;
@@ -156,7 +160,7 @@ export function Inspector(props: {
               <ProblemInfoTab id={props.id} done={done} hasFollowingSection={showAssets()} />
             </If>
             <If when={showAssets()}>
-              <View style={{ padding: 14 }}>
+              <View style={{ padding: 14, gap: 10 }}>
                 <View
                   testID="inspector-assets-btn"
                   onPress={() => props.onOpenAssets?.()}
@@ -178,6 +182,81 @@ export function Inspector(props: {
                   </Text>
                   <Icon name="chevronRight" size={14} tone="muted-foreground" />
                 </View>
+
+                <If when={props.target === "problem" && (props.hasPackage || !info().readOnly)}>
+                  <If
+                    when={props.hasPackage}
+                    else={
+                      <View
+                        testID="inspector-init-package-btn"
+                        onPress={() => props.onInitPackage?.()}
+                        class="border border-border bg-card hover:bg-muted active:bg-accent"
+                        style={{
+                          paddingLeft: 10,
+                          paddingRight: 8,
+                          paddingTop: 8,
+                          paddingBottom: 8,
+                          borderRadius: 7,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                          ...colorTransition(140),
+                        }}
+                      >
+                        <Icon name="code" size={15} tone="secondary-foreground" />
+                        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+                          <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                            {t("inspector.package.init")}
+                          </Text>
+                          <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+                            {t("inspector.package.initHint")}
+                          </Text>
+                        </View>
+                        <Icon name="plus" size={14} tone="muted-foreground" />
+                      </View>
+                    }
+                  >
+                    <View
+                      testID="inspector-open-build-btn"
+                      onPress={() => props.onOpenBuild?.()}
+                      class="border border-border bg-card hover:bg-muted active:bg-accent"
+                      style={{
+                        height: 34,
+                        paddingLeft: 10,
+                        paddingRight: 8,
+                        borderRadius: 7,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        ...colorTransition(140),
+                      }}
+                    >
+                      <Icon name="code" size={15} tone="secondary-foreground" />
+                      <Text style={{ flex: 1, fontSize: 12.5 }} class="text-foreground">
+                        {t("inspector.package.openBuild")}
+                      </Text>
+                      <Text
+                        style={{ fontSize: 11.5 }}
+                        class={
+                          props.packageFreshness === "failed"
+                            ? "text-destructive"
+                            : props.packageFreshness === "stale" || props.packageFreshness === "unverified"
+                              ? "text-chart-4"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {props.packageFreshness === "verified_fresh"
+                          ? t("inspector.package.verified")
+                          : props.packageFreshness === "stale"
+                            ? t("inspector.package.stale")
+                            : props.packageFreshness === "failed"
+                              ? t("inspector.package.failed")
+                              : t("inspector.package.unverified")}
+                      </Text>
+                      <Icon name="chevronRight" size={14} tone="muted-foreground" />
+                    </View>
+                  </If>
+                </If>
               </View>
             </If>
           </If>

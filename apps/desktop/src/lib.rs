@@ -40,13 +40,14 @@ pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
     AboutInfoJs, ActionResult, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
     ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    DialogLabelsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs,
-    MathPreviewJs, OverridePatchJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
+    DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, LimitsJs,
+    MarkdownSpanJs, MathPreviewJs, OverridePatchJs, PackageBuildStatusJs, PackageInitResultJs,
+    PackageInspectionResultJs, PdfFreshnessJs, PickedFolder, PreviewDiagnostic, PreviewLayer,
     PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
     ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
     ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
+    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1147,6 +1148,76 @@ impl Preview {
     /// the active workspace and current on-disk content hash; returns `null` otherwise.
     pub fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
         self.state.load_cold_start_snapshot()
+    }
+
+    // ---- Phase 3A: Local Polygon toolchain & package build -----------------------------
+
+    /// Detects host C++ compilers (`g++` / `clang++`) taking persisted `cxxOverride` and
+    /// `XCPC_CXX` into account.
+    pub fn toolchain_status(&self) -> ToolchainStatusJs {
+        self.state.toolchain_status()
+    }
+
+    /// Persists an explicit C++ compiler path override (passing `null` or empty clears it)
+    /// and returns the refreshed toolchain detection status.
+    pub fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
+        self.state.set_cxx_override(path)
+    }
+
+    /// Pure read-only inspection of a problem package (`hasPackage`, freshness, files,
+    /// expanded tests, latest report, gates, and next steps).
+    pub fn inspect_package(&self, slug: String) -> PackageInspectionResultJs {
+        self.state.inspect_package(&slug)
+    }
+
+    /// Scaffolds a problem package with `testlib.h` templates without overwriting existing
+    /// files, and returns the refreshed inspection JSON.
+    pub fn init_package(&self, slug: String) -> PackageInitResultJs {
+        self.state.init_package(&slug)
+    }
+
+    /// Spawns a background thread to run `xcpc_judge::build_package` (`"debug"` or
+    /// `"verify"`) with optional test/solution subset filters.
+    pub fn start_package_build(
+        &self,
+        slug: String,
+        mode: String,
+        tests: Option<Vec<String>>,
+        solutions: Option<Vec<String>>,
+    ) -> ActionResult {
+        self.state
+            .start_package_build(&slug, &mode, tests, solutions)
+    }
+
+    /// Signals cancellation to the currently running background package build, if any.
+    pub fn cancel_package_build(&self) -> ActionResult {
+        self.state.cancel_package_build()
+    }
+
+    /// Returns the latest progress and completion snapshot of the background package build.
+    pub fn package_build_status(&self) -> PackageBuildStatusJs {
+        self.state.package_build_status()
+    }
+
+    /// Validates that `relPath` stays inside `problems/<slug>/` and opens it in the system
+    /// default external editor.
+    pub async fn open_package_file(
+        this: Instance<Self>,
+        slug: String,
+        rel_path: String,
+    ) -> ActionResult {
+        if this.is_disposed() {
+            return ActionResult::err("disposed", "preview disposed");
+        }
+        let resolved = this.with(|p| p.state.resolve_package_file(&slug, &rel_path));
+        let path = match resolved {
+            Ok(p) => p,
+            Err(err) => return err,
+        };
+        match open_in_external_editor(path).await {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("io", e),
+        }
     }
 }
 
