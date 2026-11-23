@@ -28,16 +28,16 @@ use crate::snapshot;
 use crate::types::{
     ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
     ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    ExportBookStatusJs, FreezeResultJs, FuzzyHitJs, MathPreviewJs, NormalizeDirtyResultJs,
-    OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs,
-    PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PreviewDiagnostic,
-    PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
-    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
-    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str,
-    extract_report, first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str,
-    source_to_js,
+    ExportBookStatusJs, ExportOjResultJs, FreezeResultJs, FuzzyHitJs, MathPreviewJs,
+    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
+    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs,
+    PolygonImportResultJs, PreviewDiagnostic, PreviewLocationJs, PreviewRequest, PreviewResult,
+    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
+    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs, SaveResult,
+    SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
+    WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report, first_error,
+    limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -3624,6 +3624,209 @@ impl State {
                     code: a.code,
                 }
             }
+        }
+    }
+
+    // ---- Phase 3B: Polygon import & OJ package export ----------------------------------
+
+    /// Fast pre-check before opening the native file picker for Polygon ZIP import.
+    pub(crate) fn validate_polygon_import_writable(&self) -> Result<(), (String, String, String)> {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return Err((
+                "no_workspace".into(),
+                "没有打开的工作区".into(),
+                "no workspace open".into(),
+            ));
+        };
+        if ws.is_read_only() {
+            return Err((
+                "read_only".into(),
+                "工作区以只读方式打开，无法导入。".into(),
+                "workspace is read-only".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Imports a Polygon single-problem or contest ZIP into the open workspace, refreshing
+    /// the in-memory index and invalidating preview caches on success.
+    pub(crate) fn import_polygon(
+        &self,
+        zip_path: &Path,
+        target_id: Option<String>,
+    ) -> PolygonImportResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return PolygonImportResultJs {
+                ok: false,
+                code: Some("no_workspace".into()),
+                error: Some("没有打开的工作区".into()),
+                detail: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        if ws.is_read_only() {
+            return PolygonImportResultJs {
+                ok: false,
+                code: Some("read_only".into()),
+                error: Some("工作区以只读方式打开，无法导入。".into()),
+                detail: Some("workspace is read-only".into()),
+                ..Default::default()
+            };
+        }
+
+        let opts = xcpc_packages::PolygonImportOptions {
+            target_id: target_id.filter(|s| !s.trim().is_empty()),
+            ..Default::default()
+        };
+        match xcpc_packages::import_polygon(&ws, zip_path, &opts) {
+            Ok(res) => {
+                if let Ok(new_index) = WorkspaceIndex::scan(&ws) {
+                    let mut core = self.core.lock().unwrap();
+                    if core
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|w| w.root() == ws.root())
+                    {
+                        core.index = new_index;
+                    }
+                }
+                self.invalidate_cache();
+
+                let (kind, id, title) = match res.kind {
+                    xcpc_packages::PolygonImportKind::Contest => {
+                        let cid = res.contest_id.unwrap_or_default();
+                        let name = ws
+                            .load_contest(&cid)
+                            .map(|c| c.meta.name)
+                            .unwrap_or_else(|_| cid.clone());
+                        ("contest".to_owned(), cid, name)
+                    }
+                    xcpc_packages::PolygonImportKind::Problem => {
+                        let first = res.problems.first();
+                        let pid = first.map(|p| p.id.clone()).unwrap_or_default();
+                        let ptitle = first
+                            .map(|p| p.title.clone())
+                            .unwrap_or_else(|| pid.clone());
+                        ("problem".to_owned(), pid, ptitle)
+                    }
+                };
+                let problem_ids = res.problems.into_iter().map(|p| p.id).collect();
+                let warnings = res.warnings.into_iter().map(Into::into).collect();
+                PolygonImportResultJs {
+                    ok: true,
+                    cancelled: false,
+                    kind,
+                    id,
+                    title,
+                    problem_ids,
+                    warnings,
+                    error: None,
+                    code: None,
+                    detail: None,
+                }
+            }
+            Err(err) => PolygonImportResultJs {
+                ok: false,
+                cancelled: false,
+                error: Some(err.human_message()),
+                code: Some(err.code().to_owned()),
+                detail: Some(err.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Exports a DOMjudge or Hydro minimal-set OJ package (strict verification gate enabled,
+    /// `force: false`) into `build/packages/` inside the open workspace.
+    pub(crate) fn export_oj_package(
+        &self,
+        format: &str,
+        target: &str,
+        id: &str,
+    ) -> ExportOjResultJs {
+        let Some(fmt) = xcpc_packages::OjFormat::parse(format) else {
+            return ExportOjResultJs {
+                ok: false,
+                format: format.to_owned(),
+                code: Some("invalid_format".into()),
+                error: Some(format!("不支持的导出格式：{format}")),
+                detail: Some(format!("unsupported OJ format: {format:?}")),
+                ..Default::default()
+            };
+        };
+        let export_target = match target {
+            "problem" => xcpc_packages::ExportTarget::Problem(id.to_owned()),
+            "contest" => xcpc_packages::ExportTarget::Contest(id.to_owned()),
+            other => {
+                return ExportOjResultJs {
+                    ok: false,
+                    format: fmt.as_str().to_owned(),
+                    code: Some("invalid_format".into()),
+                    error: Some(format!("不支持的导出目标：{other}")),
+                    detail: Some(format!("unsupported export target: {other:?}")),
+                    ..Default::default()
+                };
+            }
+        };
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ExportOjResultJs {
+                ok: false,
+                format: fmt.as_str().to_owned(),
+                code: Some("no_workspace".into()),
+                error: Some("没有打开的工作区".into()),
+                detail: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+
+        let packages_dir = ws.root().join("build").join("packages");
+        let output_path = match &export_target {
+            xcpc_packages::ExportTarget::Problem(slug) => {
+                packages_dir.join(format!("{slug}-{}.zip", fmt.as_str()))
+            }
+            xcpc_packages::ExportTarget::Contest(cid) => {
+                packages_dir.join(format!("{cid}-{}", fmt.as_str()))
+            }
+        };
+        let opts = xcpc_packages::ExportOjOptions {
+            format: fmt,
+            output_path: output_path.clone(),
+            force: false,
+            language: None,
+        };
+        match xcpc_packages::export_oj_package(&ws, &export_target, &opts) {
+            Ok(res) => {
+                let paths: Vec<String> = res.artifacts.into_iter().map(|a| a.zip_path).collect();
+                let reveal_path = match &export_target {
+                    xcpc_packages::ExportTarget::Contest(_) => output_path.display().to_string(),
+                    xcpc_packages::ExportTarget::Problem(_) => paths
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| output_path.display().to_string()),
+                };
+                let warnings = res.warnings.into_iter().map(Into::into).collect();
+                ExportOjResultJs {
+                    ok: true,
+                    format: fmt.as_str().to_owned(),
+                    paths,
+                    reveal_path,
+                    warnings,
+                    error: None,
+                    code: None,
+                    detail: None,
+                }
+            }
+            Err(err) => ExportOjResultJs {
+                ok: false,
+                format: fmt.as_str().to_owned(),
+                error: Some(err.human_message()),
+                code: Some(err.code().to_owned()),
+                detail: Some(err.to_string()),
+                ..Default::default()
+            },
         }
     }
 }

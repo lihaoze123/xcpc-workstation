@@ -373,6 +373,26 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
       return { message: t("error.noWorkspace"), rule };
     case "missing_template":
       return { message: t("error.missingTemplate"), next: t("error.missingTemplateNext"), rule };
+    case "invalid_archive":
+      return { message: t("error.invalidArchive"), next: t("error.invalidArchiveNext"), rule };
+    case "zip_slip":
+      return { message: t("error.zipSlip"), rule };
+    case "archive_too_large":
+      return { message: t("error.archiveTooLarge"), rule };
+    case "too_many_entries":
+      return { message: t("error.tooManyEntries"), rule };
+    case "target_exists":
+      return { message: t("error.targetExists"), next: t("error.targetExistsNext"), rule };
+    case "not_verified":
+      return { message: t("error.notVerified"), next: t("error.notVerifiedNext"), rule: true };
+    case "missing_testdata":
+      return { message: t("error.missingTestdata"), next: t("error.missingTestdataNext"), rule: true };
+    case "pdf_compile_failed":
+      return { message: t("error.pdfCompileFailed"), next: t("error.pdfCompileFailedNext"), rule };
+    case "invalid_format":
+      return { message: t("error.invalidFormat"), rule };
+    case "unsupported":
+      return { message: t("error.unsupported"), rule };
     default:
       break;
   }

@@ -27,6 +27,8 @@ import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
   dialog,
   goSpace,
+  importPolygon,
+  importingPolygon,
   info,
   jumpToContest,
   openStudio,
@@ -438,6 +440,16 @@ export function LibraryView(props: { active: boolean }) {
                   {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
                 </Text>
               </If>
+              <Btn
+                testID="library-import-polygon"
+                label={width() >= 780 ? t("packages.importPolygon") : undefined}
+                icon="folderOpen"
+                variant="outline"
+                disabled={readOnly() || importingPolygon()}
+                tooltip={tip(readOnly() ? t("packages.readOnlyCannotImport") : t("packages.importPolygonTooltip"))}
+                onPress={() => void importPolygon()}
+                style={{ flexShrink: 0 }}
+              />
               <Btn
                 label={width() >= 660 ? t("library.newProblem") : undefined}
                 icon="plus"

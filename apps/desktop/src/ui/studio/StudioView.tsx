@@ -45,6 +45,7 @@ import {
   studioActions,
   unfreezeFor,
   workspaceVersion,
+  type OjPackageFormat,
   type StudioTarget,
   type UiError,
 } from "../store";
@@ -186,8 +187,9 @@ export function StudioView(props: { active: boolean }) {
   const starts = signal<PreviewStart[]>([]);
   const diagnostics = signal<PreviewDiagnostic[]>([]);
   const status = signal<ExportBookStatusJs | undefined>(undefined);
-  const exporting = signal<Book | undefined>(undefined);
+  const exporting = signal<Book | OjPackageFormat | undefined>(undefined);
   const exportedSeq = signal(0);
+  const lastOjRevealPath = signal<string | undefined>(undefined);
   const notice = signal<UiError | undefined>(undefined);
   const vimMode = signal<VimMode | undefined>(undefined);
   const freeze = createFreeze();
@@ -240,6 +242,7 @@ export function StudioView(props: { active: boolean }) {
     const owner = `${wv}:${t?.target ?? ""}:${t?.id ?? ""}`;
     untracked(() => {
       notice.set(undefined);
+      lastOjRevealPath.set(undefined);
       assetsOpen.set(false);
       if (owner !== lastFreezeOwner) {
         lastFreezeOwner = owner;
@@ -491,12 +494,40 @@ export function StudioView(props: { active: boolean }) {
       notice.set({ error: out.error, context: b === "editorial" ? t("ctx.exportEditorial") : t("ctx.exportStatements") });
     } else {
       notice.set(undefined);
+      lastOjRevealPath.set(undefined);
       exportedSeq.set(exportedSeq() + 1);
     }
     scheduleStatus(true);
   }
 
+  async function exportOjPackage(format: OjPackageFormat) {
+    save();
+    const cur = untracked(target);
+    if (!cur || exporting()) return;
+    exporting.set(format);
+    const ctx = format === "domjudge" ? t("ctx.exportDomjudge") : t("ctx.exportHydro");
+    const res = await preview.exportOjPackage(format, cur.target, cur.id);
+    exporting.set(undefined);
+    if (!res.ok) {
+      notice.set({
+        code: res.code,
+        error: res.detail ?? res.error,
+        context: ctx,
+      });
+      return;
+    }
+    notice.set(undefined);
+    lastOjRevealPath.set(res.revealPath || res.paths[0]);
+    exportedSeq.set(exportedSeq() + 1);
+  }
+
   async function reveal(b: Book) {
+    const ojPath = lastOjRevealPath();
+    if (ojPath) {
+      const res = await preview.revealInFolder(ojPath);
+      if (!res.ok) notice.set(errorOf(res, t("ctx.revealInFolder")));
+      return;
+    }
     const s = status()?.[b];
     if (!s?.exists) return;
     const res = await preview.revealInFolder(s.absPath);
@@ -891,6 +922,7 @@ export function StudioView(props: { active: boolean }) {
     untracked(() => {
       const nextActions = {
         exportBook: (b: Book) => void exportBook(b),
+        exportOjPackage: (format: OjPackageFormat) => void exportOjPackage(format),
         copyMarkdownWithSamples: () => {
           const id = problemId();
           if (!id) return;
@@ -1028,7 +1060,9 @@ export function StudioView(props: { active: boolean }) {
                 book={book()}
                 busy={exporting()}
                 exportedSeq={exportedSeq()}
+                canRevealOj={!!lastOjRevealPath()}
                 onExport={(b) => void exportBook(b)}
+                onExportOj={(fmt) => void exportOjPackage(fmt)}
                 onReveal={(b) => void reveal(b)}
               />
             </If>
@@ -1352,7 +1386,24 @@ export function StudioView(props: { active: boolean }) {
                     }}
                     class="bg-popover border-border"
                   >
-                    <ErrorDisplay error={notice()} onDismiss={() => notice.set(undefined)} />
+                    <ErrorDisplay
+                      error={notice()}
+                      locate={
+                        target()?.target === "problem" &&
+                        (notice()?.code === "not_verified" || notice()?.code === "missing_testdata")
+                          ? [
+                              {
+                                label: t("packages.openAuthoring"),
+                                onPress: () => {
+                                  notice.set(undefined);
+                                  setStudioMode("authoring");
+                                },
+                              },
+                            ]
+                          : undefined
+                      }
+                      onDismiss={() => notice.set(undefined)}
+                    />
                   </View>
                 </If>
               </View>

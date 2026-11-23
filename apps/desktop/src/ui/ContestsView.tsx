@@ -19,6 +19,8 @@ import {
   archivedExpanded,
   dialog,
   errorOf,
+  importPolygon,
+  importingPolygon,
   info,
   openStudio,
   preview,
@@ -237,6 +239,15 @@ export function ContestsView(props: { active: boolean }) {
             {activeContests().length > 0 ? t("contests.count", { count: activeContests().length }) : ""}
           </Text>
           <Spacer />
+          <Btn
+            testID="contests-import-polygon"
+            icon="folderOpen"
+            variant="outline"
+            disabled={readOnly() || importingPolygon()}
+            tooltip={tip(readOnly() ? t("packages.readOnlyCannotImport") : t("packages.importPolygonTooltip"))}
+            onPress={() => void importPolygon()}
+            style={{ flexShrink: 0 }}
+          />
           <Btn
             label={t("contests.newContest")}
             icon="plus"

@@ -10,6 +10,7 @@ import { t } from "../i18n";
 import { DelayedSpinner } from "../kit";
 import { revealState, type Book } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
+import type { OjPackageFormat } from "../store";
 import { EASE_STANDARD, ms } from "../theme";
 
 const CONFIRM_MS = 1800;
@@ -17,12 +18,15 @@ const CONFIRM_MS = 1800;
 export function ExportButton(props: {
   status: ExportBookStatusJs | undefined;
   book: Book;
-  busy: Book | undefined;
+  busy: Book | OjPackageFormat | undefined;
   /** Incremented by the caller each time an export finishes cleanly. */
   exportedSeq?: number;
+  /** True when an OJ package was exported in this session and can be revealed in folder. */
+  canRevealOj?: boolean;
   /** Demotes the button to outline/secondary styling when another primary CTA owns the screen. */
   secondary?: boolean;
   onExport: (book: Book) => void;
+  onExportOj?: (format: OjPackageFormat) => void;
   onReveal: (book: Book) => void;
 }) {
   const reveal = () => revealState(props.status, props.book);
@@ -63,34 +67,54 @@ export function ExportButton(props: {
     clearTimeout(confirmTimer);
   });
 
-  const entries = (): MenuEntry[] => [
-    {
-      id: "statements",
-      label: t("export.statements"),
-      icon: "fileDown",
-      keys: props.book === "statements" ? "mod+e" : undefined,
-    },
-    {
-      id: "editorial",
-      label: t("export.editorial"),
-      icon: "fileDown",
-      keys: props.book === "editorial" ? "mod+e" : undefined,
-    },
-    { separator: true, id: "sep" },
-    {
-      id: "reveal",
-      label: t("common.revealInFolder"),
-      icon: "folderOpen",
-      disabled: reveal() === "none",
-      note: reveal() === "stale" ? t("export.stale") : undefined,
-    },
-  ];
+  const entries = (): MenuEntry[] => {
+    const rev = reveal();
+    const list: MenuEntry[] = [
+      {
+        id: "statements",
+        label: t("export.statements"),
+        icon: "fileDown",
+        keys: props.book === "statements" ? "mod+e" : undefined,
+      },
+      {
+        id: "editorial",
+        label: t("export.editorial"),
+        icon: "fileDown",
+        keys: props.book === "editorial" ? "mod+e" : undefined,
+      },
+      {
+        id: "reveal",
+        label: t("common.revealInFolder"),
+        icon: "folderOpen",
+        disabled: rev === "none" && !props.canRevealOj,
+        note: rev === "stale" && !props.canRevealOj ? t("export.stale") : undefined,
+      },
+    ];
+    if (props.onExportOj) {
+      list.push(
+        { separator: true, id: "sep-oj" },
+        {
+          id: "domjudge",
+          label: t("export.domjudge"),
+          icon: "database",
+        },
+        {
+          id: "hydro",
+          label: t("export.hydro"),
+          icon: "database",
+        },
+      );
+    }
+    return list;
+  };
 
   const onMenuSelect = (id: string) => {
     if (busy()) return;
     if (id === "statements") props.onExport("statements");
     else if (id === "editorial") props.onExport("editorial");
     else if (id === "reveal") props.onReveal(props.book);
+    else if (id === "domjudge") props.onExportOj?.("domjudge");
+    else if (id === "hydro") props.onExportOj?.("hydro");
   };
 
   const sec = () => Boolean(props.secondary);

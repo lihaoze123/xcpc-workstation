@@ -26,6 +26,7 @@ import {
   goSpace,
   hasWorkspace,
   hydrateAppearancePrefs,
+  importWarnings,
   info,
   jumpToContest,
   newWorkspaceModalOpen,
@@ -338,6 +339,60 @@ function App() {
             >
               <ErrorDisplay error={openError()} onDismiss={() => openError.set(undefined)} />
             </View>
+          </If>
+          <If when={!openError() ? importWarnings() : undefined}>
+            {(iw) => (
+              <View
+                testID="import-warnings-notice"
+                class="bg-popover border border-border"
+                style={{
+                  position: "absolute",
+                  top: TITLE_BAR + 8,
+                  right: 16,
+                  maxWidth: 420,
+                  paddingLeft: 12,
+                  paddingRight: 10,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  borderRadius: 8,
+                  gap: 4,
+                  boxShadow: popoverShadow(),
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Icon name="triangleAlert" size={14} tone="chart-4" />
+                  <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                    {iw().warnings.length === 1
+                      ? t("packages.importWarningsOne", { title: iw().title })
+                      : t("packages.importWarningsMany", { title: iw().title, count: iw().warnings.length })}
+                  </Text>
+                  <View
+                    testID="import-warnings-dismiss"
+                    onPress={() => importWarnings.set(undefined)}
+                    class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transitionProperty: "colors",
+                      transitionDuration: ms(120),
+                      transitionTimingFunction: EASE_STANDARD,
+                    }}
+                  >
+                    <Icon name="x" size={12} tone="muted-foreground" />
+                  </View>
+                </View>
+                <Each of={iw().warnings.slice(0, 3)} key={(w, i) => `${i}:${w.code}:${w.path ?? ""}`}>
+                  {(w) => (
+                    <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
+                      {w().message}
+                    </Text>
+                  )}
+                </Each>
+              </View>
+            )}
           </If>
         </View>
         <Dialogs onJumpContest={(contestId) => jumpToContest(contestId)} />

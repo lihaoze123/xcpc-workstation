@@ -1480,6 +1480,76 @@ pub struct NormalizeDirtyResultJs {
     pub code: Option<String>,
 }
 
+// ---- Phase 3B: Polygon import & OJ package export --------------------------------------
+
+/// Non-fatal warning emitted during Polygon import or OJ package export.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PackageWarningJs {
+    pub code: String,
+    pub message: String,
+    #[prop(skip_none)]
+    pub path: Option<String>,
+}
+
+impl From<xcpc_packages::PackageWarning> for PackageWarningJs {
+    fn from(w: xcpc_packages::PackageWarning) -> Self {
+        Self {
+            code: w.code,
+            message: w.message,
+            path: w.path,
+        }
+    }
+}
+
+/// Result of importing a Polygon single-problem or contest ZIP (`pickAndImportPolygon` / `importPolygon`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PolygonImportResultJs {
+    pub ok: bool,
+    pub cancelled: bool,
+    /// `"problem"` or `"contest"` when `ok` is true; empty otherwise.
+    pub kind: String,
+    /// Imported problem slug (for single problem) or contest ID (for contest).
+    pub id: String,
+    /// Imported problem title or contest name.
+    pub title: String,
+    /// All imported problem slugs.
+    pub problem_ids: Vec<String>,
+    /// Non-fatal structured warnings (e.g. interactive, non-C++, subtasks).
+    pub warnings: Vec<PackageWarningJs>,
+    /// Human-readable error message when `ok` is false.
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    /// Stable machine-readable error code when `ok` is false.
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    /// Raw technical detail for "Copy Details" when `ok` is false.
+    #[prop(skip_none)]
+    pub detail: Option<String>,
+}
+
+/// Result of exporting a DOMjudge or Hydro OJ package (`exportOjPackage`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ExportOjResultJs {
+    pub ok: bool,
+    /// `"domjudge"` or `"hydro"`.
+    pub format: String,
+    /// Absolute paths of exported ZIP files.
+    pub paths: Vec<String>,
+    /// Primary file or directory path to pass to `revealInFolder`.
+    pub reveal_path: String,
+    /// Non-fatal structured warnings.
+    pub warnings: Vec<PackageWarningJs>,
+    /// Human-readable error message when `ok` is false.
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    /// Stable machine-readable error code when `ok` is false.
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    /// Raw technical detail for "Copy Details" when `ok` is false.
+    #[prop(skip_none)]
+    pub detail: Option<String>,
+}
+
 impl From<xcpc_judge::DetectedCompiler> for DetectedCompilerJs {
     fn from(c: xcpc_judge::DetectedCompiler) -> Self {
         let kind = match c.kind {

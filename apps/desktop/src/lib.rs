@@ -41,15 +41,16 @@ pub use crate::types::{
     AboutInfoJs, ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs,
     CleanUnusedAssetsResultJs, ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs,
     ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
-    FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs, NormalizeDirtyResultJs,
-    OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs,
-    PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PickedFolder,
-    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
-    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
-    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
-    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
+    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
+    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PackageWarningJs,
+    PdfFreshnessJs, PickedFolder, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer,
+    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
+    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
+    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs, SaveResult,
+    SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
+    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1382,6 +1383,150 @@ impl Preview {
     ) -> SavePackageFileResultJs {
         self.state
             .save_package_file(&slug, &rel_path, &content, expected_hash.as_deref())
+    }
+
+    // ---- Phase 3B: Polygon import & OJ package export ----------------------------------
+
+    /// Opens the system file picker filtered to `.zip` archives, imports the chosen Polygon
+    /// single-problem or contest package off the UI thread, and refreshes the workspace index.
+    pub async fn pick_and_import_polygon(
+        this: Instance<Self>,
+        target_id: Option<String>,
+        labels: Option<DialogLabelsJs>,
+    ) -> PolygonImportResultJs {
+        if this.is_disposed() {
+            return PolygonImportResultJs {
+                ok: false,
+                cancelled: true,
+                ..Default::default()
+            };
+        }
+        let precheck = this.with(|p| p.state.validate_polygon_import_writable());
+        if let Err((code, error, detail)) = precheck {
+            return PolygonImportResultJs {
+                ok: false,
+                cancelled: false,
+                code: Some(code),
+                error: Some(error),
+                detail: Some(detail),
+                ..Default::default()
+            };
+        }
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "导入 Polygon 压缩包",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "导入",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "Polygon 压缩包",
+        );
+        let dialog = OpenDialog::files()
+            .title(title)
+            .button_label(button)
+            .filter(FileFilter::new(filter, ["zip"]));
+        let picked = match pick_paths(dialog).await {
+            Ok(Some(paths)) => paths.into_iter().next(),
+            Ok(None) => None,
+            Err(e) => {
+                return PolygonImportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    code: Some("io".into()),
+                    error: Some(e.clone()),
+                    detail: Some(e),
+                    ..Default::default()
+                };
+            }
+        };
+        let Some(zip_path) = picked else {
+            return PolygonImportResultJs {
+                ok: false,
+                cancelled: true,
+                ..Default::default()
+            };
+        };
+        if this.is_disposed() {
+            return PolygonImportResultJs {
+                ok: false,
+                cancelled: true,
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.import_polygon(&zip_path, target_id))
+            .await
+            .unwrap_or_else(|e| PolygonImportResultJs {
+                ok: false,
+                cancelled: false,
+                code: Some("io".into()),
+                error: Some(format!("导入任务执行失败：{e}")),
+                detail: Some(format!("polygon import task failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Imports a Polygon single-problem or contest ZIP at `zipPath` off the UI thread and
+    /// refreshes the workspace index.
+    pub async fn import_polygon(
+        this: Instance<Self>,
+        zip_path: String,
+        target_id: Option<String>,
+    ) -> PolygonImportResultJs {
+        if this.is_disposed() {
+            return PolygonImportResultJs {
+                ok: false,
+                cancelled: true,
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        let path = PathBuf::from(zip_path);
+        blocking(move || state.import_polygon(&path, target_id))
+            .await
+            .unwrap_or_else(|e| PolygonImportResultJs {
+                ok: false,
+                cancelled: false,
+                code: Some("io".into()),
+                error: Some(format!("导入任务执行失败：{e}")),
+                detail: Some(format!("polygon import task failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Exports a DOMjudge (`"domjudge"`) or Hydro (`"hydro"`) minimal-set OJ package off the
+    /// UI thread with strict verification gate enabled (`force: false`).
+    pub async fn export_oj_package(
+        this: Instance<Self>,
+        format: String,
+        target: String,
+        id: String,
+    ) -> ExportOjResultJs {
+        if this.is_disposed() {
+            return ExportOjResultJs {
+                ok: false,
+                format,
+                code: Some("disposed".into()),
+                error: Some("窗口已关闭".into()),
+                detail: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        let fmt_fallback = format.clone();
+        blocking(move || state.export_oj_package(&format, &target, &id))
+            .await
+            .unwrap_or_else(|e| ExportOjResultJs {
+                ok: false,
+                format: fmt_fallback,
+                code: Some("io".into()),
+                error: Some(format!("导出任务执行失败：{e}")),
+                detail: Some(format!("oj package export task failed: {e}")),
+                ..Default::default()
+            })
     }
 }
 

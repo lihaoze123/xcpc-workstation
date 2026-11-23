@@ -18,6 +18,7 @@ import {
   goSettings,
   goSpace,
   hasWorkspace,
+  importPolygon,
   info,
   openStudio,
   paletteOpen,
@@ -43,6 +44,9 @@ function actions(): Action[] {
   const list: Action[] = [
     { id: "a:export-statements", icon: "fileDown", label: t("palette.action.exportStatements"), keywords: ["pdf", "export", "statement", "statements", "导出", "题面册", "daochu", "timian"], run: () => s!.exportBook("statements"), when: () => inStudio },
     { id: "a:export-editorial", icon: "fileDown", label: t("palette.action.exportEditorial"), keywords: ["pdf", "export", "editorial", "solution", "导出", "题解册", "daochu", "tijie"], run: () => s!.exportBook("editorial"), when: () => inStudio },
+    { id: "a:export-domjudge", icon: "database", label: t("palette.action.exportDomjudge"), keywords: ["export", "domjudge", "dj", "oj", "package", "zip", "导出", "daochu"], run: () => s!.exportOjPackage("domjudge"), when: () => inStudio },
+    { id: "a:export-hydro", icon: "database", label: t("palette.action.exportHydro"), keywords: ["export", "hydro", "hydrooj", "oj", "package", "zip", "导出", "daochu"], run: () => s!.exportOjPackage("hydro"), when: () => inStudio },
+    { id: "a:import-polygon", icon: "folderOpen", label: t("palette.action.importPolygon"), keywords: ["import", "polygon", "zip", "package", "导入", "压缩包", "daoru"], run: () => void importPolygon(), when: () => hasWorkspace() && !info().readOnly },
     {
       id: "a:copy-markdown-samples",
       icon: "copy",

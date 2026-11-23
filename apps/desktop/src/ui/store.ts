@@ -8,6 +8,7 @@ import {
   Preview,
   type ActionResult,
   type AppPrefsJs,
+  type PackageWarningJs,
   type WorkspaceInfo,
 } from "xcpc-workstation/native";
 import type { Book, Space } from "./logic";
@@ -78,6 +79,10 @@ export const revision = signal(0);
 export const workspaceVersion = signal(0);
 /** Why the last attempt to open a workspace failed, for the views that opened it. */
 export const openError = signal<UiError | undefined>(undefined);
+/** Whether a Polygon ZIP import is currently in flight. */
+export const importingPolygon = signal(false);
+/** Non-fatal warnings from the most recent Polygon import, shown cleanly until dismissed. */
+export const importWarnings = signal<{ title: string; warnings: PackageWarningJs[] } | undefined>(undefined);
 
 export function hasWorkspace(): boolean {
   return info().root !== "";
@@ -231,6 +236,7 @@ function adopt(next: WorkspaceInfo, failContext: string) {
   batch(() => {
     openError.set(next.error ? { error: next.error, context: failContext } : undefined);
     if (switched) {
+      importWarnings.set(undefined);
       studio.set(undefined);
       selectedProblem.set(undefined);
       selectedContest.set(undefined);
@@ -414,10 +420,51 @@ export function startWatch() {
   })();
 }
 
+/** Picks a Polygon ZIP via the native file dialog, imports it off the UI thread, and opens the imported item. */
+export async function importPolygon() {
+  if (!hasWorkspace() || info().readOnly || importingPolygon()) return;
+  importingPolygon.set(true);
+  try {
+    const res = await preview.pickAndImportPolygon(null, {
+      title: t("dialog.importPolygon.title"),
+      buttonLabel: t("dialog.importPolygon.button"),
+      filterLabel: t("dialog.importPolygon.filter"),
+    });
+    if (res.cancelled) return;
+    if (!res.ok) {
+      openError.set({
+        code: res.code,
+        error: res.detail ?? res.error,
+        context: t("ctx.importPolygon"),
+      });
+      return;
+    }
+    batch(() => {
+      openError.set(undefined);
+      importWarnings.set(
+        res.warnings.length > 0 ? { title: res.title || res.id, warnings: res.warnings } : undefined,
+      );
+    });
+    refresh();
+    if (res.kind === "contest" && res.id) {
+      selectedContest.set(res.id);
+      openStudio({ target: "contest", id: res.id });
+    } else if (res.id) {
+      selectedProblem.set(res.id);
+      openStudio({ target: "problem", id: res.id });
+    }
+  } finally {
+    importingPolygon.set(false);
+  }
+}
+
 // ── Studio actions for the command palette ───────────────────────────────────
+
+export type OjPackageFormat = "domjudge" | "hydro";
 
 export type StudioActions = {
   exportBook(book: Book): void;
+  exportOjPackage(format: OjPackageFormat): void;
   copyMarkdownWithSamples(): void;
   reveal(): void;
   freeze(): void;

@@ -47,6 +47,9 @@ export const en: Record<MessageKey, string> = {
   "dialog.pickImage.title": "Choose Image",
   "dialog.pickImage.button": "Import",
   "dialog.pickImage.filter": "Image Files",
+  "dialog.importPolygon.title": "Import Polygon ZIP",
+  "dialog.importPolygon.button": "Import",
+  "dialog.importPolygon.filter": "Polygon ZIP Archive",
 
   // ── App Shell & Workspace Switcher ─────────────────────────────────────────
   "shell.openOtherWorkspace": "Open Workspace…",
@@ -99,6 +102,9 @@ export const en: Record<MessageKey, string> = {
   "ctx.deleteAsset": "Delete asset",
   "ctx.cleanUnusedAssets": "Clean unused assets",
   "ctx.setAssetWidth": "Set image width",
+  "ctx.importPolygon": "Import Polygon",
+  "ctx.exportDomjudge": "Export DOMjudge Package",
+  "ctx.exportHydro": "Export Hydro Package",
 
   // ── Core Errors (§7.3) ─────────────────────────────────────────────────────
   "error.contestFrozen": "Contest is finalized and read-only",
@@ -131,6 +137,21 @@ export const en: Record<MessageKey, string> = {
   "error.unsavedAbortWidth": "Current document has unsaved changes; width update cancelled",
   "error.unsavedAbortRename": "Current document has unsaved changes; rename cancelled",
   "error.importImageFailed": "Could not import image. Check file permissions and try again.",
+  "error.invalidArchive": "Archive is invalid or corrupted",
+  "error.invalidArchiveNext": "Make sure you selected a valid Polygon ZIP archive",
+  "error.zipSlip": "Archive contains unsafe paths and was rejected",
+  "error.archiveTooLarge": "Archive exceeds the safety size limit",
+  "error.tooManyEntries": "Archive has too many files",
+  "error.targetExists": "A problem or contest with the same ID already exists",
+  "error.targetExistsNext": "Remove or rename the existing item before importing",
+  "error.notVerified": "Problem has not passed strict verification",
+  "error.notVerifiedNext": "Run full verification in Authoring before exporting",
+  "error.missingTestdata": "Built test data is missing",
+  "error.missingTestdataNext": "Run verification in Authoring to build test data first",
+  "error.pdfCompileFailed": "Statement PDF failed to compile",
+  "error.pdfCompileFailedNext": "Fix statement typesetting errors before exporting",
+  "error.invalidFormat": "Invalid package format",
+  "error.unsupported": "This package feature is not supported yet",
 
   // ── Unfreeze Diff Kinds ────────────────────────────────────────────────────
   "diff.statementChanged": "Statement",
@@ -285,6 +306,9 @@ export const en: Record<MessageKey, string> = {
   "palette.group.action": "Actions",
   "palette.action.exportStatements": "Export Statements",
   "palette.action.exportEditorial": "Export Editorial",
+  "palette.action.exportDomjudge": "Export DOMjudge Package",
+  "palette.action.exportHydro": "Export Hydro Package",
+  "palette.action.importPolygon": "Import Polygon ZIP",
   "palette.action.copyMarkdownWithSamples": "Copy Markdown with Samples",
   "palette.action.reveal": "Reveal in Folder",
   "palette.action.tabStatement": "Switch to Statement",
@@ -505,7 +529,15 @@ export const en: Record<MessageKey, string> = {
   "export.exported": "Exported",
   "export.statements": "Export Statements",
   "export.editorial": "Export Editorial",
+  "export.domjudge": "Export DOMjudge Package",
+  "export.hydro": "Export Hydro Package",
   "export.stale": "Outdated",
+  "packages.importPolygon": "Import Polygon",
+  "packages.importPolygonTooltip": "Import a Polygon problem or contest ZIP archive",
+  "packages.readOnlyCannotImport": "Cannot import in a read-only workspace",
+  "packages.importWarningsOne": "Imported \"{title}\" with 1 notice",
+  "packages.importWarningsMany": "Imported \"{title}\" with {count} notices",
+  "packages.openAuthoring": "Open Authoring",
 
   // ── Studio Outline ─────────────────────────────────────────────────────────
   "outline.cover": "Cover",

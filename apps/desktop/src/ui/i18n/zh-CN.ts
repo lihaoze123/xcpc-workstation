@@ -45,6 +45,9 @@ export const zhCN = {
   "dialog.pickImage.title": "选择图片",
   "dialog.pickImage.button": "导入",
   "dialog.pickImage.filter": "图片文件",
+  "dialog.importPolygon.title": "导入 Polygon 压缩包",
+  "dialog.importPolygon.button": "导入",
+  "dialog.importPolygon.filter": "Polygon 压缩包",
 
   // ── App Shell & Workspace Switcher ─────────────────────────────────────────
   "shell.openOtherWorkspace": "打开其他工作区…",
@@ -97,6 +100,9 @@ export const zhCN = {
   "ctx.deleteAsset": "删除素材",
   "ctx.cleanUnusedAssets": "清理未引用素材",
   "ctx.setAssetWidth": "调整图片宽度",
+  "ctx.importPolygon": "导入 Polygon",
+  "ctx.exportDomjudge": "导出 DOMjudge 包",
+  "ctx.exportHydro": "导出 Hydro 包",
 
   // ── Core Errors (§7.3) ─────────────────────────────────────────────────────
   "error.contestFrozen": "比赛已定稿，内容只读",
@@ -129,6 +135,21 @@ export const zhCN = {
   "error.unsavedAbortWidth": "当前文档尚未保存，已中止调整宽度",
   "error.unsavedAbortRename": "当前文档尚未保存，已中止重命名",
   "error.importImageFailed": "无法导入图片，请检查文件权限后重试。",
+  "error.invalidArchive": "压缩包格式无效或已损坏",
+  "error.invalidArchiveNext": "请确认选择了正确的 Polygon ZIP 文件",
+  "error.zipSlip": "压缩包包含不安全的路径，已拒绝导入",
+  "error.archiveTooLarge": "压缩包体积超过安全上限，已拒绝导入",
+  "error.tooManyEntries": "压缩包文件数量超过安全上限，已拒绝导入",
+  "error.targetExists": "同名题目或比赛已存在",
+  "error.targetExistsNext": "请先清理或重命名后再导入",
+  "error.notVerified": "题目尚未通过严格验证",
+  "error.notVerifiedNext": "请先在「出题」页完成全量验证后再导出",
+  "error.missingTestdata": "缺少已构建的测试数据",
+  "error.missingTestdataNext": "请先在「出题」页运行验证生成数据后再导出",
+  "error.pdfCompileFailed": "题面 PDF 编译失败",
+  "error.pdfCompileFailedNext": "请先修复题面排版错误后再导出",
+  "error.invalidFormat": "题目包内容格式有误",
+  "error.unsupported": "当前暂不支持该格式特性",
 
   // ── Unfreeze Diff Kinds ────────────────────────────────────────────────────
   "diff.statementChanged": "题面",
@@ -283,6 +304,9 @@ export const zhCN = {
   "palette.group.action": "操作",
   "palette.action.exportStatements": "导出题面册",
   "palette.action.exportEditorial": "导出题解册",
+  "palette.action.exportDomjudge": "导出 DOMjudge 包",
+  "palette.action.exportHydro": "导出 Hydro 包",
+  "palette.action.importPolygon": "导入 Polygon ZIP",
   "palette.action.copyMarkdownWithSamples": "复制带样例的 Markdown",
   "palette.action.reveal": "在文件夹中显示",
   "palette.action.tabStatement": "切到题面",
@@ -503,7 +527,15 @@ export const zhCN = {
   "export.exported": "已导出",
   "export.statements": "导出题面册",
   "export.editorial": "导出题解册",
+  "export.domjudge": "导出 DOMjudge 包",
+  "export.hydro": "导出 Hydro 包",
   "export.stale": "较旧",
+  "packages.importPolygon": "导入 Polygon",
+  "packages.importPolygonTooltip": "导入 Polygon 题目或比赛压缩包",
+  "packages.readOnlyCannotImport": "只读工作区无法导入",
+  "packages.importWarningsOne": "已导入「{title}」，另有 1 项提示",
+  "packages.importWarningsMany": "已导入「{title}」，另有 {count} 项提示",
+  "packages.openAuthoring": "前往出题页",
 
   // ── Studio Outline ─────────────────────────────────────────────────────────
   "outline.cover": "封面",
