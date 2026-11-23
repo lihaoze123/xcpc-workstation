@@ -32,10 +32,10 @@ use crate::types::{
     PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs, PreviewDiagnostic,
     PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
     ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SaveResult, SourceLocationJs, TagCountJs, ToolchainStatusJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report, first_error,
-    limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
+    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str, extract_report,
+    first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -2898,7 +2898,7 @@ impl State {
         let resolved = ws
             .resolve(&ws_rel)
             .map_err(ActionResult::from_storage_err)?;
-        if !resolved.is_file() {
+        if !resolved.exists() {
             return Err(ActionResult::err(
                 "not_found",
                 format!("{cleaned} not found"),
@@ -2914,6 +2914,47 @@ impl State {
             ));
         }
         Ok(canonical)
+    }
+
+    pub(crate) fn inspect_test_case(
+        &self,
+        slug: &str,
+        selector: &str,
+        head_lines: Option<u32>,
+        tail_lines: Option<u32>,
+    ) -> TestCasePreviewJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return TestCasePreviewJs {
+                ok: false,
+                error: Some("no workspace open".into()),
+                ..Default::default()
+            };
+        };
+        let head = head_lines.unwrap_or(40) as usize;
+        let tail = tail_lines.unwrap_or(20) as usize;
+        match xcpc_judge::inspect_test_case(&ws, slug, selector, head, tail) {
+            Ok(p) => TestCasePreviewJs {
+                ok: true,
+                index: p.index as u32,
+                name: p.name,
+                tag: p.tag,
+                is_sample: p.is_sample,
+                gen_cmd: p.gen_cmd,
+                available_on_disk: p.available_on_disk,
+                size_bytes: p.size_bytes as f64,
+                total_lines: p.total_lines as u32,
+                head: p.head,
+                tail: p.tail,
+                truncated: p.truncated,
+                error: None,
+            },
+            Err(e) => TestCasePreviewJs {
+                ok: false,
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
     }
 }
 

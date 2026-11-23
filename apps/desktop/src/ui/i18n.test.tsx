@@ -46,11 +46,15 @@ describe("i18n dictionaries (zh-CN & en)", () => {
     }
   });
 
-  test("all values are non-empty and English copy avoids exclamation marks", () => {
+  test("all values are non-empty, English copy avoids exclamation marks, and Chinese build copy avoids internal jargon", () => {
     for (const key of Object.keys(zhCN) as MessageKey[]) {
       expect(zhCN[key].trim().length).toBeGreaterThan(0);
       expect(en[key].trim().length).toBeGreaterThan(0);
       expect(en[key].includes("!")).toBe(false);
+      expect(zhCN[key].includes("门禁")).toBe(false);
+      if (key.startsWith("build.") || key.startsWith("inspector.package.")) {
+        expect(zhCN[key].includes("矩阵")).toBe(false);
+      }
     }
   });
 });

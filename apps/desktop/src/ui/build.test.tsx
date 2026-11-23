@@ -8,16 +8,19 @@ import {
   formatMemoryKib,
   formatStdTimeRatio,
   hasInvalidCxxOverride,
+  humanizeCheckText,
   isCellVerdictAnomaly,
   isMissingCompilerError,
   isPackageIncomplete,
   matrixCellKey,
+  nextActionForCheck,
   normalizeCxxOverrideInput,
   partitionGates,
   problemSlugFromDiagnosticFile,
   resolveSolutionHeaderSpecs,
   selectMatrixCell,
   shouldShowBuildTab,
+  solutionRole,
   toggleSubsetSelection,
   verdictBadgeStyle,
   type MatrixCellData,
@@ -184,20 +187,119 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
       undefined,
     );
     expect(headers).toEqual([
-      { name: "std", is_main: true, expected: ["AC"] },
-      { name: "wrong_wa", is_main: false, expected: ["WA"] },
+      { name: "std", source_rel: "solutions/std.cpp", is_main: true, expected: ["AC"], tags: null },
+      { name: "wrong_wa", source_rel: "solutions/wrong_wa.cpp", is_main: false, expected: ["WA"], tags: null },
     ]);
+    expect(solutionRole(headers[0])).toBe("main");
+    expect(solutionRole(headers[1])).toBe("wrong");
+    expect(solutionRole({ is_main: false, expected: ["AC"] })).toBe("alt");
   });
 
-  test("partitions fail/warn gates from passed gates", () => {
-    const { attention, passed } = partitionGates([
+  test("partitions fail/warn/passed checks and maps actionable next steps", () => {
+    const { failed, warn, attention, passed } = partitionGates([
       { id: "val", title: "Validator", status: "pass", message: "ok" },
       { id: "std", title: "Std Time", status: "warn", message: "60%" },
       { id: "wa", title: "Wrong Sol", status: "fail", message: "got AC" },
       { id: "chk", title: "Checker", status: "skip", message: "builtin" },
     ]);
+    expect(failed.map((g) => g.id)).toEqual(["wa"]);
+    expect(warn.map((g) => g.id)).toEqual(["std"]);
     expect(attention.map((g) => g.id)).toEqual(["std", "wa"]);
     expect(passed.map((g) => g.id)).toEqual(["val", "chk"]);
+
+    expect(humanizeCheckText("validator 存在与自测", true)).toBe("校验器存在与自测");
+    expect(humanizeCheckText("内置 checker", true)).toBe("内置评测器");
+    expect(humanizeCheckText("使用内置标准校验器 wcmp", true)).toBe("使用内置标准评测器 wcmp");
+    expect(humanizeCheckText("存在判定与 expect 不符的解法", true)).toBe("存在判定与预期不符的解法");
+    expect(humanizeCheckText("valid 1 组、invalid 1 组全部通过", true)).toBe("有效 1 组、无效 1 组全部通过");
+    expect(humanizeCheckText("validator.cpp missing", true)).toBe("validator.cpp missing");
+
+    expect(
+      nextActionForCheck(
+        { id: "validator_all_tests", title: "Validator", status: "fail", message: "failed on test 2" },
+        {
+          problem_id: "p",
+          package_hash: "h",
+          mode: "verify",
+          verified: false,
+          ok: false,
+          subset: false,
+          built_at_epoch_secs: 0,
+          checker: "wcmp",
+          tests: [
+            { index: 1, name: "01", is_sample: true, size_bytes: 10, validator_ok: true },
+            { index: 2, name: "02", is_sample: false, size_bytes: 20, validator_ok: false },
+          ],
+          safety_margin: {
+            max_input_bytes: 20,
+            time_limit_ms: 1000,
+            memory_limit_kib: 262_144,
+            std_max_time_ms: 1,
+            std_time_ratio: 0.001,
+            std_max_memory_kib: 1024,
+          },
+        },
+        { validator: "validator.cpp" },
+      ),
+    ).toEqual({ kind: "view_test", testIndex: 2 });
+
+    expect(
+      nextActionForCheck(
+        { id: "alt_solution", title: "Alt", status: "warn", message: "missing" },
+        undefined,
+        { solutions: ["std.cpp"] },
+      ),
+    ).toEqual({ kind: "open_file", relPath: "solutions" });
+
+    expect(
+      nextActionForCheck(
+        { id: "solutions_expect", title: "Solutions", status: "fail", message: "mismatch" },
+        {
+          problem_id: "p",
+          package_hash: "h",
+          mode: "verify",
+          verified: false,
+          ok: false,
+          subset: false,
+          built_at_epoch_secs: 0,
+          checker: "wcmp",
+          solutions: [
+            {
+              name: "std",
+              is_main: true,
+              expected: ["AC"],
+              actual_verdict: "WA",
+              matched: false,
+              max_time_ms: 1,
+              max_memory_kib: 1024,
+              passed_tests: 0,
+              total_tests: 1,
+            },
+          ],
+          matrix: [
+            {
+              test_index: 1,
+              test_name: "sample-01",
+              solution: "std",
+              verdict: "WA",
+              cpu_time_ms: 1,
+              wall_time_ms: 2,
+              peak_memory_kib: 1024,
+              cache_hit: false,
+            },
+          ],
+          safety_margin: {
+            max_input_bytes: 20,
+            time_limit_ms: 1000,
+            memory_limit_kib: 262_144,
+            std_max_time_ms: 1,
+            std_time_ratio: 0.001,
+            std_max_memory_kib: 1024,
+          },
+        },
+        { solutions: ["std.cpp"] },
+      ),
+    ).toEqual({ kind: "select_cell", testIndex: 1, solution: "std" });
   });
 
   test("detects expectation anomalies, missing compiler errors, diagnostic slugs, and custom override input", () => {

@@ -46,8 +46,9 @@ pub use crate::types::{
     PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
     ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
     ProblemSummaryJs, RatingBucketJs, SamplePairJs, SaveResult, SourceLocationJs, TagCountJs,
-    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
-    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -1199,8 +1200,8 @@ impl Preview {
         self.state.package_build_status()
     }
 
-    /// Validates that `relPath` stays inside `problems/<slug>/` and opens it in the system
-    /// default external editor.
+    /// Validates that `relPath` (file or directory) stays inside `problems/<slug>/` and opens
+    /// it in the system default external editor (or file manager for directories).
     pub async fn open_package_file(
         this: Instance<Self>,
         slug: String,
@@ -1214,10 +1215,28 @@ impl Preview {
             Ok(p) => p,
             Err(err) => return err,
         };
-        match open_in_external_editor(path).await {
+        let res = if path.is_dir() {
+            reveal_path(path).await
+        } else {
+            open_in_external_editor(path).await
+        };
+        match res {
             Ok(()) => ActionResult::ok(),
             Err(e) => ActionResult::err("io", e),
         }
+    }
+
+    /// Safely previews the head and tail lines of a single test case without loading huge
+    /// files into the UI.
+    pub fn inspect_test_case(
+        &self,
+        slug: String,
+        selector: String,
+        head_lines: Option<u32>,
+        tail_lines: Option<u32>,
+    ) -> TestCasePreviewJs {
+        self.state
+            .inspect_test_case(&slug, &selector, head_lines, tail_lines)
     }
 }
 

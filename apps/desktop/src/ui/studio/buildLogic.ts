@@ -85,6 +85,15 @@ export interface DirtyInputIssueData {
   missing_trailing_newline: boolean;
 }
 
+export interface SelfTestResultData {
+  kind: string;
+  name: string;
+  passed: boolean;
+  expected: string;
+  actual: string;
+  message?: string;
+}
+
 export interface BuildReportData {
   problem_id: string;
   package_hash: string;
@@ -96,6 +105,7 @@ export interface BuildReportData {
   checker: string;
   compile_failures?: CompileFailureData[];
   dirty_inputs?: DirtyInputIssueData[];
+  self_tests?: SelfTestResultData[];
   tests?: TestSummaryData[];
   solutions?: SolutionSummaryData[];
   matrix?: MatrixCellData[];
@@ -118,21 +128,26 @@ export interface PackageFilesData {
   checker_self_tests?: string[];
 }
 
+export interface PackageSolutionSpecData {
+  name: string;
+  source_rel?: string;
+  is_main?: boolean;
+  main?: boolean;
+  expected?: string[];
+  expect?: string | string[];
+  tags?: string[] | null;
+}
+
 export interface ExpandedTestData {
   index: number;
   name: string;
   tag?: string | null;
   is_sample: boolean;
   gen_cmd?: string | null;
-}
-
-export interface PackageSolutionSpecData {
-  name: string;
-  is_main?: boolean;
-  main?: boolean;
-  expected?: string[];
-  expect?: string | string[];
-  tags?: string[] | null;
+  source?:
+    | { kind: "sample"; stem: string; input_rel: string; manual_ans_rel?: string | null }
+    | { kind: "file"; file_rel: string }
+    | { kind: "generated"; gen_name: string; args: string[]; args_raw: string };
 }
 
 export interface PackageInspectionData {
@@ -387,8 +402,10 @@ export function logicalSolutionName(filename: string): string {
 
 export interface SolutionHeaderSpec {
   name: string;
+  source_rel?: string;
   is_main: boolean;
   expected: string[];
+  tags?: string[] | null;
 }
 
 function normalizeExpected(spec: PackageSolutionSpecData): string[] {
@@ -399,25 +416,38 @@ function normalizeExpected(spec: PackageSolutionSpecData): string[] {
 }
 
 /**
- * Resolves solution column headers with accurate `is_main` and `expected` verdicts
+ * Resolves solution column headers with accurate `is_main`, `expected`, `source_rel`, and `tags`
  * both before and after the first build runs.
  */
 export function resolveSolutionHeaderSpecs(
   inspection: PackageInspectionData | undefined,
   report: BuildReportData | undefined,
 ): SolutionHeaderSpec[] {
+  const sourceByName = new Map<string, string>();
+  for (const s of inspection?.solutions ?? []) {
+    if (s.source_rel) sourceByName.set(s.name, s.source_rel);
+  }
+  for (const file of inspection?.files?.solutions ?? []) {
+    const stem = logicalSolutionName(file);
+    if (stem && !sourceByName.has(stem)) sourceByName.set(stem, `solutions/${file}`);
+  }
+
   if (report?.solutions && report.solutions.length > 0) {
     return report.solutions.map((s) => ({
       name: s.name,
+      source_rel: sourceByName.get(s.name),
       is_main: s.is_main,
       expected: s.expected.length > 0 ? s.expected : ["AC"],
+      tags: s.tags ?? null,
     }));
   }
   if (inspection?.solutions && inspection.solutions.length > 0) {
     return inspection.solutions.map((s) => ({
       name: s.name,
+      source_rel: s.source_rel ?? sourceByName.get(s.name),
       is_main: Boolean(s.is_main ?? s.main),
       expected: normalizeExpected(s),
+      tags: s.tags ?? null,
     }));
   }
   const names: string[] = [];
@@ -427,23 +457,106 @@ export function resolveSolutionHeaderSpecs(
   }
   return names.map((name) => ({
     name,
+    source_rel: sourceByName.get(name),
     is_main: name === "std",
     expected: ["AC"],
+    tags: null,
   }));
 }
 
-/** Splits gates into attention-needed (`fail`/`warn`) and collapsed-by-default (`pass`/`skip`). */
+/** Classifies a solution's role for badge display (`main` | `alt` | `wrong`). */
+export function solutionRole(spec: Pick<SolutionHeaderSpec, "is_main" | "expected">): "main" | "alt" | "wrong" {
+  if (spec.is_main) return "main";
+  const exp = spec.expected.map((e) => e.toUpperCase());
+  if (exp.length === 1 && exp[0] === "AC") return "alt";
+  return "wrong";
+}
+
+/** Splits gates into `failed`, `warn`, and `passed` buckets for the compact summary bar. */
 export function partitionGates(gates: readonly GateResultData[]): {
+  failed: GateResultData[];
+  warn: GateResultData[];
   attention: GateResultData[];
   passed: GateResultData[];
 } {
+  const failed: GateResultData[] = [];
+  const warn: GateResultData[] = [];
   const attention: GateResultData[] = [];
   const passed: GateResultData[] = [];
   for (const g of gates) {
-    if (g.status === "fail" || g.status === "warn") attention.push(g);
-    else passed.push(g);
+    if (g.status === "fail") {
+      failed.push(g);
+      attention.push(g);
+    } else if (g.status === "warn") {
+      warn.push(g);
+      attention.push(g);
+    } else {
+      passed.push(g);
+    }
   }
-  return { attention, passed };
+  return { failed, warn, attention, passed };
+}
+
+/** Humanizes Core gate titles/messages in Chinese so no raw `validator`/`expect`/`门禁` jargon or awkward spaces leak. */
+export function humanizeCheckText(text: string, isZh: boolean): string {
+  if (!isZh) return text;
+  let out = text
+    .replace(/使用内置标准校验器/g, "使用内置标准评测器")
+    .replace(/ *\bvalidator(?!\.(?:(?:17|20|23)\.)?(?:cpp|cc|cxx)\b)\b */gi, "校验器")
+    .replace(/ *\bchecker(?!\.(?:(?:17|20|23)\.)?(?:cpp|cc|cxx)\b)\b */gi, "评测器")
+    .replace(/ *\bexpect\b */gi, "预期")
+    .replace(/\bvalid\b/gi, "有效")
+    .replace(/\binvalid\b/gi, "无效")
+    .replace(/门禁/g, "检查");
+  // Preserve clean spacing between CJK and ASCII/numbers while avoiding leading/trailing spaces.
+  out = out.replace(/([\u4e00-\u9fff]) +([\u4e00-\u9fff])/g, "$1$2");
+  return out.trim();
+}
+
+export type CheckAction =
+  | { kind: "view_test"; testIndex: number }
+  | { kind: "select_cell"; testIndex: number; solution: string }
+  | { kind: "open_file"; relPath: string }
+  | { kind: "open_programs" };
+
+/** Computes the most helpful one-click next-step action for a failed/warning check item. */
+export function nextActionForCheck(
+  gate: GateResultData,
+  report: BuildReportData | undefined,
+  files: PackageFilesData | undefined,
+): CheckAction | undefined {
+  const id = gate.id.toLowerCase();
+  if (id.includes("validator") && id.includes("test") && !id.includes("self")) {
+    const failedTest = report?.tests?.find((t) => t.validator_ok === false);
+    if (failedTest) return { kind: "view_test", testIndex: failedTest.index };
+    if (files?.validator) return { kind: "open_file", relPath: files.validator };
+    return { kind: "open_programs" };
+  }
+  if (id.includes("validator")) {
+    if (files?.validator) return { kind: "open_file", relPath: files.validator };
+    return { kind: "open_programs" };
+  }
+  if (id.includes("checker")) {
+    if (files?.custom_checker) return { kind: "open_file", relPath: files.custom_checker };
+    return { kind: "open_programs" };
+  }
+  if (id.includes("alt") || id.includes("wrong") || id.includes("coverage") || id.includes("diversity") || (gate.status === "warn" && id.includes("solution"))) {
+    return { kind: "open_file", relPath: "solutions" };
+  }
+  if (id.includes("solution") || id.includes("std")) {
+    if (report?.matrix && report.solutions) {
+      const solMap = new Map(report.solutions.map((s) => [s.name, s]));
+      const anomalous = report.matrix.find((c) => {
+        const s = solMap.get(c.solution);
+        return s ? isCellVerdictAnomaly(c.verdict, s.expected, s.is_main, s.matched) : false;
+      });
+      if (anomalous) {
+        return { kind: "select_cell", testIndex: anomalous.test_index, solution: anomalous.solution };
+      }
+    }
+    return { kind: "open_file", relPath: "solutions" };
+  }
+  return undefined;
 }
 
 /**

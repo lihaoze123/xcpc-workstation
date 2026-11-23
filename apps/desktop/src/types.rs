@@ -1358,6 +1358,27 @@ pub struct PackageBuildStatusJs {
     pub error: Option<String>,
 }
 
+/// Safe bounded head/tail preview of a single test case (`inspectTestCase`).
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct TestCasePreviewJs {
+    pub ok: bool,
+    pub index: u32,
+    pub name: String,
+    #[prop(skip_none)]
+    pub tag: Option<String>,
+    pub is_sample: bool,
+    #[prop(skip_none)]
+    pub gen_cmd: Option<String>,
+    pub available_on_disk: bool,
+    pub size_bytes: f64,
+    pub total_lines: u32,
+    pub head: String,
+    pub tail: String,
+    pub truncated: bool,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
 impl From<xcpc_judge::DetectedCompiler> for DetectedCompilerJs {
     fn from(c: xcpc_judge::DetectedCompiler) -> Self {
         let kind = match c.kind {

@@ -2578,7 +2578,7 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert!(after.has_package);
     assert_eq!(after.freshness_status, "unverified");
 
-    // Valid files inside problem directory resolve (including `problem.toml`).
+    // Valid files and directories inside problem directory resolve (including `problem.toml` and `solutions`).
     let resolved = state.resolve_package_file("sum", "solutions/std.cpp");
     assert!(resolved.is_ok(), "expected valid path, got {resolved:?}");
     let resolved_toml = state.resolve_package_file("sum", "problem.toml");
@@ -2586,6 +2586,16 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
         resolved_toml.is_ok(),
         "expected problem.toml to resolve, got {resolved_toml:?}"
     );
+    let resolved_dir = state.resolve_package_file("sum", "solutions");
+    assert!(
+        resolved_dir.is_ok() && resolved_dir.unwrap().is_dir(),
+        "expected solutions directory to resolve"
+    );
+
+    // Safe test-case inspection works for expanded tests.
+    let preview = state.inspect_test_case("sum", "1", Some(10), Some(10));
+    assert!(preview.ok, "inspect_test_case failed: {:?}", preview.error);
+    assert_eq!(preview.index, 1);
 
     // Path traversal outside problem directory is rejected.
     let escape = state.resolve_package_file("sum", "../../workspace.toml");

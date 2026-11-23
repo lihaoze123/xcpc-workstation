@@ -1324,6 +1324,12 @@ export function StudioView(props: { active: boolean }) {
                       readOnly={info().readOnly}
                       inspectionResult={packageInspection()}
                       controller={(c) => (buildConsole = c)}
+                      onCollapseInspector={() => {
+                        if (inspectorOpen()) {
+                          userToggledInspector = true;
+                          inspectorOpen.set(false);
+                        }
+                      }}
                       onRefreshPackage={() => {
                         refresh();
                         packageRefreshSeq.set(packageRefreshSeq() + 1);
@@ -1390,6 +1396,7 @@ export function StudioView(props: { active: boolean }) {
                 freeze={freeze}
                 assetsRefreshSeq={assetsRefreshSeq()}
                 hasPackage={hasPackage()}
+                hideBuildEntry={tab() === "build"}
                 packageFreshness={packageInspection()?.freshnessStatus}
                 onInitPackage={initPackageScaffold}
                 onOpenBuild={() => setTab("build")}

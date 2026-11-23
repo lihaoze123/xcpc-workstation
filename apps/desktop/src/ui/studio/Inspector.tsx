@@ -40,6 +40,7 @@ export function Inspector(props: {
   freeze: Freeze;
   assetsRefreshSeq?: number;
   hasPackage?: boolean;
+  hideBuildEntry?: boolean;
   packageFreshness?: string;
   onInitPackage?: () => void;
   onOpenBuild?: () => void;
@@ -157,7 +158,7 @@ export function Inspector(props: {
               />
             </If>
             <If when={props.target === "problem"}>
-              <If when={props.hasPackage || !info().readOnly}>
+              <If when={(props.hasPackage && !props.hideBuildEntry) || (!props.hasPackage && !info().readOnly)}>
                 <Section>
                   <If
                     when={props.hasPackage}
