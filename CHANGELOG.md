@@ -2,6 +2,26 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-11-23
+
+首个正式版本，整合完整 Phase 2（组卷、出版工作室、题库中心、校验与 MCP 工具集）与 Phase 2.5（产品化打磨、开放模板体系、国际化与多人协同工作区）。
+
+### 核心亮点
+
+- **出版工作室与实时排版**：
+  - 内嵌 Typst 引擎 + 120Hz HiDPI 零闪白分块渲染、冷启动快照即时恢复与 `Ctrl+点击` 预览定位源码。
+  - **题面 / 样例 / 题解**三栏编辑、`/` 斜杠命令菜单、居中素材库 Gallery、```` ```typst ```` 原始块透传、编辑器内悬浮公式预览、专注写作模式与实用子集 Vim 模式。
+  - 原生支持 Typst `@preview` / `@local` 外部库生态（内置 CeTZ、Pinit、Mannot、Oxifmt、Tiptoe 离线回退包）与中英双语内置 3 题精品示例工作区（桌面端自动跟随界面语言，CLI 支持 `xcpc init --example --lang en|zh`）。
+- **开放模板体系与声明式版式定制**：
+  - 去预设特权，所有模板统一为工作区可自由编辑的 `.typ` 文件，预设种子涵盖 `olymp-classic`（XCPC 经典）、`cnoi-classic`（CCF CSP/NOI 风格）与 `minimal`。
+  - 单入口 `#let render(doc)` 契约与多语声明式 `#let schema`（9 种参数控件），支持三级版式参数继承、单场比赛专属模板（`contests/<id>/template.typ`）与工作区公共宏 `templates/preamble.typ`。
+- **题库中心、活引用组卷与定稿归档**：
+  - 开放目录单一事实源（天然适配个人题库与多人 Git 协同出题）、内存索引 + `notify` 热刷新与外部编辑冲突保护。
+  - 语义级 `toml_edit` 组卷（保留注释与未知字段）、批量挑题弹窗、复制题目、元数据与版式覆写、可逆比赛归档，以及将源题面、生效模板与 PDF 一并固化的定稿快照（`snapshot/`）。
+- **国际化、Agent 原生支持与跨平台分发**：
+  - 桌面端全面支持 **简体中文 / English** 自动识别与实时热切换，附中英双语 README；全局用户外观主题定制归口 `<dataDir>/theme.toml`。
+  - 提供完整 `xcpc` CLI（`--json`）、stdio MCP 服务（支持 `--read-only`）与 `xcpc-lint` 印刷前预检；支持 Windows x86_64（安装器 / 便携 `.zip`）与 Linux x86_64（`.deb` / Arch `.pkg.tar.zst` / `AppImage` / `.tar.gz`）多平台分发及应用内更新引导。
+
 ## [0.2.0-beta.4] - 2026-11-23
 
 ### 新增
