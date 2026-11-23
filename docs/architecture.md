@@ -78,7 +78,7 @@ crates/
   xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
   xcpc-lint       # 题面检查与印刷前预检（Phase 2）
   xcpc-judge      # 本地 Polygon（Phase 3A）：本机原生编译器、内置 testlib.h、轻量运行器、双档门禁、build / stress、三级缓存
-  xcpc-packages   # 生态数据包（Phase 3B）：Polygon ZIP 导入、DOMjudge / Hydro 最小集合导出、Competitive Companion 等
+  xcpc-packages   # 生态数据包（Phase 3B）：Polygon ZIP 导入（单题/整场 + tylax 转换）、DOMjudge / Hydro 最小集合导出；Competitive Companion（Phase 4）
   xcpc-sync       # 外部 OJ 同步（后续阶段）
   xcpc-mcp        # `xcpc` 二进制：CLI 子命令 + `xcpc mcp`
 apps/
@@ -87,7 +87,7 @@ tests/fixtures/
   olymp-ref/      # 参考模板生成的基准 PDF 及其源文件
 ```
 
-依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`，`convert` 的 `publish` 模块还依赖 `storage`。`xcpc-mcp` 和 `apps/desktop` 只是外壳，不放业务逻辑。
+依赖方向：`domain` ← `storage` / `convert` / `lint` / `packages` / `sync`；`convert` → `engine`，`convert` 的 `publish` 模块还依赖 `storage`；`packages` 另依赖 `storage`、`convert`、`engine`（编译 DOMjudge `problem.pdf`）与 `judge`（核对验收报告与内置 `testlib.h`）。`xcpc-mcp` 和 `apps/desktop` 只是外壳，不放业务逻辑。
 
 ## 4. 领域模型
 
@@ -202,19 +202,19 @@ xcpc-workspace/
 
 ```mermaid
 flowchart LR
-    MD["Markdown + Math (默认)"] --> P1["pulldown-cmark (GFM + ENABLE_MATH) + mitex"]
-    TEX["Polygon LaTeX (后续)"] --> P2["tylax"]
+    TEX["Polygon LaTeX (Phase 3B 导入)"] -->|"一次性转换 + tylax 原始块"| MD["Markdown + Math (工作区单一事实源)"]
+    MD --> P1["pulldown-cmark (GFM + ENABLE_MATH) + mitex"]
     TYP["Typst"] --> P3["直通"]
     P1 --> Glue["胶水层: 二级标题→olymp 章节 / samples / 图片路径"]
-    P2 --> Glue
     P3 --> Glue
     Glue --> Typst["typst 增量编译 (olymp-classic)"]
 ```
 
-- 胶水层负责三件事：按二级标题识别章节（规则见 [product.md](./product.md#21-题面结构)）、从 `samples/` 生成样例表、把图片路径映射到题目的 `assets/`。处理 Polygon LaTeX 时，还要转换 `\epigraph`、`\illustration` 等宏。
+- 胶水层负责三件事：按二级标题识别章节（规则见 [product.md](./product.md#21-题面结构)）、从 `samples/` 生成样例表、把图片路径映射到题目的 `assets/`。
+- **Polygon LaTeX 导入（Phase 3B）**：在 `xcpc-packages` 导入 Polygon ZIP 时，将 `statement-sections/<lang>/*.tex`（回退 `statements/<lang>/problem.tex`）**一次性转换**为 `statement(.zh/.en).md`（保留原生 `$LaTeX$` 数学公式，将复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块，并将配图拷贝至 `assets/`），保持 `.md` 为工作区唯一题面事实源。
 - **模板 Schema 与单入口渲染**：所有生效模板均为磁盘上的 `.typ` 文件（`contests/<id>/template.typ` 优先于 `templates/<name>.typ`；预设 `olymp-classic` / `cnoi-classic` / `minimal` 仅作初始化与添加模板的种子，不做内置回退）。`xcpc-engine` 对模板轻量求值导出 `#let schema`（规范见 [statement-style.md §2.3](./statement-style.md#23-模板声明式-schemalet-schema)）。转换管线按「模板默认 → `workspace.toml` → `contest.toml` → `problem.toml` / `[[problem]]`」合并参数，生成单入口 `#render(doc)` 调用，并为模板未导出的 `section` / `samples` / `subsection` / `runin` 自动回退到 `/xcpc/defaults.typ`。
 - 数学定界符：LaTeX 里的普通括号（`(`、`[`、`\lceil` 等）不会缩放，转换成 Typst 时要写成转义或符号形式（`\(`、`\[`、`#sym.ceil.l`），避免 Typst 自动配对放大；只有 `\left…\right` 才转换成 `lr()`。
-- 导出到 Hydro / QOJ 等 OJ 时，用 `typlite` / `tylax` 把 Typst 转回 Markdown（后续阶段）。
+- **OJ 数据包导出（Phase 3B）**：导出 DOMjudge 包时由 `xcpc-engine` 直接编译 `problem.pdf`；导出 Hydro 包时由工作区 `statement(.zh/.en).md` 与 `samples/` 组装 `problem_zh.md` / `problem_en.md` / `problem.md`（嵌入 Hydro ```` ```input1 / ```output1 ```` 样例块并将 `assets/` 迁入 `additional_file/` 改写为 `file://` 链接）。后续导出 QOJ 等格式时按需使用 `typlite` / `tylax`。
 - **PDF 元数据与书签（Phase 2.5）**：导出 PDF 时由 Core 统一写入文档元数据，并复用 `olymp-classic.typ` 中已有的书签（`bookmarked: true`）：
   - `Title`：`春季训练赛 试题册` / `春季训练赛 题解` / `A. Two Sum`（按比赛试题册、比赛题解或单题标题生成）；
   - `Author`：比赛的作者字段，没有就不写；
@@ -236,6 +236,7 @@ flowchart LR
 | 出版与视觉自检 | `compile_and_diagnose`（结构化诊断：错误位置、总页数、溢出警告；Phase 2 起并入 lint 结果）、`render_page_png`、`export_pdf`（单题 / 整本 / 题解册）、`list_templates`（列出内置与自定义模板及其 schema） | Phase 1 / 2.5 |
 | 题库与组卷 | `search_problems`、`get_problem`、`get_contest`、`write_problem`、`compose_contest`、`set_override`（支持单题级模板参数覆写）、`set_template_options`（更新工作区/比赛/单题的模板选择与参数）、`freeze_contest` | Phase 2 / 2.5 |
 | 题目包 | `inspect_package`、`inspect_test_case`（只读，`--read-only` 可用）、`init_package`、`build_package`（`verify`/`debug` 双模式、结构化报告与门禁）、`stress_package`（有界对拍与反例摘要）；后三者在 `--read-only` 下不可用 | Phase 3A |
+| 生态数据包 | `import_polygon`（导入 Polygon 单题/整场 ZIP，受 `--read-only` 限制）、`export_oj_package`（导出 DOMjudge / Hydro 最小集合 ZIP，写入工作区 `build/`，受 `--read-only` 限制） | Phase 3B |
 | 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 4 |
 
 **MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。
@@ -254,6 +255,13 @@ Phase 2 的工具：
 
 对应的 CLI：`xcpc search`、`xcpc show`、`xcpc template list|schema|add|fork`、`xcpc contest compose|override|freeze|unfreeze`、`xcpc init [dir]`（Phase 2.5 起支持 `--example` 释放内置示例工作区）；lint 并入 `xcpc check`，不单设命令。
 
+Phase 3B 的两个生态数据包工具：
+
+- `import_polygon`：参数为本地绝对 `.zip` 路径与可选目标 `id`。自动识别单题（`problem.xml`）与整场（`contest.xml`，展开全部子题并生成 `contest.toml`），一次性转换题面为 `.md` 并全量导入题目包；slug 冲突拒绝，遇交互题 / 非 C++ / 子任务保留文件并返回结构化 `warnings`；受 `--read-only` 限制。
+- `export_oj_package`：参数 `format`（`domjudge` / `hydro`）、`target`（`problem` / `contest`）、`id` 及可选输出路径（限制在工作区 `build/` 内）。遵循「动静分离」严格门禁，仅打包已验证且内容哈希未过期的 `build/problems/<slug>/` 数据与最小集合文件（不暗中编译跑数）；受 `--read-only` 与路径沙箱限制。
+
+对应 Phase 3B CLI：`xcpc import polygon <zip> [--id <slug>] [--json]`、`xcpc export <domjudge|hydro> <problem|contest> <id> [-o <path>] [--force] [--json]`（`--force` 仅跳过 `verified` 门禁，仍要求已构建测试数据）。
+
 Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`、可选的 `book`（`statements` / `editorial`）和 `language`（只对单题有效）。`render_page_png` 另有 `page`（从 1 开始）和 `scale`，直接返回图片、不写文件；`export_pdf` 另有 `output`（相对工作区的路径，未指定时走 Core 默认路径，Phase 2.5 起按标题命名，见 §5）。诊断的位置指向工作区里的源文件（`problems/a/statement.md` 的行列），溢出版心的内容是带页码的警告。CLI 对应 `xcpc check|render|build <problem|contest> <id> [--editorial]`，退出码 0 成功、1 文档有错误、2 用法或工作区错误；`--json` 输出同样的结构。
 
 ### 7.3 安全边界（在 Core 层强制执行）
@@ -261,7 +269,7 @@ Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`
 - **原子写入**：先写临时文件，再 rename 替换。
 - **冻结只读**：`is_frozen = true` 的比赛及其快照禁止一切写入，写操作返回明确的错误码。解冻只开放给 GUI 和 CLI（需二次确认），不开放给 MCP。
 - **只读模式**：`xcpc mcp --read-only`。
-- **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越。
+- **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越。**唯一明确例外**：`import_polygon` 允许只读打开任意本地绝对 `.zip` 路径（强制校验 `.zip` 扩展名并对压缩包内全部条目实施 Zip Slip 路径穿越防护与原子暂存），所有写入操作仍严格限制在工作区目录内。
 
 ### 7.4 错误文案集中化（Phase 2.5）
 

@@ -19,7 +19,7 @@
 | 阶段 | 范围 | 核心交付 |
 | :--- | :--- | :--- |
 | **Phase 3A** | **本地传统题（XCPC）完整闭环** | `crates/xcpc-judge`、CLI `xcpc package`、5 个 MCP 工具、工作区 `AGENTS.md` 升级、`skills/xcpc-problem-creator/` 与 `xcpc init --with-skills`、桌面端「构建」Tab（轻量出题控制台）与「设置 → 工具链」 |
-| **Phase 3B** | **交互题 + 生态数据包（`xcpc-packages`）** | stdio 交互题（`interactor.cpp`，双 OS pipe 并发）、Polygon ZIP 导入（启用 `tylax` 处理 LaTeX）、DOMjudge / Hydro 最小集合数据包导出、OI 子任务/部分分按需评估 |
+| **Phase 3B** | **生态数据包（`crates/xcpc-packages`）** | Polygon ZIP 导入（单题 `problem.xml` 与整场 `contest.xml`，题面一次性转为 `.md` + `tylax` 转换复杂环境为 ```` ```typst ```` 原始块，全量导入题目包与自测，slug 冲突拒绝，交互 / 非 C++ / 子任务保留文件并输出 `warnings`，Zip Slip 防护与原子暂存）、DOMjudge（对齐 `Polygon2DOMjudge`，含 `problem.pdf` 与 Kattis 42/43 适配层，无气球颜色）与 Hydro 最小集合 ZIP 导出（单题 / 整场批量，严格剔除内部文件，遵守动静分离门禁）、CLI（`xcpc import polygon` / `xcpc export`）、MCP（`import_polygon` / `export_oj_package`）与桌面端轻量入口（stdio 交互题与 OI 子任务 / 部分分延后） |
 
 ---
 
@@ -57,7 +57,7 @@ problems/<slug>/
 ├── samples/                      # 01.in, 01.ans, ...（自动纳入前序测试点）
 ├── checker.cpp                   # 可选；自定义 checker
 ├── validator.cpp                 # 严检模式下必需
-├── interactor.cpp                # Phase 3B：存在即视为交互题
+├── interactor.cpp                # 后续阶段：存在即视为交互题
 ├── generators/<name>.cpp
 ├── solutions/<name>.cpp
 └── tests/
@@ -179,4 +179,4 @@ expect = "WA"
 - OS 强安全沙箱（bwrap / seccomp / 容器）与判外部不可信提交；
 - Nix / Hull 互通、CPLib 专门支持、通信题 / 提交答案题 / 自定义 judger；
 - 重型应用内 C++ IDE（LSP / 补全 / 调试器；仅保留轻量单文件快编与外部编辑器跳转）；
-- Phase 3A 内的多语言执行与 OI 子任务（留待后续讨论/3B 评估）。
+- Phase 3 内的多语言执行、stdio 交互题（`interactor.cpp`）与 OI 子任务 / 部分分（延后至后续阶段）。

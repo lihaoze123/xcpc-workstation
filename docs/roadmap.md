@@ -178,12 +178,25 @@
    - 出版工作室单题第 4 个 Tab「构建」（构建 / 严格验收 / 局部运行 / 测试×解法矩阵 / 点击单元格看诊断 / 一键脚手架 / 跳转外部编辑器；失败汇入 Preflight 徽章）；
    - 「设置 → 工具链」（检测编译器、路径覆写与缺失平台安装指引）。
 
-### Phase 3B：交互题与生态数据包（`crates/xcpc-packages`）
+### Phase 3B：生态数据包（`crates/xcpc-packages`）
 
-1. **stdio 交互题**：`interactor.cpp` + 本机双 OS pipe 并发运行与死锁超时判定。
-2. **Polygon ZIP 导入**：启用 `tylax` 转换 LaTeX 题面，导入 `validator` / `checker` / `generators` / `solutions` 与测试脚本。
-3. **外部 OJ 数据包导出**：导出 DOMjudge / Hydro 最小集合 ZIP（严格剔除 `validator`、`solutions`、`wrong`、`editorial` 等内部文件）。
-4. OI 子任务与部分分按需评估。
+2026-11-23 讨论确认，聚焦 Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出，提供 CLI、MCP 与桌面端轻量入口；stdio 交互题（`interactor.cpp`）与 OI 子任务 / 部分分延后至后续阶段。
+
+1. **Polygon ZIP 导入**：
+   - 同时支持单题（`problem.xml`）与整场比赛（`contest.xml`，展开全部子题并生成 `contest.toml`）。
+   - **题面转换**：将 Polygon LaTeX 一次性转换为 `statement(.zh/.en).md`（Markdown + 原生 `$LaTeX$` 公式；复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块；配图迁入 `assets/`），保持 `.md` 为工作区单一事实源。
+   - **题目包全量导入**：`samples/`、声明式 `[[test]]` 生成器（手写 / `from-file` 多测 / 缺源码时回退为静态 `tests/*.in`）、`validator.cpp`、`checker.cpp`（标准 `std::*` 映射到 `[package].checker`）、`solutions/*`（`main` / `expect`）以及 validator / checker 自测。
+   - **冲突、兼容与安全**：目标 slug 冲突时直接拒绝（支持显式指定目标 `id`）；遇到交互题 / 非 C++ / 子任务时保留原始文件并输出结构化 `warnings`，不中止导入；内建 Zip Slip 路径穿越防护与原子暂存。
+2. **DOMjudge / Hydro 最小集合 ZIP 导出**：
+   - 支持单题 ZIP 与整场比赛批量导出（`A-<slug>.zip`、`B-<slug>.zip`……）。
+   - **最小集合**：严格剔除 `validator.cpp`、`solutions/`、`generators/`、`editorial.md` 与 `tests/` 自测等内部文件。
+   - **DOMjudge**（对齐 `cn-xcpc-tools/Polygon2DOMjudge`）：`domjudge-problem.ini`（比赛导出带 `short-name`，无气球颜色）、`problem.yaml`、`data/sample/`、`data/secret/`、`problem.pdf`（由 `xcpc-engine` 编译）、标准 Checker 映射至 `validation: default` + `validator_flags`、自定义 `checker.cpp` 打包进 `output_validators/`（附内置 `testlib.h` 与 Kattis 42/43 适配层）。
+   - **Hydro**：`problem.yaml`、`problem_zh.md` / `problem_en.md` / `problem.md`（含 Hydro `input1` / `output1` 样例块与 `additional_file/` + `file://` 配图链接）、`testdata/config.yaml`、`testdata/*.in/.out`、自定义 `checker.cpp`（`checker_type: testlib`）。
+   - **门禁（「动静分离」）**：核对最近一次严格构建报告（`verified == true` 且当前内容哈希未过期），直接打包 `build/problems/<slug>/` 已有数据，不暗中编译或跑数；未验收或已过期时拒绝导出，CLI `--force` 仅跳过门禁（仍要求已构建测试数据）。
+3. **CLI、MCP 与轻量 GUI 入口**：
+   - CLI：`xcpc import polygon <zip> [--id <slug>] [--json]`、`xcpc export <domjudge|hydro> <problem|contest> <id> [-o <path>] [--force] [--json]`；
+   - MCP：`import_polygon`（`--read-only` 下禁止；明确允许只读打开任意本地绝对 `.zip` 路径，经 `.zip` 扩展名检查与 Zip Slip 防护，所有写入严格留在工作区内）与 `export_oj_package`（`format`、`target`、`id`，写入工作区 `build/`，遵守 `--read-only` 与路径沙箱）；
+   - GUI：`Cmd+K` 新增导入/导出动作；题库与比赛顶栏新增「导入 Polygon」（调起原生文件选择器）；出版工作室导出分体按钮 `▾` 菜单在分割线下方追加「导出 DOMjudge 包」与「导出 Hydro 包」。
 
 ### Phase 3B+（Phase 3C 前置）：题库界面全面升级与命令面板优化
 
@@ -223,9 +236,10 @@
 
 ## 待定（尚未排期）
 
+- stdio 交互题（`interactor.cpp`，双 OS pipe 并发运行与死锁超时判定）与 OI 子任务 / 部分分（自 Phase 3B 延后）。
 - 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
 - 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
-- DOMjudge / Hydro / FPS / QOJ 包的导入导出。
+- DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。
 - 代码模板册（TRD）。
 - 双语并排校对与语义级 Diff。
 - 更多主题预设和定制体系。

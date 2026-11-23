@@ -68,7 +68,7 @@ expect = ["tle", "ac"]       # 整题结论之一：ac / wa / tle / mle / re / a
 
 一道题包含以下资产：
 
-1. **题面**：`statement.md`（默认是 Markdown + Math），双语时为 `statement.zh.md` / `statement.en.md`。也支持 `.tex` / `.typ`，但 LaTeX 输入要到 Polygon 导入时才实现。
+1. **题面**：`statement.md`（默认是 Markdown + Math），双语时为 `statement.zh.md` / `statement.en.md`。Polygon 导入的 LaTeX 题面会在导入时一次性转换为 `.md`（复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块），保持 `.md` 为工作区单一事实源。
 2. **样例**：`samples/01.in`、`samples/01.ans`……**只放在这里**，不写进题面正文，由模板渲染成样例章节。
 3. **配图**：`assets/`。
 4. **题解**：`editorial.md`，出版时排进 A4 题解册。
@@ -176,21 +176,21 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 
 见 [statement-style.md](./statement-style.md#5-代码模板册trd后续阶段)。
 
-## 6. 赛事包与 OJ 生态（后续阶段）
+## 6. 赛事包与 OJ 生态（Phase 3B 起）
 
 | 平台 / 格式 | 导入 | 导出 | 核心内容 |
 | :--- | :---: | :---: | :--- |
-| **Codeforces Polygon（ZIP）** | 完整 | — | `contest.xml`/`problem.xml`、多语言 `statement.tex`、样例、配图、限制、交互题标记 |
-| **Competitive Companion（`:10043`）** | 实时抓取 | — | 浏览器插件一键把题目元数据、样例、限制和链接收入题库 |
-| **DOMjudge（ICPC Package）** | 支持 | 支持 | `problem.yaml`、`problem_statement/`、`data/sample/` |
-| **Hydro OJ** | 支持 | 支持 | `problem.yaml`、`problem_zh/en.md`、样例与附加文件 |
-| **FPS（XML）** | 支持 | 支持 | 题面、样例、Base64 图片、标程 |
-| **QOJ / 通用 Markdown 包** | 支持 | 支持 | Markdown 题面 + 题解 + 静态资源 |
+| **Codeforces Polygon（ZIP）** | 完整（Phase 3B） | — | 单题（`problem.xml`）与整场（`contest.xml` 展开子题并生成 `contest.toml`）；多语言 LaTeX 题面一次性转 `.md`（复杂环境经 `tylax` 转 ```` ```typst ```` 块）；全量导入样例、配图、`validator`/`checker`/`generators`/`solutions` 与自测；交互/非 C++/子任务保留文件并输出 `warnings` |
+| **DOMjudge（ICPC Package）** | 后续阶段 | 支持（Phase 3B） | 对齐 `Polygon2DOMjudge` 的最小集合 ZIP（单题 / 整场 `A-<slug>.zip`…）：`domjudge-problem.ini`（无气球颜色）、`problem.yaml`、`data/sample|secret/`、`problem.pdf`、标准/自定义 `output_validators/`（Kattis 42/43 适配），严格剔除内部源码与解法 |
+| **Hydro OJ** | 后续阶段 | 支持（Phase 3B） | 最小集合 ZIP（单题 / 整场批量）：`problem.yaml`、`problem_zh/en.md`（含 `input1`/`output1` 样例块与 `additional_file/` `file://` 配图）、`testdata/config.yaml` 与 `.in/.out`、自定义 `testlib` checker |
+| **Competitive Companion（`:10043`）** | 实时抓取（Phase 4） | — | 浏览器插件一键把题目元数据、样例、限制和链接收入题库 |
+| **FPS（XML）** | 后续阶段 | 后续阶段 | 题面、样例、Base64 图片、标程 |
+| **QOJ / 通用 Markdown 包** | 后续阶段 | 后续阶段 | Markdown 题面 + 题解 + 静态资源 |
 | **PDF** | — | 完整 | 整本题册（封面、题表、补白）、单题、A4 题解册、TRD |
 
 ## 7. 本地 Polygon：原生题目包与严格验收（Phase 3）
 
-详细规格见 [specs/local-polygon.md](./specs/local-polygon.md)（2026-11-23 调整并确认）。Phase 3 拆分为 **3A（本地传统题 XCPC 完整闭环）** 与 **3B（stdio 交互题 + Polygon 导入 + DOMjudge/Hydro 导出）**。
+详细规格见 [specs/local-polygon.md](./specs/local-polygon.md)（2026-11-23 调整并确认）。Phase 3 拆分为 **3A（本地传统题 XCPC 完整闭环）** 与 **3B（Polygon ZIP 导入 + DOMjudge / Hydro 最小集合导出）**；stdio 交互题（`interactor.cpp`）与 OI 子任务 / 部分分延后至后续阶段。
 
 ### 7.1 执行引擎与可复现边界
 
@@ -209,11 +209,11 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 
 ### 7.3 题目包结构与声明
 
-- **路径约定**：`checker.cpp`（可选）、`validator.cpp`、`interactor.cpp`（Phase 3B：存在即交互题）、`generators/<name>.cpp`、`solutions/<name>.cpp`、`tests/*.in`（手写测试与对拍反例）、`tests/validator/{valid,invalid}/*.in`（Validator 自测）、`tests/checker/{ok,wa,pe}-*/{in,out,ans}`（自定义 Checker 自测）。
+- **路径约定**：`checker.cpp`（可选）、`validator.cpp`、`interactor.cpp`（后续阶段：存在即交互题）、`generators/<name>.cpp`、`solutions/<name>.cpp`、`tests/*.in`（手写测试与对拍反例）、`tests/validator/{valid,invalid}/*.in`（Validator 自测）、`tests/checker/{ok,wa,pe}-*/{in,out,ans}`（自定义 Checker 自测）。
 - **内置标准 Checker 家族**：`wcmp`（默认）、`ncmp`、`fcmp`、`lcmp`、`rcmp4`、`rcmp6`、`rcmp9`、`yesno`、`nyesno`（`[package].checker` 指定，存在 `checker.cpp` 时优先使用）。
-- **`problem.toml` 声明**：`[[test]]`（`file` 或 `gen` + `args`，支持声明式 `repeat = N` 与展示/过滤标签 `tag`、`name`、`sample = true`）和 `[solutions.<name>]`（`main = true` 表示标程；`expect` 为结论或结论列表；可选 `tags` 过滤供暴力参考解交叉验证小数据）。Phase 3A 不做子任务与部分分。
+- **`problem.toml` 声明**：`[[test]]`（`file` 或 `gen` + `args`，支持声明式 `repeat = N` 与展示/过滤标签 `tag`、`name`、`sample = true`）和 `[solutions.<name>]`（`main = true` 表示标程；`expect` 为结论或结论列表；可选 `tags` 过滤供暴力参考解交叉验证小数据）。Phase 3 不做子任务与部分分。
 - **样例衔接**：`samples/` 默认自动作为前序测试点纳入构建（过 validator，已有手工 `.ans` 不静默覆盖，同时验证手工 `.ans` 与 `std` 均过 checker，天然兼容构造题）；仅显式标记 `sample = true` 的 `[[test]]` 写入 `samples/`。自动检测手写数据的 CRLF、UTF-8 BOM 与缺尾换行。
-- **交互（Phase 3B）**：只支持 stdio 交互，interactor 按 testlib `interactor <in> <out>` 约定，通过两条原生 OS pipe 并发连接，双方互相等待由超时判 TLE。
+- **交互（后续阶段）**：只支持 stdio 交互，interactor 按 testlib `interactor <in> <out>` 约定，通过两条原生 OS pipe 并发连接，双方互相等待由超时判 TLE。
 
 ### 7.4 双档门禁、操作与 Agent 协同
 
@@ -228,4 +228,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 - 产物放在 `build/problems/<slug>/`（不进 Git）；编译、生成、运行三级内容哈希缓存放在 `~/.cache/xcpc/`，跨工作区共享。
 - **GUI**：出版工作室单题第 4 个 Tab「构建」（轻量出题控制台：构建/严格验收/局部运行、测试×解法矩阵、点击单元格看 checker/stderr 诊断、一键脚手架、跳转外部编辑器；失败汇入 Preflight 徽章）+「设置 → 工具链」。
 - **Agent / Skill 协同**：提供 5 个 MCP 工具（`inspect_package`、`inspect_test_case`、`init_package`、`build_package`、`stress_package`），仓库内建 `skills/xcpc-problem-creator/`（支持 `xcpc init --with-skills` 安装至工作区）并同步升级 `AGENTS.md`。
-- **生态包（Phase 3B）**：Polygon ZIP 导入（启用 `tylax` 转换 LaTeX）与 DOMjudge / Hydro 最小集合数据包 ZIP 导出（剔除内部文件）。
+- **生态包（Phase 3B，`crates/xcpc-packages`）**：
+  - **Polygon ZIP 导入**：支持单题（`problem.xml`）与整场（`contest.xml`，展开全部子题并生成 `contest.toml`）；题面一次性转为 `statement(.zh/.en).md`（复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块，配图入 `assets/`）；全量导入 `samples/`、声明式 `[[test]]` 生成器（手写 / `from-file` 多测 / 缺源码时回退静态 `tests/*.in`）、`validator.cpp`、`checker.cpp`（标准 `std::*` 映射到 `[package].checker`）、`solutions/*` 与自测；slug 冲突拒绝（支持指定目标 `id`），交互 / 非 C++ / 子任务保留文件并输出 `warnings`；含 Zip Slip 防护与原子暂存。
+  - **DOMjudge / Hydro 最小集合 ZIP 导出**：支持单题与整场批量导出（`A-<slug>.zip`、`B-<slug>.zip`……），严格剔除 `validator.cpp`、`solutions/`、`generators/`、`editorial.md` 与 `tests/` 自测；遵守「动静分离」门禁（核对最新严格构建报告 `verified == true` 且哈希未过期，直接打包 `build/problems/<slug>/` 既有数据，CLI `--force` 仅跳过门禁）。DOMjudge 对齐 `Polygon2DOMjudge`（无气球颜色，内置 `problem.pdf`、标准 checker 映射与自定义 `output_validators/` Kattis 42/43 适配层）；Hydro 生成含 `input1`/`output1` 样例块与 `additional_file/` `file://` 配图的 Markdown 及 `testdata/config.yaml`。
+  - **入口**：CLI（`xcpc import polygon`、`xcpc export <domjudge|hydro>`）、MCP（`import_polygon`、`export_oj_package`）与桌面端轻量入口（`Cmd+K`、题库/比赛顶栏「导入 Polygon」、出版工作室导出分体按钮菜单）。
