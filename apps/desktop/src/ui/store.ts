@@ -44,7 +44,12 @@ import {
 export const preview = new Preview(process.dataDir);
 
 /** What the studio shows: a problem, or a contest (and the problem of it in the editor). */
-export type StudioTarget = { target: "problem" | "contest"; id: string; label?: string };
+export type StudioTarget = {
+  target: "problem" | "contest";
+  id: string;
+  label?: string;
+  initialTab?: "statement" | "samples" | "editorial" | "build";
+};
 
 /** An error the views show with `ErrorDisplay`: the Core's code and raw text, and where it came from. */
 export type UiError = { code?: string | null; error?: string | null; context?: string; referencing?: string[] };

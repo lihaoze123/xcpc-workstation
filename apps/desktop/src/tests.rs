@@ -2578,9 +2578,14 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert!(after.has_package);
     assert_eq!(after.freshness_status, "unverified");
 
-    // Valid file inside problem directory resolves.
+    // Valid files inside problem directory resolve (including `problem.toml`).
     let resolved = state.resolve_package_file("sum", "solutions/std.cpp");
     assert!(resolved.is_ok(), "expected valid path, got {resolved:?}");
+    let resolved_toml = state.resolve_package_file("sum", "problem.toml");
+    assert!(
+        resolved_toml.is_ok(),
+        "expected problem.toml to resolve, got {resolved_toml:?}"
+    );
 
     // Path traversal outside problem directory is rejected.
     let escape = state.resolve_package_file("sum", "../../workspace.toml");

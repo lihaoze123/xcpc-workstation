@@ -77,6 +77,7 @@ const SHORTCUT_GROUP_DEFS: readonly ShortcutGroupDef[] = [
       { id: "tab-statement", labelKey: "shortcuts.item.tabStatement", keys: "alt+1", keywords: ["statement", "题面"] },
       { id: "tab-samples", labelKey: "shortcuts.item.tabSamples", keys: "alt+2", keywords: ["samples", "样例"] },
       { id: "tab-editorial", labelKey: "shortcuts.item.tabEditorial", keys: "alt+3", keywords: ["editorial", "题解"] },
+      { id: "build-verify", labelKey: "shortcuts.item.buildVerify", contextKey: "shortcuts.ctx.buildTab", keys: "mod+b", keywords: ["build", "verify", "judge", "构建", "验证"] },
       { id: "inspector", labelKey: "shortcuts.item.inspector", keys: "mod+i", keywords: ["inspector", "properties", "属性"] },
       { id: "focus-mode", labelKey: "shortcuts.item.focusMode", keys: "mod+shift+f", keywords: ["focus", "zen", "专注"] },
       { id: "save", labelKey: "shortcuts.item.save", keys: "mod+s", keywords: ["save", "保存"] },

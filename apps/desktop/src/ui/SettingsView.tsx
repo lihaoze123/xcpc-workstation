@@ -79,6 +79,7 @@ import {
   type AppearanceMode,
 } from "./theme";
 import {
+  customOverrideInputValue,
   dedupDetectedCompilers,
   hasInvalidCxxOverride,
   normalizeCxxOverrideInput,
@@ -627,40 +628,40 @@ function LayoutPane() {
 
 function ToolchainPane() {
   const status = signal<ToolchainStatusJs>(preview.toolchainStatus());
-  const draft = signal(status().overridePath ?? "");
+  const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
+  const draft = signal(customOverrideInputValue(status().overridePath, compilers()));
+
+  const syncFromStatus = (next: ToolchainStatusJs) => {
+    status.set(next);
+    const deduped = dedupDetectedCompilers(next.compilers, next.active);
+    draft.set(customOverrideInputValue(next.overridePath, deduped));
+  };
 
   const redetect = () => {
-    const next = preview.toolchainStatus();
-    status.set(next);
-    draft.set(next.overridePath ?? "");
+    syncFromStatus(preview.toolchainStatus());
   };
 
   const applyOverride = () => {
     const normalized = normalizeCxxOverrideInput(draft());
-    const next = preview.setCxxOverride(normalized);
-    status.set(next);
-    draft.set(next.overridePath ?? "");
+    syncFromStatus(preview.setCxxOverride(normalized));
   };
 
   const clearOverride = () => {
-    const next = preview.setCxxOverride(null);
-    status.set(next);
-    draft.set("");
+    syncFromStatus(preview.setCxxOverride(null));
   };
 
   const selectCompiler = (path: string) => {
-    const next = preview.setCxxOverride(path);
-    status.set(next);
-    draft.set(next.overridePath ?? "");
+    syncFromStatus(preview.setCxxOverride(path));
   };
 
   const dark = () => colorScheme() === "dark";
   const invalidOverride = () => hasInvalidCxxOverride(status());
-  const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== (status().overridePath ?? "");
-  const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
+  const currentCustomVal = () => customOverrideInputValue(status().overridePath, compilers());
+  const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== currentCustomVal();
 
   return (
     <View testID="settings-toolchain-pane" style={{ gap: 24 }}>
+      {/* Unified Compilers card: detected list with inline Active badge + one-click Use + custom path row */}
       <Section
         title={t("settings.toolchain.title")}
         description={t("settings.toolchain.desc")}
@@ -673,62 +674,96 @@ function ToolchainPane() {
           />
         }
       >
-        <SectionRow first>
-          <If
-            when={status().active}
-            else={
+        <If
+          when={compilers().length > 0}
+          else={
+            <SectionRow first>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Icon name="triangleAlert" size={16} tone="destructive" />
-                <Text testID="toolchain-not-found" style={{ fontSize: 13.5, fontWeight: 500 }} class="text-destructive">
-                  {t("settings.toolchain.notFound")}
-                </Text>
-              </View>
-            }
-          >
-            {(active) => {
-              const badge = () => verdictBadgeStyle("AC", dark());
-              return (
-                <View style={{ gap: 4 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text testID="toolchain-active-name" style={{ fontSize: 13.5, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
-                      {active().name}
-                    </Text>
-                    <View
-                      style={{
-                        height: 20,
-                        paddingLeft: 7,
-                        paddingRight: 7,
-                        borderRadius: 9999,
-                        justifyContent: "center",
-                        backgroundColor: badge().bg,
-                      }}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: 600, color: badge().fg }}>
-                        {t("settings.toolchain.active")}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
-                    {active().version}
+                <View style={{ gap: 2 }}>
+                  <Text testID="toolchain-not-found" style={{ fontSize: 13.5, fontWeight: 500 }} class="text-destructive">
+                    {t("settings.toolchain.notFound")}
                   </Text>
-                  <Text
-                    tooltip={tip(active().path)}
-                    style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
-                    class="text-muted-foreground"
-                  >
-                    {active().path}
+                  <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                    {t("settings.toolchain.noDetected")}
                   </Text>
                 </View>
+              </View>
+            </SectionRow>
+          }
+        >
+          <Each of={compilers()} key={(c) => c.path}>
+            {(compiler, idx) => {
+              const isActive = () => status().active?.path === compiler().path;
+              const badge = () => verdictBadgeStyle("AC", dark());
+              return (
+                <SectionRow
+                  first={idx() === 0}
+                  trailing={
+                    isActive() ? (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <View
+                          style={{
+                            height: 20,
+                            paddingLeft: 7,
+                            paddingRight: 7,
+                            borderRadius: 9999,
+                            justifyContent: "center",
+                            backgroundColor: badge().bg,
+                          }}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: 600, color: badge().fg }}>
+                            {t("settings.toolchain.active")}
+                          </Text>
+                        </View>
+                        <If when={Boolean(status().overridePath) && idx() > 0}>
+                          <Btn
+                            label={t("settings.toolchain.clearOverride")}
+                            variant="ghost"
+                            onPress={clearOverride}
+                          />
+                        </If>
+                      </View>
+                    ) : (
+                      <Btn
+                        testID={`toolchain-use-${compiler().name}`}
+                        label={t("settings.toolchain.useCompiler")}
+                        onPress={() => selectCompiler(compiler().path)}
+                      />
+                    )
+                  }
+                >
+                  <View style={{ minWidth: 0, gap: 2 }}>
+                    <Text
+                      testID={isActive() ? "toolchain-active-name" : undefined}
+                      style={{ fontSize: 13.5, fontWeight: isActive() ? 600 : 500, fontFamily: MONO }}
+                      class="text-foreground"
+                    >
+                      {compiler().name}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
+                      {compiler().version}
+                    </Text>
+                    <Text
+                      tooltip={tip(compiler().path)}
+                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
+                      class="text-muted-foreground"
+                    >
+                      {compiler().path}
+                    </Text>
+                  </View>
+                </SectionRow>
               );
             }}
-          </If>
-        </SectionRow>
+          </Each>
+        </If>
 
+        {/* Lightweight Custom Path row at the bottom of the unified card */}
         <SectionRow>
           <View style={{ gap: 8 }}>
             <View style={{ gap: 2 }}>
               <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                {t("settings.toolchain.overrideTitle")}
+                {t("settings.toolchain.customPathLabel")}
               </Text>
               <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
                 {t("settings.toolchain.overrideDesc")}
@@ -753,7 +788,7 @@ function ToolchainPane() {
                 disabled={!dirtyDraft()}
                 onPress={applyOverride}
               />
-              <If when={Boolean(status().overridePath)}>
+              <If when={Boolean(currentCustomVal())}>
                 <Btn
                   testID="toolchain-override-clear"
                   label={t("settings.toolchain.clearOverride")}
@@ -773,68 +808,6 @@ function ToolchainPane() {
             </If>
           </View>
         </SectionRow>
-      </Section>
-
-      <Section title={t("settings.toolchain.detectedTitle")}>
-        <If
-          when={compilers().length > 0}
-          else={
-            <SectionRow first>
-              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
-                {t("settings.toolchain.noDetected")}
-              </Text>
-            </SectionRow>
-          }
-        >
-          <Each of={compilers()} key={(c) => c.path}>
-            {(compiler, idx) => {
-              const isActive = () => status().active?.path === compiler().path;
-              return (
-                <SectionRow
-                  first={idx() === 0}
-                  trailing={
-                    isActive() ? (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-primary">
-                          {t("settings.toolchain.active")}
-                        </Text>
-                        <If when={Boolean(status().overridePath)}>
-                          <Btn
-                            label={t("settings.toolchain.clearOverride")}
-                            variant="ghost"
-                            onPress={clearOverride}
-                          />
-                        </If>
-                      </View>
-                    ) : (
-                      <Btn
-                        testID={`toolchain-use-${compiler().name}`}
-                        label={t("settings.toolchain.useCompiler")}
-                        onPress={() => selectCompiler(compiler().path)}
-                      />
-                    )
-                  }
-                >
-                  <View style={{ minWidth: 0, gap: 2 }}>
-                    <Text style={{ fontSize: 13, fontWeight: 500, fontFamily: MONO }} class="text-foreground">
-                      {compiler().name}
-                    </Text>
-                    <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
-                      {compiler().version}
-                    </Text>
-                    <Text
-                      tooltip={tip(compiler().path)}
-                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
-                      class="text-muted-foreground"
-                    >
-                      {compiler().path}
-                    </Text>
-                  </View>
-                </SectionRow>
-              );
-            }}
-          </Each>
-        </If>
       </Section>
 
       <If when={!status().active}>

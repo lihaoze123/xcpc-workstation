@@ -20,6 +20,8 @@ export function ExportButton(props: {
   busy: Book | undefined;
   /** Incremented by the caller each time an export finishes cleanly. */
   exportedSeq?: number;
+  /** Demotes the button to outline/secondary styling when another primary CTA owns the screen. */
+  secondary?: boolean;
   onExport: (book: Book) => void;
   onReveal: (book: Book) => void;
 }) {
@@ -91,11 +93,23 @@ export function ExportButton(props: {
     else if (id === "reveal") props.onReveal(props.book);
   };
 
+  const sec = () => Boolean(props.secondary);
+  const fgTone = () => (sec() ? "foreground" : "primary-foreground");
+  const fgClass = () => (sec() ? "text-foreground" : "text-primary-foreground");
+  const btnClass = (disabled: boolean) =>
+    sec()
+      ? disabled
+        ? "bg-card"
+        : "bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      : disabled
+        ? "bg-primary"
+        : "bg-primary hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
   const chevronTrigger = (disabled: boolean) => (
     <View
       testID="export-menu"
       disabled={disabled}
-      class={disabled ? "bg-primary" : "bg-primary hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+      class={btnClass(disabled)}
       style={{
         width: 24,
         height: 28,
@@ -106,7 +120,7 @@ export function ExportButton(props: {
         transitionTimingFunction: EASE_STANDARD,
       }}
     >
-      <Icon name="chevronDown" size={14} tone="primary-foreground" />
+      <Icon name="chevronDown" size={14} tone={fgTone()} />
     </View>
   );
 
@@ -116,19 +130,20 @@ export function ExportButton(props: {
         flexDirection: "row",
         height: 28,
         borderRadius: 6,
+        borderWidth: sec() ? 1 : 0,
         overflow: "hidden",
         opacity: busy() ? 0.8 : 1,
         transitionProperty: "opacity",
         transitionDuration: ms(120),
         transitionTimingFunction: EASE_STANDARD,
       }}
-      class="bg-primary"
+      class={sec() ? "bg-card border-border" : "bg-primary"}
     >
       <View
         testID="export-main"
         disabled={busy()}
         onPress={() => !busy() && props.onExport(props.book)}
-        class={busy() ? "bg-primary" : "bg-primary hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+        class={btnClass(busy())}
         style={{
           minWidth: 96,
           paddingLeft: 12,
@@ -142,16 +157,19 @@ export function ExportButton(props: {
         }}
       >
         <View style={{ width: showSpinner() ? 12 : 0, marginRight: showSpinner() ? 6 : 0, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
-          <DelayedSpinner active={busy()} class="border-primary-foreground" />
+          <DelayedSpinner active={busy()} class={sec() ? "border-foreground" : "border-primary-foreground"} />
         </View>
         <If when={confirmed() && !busy()}>
-          <Icon name="check" size={14} tone="primary-foreground" style={{ marginRight: 5 }} />
+          <Icon name="check" size={14} tone={fgTone()} style={{ marginRight: 5 }} />
         </If>
-        <Text style={{ fontSize: 13 }} class="text-primary-foreground">
+        <Text style={{ fontSize: 13 }} class={fgClass()}>
           {confirmed() && !busy() ? t("export.exported") : t("export.pdf")}
         </Text>
       </View>
-      <View style={{ width: 1, alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.22)" }} />
+      <View
+        style={{ width: 1, alignSelf: "stretch", backgroundColor: sec() ? undefined : "rgba(255,255,255,0.22)" }}
+        class={sec() ? "bg-border" : undefined}
+      />
       <If when={!busy()} else={chevronTrigger(true)}>
         <AppMenu entries={entries()} onSelect={onMenuSelect} align="end" minWidth={210} trigger={chevronTrigger(false)} />
       </If>

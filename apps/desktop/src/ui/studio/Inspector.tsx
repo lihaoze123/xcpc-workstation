@@ -157,33 +157,8 @@ export function Inspector(props: {
               />
             </If>
             <If when={props.target === "problem"}>
-              <ProblemInfoTab id={props.id} done={done} hasFollowingSection={showAssets()} />
-            </If>
-            <If when={showAssets()}>
-              <View style={{ padding: 14, gap: 10 }}>
-                <View
-                  testID="inspector-assets-btn"
-                  onPress={() => props.onOpenAssets?.()}
-                  class="border border-border bg-card hover:bg-muted active:bg-accent"
-                  style={{
-                    height: 34,
-                    paddingLeft: 10,
-                    paddingRight: 8,
-                    borderRadius: 7,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                    ...colorTransition(140),
-                  }}
-                >
-                  <Icon name="image" size={15} tone="secondary-foreground" />
-                  <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                    {t("inspector.assetsCount", { count: assetCount() })}
-                  </Text>
-                  <Icon name="chevronRight" size={14} tone="muted-foreground" />
-                </View>
-
-                <If when={props.target === "problem" && (props.hasPackage || !info().readOnly)}>
+              <If when={props.hasPackage || !info().readOnly}>
+                <Section>
                   <If
                     when={props.hasPackage}
                     else={
@@ -256,7 +231,33 @@ export function Inspector(props: {
                       <Icon name="chevronRight" size={14} tone="muted-foreground" />
                     </View>
                   </If>
-                </If>
+                </Section>
+              </If>
+              <ProblemInfoTab id={props.id} done={done} hasFollowingSection={showAssets()} />
+            </If>
+            <If when={showAssets()}>
+              <View style={{ padding: 14 }}>
+                <View
+                  testID="inspector-assets-btn"
+                  onPress={() => props.onOpenAssets?.()}
+                  class="border border-border bg-card hover:bg-muted active:bg-accent"
+                  style={{
+                    height: 34,
+                    paddingLeft: 10,
+                    paddingRight: 8,
+                    borderRadius: 7,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    ...colorTransition(140),
+                  }}
+                >
+                  <Icon name="image" size={15} tone="secondary-foreground" />
+                  <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                    {t("inspector.assetsCount", { count: assetCount() })}
+                  </Text>
+                  <Icon name="chevronRight" size={14} tone="muted-foreground" />
+                </View>
               </View>
             </If>
           </If>

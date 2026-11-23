@@ -210,22 +210,82 @@ export function formatSecondsFromMs(msVal: number): string {
   return `${(msVal / 1000).toFixed(2)}s`;
 }
 
-/** Formats slowest std ratio, e.g. `0.38s / 2.00s = 19%`. */
+/** Formats slowest std ratio cleanly, e.g. `1 ms / 1.0 s (<1%)` for sub-100ms or `0.38 s / 2.0 s (19%)`. */
 export function formatStdTimeRatio(margin: SafetyMarginData | undefined): string {
   if (!margin || margin.time_limit_ms <= 0) return "–";
-  const pct = Math.round(margin.std_time_ratio * 100);
-  return `${formatSecondsFromMs(margin.std_max_time_ms)} / ${formatSecondsFromMs(margin.time_limit_ms)} = ${pct}%`;
+  const stdStr = margin.std_max_time_ms < 100
+    ? `${Math.round(margin.std_max_time_ms)} ms`
+    : `${(margin.std_max_time_ms / 1000).toFixed(2)} s`;
+  const limitStr = `${(margin.time_limit_ms / 1000).toFixed(1)} s`;
+  const pctNum = margin.std_time_ratio * 100;
+  const pctStr = pctNum > 0 && pctNum < 1 ? "<1%" : `${Math.round(pctNum)}%`;
+  return `${stdStr} / ${limitStr} (${pctStr})`;
 }
 
-/** Formats AC vs TLE margin when both slowest AC and fastest TLE exist. */
-export function formatAcVsTleMargin(margin: SafetyMarginData | undefined): string {
+/** Formats AC vs TLE margin when both slowest AC and fastest TLE exist, else returns `undefined` so the UI hides it. */
+export function formatAcVsTleMargin(margin: SafetyMarginData | undefined): string | undefined {
   if (!margin || margin.slowest_ac_time_ms == null || margin.fastest_tle_time_ms == null) {
-    return "–";
+    return undefined;
   }
   const ac = margin.slowest_ac_time_ms;
   const tle = margin.fastest_tle_time_ms;
   const ratio = ac > 0 ? `${(tle / ac).toFixed(1)}×` : "∞";
-  return `${formatSecondsFromMs(ac)} vs ${formatSecondsFromMs(tle)} (${ratio})`;
+  const acStr = ac < 100 ? `${Math.round(ac)} ms` : formatSecondsFromMs(ac);
+  const tleStr = tle < 100 ? `${Math.round(tle)} ms` : formatSecondsFromMs(tle);
+  return `${acStr} vs ${tleStr} (${ratio})`;
+}
+
+/**
+ * Returns `true` when a single matrix cell's verdict violates the solution's configured `expect`
+ * (e.g. `std` / `AC`-expected solution getting non-`AC`, a wrong solution getting an unexpected
+ * failure verdict like `RE` when expecting `WA`, or a wrong solution unexpectedly passing all tests).
+ */
+export function isCellVerdictAnomaly(
+  verdict: string,
+  expected: readonly string[],
+  isMain: boolean,
+  solutionMatched?: boolean,
+): boolean {
+  const v = verdict.toUpperCase();
+  if (!v) return false;
+  if (isMain) return v !== "AC";
+  const exp = expected.map((e) => e.toUpperCase());
+  if (exp.length === 0) return v !== "AC";
+  if (exp.length === 1 && exp[0] === "AC") return v !== "AC";
+  if (v === "AC") return solutionMatched === false;
+  return !exp.includes(v);
+}
+
+/** Returns `true` when a build error string indicates no C++ compiler was found. */
+export function isMissingCompilerError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  const lower = error.toLowerCase();
+  return (
+    lower.includes("no c++ compiler") ||
+    lower.includes("compiler not found") ||
+    lower.includes("未检测到") ||
+    lower.includes("g++") && lower.includes("not found")
+  );
+}
+
+/** Extracts problem slug from a `problems/<slug>/...` diagnostic file path (for contest-mode Preflight jump). */
+export function problemSlugFromDiagnosticFile(file: string | null | undefined): string | undefined {
+  if (!file) return undefined;
+  const m = file.match(/^problems\/([^/]+)\//);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Returns the custom path text to show in Settings -> Toolchain's custom input box:
+ * only populates it when `overridePath` is set and is NOT one of the detected PATH compilers.
+ */
+export function customOverrideInputValue(
+  overridePath: string | null | undefined,
+  detectedCompilers: readonly DetectedCompilerJs[],
+): string {
+  if (!overridePath) return "";
+  if (detectedCompilers.some((c) => c.path === overridePath)) return "";
+  return overridePath;
 }
 
 /** Accessible light/dark semantic badge colors for judge verdicts. */

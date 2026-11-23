@@ -52,8 +52,8 @@ import { panelTransition } from "../motion";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
-import { BuildConsole } from "./BuildConsole";
-import { shouldShowBuildTab } from "./buildLogic";
+import { BuildConsole, type BuildConsoleController } from "./BuildConsole";
+import { problemSlugFromDiagnosticFile, shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
@@ -189,6 +189,7 @@ export function StudioView(props: { active: boolean }) {
   const freeze = createFreeze();
   let canvas: CanvasController | undefined;
   let editorActions: MarkdownEditorActions | undefined;
+  let buildConsole: BuildConsoleController | undefined;
 
   const contest = computed(() => {
     void revision();
@@ -241,6 +242,21 @@ export function StudioView(props: { active: boolean }) {
         freeze.reset();
       }
       if (t?.target !== "contest") coverActive.set(false);
+    });
+  });
+
+  // Apply optional `initialTab` when navigating directly to a tab (e.g. "build" from Library or contest Preflight).
+  effect(() => {
+    const s = studio();
+    const want = s?.initialTab;
+    if (!want) return;
+    untracked(() => {
+      if (want === "build" && s.target === "problem") {
+        packageRefreshSeq.set(packageRefreshSeq() + 1);
+        tab.set("build");
+      } else if (want !== "build") {
+        tab.set(want);
+      }
     });
   });
 
@@ -556,9 +572,17 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function finding(d: PreviewDiagnostic) {
-    if (d.code?.startsWith("package_") && hasPackage()) {
-      setTab("build");
-      return;
+    if (d.code?.startsWith("package_")) {
+      if (target()?.target === "contest") {
+        const slug = problemSlugFromDiagnosticFile(d.file);
+        if (slug) {
+          openStudio({ target: "problem", id: slug, initialTab: "build" });
+          return;
+        }
+      } else if (hasPackage()) {
+        setTab("build");
+        return;
+      }
     }
     if (d.file && d.line != null) locate({ file: d.file, line: d.line, column: d.column ?? 1 });
     else if (d.page != null) canvas?.goPage(d.page);
@@ -805,6 +829,9 @@ export function StudioView(props: { active: boolean }) {
       "alt+4": on(() => {
         if (hasPackage()) setTab("build");
       }),
+      "mod+b": on(() => {
+        if (tab() === "build") buildConsole?.triggerPrimaryRun();
+      }),
       "mod+i": on(toggleInspector),
       "mod+s": on(save),
       "mod+e": on(() => void exportBook(book())),
@@ -949,30 +976,32 @@ export function StudioView(props: { active: boolean }) {
         }
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Btn
-              label={t("studio.preview")}
-              icon="fileText"
-              variant="ghost"
-              testID="toggle-preview"
-              disabled={tab() === "build"}
-              tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
-              onPress={togglePreview}
-              style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
-            />
-            <Btn
-              label={t("studio.focus")}
-              icon="filePenLine"
-              variant="ghost"
-              testID="toggle-focus"
-              tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
-              onPress={toggleFocusMode}
-              style={focusMode() ? { backgroundColor: token("accent") } : undefined}
-            />
+            <If when={tab() !== "build"}>
+              <Btn
+                label={t("studio.preview")}
+                icon="fileText"
+                variant="ghost"
+                testID="toggle-preview"
+                tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
+                onPress={togglePreview}
+                style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
+              />
+              <Btn
+                label={t("studio.focus")}
+                icon="filePenLine"
+                variant="ghost"
+                testID="toggle-focus"
+                tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
+                onPress={toggleFocusMode}
+                style={focusMode() ? { backgroundColor: token("accent") } : undefined}
+              />
+            </If>
             <ExportButton
               status={status()}
               book={book()}
               busy={exporting()}
               exportedSeq={exportedSeq()}
+              secondary={tab() === "build"}
               onExport={(b) => void exportBook(b)}
               onReveal={(b) => void reveal(b)}
             />
@@ -1294,6 +1323,7 @@ export function StudioView(props: { active: boolean }) {
                       problemId={id()}
                       readOnly={info().readOnly}
                       inspectionResult={packageInspection()}
+                      controller={(c) => (buildConsole = c)}
                       onRefreshPackage={() => {
                         refresh();
                         packageRefreshSeq.set(packageRefreshSeq() + 1);

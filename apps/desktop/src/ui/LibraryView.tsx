@@ -31,6 +31,7 @@ import {
   jumpToContest,
   openStudio,
   preview,
+  refresh,
   revision,
   selectedContest,
   selectedProblem,
@@ -468,6 +469,17 @@ export function LibraryView(props: { active: boolean }) {
                         },
                       },
                       { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
+                      {
+                        label: t("library.menu.createPackage"),
+                        disabled: ro || preview.inspectPackage(row.id).hasPackage,
+                        onSelect: () => {
+                          const res = preview.initPackage(row.id);
+                          if (res.ok) {
+                            refresh();
+                            openStudio({ target: "problem", id: row.id, initialTab: "build" });
+                          }
+                        },
+                      },
                       { label: t("library.menu.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
                       { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
                       { type: "separator" },
@@ -725,6 +737,9 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                 align="end"
                 entries={[
                   { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
+                  ...(readOnly() || preview.inspectPackage(props.id).hasPackage
+                    ? []
+                    : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
                   { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: readOnly() },
                   { id: "add", label: t("library.menu.addToContest"), icon: "listPlus", disabled: readOnly() },
                   { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
@@ -737,6 +752,12 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                       void Clipboard.writeText(preview.exportMarkdownWithSamples(props.id, null));
                     } catch {
                       // Ignore errors when problem files are unreadable.
+                    }
+                  } else if (id === "createPackage") {
+                    const res = preview.initPackage(props.id);
+                    if (res.ok) {
+                      refresh();
+                      openStudio({ target: "problem", id: props.id, initialTab: "build" });
                     }
                   } else if (id === "duplicate") dialog.set({ kind: "duplicateProblem", problemId: props.id });
                   else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });

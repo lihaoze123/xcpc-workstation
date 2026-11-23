@@ -1,16 +1,20 @@
 import { describe, expect, test } from "nsh/test";
 import {
   buildMatrixLookup,
+  customOverrideInputValue,
   dedupDetectedCompilers,
   formatAcVsTleMargin,
   formatBytesCompact,
   formatMemoryKib,
   formatStdTimeRatio,
   hasInvalidCxxOverride,
+  isCellVerdictAnomaly,
+  isMissingCompilerError,
   isPackageIncomplete,
   matrixCellKey,
   normalizeCxxOverrideInput,
   partitionGates,
+  problemSlugFromDiagnosticFile,
   resolveSolutionHeaderSpecs,
   selectMatrixCell,
   shouldShowBuildTab,
@@ -71,9 +75,12 @@ describe("Safety margin formatting", () => {
       fastest_tle_solution: "brute",
       fastest_tle_time_ms: 2150,
     };
-    expect(formatStdTimeRatio(margin)).toBe("0.38s / 2.00s = 19%");
+    expect(formatStdTimeRatio(margin)).toBe("0.38 s / 2.0 s (19%)");
+    expect(formatStdTimeRatio({ ...margin, std_max_time_ms: 1, time_limit_ms: 1000, std_time_ratio: 0.001 })).toBe(
+      "1 ms / 1.0 s (<1%)",
+    );
     expect(formatAcVsTleMargin(margin)).toBe("0.38s vs 2.15s (5.7×)");
-    expect(formatAcVsTleMargin({ ...margin, fastest_tle_time_ms: null })).toBe("–");
+    expect(formatAcVsTleMargin({ ...margin, fastest_tle_time_ms: null })).toBeUndefined();
   });
 });
 
@@ -191,5 +198,24 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     ]);
     expect(attention.map((g) => g.id)).toEqual(["std", "wa"]);
     expect(passed.map((g) => g.id)).toEqual(["val", "chk"]);
+  });
+
+  test("detects expectation anomalies, missing compiler errors, diagnostic slugs, and custom override input", () => {
+    expect(isCellVerdictAnomaly("AC", ["AC"], true)).toBe(false);
+    expect(isCellVerdictAnomaly("WA", ["AC"], true)).toBe(true);
+    expect(isCellVerdictAnomaly("WA", ["WA"], false, true)).toBe(false);
+    expect(isCellVerdictAnomaly("RE", ["WA"], false, false)).toBe(true);
+    expect(isCellVerdictAnomaly("AC", ["WA"], false, true)).toBe(false);
+    expect(isCellVerdictAnomaly("AC", ["WA"], false, false)).toBe(true);
+
+    expect(isMissingCompilerError("no C++ compiler found on PATH")).toBe(true);
+    expect(isMissingCompilerError("validator rejected test 1")).toBe(false);
+
+    expect(problemSlugFromDiagnosticFile("problems/a-plus-b/problem.toml")).toBe("a-plus-b");
+    expect(problemSlugFromDiagnosticFile("contests/round-1/contest.toml")).toBeUndefined();
+
+    const detected = [{ name: "g++", path: "/usr/bin/g++", version: "g++ 16", kind: "gpp" }];
+    expect(customOverrideInputValue("/usr/bin/g++", detected)).toBe("");
+    expect(customOverrideInputValue("/opt/custom/g++", detected)).toBe("/opt/custom/g++");
   });
 });
