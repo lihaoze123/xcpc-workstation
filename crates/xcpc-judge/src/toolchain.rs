@@ -187,16 +187,37 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
         .filter(|s| !s.is_empty());
 
     let mut compilers = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen_paths = HashSet::new();
+    let mut seen_name_versions = HashSet::new();
 
     let mut try_add = |candidate: &Path| {
         if let Some(info) = probe_compiler(candidate) {
-            let key = fs::canonicalize(&info.path).unwrap_or_else(|_| PathBuf::from(&info.path));
-            if seen.insert(key) {
+            let path_key =
+                fs::canonicalize(&info.path).unwrap_or_else(|_| PathBuf::from(&info.path));
+            let nv_key = (info.name.clone(), info.version.clone());
+            if seen_paths.insert(path_key) && seen_name_versions.insert(nv_key) {
                 compilers.push(info);
             }
         }
     };
+
+    // Scan PATH first so the first occurrence in PATH (e.g. NixOS gcc-wrapper before unwrapped
+    // gcc) is preserved when deduplicating by (name, version).
+    let names: &[&str] = if cfg!(windows) {
+        &["g++.exe", "clang++.exe"]
+    } else {
+        &["g++", "clang++"]
+    };
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for name in names {
+            for dir in std::env::split_paths(&path_var) {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    try_add(&candidate);
+                }
+            }
+        }
+    }
 
     let explicit_active = if let Some(ref ov) = override_path {
         let p = PathBuf::from(ov);
@@ -215,23 +236,6 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
     } else {
         None
     };
-
-    // Scan PATH for g++ and clang++.
-    let names: &[&str] = if cfg!(windows) {
-        &["g++.exe", "clang++.exe"]
-    } else {
-        &["g++", "clang++"]
-    };
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for name in names {
-            for dir in std::env::split_paths(&path_var) {
-                let candidate = dir.join(name);
-                if candidate.is_file() {
-                    try_add(&candidate);
-                }
-            }
-        }
-    }
 
     let active = if override_path.is_some() || env_override.is_some() {
         explicit_active

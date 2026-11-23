@@ -16,8 +16,9 @@ pub use build::{BuildOptions, ProgressCallback, build_package};
 pub use cache::{JudgeCache, default_cache_root};
 pub use error::{JudgeError, Result};
 pub use ops::{
-    InitPackageResult, PackageFiles, PackageInspection, StressOptions, StressResult,
-    TestCasePreview, init_package, inspect_package, inspect_test_case, stress_package,
+    InitPackageResult, PackageFiles, PackageInspection, PackageSolutionInfo, StressOptions,
+    StressResult, TestCasePreview, init_package, inspect_package, inspect_test_case,
+    stress_package,
 };
 pub use package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, PackageFreshness, TestSource, build_dir_for,

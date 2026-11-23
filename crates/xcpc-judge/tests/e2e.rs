@@ -70,6 +70,13 @@ fn unit_parsers_and_language_detection() {
     let tc = detect_toolchain(None);
     assert!(tc.active.is_some(), "expected g++ or clang++ in PATH");
     assert!(!tc.install_guide.is_empty());
+    let mut seen_nv = std::collections::HashSet::new();
+    for c in &tc.compilers {
+        assert!(
+            seen_nv.insert((c.name.clone(), c.version.clone())),
+            "duplicate (name, version) in detected compilers: {c:?}"
+        );
+    }
 }
 
 #[test]
@@ -638,4 +645,116 @@ int main() {
         check_package_freshness(&ws, "wb-sample").unwrap(),
         PackageFreshness::VerifiedFresh { .. }
     ));
+}
+
+#[test]
+fn inspect_package_includes_solution_specs_before_first_build() {
+    let extra_toml = r#"
+[solutions.std]
+main = true
+
+[solutions.brute]
+expect = "AC"
+tags = ["sample", "small"]
+
+[solutions.wrong_wa]
+expect = ["WA", "TLE"]
+"#;
+    let (_dir, ws) = setup_workspace_with_problem("prebuild-insp", extra_toml);
+    ws.write(
+        "problems/prebuild-insp/solutions/std.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write(
+        "problems/prebuild-insp/solutions/brute.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write(
+        "problems/prebuild-insp/solutions/wrong_wa.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+
+    let insp = inspect_package(&ws, "prebuild-insp").unwrap();
+    assert!(insp.last_report.is_none());
+    assert_eq!(insp.solutions.len(), 3);
+    assert_eq!(insp.solutions[0].name, "std");
+    assert!(insp.solutions[0].is_main);
+    assert_eq!(insp.solutions[0].expected, vec!["AC"]);
+
+    let brute = insp.solutions.iter().find(|s| s.name == "brute").unwrap();
+    assert!(!brute.is_main);
+    assert_eq!(brute.expected, vec!["AC"]);
+    assert_eq!(
+        brute.tags.as_deref(),
+        Some(&["sample".to_string(), "small".to_string()][..])
+    );
+
+    let wrong = insp
+        .solutions
+        .iter()
+        .find(|s| s.name == "wrong_wa")
+        .unwrap();
+    assert!(!wrong.is_main);
+    assert_eq!(wrong.expected, vec!["WA", "TLE"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runner_does_not_leak_parent_rss() {
+    // Allocate and touch 64 MiB in the parent test process to inflate parent hiwater_rss.
+    let mut parent_ballast = vec![0u8; 64 * 1024 * 1024];
+    for chunk in parent_ballast.chunks_mut(4096) {
+        chunk[0] = 42;
+    }
+    let _keep = std::hint::black_box(&parent_ballast);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = xcpc_judge::JudgeCache::open(tmp.path().join("cache")).unwrap();
+    let compiler = xcpc_judge::resolve_active_compiler(None).unwrap();
+    let src = br#"#include <iostream>
+int main() {
+    int a, b;
+    if (std::cin >> a >> b) std::cout << (a + b) << '\n';
+    return 0;
+}
+"#;
+    let src_path = tmp.path().join("tiny.cpp");
+    fs::write(&src_path, src).unwrap();
+    let testlib = xcpc_judge::assets::resolve_testlib(tmp.path(), tmp.path());
+    let compiled = xcpc_judge::toolchain::compile_cached(
+        &cache,
+        &compiler,
+        SourceLanguage::Cpp { std: CppStd::Cpp20 },
+        "tiny",
+        "tiny.cpp",
+        src,
+        Some(&src_path),
+        &testlib,
+    )
+    .unwrap();
+
+    let in_path = tmp.path().join("in.txt");
+    let out_path = tmp.path().join("out.txt");
+    fs::write(&in_path, b"3 4\n").unwrap();
+
+    let limits = xcpc_judge::RunLimits::from_problem_limits(Some("1s"), Some("64MB")).unwrap();
+    let outcome = xcpc_judge::run_process(
+        &compiled.binary_path,
+        &[],
+        Some(&in_path),
+        Some(&out_path),
+        limits,
+        None,
+    )
+    .unwrap();
+    assert_eq!(outcome.verdict, Verdict::AC);
+    assert!(
+        outcome.peak_memory_kib < 32 * 1024,
+        "parent RSS leaked into child peak_memory_kib: {} KiB",
+        outcome.peak_memory_kib
+    );
+    drop(parent_ballast);
 }

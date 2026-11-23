@@ -282,6 +282,117 @@ pub fn run_validator(
     }
 }
 
+#[cfg(target_os = "linux")]
+const LINUX_RUNNER_HELPER_CPP: &str = r#"
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static void set_lim(int resource, unsigned long long soft, unsigned long long hard) {
+    struct rlimit lim;
+    lim.rlim_cur = static_cast<rlim_t>(soft);
+    lim.rlim_max = static_cast<rlim_t>(hard);
+    setrlimit(resource, &lim);
+}
+
+int main(int argc, char* argv[]) {
+    // Usage: helper <meta_path> <as_bytes> <fsize_bytes> <cpu_secs> <mem_bytes> <binary> [args...]
+    if (argc < 7) return 2;
+    const char* meta_path = argv[1];
+    unsigned long long as_bytes = std::strtoull(argv[2], nullptr, 10);
+    unsigned long long fsize_bytes = std::strtoull(argv[3], nullptr, 10);
+    unsigned long long cpu_secs = std::strtoull(argv[4], nullptr, 10);
+    unsigned long long mem_bytes = std::strtoull(argv[5], nullptr, 10);
+
+    pid_t pid = fork();
+    if (pid < 0) return 3;
+    if (pid == 0) {
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+        setpgid(0, 0);
+        if (as_bytes > 0) set_lim(RLIMIT_AS, as_bytes, as_bytes);
+        if (fsize_bytes > 0) set_lim(RLIMIT_FSIZE, fsize_bytes, fsize_bytes);
+        if (cpu_secs > 0) set_lim(RLIMIT_CPU, cpu_secs, cpu_secs + 1);
+        struct rlimit cur_stack;
+        if (getrlimit(RLIMIT_STACK, &cur_stack) == 0) {
+            rlim_t desired = mem_bytes > 0 ? static_cast<rlim_t>(mem_bytes) : cur_stack.rlim_max;
+            rlim_t new_soft = (cur_stack.rlim_max == RLIM_INFINITY)
+                ? desired
+                : (desired < cur_stack.rlim_max ? desired : cur_stack.rlim_max);
+            if (new_soft > cur_stack.rlim_cur) {
+                struct rlimit lim = { new_soft, cur_stack.rlim_max };
+                setrlimit(RLIMIT_STACK, &lim);
+            }
+        }
+        execv(argv[6], &argv[6]);
+        _exit(127);
+    }
+
+    int status = 0;
+    struct rusage ru;
+    std::memset(&ru, 0, sizeof(ru));
+    while (wait4(pid, &status, 0, &ru) < 0) {
+        if (errno == EINTR) continue;
+        return 4;
+    }
+
+    int exit_code = -1;
+    int sig = 0;
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        sig = WTERMSIG(status);
+    }
+
+    unsigned long long user_us =
+        static_cast<unsigned long long>(ru.ru_utime.tv_sec) * 1000000ULL +
+        static_cast<unsigned long long>(ru.ru_utime.tv_usec);
+    unsigned long long sys_us =
+        static_cast<unsigned long long>(ru.ru_stime.tv_sec) * 1000000ULL +
+        static_cast<unsigned long long>(ru.ru_stime.tv_usec);
+    unsigned long long maxrss_kib = static_cast<unsigned long long>(ru.ru_maxrss);
+
+    FILE* f = std::fopen(meta_path, "w");
+    if (!f) return 5;
+    std::fprintf(f, "%d %d %llu %llu %llu\n", exit_code, sig, user_us, sys_us, maxrss_kib);
+    std::fclose(f);
+    return 0;
+}
+"#;
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_runner_helper() -> Option<std::path::PathBuf> {
+    use std::sync::OnceLock;
+    static HELPER: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    HELPER
+        .get_or_init(|| {
+            let compiler = crate::toolchain::resolve_active_compiler(None).ok()?;
+            let cache = crate::cache::JudgeCache::open_default().ok()?;
+            let testlib = crate::assets::ResolvedTestlib::Bundled {
+                content_hash: String::new(),
+            };
+            let res = crate::toolchain::compile_cached(
+                &cache,
+                &compiler,
+                crate::toolchain::SourceLanguage::Cpp {
+                    std: crate::toolchain::CppStd::Cpp20,
+                },
+                "xcpc-runner-helper",
+                "<builtin:runner-helper>",
+                LINUX_RUNNER_HELPER_CPP.as_bytes(),
+                None,
+                &testlib,
+            )
+            .ok()?;
+            Some(res.binary_path)
+        })
+        .clone()
+}
+
 #[cfg(unix)]
 fn run_process_unix(
     binary: &Path,
@@ -292,10 +403,49 @@ fn run_process_unix(
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<RunOutcome> {
     use std::io::Read;
+    #[cfg(not(target_os = "linux"))]
     use std::os::unix::process::CommandExt;
 
-    let mut cmd = Command::new(binary);
-    cmd.args(args);
+    // Compute rlimits for the child process.
+    // Virtual address space (RLIMIT_AS) gets headroom over RSS limit so C++ runtime
+    // mappings don't cause false MLE, while ru_maxrss enforces the exact memory limit.
+    let mem_bytes = limits.memory_limit_kib.saturating_mul(1024);
+    let as_limit_bytes = mem_bytes
+        .saturating_mul(2)
+        .max(mem_bytes.saturating_add(256 * 1024 * 1024));
+    let fsize_bytes = limits.fsize_limit_bytes;
+    let cpu_secs = (limits.time_limit_ms / 1000).saturating_add(2);
+
+    // On Linux, spawning a child directly from a large parent (e.g. Desktop GUI with ~166 MB
+    // RSS) leaks the parent's `mm->hiwater_rss` into the child's `wait4` `ru_maxrss` even
+    // under `posix_spawn` (`CLONE_VM | CLONE_VFORK`). Running through a tiny ~2 MB helper
+    // binary gives the target a clean `mm` before `execv` and accurate `ru_maxrss` + exact
+    // pre-exec `setrlimit`.
+    #[cfg(target_os = "linux")]
+    let (mut cmd, meta_file) = if let Some(helper_bin) = ensure_linux_runner_helper() {
+        let meta =
+            tempfile::NamedTempFile::new().map_err(|e| io_err("create runner meta file", e))?;
+        let mut c = Command::new(&helper_bin);
+        c.arg(meta.path())
+            .arg(as_limit_bytes.to_string())
+            .arg(fsize_bytes.to_string())
+            .arg(cpu_secs.to_string())
+            .arg(mem_bytes.to_string())
+            .arg(binary)
+            .args(args);
+        (c, Some(meta))
+    } else {
+        let mut c = Command::new(binary);
+        c.args(args);
+        (c, None)
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let mut cmd = {
+        let mut c = Command::new(binary);
+        c.args(args);
+        c
+    };
 
     match stdin_path {
         Some(p) => {
@@ -320,16 +470,7 @@ fn run_process_unix(
 
     cmd.stderr(Stdio::piped());
 
-    // Compute rlimits for the child process.
-    // Virtual address space (RLIMIT_AS) gets headroom over RSS limit so C++ runtime
-    // mappings don't cause false MLE, while ru_maxrss enforces the exact memory limit.
-    let mem_bytes = limits.memory_limit_kib.saturating_mul(1024);
-    let as_limit_bytes = mem_bytes
-        .saturating_mul(2)
-        .max(mem_bytes.saturating_add(256 * 1024 * 1024));
-    let fsize_bytes = limits.fsize_limit_bytes;
-    let cpu_secs = (limits.time_limit_ms / 1000).saturating_add(2);
-
+    #[cfg(not(target_os = "linux"))]
     // SAFETY: setrlimit and setpgid are async-signal-safe syscalls.
     unsafe {
         cmd.pre_exec(move || {
@@ -409,23 +550,22 @@ fn run_process_unix(
     let wall_limit = Duration::from_millis(limits.wall_limit_ms);
 
     let watchdog = std::thread::spawn(move || {
+        let kill_child = || unsafe {
+            #[cfg(not(target_os = "linux"))]
+            let _ = libc::kill(-pid, libc::SIGKILL);
+            let _ = libc::kill(pid, libc::SIGKILL);
+        };
         while !wd_finished.load(Ordering::Acquire) {
             if let Some(ref c) = wd_cancel
                 && c.load(Ordering::Relaxed)
             {
                 wd_cancel_hit.store(true, Ordering::Release);
-                unsafe {
-                    let _ = libc::kill(-pid, libc::SIGKILL);
-                    let _ = libc::kill(pid, libc::SIGKILL);
-                }
+                kill_child();
                 return;
             }
             if start.elapsed() >= wall_limit {
                 wd_wall.store(true, Ordering::Release);
-                unsafe {
-                    let _ = libc::kill(-pid, libc::SIGKILL);
-                    let _ = libc::kill(pid, libc::SIGKILL);
-                }
+                kill_child();
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -464,26 +604,50 @@ fn run_process_unix(
         return Err(JudgeError::Cancelled);
     }
 
-    let user_ms = (rusage.ru_utime.tv_sec as u64)
-        .saturating_mul(1000)
-        .saturating_add((rusage.ru_utime.tv_usec as u64) / 1000);
-    let sys_ms = (rusage.ru_stime.tv_sec as u64)
-        .saturating_mul(1000)
-        .saturating_add((rusage.ru_stime.tv_usec as u64) / 1000);
-    let cpu_time_ms = user_ms.saturating_add(sys_ms);
+    // Parse isolated child metrics from helper meta file on Linux if available.
+    #[cfg(target_os = "linux")]
+    let helper_metrics: Option<(Option<i32>, Option<i32>, u64, u64)> =
+        meta_file.as_ref().and_then(|mf| {
+            let text = std::fs::read_to_string(mf.path()).ok()?;
+            let mut parts = text.split_whitespace();
+            let code: i32 = parts.next()?.parse().ok()?;
+            let sig: i32 = parts.next()?.parse().ok()?;
+            let user_us: u64 = parts.next()?.parse().ok()?;
+            let sys_us: u64 = parts.next()?.parse().ok()?;
+            let maxrss_kib: u64 = parts.next()?.parse().ok()?;
+            let exit_code = (code >= 0).then_some(code);
+            let signal = (sig > 0).then_some(sig);
+            let cpu_ms = user_us.saturating_add(sys_us) / 1000;
+            Some((exit_code, signal, cpu_ms, maxrss_kib))
+        });
+    #[cfg(not(target_os = "linux"))]
+    let helper_metrics: Option<(Option<i32>, Option<i32>, u64, u64)> = None;
 
-    // On Linux ru_maxrss is in KiB; on macOS it is in bytes.
-    #[cfg(target_os = "macos")]
-    let peak_memory_kib = (rusage.ru_maxrss as u64) / 1024;
-    #[cfg(not(target_os = "macos"))]
-    let peak_memory_kib = rusage.ru_maxrss as u64;
-
-    let (exit_code, signal) = if libc::WIFEXITED(status) {
-        (Some(libc::WEXITSTATUS(status)), None)
-    } else if libc::WIFSIGNALED(status) {
-        (None, Some(libc::WTERMSIG(status)))
+    let (exit_code, signal, cpu_time_ms, peak_memory_kib) = if let Some(m) = helper_metrics {
+        m
     } else {
-        (None, None)
+        let user_ms = (rusage.ru_utime.tv_sec as u64)
+            .saturating_mul(1000)
+            .saturating_add((rusage.ru_utime.tv_usec as u64) / 1000);
+        let sys_ms = (rusage.ru_stime.tv_sec as u64)
+            .saturating_mul(1000)
+            .saturating_add((rusage.ru_stime.tv_usec as u64) / 1000);
+        let cpu_ms = user_ms.saturating_add(sys_ms);
+
+        // On Linux ru_maxrss is in KiB; on macOS it is in bytes.
+        #[cfg(target_os = "macos")]
+        let peak_kib = (rusage.ru_maxrss as u64) / 1024;
+        #[cfg(not(target_os = "macos"))]
+        let peak_kib = rusage.ru_maxrss as u64;
+
+        let (ec, sig) = if libc::WIFEXITED(status) {
+            (Some(libc::WEXITSTATUS(status)), None)
+        } else if libc::WIFSIGNALED(status) {
+            (None, Some(libc::WTERMSIG(status)))
+        } else {
+            (None, None)
+        };
+        (ec, sig, cpu_ms, peak_kib)
     };
 
     let verdict = if killed_by_wall.load(Ordering::Acquire)

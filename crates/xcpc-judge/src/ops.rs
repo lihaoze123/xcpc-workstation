@@ -49,6 +49,17 @@ pub struct PackageFiles {
     pub checker_self_tests: Vec<String>,
 }
 
+/// Configured metadata for one solution in a problem package (available before the first build).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageSolutionInfo {
+    pub name: String,
+    pub source_rel: String,
+    pub is_main: bool,
+    pub expected: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+}
+
 /// Read-only overview of a problem package (`inspect_package`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackageInspection {
@@ -58,6 +69,8 @@ pub struct PackageInspection {
     pub freshness: PackageFreshness,
     pub checker: String,
     pub files: PackageFiles,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub solutions: Vec<PackageSolutionInfo>,
     pub expanded_tests: Vec<ExpandedTest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirty_inputs: Vec<DirtyInputIssue>,
@@ -162,6 +175,39 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
     let dirty_inputs = check_dirty_inputs(&prob_dir);
 
     let files = collect_package_files(&prob_dir, &checker_spec);
+    let solutions = match discover_solutions(&prob_dir, &problem.meta) {
+        Ok(list) => list
+            .into_iter()
+            .map(|s| PackageSolutionInfo {
+                name: s.name,
+                source_rel: s.source_rel,
+                is_main: s.is_main,
+                expected: s.expect.normalized(),
+                tags: s.tags,
+            })
+            .collect(),
+        Err(_) => {
+            // Fall back to declared solutions from `problem.toml` if a declared file is missing on disk.
+            let mut list: Vec<PackageSolutionInfo> = problem
+                .meta
+                .solutions
+                .iter()
+                .map(|(name, spec)| PackageSolutionInfo {
+                    name: name.clone(),
+                    source_rel: format!("solutions/{name}.cpp"),
+                    is_main: spec.main.unwrap_or(false),
+                    expected: spec
+                        .expect
+                        .as_ref()
+                        .map(|e| e.normalized())
+                        .unwrap_or_else(|| vec!["AC".to_owned()]),
+                    tags: spec.tags.clone(),
+                })
+                .collect();
+            list.sort_by(|a, b| b.is_main.cmp(&a.is_main).then_with(|| a.name.cmp(&b.name)));
+            list
+        }
+    };
     let last_report = load_latest_report(ws, slug);
 
     let gates = last_report
@@ -207,6 +253,7 @@ pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> 
         freshness,
         checker: checker_spec.display_name().to_owned(),
         files,
+        solutions,
         expanded_tests,
         dirty_inputs,
         last_report,
