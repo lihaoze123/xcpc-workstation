@@ -8,7 +8,7 @@ import type { TestCasePreviewJs } from "xcpc-workstation/native";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
-import { Btn, IconBtn, tip } from "../kit";
+import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO, popoverShadow } from "../theme";
 import {
@@ -49,7 +49,7 @@ export function InlineFileEditor(props: {
   const tooLarge = signal(false);
   const dirty = signal(false);
   const conflict = signal(false);
-  const savedFeedback = signal(false);
+  const savedFeedback = createTransientFlag(1500);
   const err = signal<UiError | undefined>(undefined);
   let draftText = "";
   let loadedFor = "";
@@ -110,8 +110,7 @@ export function InlineFileEditor(props: {
     dirty.set(false);
     initialText.set(draftText);
     if (res.contentHash) baseHash.set(res.contentHash);
-    savedFeedback.set(true);
-    setTimeout(() => savedFeedback.set(false), 1600);
+    savedFeedback.trigger();
     props.onSaved();
   }
 
@@ -166,10 +165,13 @@ export function InlineFileEditor(props: {
               <If when={dirty()}>
                 <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
               </If>
-              <If when={savedFeedback() && !dirty()}>
-                <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
-                  {t("build.quickEdit.saved")}
-                </Text>
+              <If when={savedFeedback.active() && !dirty()}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                  <Icon name="check" size={11.5} tone="secondary-foreground" />
+                  <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                    {t("build.quickEdit.saved")}
+                  </Text>
+                </View>
               </If>
             </View>
           </If>
@@ -184,10 +186,13 @@ export function InlineFileEditor(props: {
             <If when={!props.title && dirty()}>
               <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
             </If>
-            <If when={!props.title && savedFeedback() && !dirty()}>
-              <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
-                {t("build.quickEdit.saved")}
-              </Text>
+            <If when={!props.title && savedFeedback.active() && !dirty()}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                <Icon name="check" size={11.5} tone="secondary-foreground" />
+                <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                  {t("build.quickEdit.saved")}
+                </Text>
+              </View>
             </If>
           </View>
         </View>
@@ -324,7 +329,7 @@ export function CellDiagnosticDrawer(props: {
   onOpenTest: (testIndex: number) => void;
 }) {
   const testPreview = signal<TestCasePreviewJs | undefined>(undefined);
-  const copied = signal(false);
+  const copied = createTransientFlag(1600);
 
   effect(() => {
     const slug = props.problemId;
@@ -488,14 +493,14 @@ export function CellDiagnosticDrawer(props: {
               </Text>
               <Btn
                 testID="diag-copy-repro-btn"
-                label={copied() ? t("common.copied") : t("common.copy")}
-                icon={copied() ? "check" : "copy"}
+                label={copied.active() ? t("common.copied") : t("common.copy")}
+                icon={copied.active() ? "check" : "copy"}
                 variant="ghost"
+                style={{ minWidth: 74 }}
                 onPress={() => {
                   if (!props.cell.repro_cmd) return;
                   void Clipboard.writeText(props.cell.repro_cmd);
-                  copied.set(true);
-                  setTimeout(() => copied.set(false), 1600);
+                  copied.trigger();
                 }}
               />
             </View>

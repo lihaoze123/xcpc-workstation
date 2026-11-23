@@ -7,7 +7,7 @@ import { Editor } from "nsh/base";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
-import { Btn, IconBtn, tip } from "../kit";
+import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
 import { Modal } from "../Modal";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO } from "../theme";
@@ -30,6 +30,7 @@ export function PackageQuickEditModal(props: {
   const tooLarge = signal(false);
   const dirty = signal(false);
   const conflict = signal(false);
+  const savedFeedback = createTransientFlag(1500);
   const err = signal<UiError | undefined>(undefined);
   let draftText = "";
 
@@ -94,6 +95,7 @@ export function PackageQuickEditModal(props: {
     dirty.set(false);
     initialText.set(draftText);
     if (res.contentHash) baseHash.set(res.contentHash);
+    savedFeedback.trigger();
     props.onSaved();
   }
 
@@ -133,6 +135,14 @@ export function PackageQuickEditModal(props: {
               <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-chart-4" />
               <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
                 {t("build.quickEdit.unsaved")}
+              </Text>
+            </View>
+          </If>
+          <If when={savedFeedback.active() && !dirty()}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Icon name="check" size={12} tone="secondary-foreground" />
+              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                {t("build.quickEdit.saved")}
               </Text>
             </View>
           </If>

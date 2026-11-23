@@ -395,3 +395,67 @@ export function FieldLabel(props: { label: string }) {
 export function Chevron(props: { size?: number; tone?: IconTone }) {
   return <Icon name="chevronDown" size={props.size ?? 14} tone={props.tone ?? "muted-foreground"} />;
 }
+
+/**
+ * Reusable in-place transient flag (`design-system.md` §6.5): flips to `true` for
+ * `durationMs` and automatically clears its timer on unmount via `cleanup()`.
+ */
+export function createTransientFlag(durationMs = 1600): {
+  active: () => boolean;
+  trigger: (msOverride?: number) => void;
+  clear: () => void;
+} {
+  const state = signal(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    state.set(false);
+  };
+  const trigger = (msOverride?: number) => {
+    if (timer !== undefined) clearTimeout(timer);
+    state.set(true);
+    timer = setTimeout(() => {
+      timer = undefined;
+      state.set(false);
+    }, msOverride ?? durationMs);
+  };
+  cleanup(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+  return { active: () => state(), trigger, clear };
+}
+
+/**
+ * Reusable in-place transient value (`design-system.md` §6.5): holds a value `T` for
+ * `durationMs`, then resets to `undefined`, cleaning up its timer automatically on unmount.
+ */
+export function createTransientValue<T>(durationMs = 1600): {
+  value: () => T | undefined;
+  trigger: (val: T, msOverride?: number) => void;
+  clear: () => void;
+} {
+  const state = signal<T | undefined>(undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    state.set(undefined);
+  };
+  const trigger = (val: T, msOverride?: number) => {
+    if (timer !== undefined) clearTimeout(timer);
+    state.set(val);
+    timer = setTimeout(() => {
+      timer = undefined;
+      state.set(undefined);
+    }, msOverride ?? durationMs);
+  };
+  cleanup(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+  return { value: () => state(), trigger, clear };
+}

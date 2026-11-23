@@ -26,7 +26,7 @@ import type { ActionResult, CleanUnusedAssetsResultJs, ProblemAssetJs } from "xc
 import { ErrorDisplay } from "../ErrorDisplay";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, IconBtn, tip } from "../kit";
+import { Btn, createTransientValue, IconBtn, tip } from "../kit";
 import { Modal } from "../Modal";
 import { colorTransition, overlayTransition, panelTransition } from "../motion";
 import { errorOf, preview, revision, type UiError } from "../store";
@@ -99,6 +99,7 @@ export function AssetsGalleryModal(props: {
   const renaming = signal<string | undefined>(undefined);
   const renameDraft = signal("");
   const confirmingDelete = signal<DeleteConfirm | undefined>(undefined);
+  const cleanedFeedback = createTransientValue<number>(1800);
   const error = signal<UiError | undefined>(undefined);
   const lightboxFailed = signal(false);
 
@@ -306,6 +307,9 @@ export function AssetsGalleryModal(props: {
       return;
     }
     error.set(undefined);
+    if (res.removed.length > 0) {
+      cleanedFeedback.trigger(res.removed.length);
+    }
   }
 
   async function handleImport() {
@@ -505,6 +509,14 @@ export function AssetsGalleryModal(props: {
 
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
             <If when={mode() === "grid"}>
+              <If when={cleanedFeedback.value() != null}>
+                <View testID="assets-cleaned-feedback" style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 4 }}>
+                  <Icon name="check" size={12.5} tone="secondary-foreground" />
+                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                    {t("assets.cleanedUnused", { count: cleanedFeedback.value()! })}
+                  </Text>
+                </View>
+              </If>
               <If when={unusedCount() > 0}>
                 <Btn
                   testID="assets-clean-unused-btn"

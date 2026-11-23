@@ -16,7 +16,7 @@ import type {
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
-import { Btn, IconBtn, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { dialog, goSpace, onExternalChange, preview, type UiError } from "../store";
@@ -66,6 +66,7 @@ export interface BuildConsoleController {
   filterCount(): number;
   toggleFilter(): void;
   running(): boolean;
+  quickRunDone(): boolean;
   startRun(mode: "debug" | "verify"): void;
   cancelRun(): void;
 }
@@ -121,7 +122,7 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
         onPress={() => props.ctrl.toggleFilter()}
       />
 
-      {/* Fixed-width primary CTA slot: constant "验证" <-> outline "取消" in-place */}
+      {/* Fixed-width primary CTA slot: constant "验证" <-> outline "取消" / Tier 3 "✓ 完成" in-place */}
       <View style={{ width: 108, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
         <If
           when={!running()}
@@ -136,58 +137,72 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
             />
           }
         >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Btn
-              testID="build-verify-btn"
-              label={t("build.action.verify")}
-              icon="play"
-              variant="primary"
-              disabled={props.readOnly}
-              tooltip={tip(t("build.action.verify"), "mod+b")}
-              onPress={() => props.ctrl.startRun("verify")}
-              style={{
-                width: 82,
-                borderTopRightRadius: 0,
-                borderBottomRightRadius: 0,
-              }}
-            />
-            <AppMenu
-              align="end"
-              minWidth={184}
-              entries={[
-                {
-                  id: "debug",
-                  label:
-                    filterCount() > 0
-                      ? t("build.action.verifySelected", { count: filterCount() })
-                      : t("build.action.quickRun"),
-                  icon: "play",
-                },
-              ]}
-              onSelect={(id) => {
-                if (id === "debug") props.ctrl.startRun("debug");
-              }}
-              trigger={
-                <View
-                  testID="build-verify-menu-trigger"
-                  class="bg-primary hover:bg-sidebar-primary"
-                  style={{
-                    width: 26,
-                    height: 28,
-                    borderTopRightRadius: 6,
-                    borderBottomRightRadius: 6,
-                    borderLeftWidth: 1,
-                    borderLeftColor: "rgba(255,255,255,0.18)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    opacity: props.readOnly ? 0.5 : 1,
-                  }}
-                >
-                  <Icon name="chevronDown" size={13} tone="primary-foreground" />
-                </View>
-              }
-            />
-          </View>
+          <If
+            when={!props.ctrl.quickRunDone()}
+            else={
+              <Btn
+                testID="build-quick-run-done-btn"
+                label={t("build.action.done")}
+                icon="check"
+                variant="outline"
+                onPress={() => props.ctrl.startRun("verify")}
+                style={{ width: 108 }}
+              />
+            }
+          >
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Btn
+                testID="build-verify-btn"
+                label={t("build.action.verify")}
+                icon="play"
+                variant="primary"
+                disabled={props.readOnly}
+                tooltip={tip(t("build.action.verify"), "mod+b")}
+                onPress={() => props.ctrl.startRun("verify")}
+                style={{
+                  width: 82,
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                }}
+              />
+              <AppMenu
+                align="end"
+                minWidth={184}
+                entries={[
+                  {
+                    id: "debug",
+                    label:
+                      filterCount() > 0
+                        ? t("build.action.verifySelected", { count: filterCount() })
+                        : t("build.action.quickRun"),
+                    icon: "play",
+                  },
+                ]}
+                onSelect={(id) => {
+                  if (id === "debug") props.ctrl.startRun("debug");
+                }}
+                trigger={
+                  <View
+                    testID="build-verify-menu-trigger"
+                    class="bg-primary hover:bg-sidebar-primary"
+                    style={{
+                      width: 26,
+                      height: 28,
+                      borderTopRightRadius: 6,
+                      borderBottomRightRadius: 6,
+                      borderLeftWidth: 1,
+                      borderLeftColor: "rgba(255,255,255,0.18)",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: props.readOnly ? 0.5 : 1,
+                    }}
+                  >
+                    <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                  </View>
+                }
+              />
+            </View>
+          </If>
         </If>
       </View>
     </View>
@@ -237,12 +252,14 @@ export function BuildConsole(props: {
   const lastFullSummaries = signal<Map<string, SolutionSummaryData>>(new Map());
   const lastFullMargin = signal<SafetyMarginData | undefined>(undefined);
 
-  // Inline generator batch editor state (P1-4)
+  // Inline generator batch editor state (P1-4) + Tier 2/3 transient flags (§6.5)
   const batchEditRuleIdx = signal<number | undefined>(undefined);
   const batchEditGen = signal("");
   const batchEditArgs = signal("");
   const batchEditRepeat = signal("1");
   const batchEditTag = signal("");
+  const batchSaved = createTransientFlag(1500);
+  const quickRunDone = createTransientFlag(1400);
 
   // Modals & transient feedback
   const createModalKind = signal<"solution" | "generator" | undefined>(undefined);
@@ -370,7 +387,12 @@ export function BuildConsole(props: {
           liveCells.set([]);
           if (next.reportJson && next.slug === untracked(() => props.problemId)) {
             try {
-              finishedReport.set(JSON.parse(next.reportJson) as BuildReportData);
+              const rep = JSON.parse(next.reportJson) as BuildReportData;
+              finishedReport.set(rep);
+              // Tier 3 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
+              if (!next.cancelled && !next.error && (rep.mode === "debug" || rep.subset)) {
+                quickRunDone.trigger();
+              }
             } catch {
               // ignore
             }
@@ -646,6 +668,7 @@ export function BuildConsole(props: {
       filterOpen.set(!filterOpen());
     },
     running: () => isRunningThis(),
+    quickRunDone: () => quickRunDone.active(),
     startRun,
     cancelRun,
   });
@@ -740,6 +763,7 @@ export function BuildConsole(props: {
       return;
     }
     finishedReport.set(undefined);
+    batchSaved.trigger();
     props.onRefreshPackage();
   }
 
@@ -1841,9 +1865,10 @@ export function BuildConsole(props: {
                               />
                               <Btn
                                 testID="batch-rule-save-btn"
-                                label={t("build.quickEdit.save")}
+                                label={batchSaved.active() ? t("build.batch.updated") : t("build.batch.update")}
                                 icon="check"
                                 variant="outline"
+                                style={{ minWidth: 82 }}
                                 onPress={handleSaveBatchRule}
                               />
                             </View>

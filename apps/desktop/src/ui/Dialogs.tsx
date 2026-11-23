@@ -350,9 +350,14 @@ function AddToContest(props: { problemId: string }) {
   };
 
   const highlighted = signal<number>(enabledIndices()[0] ?? 0);
+  const addedId = signal<string | undefined>(undefined);
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let rootRef: ViewRef | undefined;
   const raf = requestAnimationFrame(() => rootRef?.focus());
-  cleanup(() => cancelAnimationFrame(raf));
+  cleanup(() => {
+    cancelAnimationFrame(raf);
+    if (closeTimer !== undefined) clearTimeout(closeTimer);
+  });
 
   const add = (cid: string) => {
     const c = contests().find((x) => x.id === cid);
@@ -360,7 +365,12 @@ function AddToContest(props: { problemId: string }) {
     const res = preview.composeContest(cid, [...c.items.map((i) => i.id), props.problemId]);
     if (!res.ok) return error.set(errorOf(res));
     refresh();
-    dialog.set(undefined);
+    addedId.set(cid);
+    if (closeTimer !== undefined) clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      closeTimer = undefined;
+      dialog.set(undefined);
+    }, 750);
   };
 
   const activate = (idx: number) => {
@@ -432,19 +442,31 @@ function AddToContest(props: { problemId: string }) {
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13 }} class={off() ? "text-muted-foreground" : "text-foreground"}>
+                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13 }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
                       {c().name}
                     </Text>
                     {c().frozen && <Icon name="lock" size={13} tone="muted-foreground" />}
-                    <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                      {has()
-                        ? t("dialogs.addToContest.alreadyIn")
-                        : c().frozen
-                          ? t("contests.finalized")
-                          : full()
-                            ? t("dialogs.addToContest.full")
-                            : t("contests.problemCount", { count: c().items.length })}
-                    </Text>
+                    <If
+                      when={addedId() === c().id}
+                      else={
+                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                          {has()
+                            ? t("dialogs.addToContest.alreadyIn")
+                            : c().frozen
+                              ? t("contests.finalized")
+                              : full()
+                                ? t("dialogs.addToContest.full")
+                                : t("contests.problemCount", { count: c().items.length })}
+                        </Text>
+                      }
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                        <Icon name="check" size={12.5} tone="primary" />
+                        <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-primary">
+                          {t("dialogs.addToContest.added")}
+                        </Text>
+                      </View>
+                    </If>
                   </View>
                 );
               }}

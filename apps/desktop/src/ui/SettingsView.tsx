@@ -33,7 +33,7 @@ import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "./kit";
+import { Btn, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip } from "./kit";
 import { Section, SectionRow } from "./layout";
 import { abbreviateHome, pathBase } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
@@ -631,6 +631,8 @@ function ToolchainPane() {
   const status = signal<ToolchainStatusJs>(preview.toolchainStatus());
   const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
   const draft = signal(customOverrideInputValue(status().overridePath, compilers()));
+  const redetected = createTransientFlag(1400);
+  const overrideApplied = createTransientFlag(1500);
 
   const syncFromStatus = (next: ToolchainStatusJs) => {
     status.set(next);
@@ -640,11 +642,14 @@ function ToolchainPane() {
 
   const redetect = () => {
     syncFromStatus(preview.toolchainStatus());
+    redetected.trigger();
   };
 
   const applyOverride = () => {
     const normalized = normalizeCxxOverrideInput(draft());
-    syncFromStatus(preview.setCxxOverride(normalized));
+    const next = preview.setCxxOverride(normalized);
+    syncFromStatus(next);
+    if (!next.error) overrideApplied.trigger();
   };
 
   const clearOverride = () => {
@@ -669,8 +674,9 @@ function ToolchainPane() {
         trailing={
           <Btn
             testID="toolchain-redetect-btn"
-            label={t("settings.toolchain.redetect")}
-            icon="rotateCcw"
+            label={redetected.active() ? t("settings.toolchain.refreshed") : t("settings.toolchain.redetect")}
+            icon={redetected.active() ? "check" : "rotateCcw"}
+            style={{ minWidth: 96 }}
             onPress={redetect}
           />
         }
@@ -784,9 +790,11 @@ function ToolchainPane() {
               />
               <Btn
                 testID="toolchain-override-save"
-                label={t("settings.toolchain.saveOverride")}
-                variant="primary"
-                disabled={!dirtyDraft()}
+                label={overrideApplied.active() ? t("settings.toolchain.applied") : t("settings.toolchain.saveOverride")}
+                icon={overrideApplied.active() ? "check" : undefined}
+                variant={overrideApplied.active() ? "outline" : "primary"}
+                disabled={!dirtyDraft() && !overrideApplied.active()}
+                style={{ minWidth: 72 }}
                 onPress={applyOverride}
               />
               <If when={Boolean(currentCustomVal())}>
