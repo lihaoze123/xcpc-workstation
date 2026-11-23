@@ -58,6 +58,9 @@ enum Command {
         /// Populate the workspace with the built-in example contest and problems.
         #[arg(long)]
         example: bool,
+        /// Language for `--example` (`chinese`/`zh` or `english`/`en`; defaults to `chinese`).
+        #[arg(long, alias = "language")]
+        lang: Option<Lang>,
         /// Target directory (defaults to current directory `.`).
         dir: Option<PathBuf>,
     },
@@ -299,7 +302,9 @@ enum TargetKind {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Lang {
+    #[value(alias = "zh")]
     Chinese,
+    #[value(alias = "en")]
     English,
 }
 
@@ -437,7 +442,7 @@ fn dir_has_entries(dir: &std::path::Path) -> Result<bool, Fatal> {
 
 fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
     match &cli.command {
-        Command::Init { example, dir } => {
+        Command::Init { example, lang, dir } => {
             if cli.read_only {
                 return Err(xcpc_storage::Error::ReadOnly.into());
             }
@@ -456,7 +461,8 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                 });
             }
             let ws = if *example {
-                xcpc_storage::init_example_workspace(&target_dir)?
+                let language = lang.map(Lang::into_language).unwrap_or(Language::Chinese);
+                xcpc_storage::init_example_workspace_with_options(&target_dir, None, language)?
             } else {
                 xcpc_storage::init_workspace(&target_dir)?
             };

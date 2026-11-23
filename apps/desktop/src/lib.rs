@@ -176,10 +176,17 @@ impl Preview {
         }
     }
 
-    /// Initializes the built-in example workspace at `dir` (2 curated problems + 2 contests)
+    /// Initializes the built-in example workspace at `dir` (3 curated problems + 2 contests)
+    /// in the requested language (`"en"` / `"english"` or `"zh"` / `"chinese"`, default Chinese)
     /// and switches to it.
-    pub fn init_example_workspace(&self, dir: String, template: Option<String>) -> WorkspaceInfo {
-        match xcpc_storage::init_example_workspace_with_template(&dir, template.as_deref()) {
+    pub fn init_example_workspace(
+        &self,
+        dir: String,
+        template: Option<String>,
+        language: Option<String>,
+    ) -> WorkspaceInfo {
+        let lang = parse_example_language(language.as_deref());
+        match xcpc_storage::init_example_workspace_with_options(&dir, template.as_deref(), lang) {
             Ok(ws) => self.switch(ws),
             Err(e) => WorkspaceInfo {
                 error: Some(e.human_message()),
@@ -195,6 +202,7 @@ impl Preview {
         this: Instance<Self>,
         template: Option<String>,
         labels: Option<DialogLabelsJs>,
+        language: Option<String>,
     ) -> WorkspaceInfo {
         if this.is_disposed() {
             return WorkspaceInfo::default();
@@ -216,6 +224,7 @@ impl Preview {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
+        let lang = parse_example_language(language.as_deref());
         this.with(|p| {
             let dir = match picked {
                 Ok(Some(paths)) => paths.into_iter().next(),
@@ -231,9 +240,10 @@ impl Preview {
                 return p.workspace();
             };
             let target_dir = resolve_example_target_dir(&dir);
-            match xcpc_storage::init_example_workspace_with_template(
+            match xcpc_storage::init_example_workspace_with_options(
                 &target_dir,
                 template.as_deref(),
+                lang,
             ) {
                 Ok(ws) => p.switch(ws),
                 Err(e) => WorkspaceInfo {
@@ -1143,6 +1153,13 @@ impl Preview {
 /// If `dir` is non-empty, returns a fresh `xcpc-example` subdirectory inside it
 /// (`xcpc-example`, `xcpc-example-2`, ...) so existing files are never mixed with
 /// example content.
+pub(crate) fn parse_example_language(raw: Option<&str>) -> xcpc_domain::Language {
+    match raw.map(str::trim) {
+        Some(s) if s.to_ascii_lowercase().starts_with("en") => xcpc_domain::Language::English,
+        _ => xcpc_domain::Language::Chinese,
+    }
+}
+
 pub(crate) fn resolve_example_target_dir(dir: &Path) -> PathBuf {
     let is_non_empty = |p: &Path| {
         std::fs::read_dir(p)

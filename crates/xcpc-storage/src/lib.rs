@@ -28,6 +28,7 @@ use xcpc_domain::{
 pub mod assets;
 pub mod edit;
 pub mod example;
+mod example_en;
 pub mod index;
 pub mod watcher;
 
@@ -36,7 +37,10 @@ pub use assets::{
     RenameAssetResult, ScannedAssetRef, is_existing_asset_name, is_safe_asset_name,
     is_windows_reserved_name, read_image_dimensions,
 };
-pub use example::{init_example_workspace, init_example_workspace_with_template};
+pub use example::{
+    init_example_workspace, init_example_workspace_with_options,
+    init_example_workspace_with_template,
+};
 pub use index::WorkspaceIndex;
 pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 

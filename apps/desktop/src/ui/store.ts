@@ -14,6 +14,7 @@ import type { Book, Space } from "./logic";
 import { clampRatio } from "./logic";
 import {
   languagePref,
+  locale,
   normalizeLanguagePref,
   normalizeLocale,
   systemLocale,
@@ -286,10 +287,14 @@ export function openRecent(path: string) {
 /** Picks a folder, initializes the built-in example workspace there, and opens its studio target. */
 export async function openExampleWorkspace(template?: string) {
   const before = info().root;
-  const next = await preview.pickAndInitExampleWorkspace(template ?? null, {
-    title: t("dialog.pickExample.title"),
-    buttonLabel: t("dialog.pickExample.button"),
-  });
+  const next = await preview.pickAndInitExampleWorkspace(
+    template ?? null,
+    {
+      title: t("dialog.pickExample.title"),
+      buttonLabel: t("dialog.pickExample.button"),
+    },
+    locale(),
+  );
   if (next.root === before && !next.error) return;
   if (next.root === "" && !next.error) return; // cancelled with none open
   if (next.root === before && next.error) {

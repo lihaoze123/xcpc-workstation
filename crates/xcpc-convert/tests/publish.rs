@@ -1304,6 +1304,56 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
 }
 
 #[test]
+fn embedded_english_example_workspace_compiles_cleanly_for_statements_and_editorial() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_example_workspace_with_options(
+        dir.path(),
+        None,
+        xcpc_domain::Language::English,
+    )
+    .unwrap();
+    assert_eq!(
+        ws.list_problems().unwrap(),
+        vec!["crc-check", "tree-beacon", "typst-showcase"]
+    );
+    assert_eq!(
+        ws.list_contests().unwrap(),
+        vec!["minimal-round", "welcome-round"]
+    );
+    assert!(
+        dir.path()
+            .join("problems/crc-check/statement.en.md")
+            .is_file()
+    );
+    assert!(
+        ws.load_problem("crc-check")
+            .unwrap()
+            .default_language()
+            == xcpc_domain::Language::English
+    );
+
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    for (target, kind) in [
+        (Target::Contest("welcome-round".into()), Kind::Statements),
+        (Target::Contest("welcome-round".into()), Kind::Editorial),
+        (Target::Contest("minimal-round".into()), Kind::Statements),
+        (Target::Contest("minimal-round".into()), Kind::Editorial),
+        (Target::Problem("crc-check".into()), Kind::Statements),
+        (Target::Problem("tree-beacon".into()), Kind::Statements),
+        (Target::Problem("typst-showcase".into()), Kind::Statements),
+    ] {
+        let (compiled, _, report) =
+            publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
+        assert!(compiled.is_some());
+        let diags = non_fallback_diagnostics(&report.diagnostics);
+        assert!(
+            report.ok && diags.is_empty(),
+            "english example workspace check had diagnostics for {target:?} {kind:?}: {diags:#?}"
+        );
+    }
+}
+
+#[test]
 fn custom_template_cnoi_and_workspace_preamble_compile_cleanly() {
     let dir = tempfile::tempdir().unwrap();
     let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();

@@ -2114,7 +2114,7 @@ fn cold_start_snapshot_roundtrips_and_invalidates_on_content_and_asset_change() 
     let data_dir = TempDir::new("snap-data");
 
     let preview = Preview::new(Some(data_dir.0.display().to_string()));
-    let info = preview.init_example_workspace(ws_dir.0.display().to_string(), None);
+    let info = preview.init_example_workspace(ws_dir.0.display().to_string(), None, None);
     assert!(
         info.error.is_none(),
         "init example failed: {:?}",

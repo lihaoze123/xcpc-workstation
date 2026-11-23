@@ -15,6 +15,9 @@
 use std::fs;
 use std::path::Path;
 
+use xcpc_domain::Language;
+
+use crate::example_en::EXAMPLE_FILES_EN;
 use crate::{Result, Workspace, init_workspace_with_template};
 
 /// Static files seeded into an example workspace (relative to workspace root).
@@ -1131,25 +1134,44 @@ output = "showcase.out"
     ),
 ];
 
-/// Initializes an XCPC workspace at `dir` and populates it with the embedded example
+/// Initializes an XCPC workspace at `dir` and populates it with the embedded Chinese example
 /// contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`),
 /// `templates/preamble.typ`, and three problems (`crc-check`, `tree-beacon`, `typst-showcase`).
 ///
 /// Existing files are left untouched so re-running is safe and idempotent.
 pub fn init_example_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {
-    init_example_workspace_with_template(dir, None)
+    init_example_workspace_with_options(dir, None, Language::Chinese)
 }
 
-/// Initializes the built-in example workspace at `dir` with an optional default
+/// Initializes the built-in Chinese example workspace at `dir` with an optional default
 /// `template` written to `workspace.toml` (e.g. `"olymp-classic"` or `"cnoi-classic"`).
 pub fn init_example_workspace_with_template(
     dir: impl AsRef<Path>,
     template: Option<&str>,
 ) -> Result<Workspace> {
+    init_example_workspace_with_options(dir, template, Language::Chinese)
+}
+
+/// Initializes the built-in example workspace at `dir` in `language` (`Language::Chinese` or
+/// `Language::English`), with an optional default `template` written to `workspace.toml`.
+///
+/// - `Language::Chinese`: materializes `olymp-classic` + `cnoi-classic` and seeds Chinese
+///   problems & contests (`welcome-round`, `oi-mock`).
+/// - `Language::English`: materializes `olymp-classic` + `minimal` and seeds English
+///   problems (`statement.en.md`) & contests (`welcome-round`, `minimal-round`).
+///
+/// Existing files are left untouched so re-running is safe and idempotent.
+pub fn init_example_workspace_with_options(
+    dir: impl AsRef<Path>,
+    template: Option<&str>,
+    language: Language,
+) -> Result<Workspace> {
     let ws = init_workspace_with_template(dir, template)?;
-    // Example contests reference both `olymp-classic` and `cnoi-classic`: materialize
-    // both presets into `templates/` if not already present.
-    for preset_id in ["olymp-classic", "cnoi-classic"] {
+    let (presets, files): (&[&str], &[(&str, &str)]) = match language {
+        Language::Chinese => (&["olymp-classic", "cnoi-classic"], EXAMPLE_FILES),
+        Language::English => (&["olymp-classic", "minimal"], EXAMPLE_FILES_EN),
+    };
+    for &preset_id in presets {
         let rel = format!("templates/{preset_id}.typ");
         let abs = ws.resolve(&rel)?;
         if fs::symlink_metadata(&abs).is_err()
@@ -1158,7 +1180,7 @@ pub fn init_example_workspace_with_template(
             ws.write(&rel, src.as_bytes())?;
         }
     }
-    for &(rel, content) in EXAMPLE_FILES {
+    for &(rel, content) in files {
         let abs = ws.resolve(rel)?;
         if fs::symlink_metadata(&abs).is_err() {
             ws.write(rel, content.as_bytes())?;
