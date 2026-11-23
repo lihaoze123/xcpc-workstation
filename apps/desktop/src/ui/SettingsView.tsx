@@ -79,6 +79,7 @@ import {
   type AppearanceMode,
 } from "./theme";
 import {
+  dedupDetectedCompilers,
   hasInvalidCxxOverride,
   normalizeCxxOverrideInput,
   verdictBadgeStyle,
@@ -647,9 +648,16 @@ function ToolchainPane() {
     draft.set("");
   };
 
+  const selectCompiler = (path: string) => {
+    const next = preview.setCxxOverride(path);
+    status.set(next);
+    draft.set(next.overridePath ?? "");
+  };
+
   const dark = () => colorScheme() === "dark";
   const invalidOverride = () => hasInvalidCxxOverride(status());
   const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== (status().overridePath ?? "");
+  const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
 
   return (
     <View testID="settings-toolchain-pane" style={{ gap: 24 }}>
@@ -703,7 +711,11 @@ function ToolchainPane() {
                   <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
                     {active().version}
                   </Text>
-                  <Text style={{ fontSize: 12, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+                  <Text
+                    tooltip={tip(active().path)}
+                    style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
+                    class="text-muted-foreground"
+                  >
                     {active().path}
                   </Text>
                 </View>
@@ -765,7 +777,7 @@ function ToolchainPane() {
 
       <Section title={t("settings.toolchain.detectedTitle")}>
         <If
-          when={status().compilers.length > 0}
+          when={compilers().length > 0}
           else={
             <SectionRow first>
               <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
@@ -774,7 +786,7 @@ function ToolchainPane() {
             </SectionRow>
           }
         >
-          <Each of={status().compilers} key={(c) => c.path}>
+          <Each of={compilers()} key={(c) => c.path}>
             {(compiler, idx) => {
               const isActive = () => status().active?.path === compiler().path;
               return (
@@ -782,20 +794,39 @@ function ToolchainPane() {
                   first={idx() === 0}
                   trailing={
                     isActive() ? (
-                      <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-primary">
-                        {t("settings.toolchain.active")}
-                      </Text>
-                    ) : undefined
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-primary">
+                          {t("settings.toolchain.active")}
+                        </Text>
+                        <If when={Boolean(status().overridePath)}>
+                          <Btn
+                            label={t("settings.toolchain.clearOverride")}
+                            variant="ghost"
+                            onPress={clearOverride}
+                          />
+                        </If>
+                      </View>
+                    ) : (
+                      <Btn
+                        testID={`toolchain-use-${compiler().name}`}
+                        label={t("settings.toolchain.useCompiler")}
+                        onPress={() => selectCompiler(compiler().path)}
+                      />
+                    )
                   }
                 >
-                  <View style={{ gap: 2 }}>
+                  <View style={{ minWidth: 0, gap: 2 }}>
                     <Text style={{ fontSize: 13, fontWeight: 500, fontFamily: MONO }} class="text-foreground">
                       {compiler().name}
                     </Text>
                     <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
                       {compiler().version}
                     </Text>
-                    <Text style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+                    <Text
+                      tooltip={tip(compiler().path)}
+                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
+                      class="text-muted-foreground"
+                    >
                       {compiler().path}
                     </Text>
                   </View>

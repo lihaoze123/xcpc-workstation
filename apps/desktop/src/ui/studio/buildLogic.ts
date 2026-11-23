@@ -1,7 +1,7 @@
 // Pure TypeScript types and helpers for the Local Polygon Build Console & Toolchain settings.
 // Kept pure (no NSH JSX dependencies) so every state transition and formatter is unit-tested.
 
-import type { ToolchainStatusJs } from "xcpc-workstation/native";
+import type { DetectedCompilerJs, ToolchainStatusJs } from "xcpc-workstation/native";
 
 export type GateStatusKind = "pass" | "fail" | "warn" | "skip";
 
@@ -126,6 +126,15 @@ export interface ExpandedTestData {
   gen_cmd?: string | null;
 }
 
+export interface PackageSolutionSpecData {
+  name: string;
+  is_main?: boolean;
+  main?: boolean;
+  expected?: string[];
+  expect?: string | string[];
+  tags?: string[] | null;
+}
+
 export interface PackageInspectionData {
   problem_id: string;
   has_package: boolean;
@@ -133,6 +142,7 @@ export interface PackageInspectionData {
   freshness: { status: string; summary?: string };
   checker: string;
   files: PackageFilesData;
+  solutions?: PackageSolutionSpecData[];
   expanded_tests: ExpandedTestData[];
   dirty_inputs?: DirtyInputIssueData[];
   last_report?: BuildReportData | null;
@@ -306,4 +316,101 @@ export function normalizeCxxOverrideInput(raw: string): string | null {
 /** True when the user configured a manual compiler override path that failed detection. */
 export function hasInvalidCxxOverride(status: Pick<ToolchainStatusJs, "overridePath" | "active">): boolean {
   return Boolean(status.overridePath && !status.active);
+}
+
+/** Strips `.cpp` / `.17.cpp` / `.20.cpp` / `.23.cpp` suffix from a solution filename. */
+export function logicalSolutionName(filename: string): string {
+  return filename
+    .replace(/\.(17|20|23)\.(cpp|cc|cxx)$/i, "")
+    .replace(/\.(cpp|cc|cxx)$/i, "");
+}
+
+export interface SolutionHeaderSpec {
+  name: string;
+  is_main: boolean;
+  expected: string[];
+}
+
+function normalizeExpected(spec: PackageSolutionSpecData): string[] {
+  if (Array.isArray(spec.expected) && spec.expected.length > 0) return spec.expected;
+  if (Array.isArray(spec.expect) && spec.expect.length > 0) return spec.expect;
+  if (typeof spec.expect === "string" && spec.expect.trim().length > 0) return [spec.expect.trim()];
+  return ["AC"];
+}
+
+/**
+ * Resolves solution column headers with accurate `is_main` and `expected` verdicts
+ * both before and after the first build runs.
+ */
+export function resolveSolutionHeaderSpecs(
+  inspection: PackageInspectionData | undefined,
+  report: BuildReportData | undefined,
+): SolutionHeaderSpec[] {
+  if (report?.solutions && report.solutions.length > 0) {
+    return report.solutions.map((s) => ({
+      name: s.name,
+      is_main: s.is_main,
+      expected: s.expected.length > 0 ? s.expected : ["AC"],
+    }));
+  }
+  if (inspection?.solutions && inspection.solutions.length > 0) {
+    return inspection.solutions.map((s) => ({
+      name: s.name,
+      is_main: Boolean(s.is_main ?? s.main),
+      expected: normalizeExpected(s),
+    }));
+  }
+  const names: string[] = [];
+  for (const file of inspection?.files?.solutions ?? []) {
+    const stem = logicalSolutionName(file);
+    if (stem && !names.includes(stem)) names.push(stem);
+  }
+  return names.map((name) => ({
+    name,
+    is_main: name === "std",
+    expected: ["AC"],
+  }));
+}
+
+/** Splits gates into attention-needed (`fail`/`warn`) and collapsed-by-default (`pass`/`skip`). */
+export function partitionGates(gates: readonly GateResultData[]): {
+  attention: GateResultData[];
+  passed: GateResultData[];
+} {
+  const attention: GateResultData[] = [];
+  const passed: GateResultData[] = [];
+  for (const g of gates) {
+    if (g.status === "fail" || g.status === "warn") attention.push(g);
+    else passed.push(g);
+  }
+  return { attention, passed };
+}
+
+/**
+ * Defensively deduplicates detected compilers by `(name, version)` preserving the first
+ * PATH occurrence, while ensuring a manually active override path is never dropped.
+ */
+export function dedupDetectedCompilers(
+  compilers: readonly DetectedCompilerJs[],
+  active?: DetectedCompilerJs | null,
+): DetectedCompilerJs[] {
+  const out: DetectedCompilerJs[] = [];
+  const seen = new Set<string>();
+  for (const c of compilers) {
+    const key = `${c.name}\0${c.version}`;
+    if (seen.has(key)) {
+      // If the active compiler was manually overridden to this duplicate path, replace the kept entry.
+      if (active && c.path === active.path) {
+        const idx = out.findIndex((x) => `${x.name}\0${x.version}` === key);
+        if (idx >= 0) out[idx] = c;
+      }
+      continue;
+    }
+    seen.add(key);
+    out.push(c);
+  }
+  if (active && !out.some((c) => c.path === active.path)) {
+    out.unshift(active);
+  }
+  return out;
 }

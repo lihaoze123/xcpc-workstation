@@ -2555,14 +2555,37 @@ impl State {
             Ok(insp) => {
                 let freshness_status = freshness_status_str(&insp.freshness).to_owned();
                 let has_package = insp.has_package;
-                match serde_json::to_string(&insp) {
-                    Ok(inspection_json) => PackageInspectionResultJs {
-                        ok: true,
-                        has_package,
-                        freshness_status,
-                        inspection_json,
-                        error: None,
-                    },
+                match serde_json::to_value(&insp) {
+                    Ok(mut val) => {
+                        if let Some(obj) = val.as_object_mut()
+                            && !obj.contains_key("solutions")
+                            && let Ok(problem) = ws.load_problem(slug)
+                            && let Ok(prob_dir) = ws.resolve(&problem.dir)
+                            && let Ok(discovered) =
+                                xcpc_judge::discover_solutions(&prob_dir, &problem.meta)
+                        {
+                            let sols: Vec<serde_json::Value> = discovered
+                                .into_iter()
+                                .map(|s| {
+                                    serde_json::json!({
+                                        "name": s.name,
+                                        "is_main": s.is_main,
+                                        "expect": s.expect,
+                                        "tags": s.tags,
+                                    })
+                                })
+                                .collect();
+                            obj.insert("solutions".to_owned(), serde_json::Value::Array(sols));
+                        }
+                        let inspection_json = val.to_string();
+                        PackageInspectionResultJs {
+                            ok: true,
+                            has_package,
+                            freshness_status,
+                            inspection_json,
+                            error: None,
+                        }
+                    }
                     Err(e) => PackageInspectionResultJs {
                         ok: false,
                         has_package,

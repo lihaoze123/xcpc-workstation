@@ -24,6 +24,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { t, type MessageKey } from "../i18n";
 import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
+import { AppMenu, type MenuEntry } from "../Menu";
 import { minimalEdit, ratioOf, type Book } from "../logic";
 import {
   book as storeBook,
@@ -110,7 +111,7 @@ export function StudioView(props: { active: boolean }) {
   const assetsHasTypstBlock = signal(false);
   const previewCollapsed = signal(false);
   const focusMode = signal(false);
-  const previewHidden = computed(() => focusMode() || previewCollapsed());
+  const previewHidden = computed(() => focusMode() || previewCollapsed() || tab() === "build");
 
   // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).
@@ -953,6 +954,7 @@ export function StudioView(props: { active: boolean }) {
               icon="fileText"
               variant="ghost"
               testID="toggle-preview"
+              disabled={tab() === "build"}
               tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
               onPress={togglePreview}
               style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
@@ -1027,25 +1029,26 @@ export function StudioView(props: { active: boolean }) {
           >
             <ResizablePanel size={initialRatio * 1000} minSize={320}>
               <View style={{ flex: 1 }} class="bg-card">
-                {/* Single merged 38pt bar: tabs on the left, 4 high-frequency insert icons or read-only badge on the right */}
+                {/* Single merged 38pt bar: tabs on the left, compact insert icons (or dropdown when 4 tabs) on the right */}
                 <View
                   style={{
                     height: 38,
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    paddingLeft: 8,
-                    paddingRight: 8,
+                    paddingLeft: 6,
+                    paddingRight: 6,
+                    gap: 4,
                     borderBottomWidth: 1,
                   }}
                   class="border-border"
                 >
-                  <Segmented items={tabs()} value={tab()} onChange={setTab} itemWidth={72} underline />
+                  <Segmented items={tabs()} value={tab()} onChange={setTab} itemWidth={hasPackage() ? 60 : 72} underline />
                   <If
                     when={readOnly()}
                     else={
                       <If when={isMarkdownTab() && !!file()}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
                           <If when={vimMode()}>
                             {(m) => (
                               <View
@@ -1069,34 +1072,69 @@ export function StudioView(props: { active: boolean }) {
                               </View>
                             )}
                           </If>
-                          <IconBtn
-                            icon="sigma"
-                            size={26}
-                            iconSize={14.5}
-                            tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
-                            onPress={() => editorActions?.inlineMath()}
-                          />
-                          <IconBtn
-                            icon="squareCode"
-                            size={26}
-                            iconSize={14.5}
-                            tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
-                            onPress={() => editorActions?.displayMath()}
-                          />
-                          <IconBtn
-                            icon="table"
-                            size={26}
-                            iconSize={14.5}
-                            tooltip={tip(t("studio.toolbar.table"))}
-                            onPress={() => editorActions?.table()}
-                          />
-                          <IconBtn
-                            icon="image"
-                            size={26}
-                            iconSize={14.5}
-                            tooltip={tip(t("studio.toolbar.insertImage"))}
-                            onPress={openAssets}
-                          />
+                          <If
+                            when={hasPackage()}
+                            else={
+                              <>
+                                <IconBtn
+                                  icon="sigma"
+                                  size={26}
+                                  iconSize={14.5}
+                                  tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
+                                  onPress={() => editorActions?.inlineMath()}
+                                />
+                                <IconBtn
+                                  icon="squareCode"
+                                  size={26}
+                                  iconSize={14.5}
+                                  tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
+                                  onPress={() => editorActions?.displayMath()}
+                                />
+                                <IconBtn
+                                  icon="table"
+                                  size={26}
+                                  iconSize={14.5}
+                                  tooltip={tip(t("studio.toolbar.table"))}
+                                  onPress={() => editorActions?.table()}
+                                />
+                                <IconBtn
+                                  icon="image"
+                                  size={26}
+                                  iconSize={14.5}
+                                  tooltip={tip(t("studio.toolbar.insertImage"))}
+                                  onPress={openAssets}
+                                />
+                              </>
+                            }
+                          >
+                            <AppMenu
+                              align="end"
+                              minWidth={172}
+                              entries={
+                                [
+                                  { id: "inlineMath", label: t("studio.toolbar.inlineMath"), icon: "sigma", keys: "mod+m" },
+                                  { id: "displayMath", label: t("studio.toolbar.displayMath"), icon: "squareCode", keys: "mod+shift+m" },
+                                  { id: "table", label: t("studio.toolbar.table"), icon: "table" },
+                                  { id: "image", label: t("studio.toolbar.insertImage"), icon: "image" },
+                                ] as MenuEntry[]
+                              }
+                              onSelect={(id) => {
+                                if (id === "inlineMath") editorActions?.inlineMath();
+                                else if (id === "displayMath") editorActions?.displayMath();
+                                else if (id === "table") editorActions?.table();
+                                else if (id === "image") openAssets();
+                              }}
+                              trigger={
+                                <IconBtn
+                                  testID="studio-insert-menu"
+                                  icon="plus"
+                                  size={26}
+                                  iconSize={14.5}
+                                  tooltip={tip(t("studio.toolbar.insert"))}
+                                />
+                              }
+                            />
+                          </If>
                         </View>
                       </If>
                     }

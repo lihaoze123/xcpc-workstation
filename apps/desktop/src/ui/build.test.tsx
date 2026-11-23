@@ -1,6 +1,7 @@
 import { describe, expect, test } from "nsh/test";
 import {
   buildMatrixLookup,
+  dedupDetectedCompilers,
   formatAcVsTleMargin,
   formatBytesCompact,
   formatMemoryKib,
@@ -9,6 +10,8 @@ import {
   isPackageIncomplete,
   matrixCellKey,
   normalizeCxxOverrideInput,
+  partitionGates,
+  resolveSolutionHeaderSpecs,
   selectMatrixCell,
   shouldShowBuildTab,
   toggleSubsetSelection,
@@ -142,5 +145,51 @@ describe("Toolchain override state helpers", () => {
       }),
     ).toBe(false);
     expect(hasInvalidCxxOverride({ overridePath: null, active: null })).toBe(false);
+  });
+
+  test("deduplicates compilers by name+version while preserving active override", () => {
+    const wrapped = { name: "g++", path: "/nix/store/wrap/bin/g++", version: "g++ (GCC) 16.2.0", kind: "gpp" };
+    const unwrapped = { name: "g++", path: "/nix/store/raw/bin/g++", version: "g++ (GCC) 16.2.0", kind: "gpp" };
+    const clang = { name: "clang++", path: "/nix/store/clang/bin/clang++", version: "clang 20.1.0", kind: "clangpp" };
+
+    expect(dedupDetectedCompilers([wrapped, unwrapped, clang], wrapped)).toEqual([wrapped, clang]);
+    // Manual override pointing at the second duplicate path stays visible as active.
+    expect(dedupDetectedCompilers([wrapped, unwrapped, clang], unwrapped)).toEqual([unwrapped, clang]);
+  });
+});
+
+describe("Pre-build solution headers & restrained gate partitioning", () => {
+  test("reads configured expect verdicts from inspection before first build", () => {
+    const headers = resolveSolutionHeaderSpecs(
+      {
+        problem_id: "sum",
+        has_package: true,
+        package_hash: "abc",
+        freshness: { status: "unverified" },
+        checker: "wcmp",
+        files: { solutions: ["std.cpp", "wrong_wa.cpp"] },
+        solutions: [
+          { name: "std", is_main: true, expected: ["AC"] },
+          { name: "wrong_wa", is_main: false, expect: "WA" },
+        ],
+        expanded_tests: [],
+      },
+      undefined,
+    );
+    expect(headers).toEqual([
+      { name: "std", is_main: true, expected: ["AC"] },
+      { name: "wrong_wa", is_main: false, expected: ["WA"] },
+    ]);
+  });
+
+  test("partitions fail/warn gates from passed gates", () => {
+    const { attention, passed } = partitionGates([
+      { id: "val", title: "Validator", status: "pass", message: "ok" },
+      { id: "std", title: "Std Time", status: "warn", message: "60%" },
+      { id: "wa", title: "Wrong Sol", status: "fail", message: "got AC" },
+      { id: "chk", title: "Checker", status: "skip", message: "builtin" },
+    ]);
+    expect(attention.map((g) => g.id)).toEqual(["std", "wa"]);
+    expect(passed.map((g) => g.id)).toEqual(["val", "chk"]);
   });
 });
