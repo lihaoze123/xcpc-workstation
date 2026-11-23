@@ -650,12 +650,16 @@ fn run_process_unix(
         (ec, sig, cpu_ms, peak_kib)
     };
 
+    let is_bad_alloc = stderr.contains("std::bad_alloc") || stderr.contains("bad_alloc");
+
     let verdict = if killed_by_wall.load(Ordering::Acquire)
         || signal == Some(libc::SIGXCPU)
         || cpu_time_ms > limits.time_limit_ms
     {
         Verdict::TLE
-    } else if limits.memory_limit_kib > 0 && peak_memory_kib > limits.memory_limit_kib {
+    } else if (limits.memory_limit_kib > 0 && peak_memory_kib > limits.memory_limit_kib)
+        || ((signal.is_some() || exit_code != Some(0)) && is_bad_alloc)
+    {
         Verdict::MLE
     } else if signal.is_some() || exit_code != Some(0) {
         Verdict::RE

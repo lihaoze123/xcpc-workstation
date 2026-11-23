@@ -39,4 +39,5 @@ pub use runner::{
 pub use toolchain::{
     CompileDiagnostic, CompileFailure, CompilerKind, CppStd, DetectedCompiler, SourceLanguage,
     ToolchainStatus, detect_toolchain, parse_compiler_diagnostics, resolve_active_compiler,
+    validate_compiler_path,
 };

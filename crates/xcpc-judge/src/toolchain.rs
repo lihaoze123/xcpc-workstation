@@ -252,6 +252,29 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
     }
 }
 
+/// Validates that `path` points to an existing, runnable C++ compiler and returns its
+/// detected metadata. Rejects non-existent, non-executable, or non-compiler paths.
+pub fn validate_compiler_path(path: &Path) -> Result<DetectedCompiler> {
+    let display = path.to_string_lossy().trim().to_owned();
+    if display.is_empty() {
+        return Err(JudgeError::CompilerNotFound(display));
+    }
+    let resolved = resolve_in_path(Path::new(&display))
+        .ok_or_else(|| JudgeError::CompilerNotFound(display.clone()))?;
+    let info =
+        probe_compiler(&resolved).ok_or_else(|| JudgeError::CompilerNotFound(display.clone()))?;
+    let v_lower = info.version.to_ascii_lowercase();
+    let looks_like_cxx = matches!(info.kind, CompilerKind::Gpp | CompilerKind::Clangpp)
+        || v_lower.contains("c++")
+        || v_lower.contains("mingw")
+        || v_lower.contains("icpx")
+        || v_lower.contains("zig");
+    if !looks_like_cxx {
+        return Err(JudgeError::CompilerNotFound(display));
+    }
+    Ok(info)
+}
+
 /// Resolves the active compiler or returns an error if missing / invalid override.
 pub fn resolve_active_compiler(cxx_override: Option<&Path>) -> Result<DetectedCompiler> {
     let status = detect_toolchain(cxx_override);

@@ -328,7 +328,8 @@ int main() {
         PackageFreshness::VerifiedFresh { .. }
     ));
 
-    // 2. Debug subset run MUST NOT overwrite verified state, and should hit Level 3 cache.
+    // 2. Debug subset run MUST NOT overwrite verified state, merges untouched cells as stale (P0-2),
+    // and hits Level 3 cache on the re-run cell.
     let debug_opts = BuildOptions {
         mode: BuildMode::Debug,
         tests: vec!["1".to_owned()],
@@ -340,8 +341,12 @@ int main() {
     assert!(debug_report.ok);
     assert!(!debug_report.verified);
     assert!(debug_report.subset);
-    assert_eq!(debug_report.matrix.len(), 1);
-    assert!(debug_report.matrix[0].cache_hit);
+    let fresh_cells: Vec<_> = debug_report.matrix.iter().filter(|c| !c.stale).collect();
+    let stale_cells: Vec<_> = debug_report.matrix.iter().filter(|c| c.stale).collect();
+    assert_eq!(fresh_cells.len(), 1);
+    assert!(fresh_cells[0].cache_hit);
+    assert!(fresh_cells[0].output_preview.as_deref() == Some("7"));
+    assert_eq!(stale_cells.len(), 19);
 
     // Verified state is STILL fresh!
     assert!(matches!(
@@ -1022,4 +1027,218 @@ main = true
     let final_toml = ws.read_text("problems/mut-pkg/problem.toml").unwrap();
     assert!(final_toml.contains("# Keep this author comment!"));
     assert!(final_toml.contains("custom_extra = \"preserve-me\""));
+}
+
+#[test]
+fn audit_fixes_a5_a6_a7_a8_a9_a10_and_live_cell_events() {
+    // A-5: validate_compiler_path accepts real compiler, rejects missing & non-compiler binaries.
+    let tc = detect_toolchain(None);
+    let active = tc.active.expect("compiler in PATH");
+    assert!(xcpc_judge::validate_compiler_path(Path::new(&active.path)).is_ok());
+    assert!(xcpc_judge::validate_compiler_path(Path::new("/nonexistent/path/to/g++")).is_err());
+    if Path::new("/bin/true").is_file() {
+        assert!(xcpc_judge::validate_compiler_path(Path::new("/bin/true")).is_err());
+    }
+
+    // A-9: Duplicate generator names across [[test]] rules are sequentially disambiguated.
+    let a9_toml = r#"
+[[test]]
+gen = "gen_random"
+args = "-n 10 {i}"
+repeat = 3
+
+[[test]]
+gen = "gen_random"
+args = "-n 100 {i}"
+repeat = 2
+"#;
+    let (_d9, ws9) = setup_workspace_with_problem("dup-gen", a9_toml);
+    let p9 = ws9.load_problem("dup-gen").unwrap();
+    let expanded = xcpc_judge::expand_tests(&ws9.resolve(&p9.dir).unwrap(), &p9.meta).unwrap();
+    let names: Vec<&str> = expanded.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "gen_random-1",
+            "gen_random-2",
+            "gen_random-3",
+            "gen_random-4",
+            "gen_random-5"
+        ]
+    );
+
+    // A-6 & A-7: 200k-char single line without \n, 5.5 MiB multi-line exact line count,
+    // and manual sample .ans vs built std output separation.
+    let a6_toml = r#"
+[[test]]
+file = "tests/single-200k.in"
+name = "single-200k"
+
+[[test]]
+file = "tests/multi-5m.in"
+name = "multi-5m"
+"#;
+    let (_d6, ws6) = setup_workspace_with_problem("a67", a6_toml);
+    let prob6 = ws6.resolve("problems/a67").unwrap();
+    fs::create_dir_all(prob6.join("tests")).unwrap();
+    fs::create_dir_all(prob6.join("samples")).unwrap();
+
+    // Sample with manual .ans AND different built std output.
+    ws6.write("problems/a67/samples/01.in", b"1 2\n").unwrap();
+    ws6.write("problems/a67/samples/01.ans", b"MANUAL_3\n")
+        .unwrap();
+    let build6_tests = xcpc_judge::build_dir_for(&ws6, "a67").join("tests");
+    fs::create_dir_all(&build6_tests).unwrap();
+    fs::write(build6_tests.join("001.ans"), "STD_3\n").unwrap();
+
+    let p_samp = inspect_test_case(&ws6, "a67", "1", 10, 5).unwrap();
+    assert_eq!(p_samp.ans_source.as_deref(), Some("manual_sample"));
+    assert_eq!(p_samp.ans_head, "MANUAL_3");
+    assert!(p_samp.std_output_available);
+    assert_eq!(p_samp.std_output_head, "STD_3");
+
+    // 200k-char single line without any newline.
+    let line_200k = "a".repeat(200_000);
+    fs::write(prob6.join("tests/single-200k.in"), &line_200k).unwrap();
+    let p_200k = inspect_test_case(&ws6, "a67", "single-200k", 10, 5).unwrap();
+    assert!(p_200k.truncated);
+    assert!(!p_200k.head.is_empty());
+    assert!(p_200k.head.starts_with(&"a".repeat(200)));
+    assert!(p_200k.head.contains("chars)"));
+    assert_eq!(p_200k.total_lines, 1);
+    assert_eq!(p_200k.total_lines_exact, Some(1));
+
+    // 5.5 MiB multi-line file -> exact total_lines == 200_000 (never 0!).
+    let mut multi_5m = String::with_capacity(6 * 1024 * 1024);
+    for i in 1..=200_000 {
+        use std::fmt::Write;
+        let _ = writeln!(multi_5m, "row-{i:06} 1234567890 1234567890");
+    }
+    assert!(multi_5m.len() > 5_500_000);
+    fs::write(prob6.join("tests/multi-5m.in"), &multi_5m).unwrap();
+    let p_5m = inspect_test_case(&ws6, "a67", "multi-5m", 5, 5).unwrap();
+    assert!(p_5m.truncated);
+    assert_eq!(p_5m.total_lines, 200_000);
+    assert_eq!(p_5m.total_lines_exact, Some(200_000));
+    assert!(p_5m.head.contains("row-000001"));
+    assert!(p_5m.tail.contains("row-200000"));
+
+    // A-8, A-10, P1-7 & P1-8:
+    // - sample/01.in is INVALID (-5 6 fails validator [0, 100])
+    // - tests/valid-01.in is VALID (3 4)
+    // - `only_fails_invalid` returns WA on negative input, AC on valid input, expects WA -> MUST NOT match (A-8)!
+    // - `bad_alloc_mle` throws std::bad_alloc -> classified as MLE (A-10)!
+    // - ProgressEvent::Running emits live `cell: Some(MatrixCell)` with `output_preview` (P1-7/8)!
+    let a8_toml = r#"
+[[test]]
+file = "tests/valid-01.in"
+name = "valid-01"
+
+[solutions.std]
+main = true
+
+[solutions.only_fails_invalid]
+expect = "WA"
+
+[solutions.bad_alloc_mle]
+expect = "MLE"
+"#;
+    let (_d8, ws8) = setup_workspace_with_problem("a810", a8_toml);
+    let cache_dir = tempfile::tempdir().unwrap();
+
+    ws8.write("problems/a810/samples/01.in", b"-5 6\n").unwrap();
+    ws8.write("problems/a810/samples/01.ans", b"1\n").unwrap();
+    ws8.write("problems/a810/tests/valid-01.in", b"3 4\n")
+        .unwrap();
+    ws8.write(
+        "problems/a810/validator.cpp",
+        br#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerValidation(argc, argv);
+    inf.readInt(0, 100);
+    inf.readSpace();
+    inf.readInt(0, 100);
+    inf.readEoln();
+    inf.readEof();
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    ws8.write(
+        "problems/a810/solutions/std.cpp",
+        br#"#include <iostream>
+int main() { int a, b; if (std::cin >> a >> b) std::cout << (a + b) << '\n'; }
+"#,
+    )
+    .unwrap();
+    ws8.write(
+        "problems/a810/solutions/only_fails_invalid.cpp",
+        br#"#include <iostream>
+int main() {
+    int a, b;
+    if (std::cin >> a >> b) {
+        if (a < 0) std::cout << 999999 << '\n';
+        else std::cout << (a + b) << '\n';
+    }
+}
+"#,
+    )
+    .unwrap();
+    ws8.write(
+        "problems/a810/solutions/bad_alloc_mle.cpp",
+        br#"#include <new>
+int main() { throw std::bad_alloc(); }
+"#,
+    )
+    .unwrap();
+
+    let live_cells = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let lc_clone = Arc::clone(&live_cells);
+    let cb = move |ev: ProgressEvent| {
+        if let ProgressEvent::Running { cell: Some(c), .. } = ev {
+            lc_clone.lock().unwrap().push(*c);
+        }
+    };
+
+    let rep = build_package(
+        &ws8,
+        "a810",
+        &BuildOptions {
+            mode: BuildMode::Debug,
+            cache_dir: Some(cache_dir.path().to_path_buf()),
+            ..Default::default()
+        },
+        None,
+        Some(&cb),
+    )
+    .unwrap();
+
+    // A-8: `only_fails_invalid` got AC on all valid tests -> NOT matched with `expect = "WA"`.
+    let ofi = rep
+        .solutions
+        .iter()
+        .find(|s| s.name == "only_fails_invalid")
+        .unwrap();
+    assert_eq!(ofi.actual_verdict, Verdict::AC);
+    assert!(!ofi.matched);
+
+    // A-10: `bad_alloc_mle` classified as MLE and matched.
+    let bam = rep
+        .solutions
+        .iter()
+        .find(|s| s.name == "bad_alloc_mle")
+        .unwrap();
+    assert_eq!(bam.actual_verdict, Verdict::MLE);
+    assert!(bam.matched);
+
+    // P1-7 & P1-8: Live cell progress events received with output_preview populated.
+    let emitted = live_cells.lock().unwrap();
+    assert_eq!(emitted.len(), rep.matrix.len());
+    let wa_cell = emitted
+        .iter()
+        .find(|c| c.solution == "only_fails_invalid" && c.test_index == 1)
+        .unwrap();
+    assert_eq!(wa_cell.verdict, Verdict::WA);
+    assert_eq!(wa_cell.output_preview.as_deref(), Some("999999"));
 }

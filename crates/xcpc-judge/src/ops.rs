@@ -99,11 +99,20 @@ pub struct TestCasePreview {
     pub available_on_disk: bool,
     pub size_bytes: u64,
     pub total_lines: usize,
+    /// Exact total line count when computed (`None` only for very huge files > 16 MiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_lines_exact: Option<usize>,
+    /// Approximate number of bytes omitted from the preview when `truncated == true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_bytes: Option<u64>,
     pub head: String,
     pub tail: String,
     pub truncated: bool,
     #[serde(default)]
     pub ans_available: bool,
+    /// Origin of `ans_*`: `"manual_sample"` or `"std"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ans_source: Option<String>,
     #[serde(default)]
     pub ans_size_bytes: u64,
     #[serde(default)]
@@ -114,6 +123,18 @@ pub struct TestCasePreview {
     pub ans_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ans_total_lines: Option<usize>,
+    /// Built `std` output preview (`build/problems/<slug>/tests/{:03}.ans`) when available,
+    /// kept distinct from manual `samples/NN.ans` so UI never mislabels manual `.ans` as `std`.
+    #[serde(default)]
+    pub std_output_available: bool,
+    #[serde(default)]
+    pub std_output_size_bytes: u64,
+    #[serde(default)]
+    pub std_output_head: String,
+    #[serde(default)]
+    pub std_output_tail: String,
+    #[serde(default)]
+    pub std_output_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_index: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -325,44 +346,58 @@ pub fn inspect_test_case(
         .find(|t| sel.parse::<usize>().ok() == Some(t.index) || t.name == sel)
         .ok_or_else(|| JudgeError::TestNotFound(selector.to_owned()))?;
 
-    let (disk_path, file_rel, ans_path) = match &test.source {
+    let built_ans_path = build_dir_for(ws, slug)
+        .join("tests")
+        .join(format!("{:03}.ans", test.index));
+
+    let (disk_path, file_rel, manual_ans_path) = match &test.source {
         TestSource::Sample {
             input_rel,
             manual_ans_rel,
             ..
         } => {
-            let ans = manual_ans_rel
+            let manual = manual_ans_rel
                 .as_ref()
                 .map(|r| prob_dir.join(r))
-                .filter(|p| p.is_file())
-                .unwrap_or_else(|| {
-                    build_dir_for(ws, slug)
-                        .join("tests")
-                        .join(format!("{:03}.ans", test.index))
-                });
-            (prob_dir.join(input_rel), Some(input_rel.clone()), ans)
+                .filter(|p| p.is_file());
+            (prob_dir.join(input_rel), Some(input_rel.clone()), manual)
         }
-        TestSource::File { file_rel } => (
-            prob_dir.join(file_rel),
-            Some(file_rel.clone()),
-            build_dir_for(ws, slug)
-                .join("tests")
-                .join(format!("{:03}.ans", test.index)),
-        ),
+        TestSource::File { file_rel } => (prob_dir.join(file_rel), Some(file_rel.clone()), None),
         TestSource::Generated { .. } => (
             build_dir_for(ws, slug)
                 .join("tests")
                 .join(format!("{:03}.in", test.index)),
             None,
-            build_dir_for(ws, slug)
-                .join("tests")
-                .join(format!("{:03}.ans", test.index)),
+            None,
         ),
     };
 
+    // Preview built `std` output separately when available.
+    let std_preview = if built_ans_path.is_file() {
+        Some(read_bounded_preview(
+            &built_ans_path,
+            head_lines,
+            tail_lines,
+        )?)
+    } else {
+        None
+    };
+
+    // For `ans_*`: prefer manual sample `.ans` if present (labeled `"manual_sample"`),
+    // otherwise use built `std` `.ans` (labeled `"std"`).
+    let (ans_source, ans_preview) = if let Some(ref mp) = manual_ans_path {
+        (
+            Some("manual_sample".to_owned()),
+            Some(read_bounded_preview(mp, head_lines, tail_lines)?),
+        )
+    } else if let Some(ref sp) = std_preview {
+        (Some("std".to_owned()), Some(sp.clone()))
+    } else {
+        (None, None)
+    };
+
     let (ans_available, ans_size_bytes, ans_head, ans_tail, ans_truncated, ans_total_lines) =
-        if ans_path.is_file() {
-            let p = read_bounded_preview(&ans_path, head_lines, tail_lines)?;
+        if let Some(p) = ans_preview {
             (
                 true,
                 p.size_bytes,
@@ -375,6 +410,18 @@ pub fn inspect_test_case(
             (false, 0, String::new(), String::new(), false, None)
         };
 
+    let (
+        std_output_available,
+        std_output_size_bytes,
+        std_output_head,
+        std_output_tail,
+        std_output_truncated,
+    ) = if let Some(p) = std_preview {
+        (true, p.size_bytes, p.head, p.tail, p.truncated)
+    } else {
+        (false, 0, String::new(), String::new(), false)
+    };
+
     if !disk_path.is_file() {
         return Ok(TestCasePreview {
             index: test.index,
@@ -385,21 +432,33 @@ pub fn inspect_test_case(
             available_on_disk: false,
             size_bytes: 0,
             total_lines: 0,
+            total_lines_exact: Some(0),
+            omitted_bytes: None,
             head: String::new(),
             tail: String::new(),
             truncated: false,
             ans_available,
+            ans_source,
             ans_size_bytes,
             ans_head,
             ans_tail,
             ans_truncated,
             ans_total_lines,
+            std_output_available,
+            std_output_size_bytes,
+            std_output_head,
+            std_output_tail,
+            std_output_truncated,
             rule_index: test.rule_index,
             file_rel,
         });
     }
 
     let preview = read_bounded_preview(&disk_path, head_lines, tail_lines)?;
+    let omitted_bytes = preview.truncated.then(|| {
+        let shown = (preview.head.len() + preview.tail.len()) as u64;
+        preview.size_bytes.saturating_sub(shown)
+    });
 
     Ok(TestCasePreview {
         index: test.index,
@@ -410,15 +469,23 @@ pub fn inspect_test_case(
         available_on_disk: true,
         size_bytes: preview.size_bytes,
         total_lines: preview.exact_total_lines.unwrap_or(0),
+        total_lines_exact: preview.exact_total_lines,
+        omitted_bytes,
         head: preview.head,
         tail: preview.tail,
         truncated: preview.truncated,
         ans_available,
+        ans_source,
         ans_size_bytes,
         ans_head,
         ans_tail,
         ans_truncated,
         ans_total_lines,
+        std_output_available,
+        std_output_size_bytes,
+        std_output_head,
+        std_output_tail,
+        std_output_truncated,
         rule_index: test.rule_index,
         file_rel,
     })
@@ -883,15 +950,41 @@ fn read_truncated_preview(path: &Path, max_bytes: usize) -> String {
 const HEAD_READ_LIMIT: u64 = 64 * 1024;
 const TAIL_READ_TRIGGER: u64 = 96 * 1024;
 const TAIL_READ_LIMIT: u64 = 32 * 1024;
+const LINE_COUNT_LIMIT: u64 = 16 * 1024 * 1024;
 const MAX_LINE_CHARS: usize = 200;
 const MAX_PREVIEW_BYTES: usize = 4096;
 
+#[derive(Debug, Clone)]
 struct BoundedPreview {
     size_bytes: u64,
     exact_total_lines: Option<usize>,
     head: String,
     tail: String,
     truncated: bool,
+}
+
+fn count_lines_streaming(path: &Path) -> Option<usize> {
+    let mut f = File::open(path).ok()?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut newlines = 0usize;
+    let mut total_bytes = 0u64;
+    let mut last_byte = 0u8;
+    loop {
+        let n = f.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        total_bytes += n as u64;
+        last_byte = buf[n - 1];
+        newlines += buf[..n].iter().filter(|&&b| b == b'\n').count();
+    }
+    if total_bytes == 0 {
+        Some(0)
+    } else if last_byte == b'\n' {
+        Some(newlines)
+    } else {
+        Some(newlines + 1)
+    }
 }
 
 fn truncate_line_chars(line: &str, max_chars: usize) -> (String, bool) {
@@ -1001,8 +1094,18 @@ fn read_bounded_preview(
         // Drop potentially cut-off final line in the 64 KiB window.
         h_lines.pop();
     }
-    let head_slice = &h_lines[..head_lines.min(h_lines.len())];
-    let (head, _) = format_bounded_lines(head_slice, MAX_PREVIEW_BYTES);
+    let head = if h_lines.is_empty() {
+        String::new()
+    } else if h_lines.len() == 1 && !head_buf.contains(&b'\n') {
+        // Single line exceeding the 64 KiB head window (e.g. 200k-char single line without \n).
+        let prefix: String = h_lines[0].chars().take(MAX_LINE_CHARS).collect();
+        let extra_bytes = size_bytes.saturating_sub(prefix.len() as u64);
+        format!("{prefix}… (+{extra_bytes} chars)")
+    } else {
+        let head_slice = &h_lines[..head_lines.min(h_lines.len())];
+        let (h, _) = format_bounded_lines(head_slice, MAX_PREVIEW_BYTES);
+        h
+    };
 
     let tail = if tail_lines == 0 {
         String::new()
@@ -1023,9 +1126,15 @@ fn read_bounded_preview(
         }
     };
 
+    let exact_total_lines = if size_bytes <= LINE_COUNT_LIMIT {
+        count_lines_streaming(path)
+    } else {
+        None
+    };
+
     Ok(BoundedPreview {
         size_bytes,
-        exact_total_lines: None,
+        exact_total_lines,
         head,
         tail,
         truncated: true,

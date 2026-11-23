@@ -68,6 +68,12 @@ pub struct MatrixCell {
     pub checker_message: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub stderr: String,
+    /// Bounded snippet (<= 1 KiB) of the solution's actual stdout for 3-column diagnostics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_preview: Option<String>,
+    /// `true` when preserved from a previous report during a subset run (not re-executed).
+    #[serde(default)]
+    pub stale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repro_cmd: Option<String>,
 }
@@ -196,6 +202,9 @@ pub enum ProgressEvent {
         cpu_time_ms: u64,
         completed: usize,
         total: usize,
+        /// Completed matrix cell for live per-cell UI updates.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<Box<MatrixCell>>,
     },
     Finished {
         ok: bool,

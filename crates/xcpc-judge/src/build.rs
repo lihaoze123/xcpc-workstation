@@ -18,7 +18,8 @@ use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, TestSource, build_dir_for, check_dirty_inputs,
     compute_package_hash, discover_solutions, expand_tests, find_generator_source,
-    find_validator_source, report_path_for, resolve_checker_spec, verified_report_path_for,
+    find_validator_source, load_latest_report, report_path_for, resolve_checker_spec,
+    verified_report_path_for,
 };
 use crate::report::{
     BuildMode, BuildReport, GateResult, GateStatus, MatrixCell, ProgressEvent, SafetyMargin,
@@ -58,6 +59,8 @@ struct CachedSolutionRun {
     peak_memory_kib: u64,
     checker_message: String,
     stderr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_preview: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -589,16 +592,6 @@ pub fn build_package(
             }
         }
 
-        let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
-        emit(ProgressEvent::Running {
-            solution: main_sol.name.clone(),
-            test_name: mt.spec.name.clone(),
-            verdict: cell_verdict,
-            cpu_time_ms: outcome.cpu_time_ms,
-            completed,
-            total: planned_runs,
-        });
-
         let repro = (!cell_verdict.is_ok()).then(|| {
             format!(
                 "xcpc package build {slug} --tests {} --solutions {}",
@@ -613,20 +606,36 @@ pub fn build_package(
             repro_commands.push(r.clone());
         }
 
+        let main_output_preview = read_bounded_output_preview(&out_path);
+        let main_cell = MatrixCell {
+            test_index: mt.spec.index,
+            test_name: mt.spec.name.clone(),
+            solution: main_sol.name.clone(),
+            verdict: cell_verdict,
+            cpu_time_ms: outcome.cpu_time_ms,
+            wall_time_ms: outcome.wall_time_ms,
+            peak_memory_kib: outcome.peak_memory_kib,
+            cache_hit,
+            checker_message: checker_msg,
+            stderr: outcome.stderr,
+            output_preview: main_output_preview,
+            stale: false,
+            repro_cmd: repro,
+        };
+
+        let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
+        emit(ProgressEvent::Running {
+            solution: main_sol.name.clone(),
+            test_name: mt.spec.name.clone(),
+            verdict: cell_verdict,
+            cpu_time_ms: outcome.cpu_time_ms,
+            completed,
+            total: planned_runs,
+            cell: include_main_in_report.then(|| Box::new(main_cell.clone())),
+        });
+
         if include_main_in_report {
-            matrix_cells.push(MatrixCell {
-                test_index: mt.spec.index,
-                test_name: mt.spec.name.clone(),
-                solution: main_sol.name.clone(),
-                verdict: cell_verdict,
-                cpu_time_ms: outcome.cpu_time_ms,
-                wall_time_ms: outcome.wall_time_ms,
-                peak_memory_kib: outcome.peak_memory_kib,
-                cache_hit,
-                checker_message: checker_msg,
-                stderr: outcome.stderr,
-                repro_cmd: repro,
-            });
+            matrix_cells.push(main_cell);
         }
     }
 
@@ -653,7 +662,7 @@ pub fn build_package(
             .get(&format!("sol:{}", sol.name))
             .ok_or_else(|| JudgeError::Internal(format!("missing binary for {}", sol.name)))?;
         let Some((ref ans_path, ref ans_hash)) = ans_paths[*idx] else {
-            return Ok(MatrixCell {
+            let je_cell = MatrixCell {
                 test_index: mt.spec.index,
                 test_name: mt.spec.name.clone(),
                 solution: sol.name.clone(),
@@ -664,11 +673,24 @@ pub fn build_package(
                 cache_hit: false,
                 checker_message: "reference answer unavailable (main solution failed)".to_owned(),
                 stderr: String::new(),
+                output_preview: None,
+                stale: false,
                 repro_cmd: Some(format!(
                     "xcpc package build {slug} --tests {} --solutions {}",
                     mt.spec.index, sol.name
                 )),
+            };
+            let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
+            emit(ProgressEvent::Running {
+                solution: sol.name.clone(),
+                test_name: mt.spec.name.clone(),
+                verdict: Verdict::JE,
+                cpu_time_ms: 0,
+                completed,
+                total: planned_runs,
+                cell: Some(Box::new(je_cell.clone())),
             });
+            return Ok(je_cell);
         };
 
         let cache_key = run_cache_key(
@@ -704,6 +726,7 @@ pub fn build_package(
                 } else {
                     (outcome.verdict, String::new())
                 };
+                let output_preview = read_bounded_output_preview(tmp_out.path());
                 let entry = CachedSolutionRun {
                     verdict: final_verdict,
                     cpu_time_ms: outcome.cpu_time_ms,
@@ -711,22 +734,13 @@ pub fn build_package(
                     peak_memory_kib: outcome.peak_memory_kib,
                     checker_message: checker_msg,
                     stderr: outcome.stderr,
+                    output_preview,
                 };
                 let _ = cache.put_run_json(&cache_key, &entry);
                 (entry, false)
             };
 
-        let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
-        emit(ProgressEvent::Running {
-            solution: sol.name.clone(),
-            test_name: mt.spec.name.clone(),
-            verdict: cached.verdict,
-            cpu_time_ms: cached.cpu_time_ms,
-            completed,
-            total: planned_runs,
-        });
-
-        Ok(MatrixCell {
+        let cell = MatrixCell {
             test_index: mt.spec.index,
             test_name: mt.spec.name.clone(),
             solution: sol.name.clone(),
@@ -737,8 +751,23 @@ pub fn build_package(
             cache_hit,
             checker_message: cached.checker_message,
             stderr: cached.stderr,
+            output_preview: cached.output_preview,
+            stale: false,
             repro_cmd: None,
-        })
+        };
+
+        let completed = done_runs.fetch_add(1, Ordering::Relaxed) + 1;
+        emit(ProgressEvent::Running {
+            solution: sol.name.clone(),
+            test_name: mt.spec.name.clone(),
+            verdict: cell.verdict,
+            cpu_time_ms: cell.cpu_time_ms,
+            completed,
+            total: planned_runs,
+            cell: Some(Box::new(cell.clone())),
+        });
+
+        Ok(cell)
     };
 
     let other_cells: Vec<Result<MatrixCell>> = if sol_jobs == 1 {
@@ -762,6 +791,15 @@ pub fn build_package(
     }
 
     // Aggregate per-solution summaries.
+    // Fix A-8: exclude tests where `validator_ok == Some(false)` from counting as a valid
+    // trigger of `expect` for non-main solutions (so a wrong solution failing ONLY on an
+    // invalid sample is NOT falsely reported as `matched = true`).
+    let invalid_test_indices: HashSet<usize> = test_summaries
+        .iter()
+        .filter(|t| t.validator_ok == Some(false))
+        .map(|t| t.index)
+        .collect();
+
     let mut solution_summaries = Vec::new();
     let mut all_solutions_matched = true;
 
@@ -774,12 +812,34 @@ pub fn build_package(
         let passed_tests = cells.iter().filter(|c| c.verdict == Verdict::AC).count();
         let max_time_ms = cells.iter().map(|c| c.cpu_time_ms).max().unwrap_or(0);
         let max_memory_kib = cells.iter().map(|c| c.peak_memory_kib).max().unwrap_or(0);
-        let actual_verdict = cells
-            .iter()
-            .find(|c| c.verdict != Verdict::AC)
-            .map(|c| c.verdict)
-            .unwrap_or(Verdict::AC);
-        let matched = sol.expect.matches(actual_verdict.as_str());
+
+        let eval_cells: Vec<&MatrixCell> = if sol.is_main {
+            cells.clone()
+        } else {
+            cells
+                .iter()
+                .copied()
+                .filter(|c| !invalid_test_indices.contains(&c.test_index))
+                .collect()
+        };
+
+        let (actual_verdict, matched) =
+            if !sol.is_main && eval_cells.is_empty() && !cells.is_empty() {
+                // All tests this solution ran on failed validator: cannot legitimately satisfy `expect`.
+                let v = cells
+                    .iter()
+                    .find(|c| c.verdict != Verdict::AC)
+                    .map(|c| c.verdict)
+                    .unwrap_or(Verdict::AC);
+                (v, false)
+            } else {
+                let v = eval_cells
+                    .iter()
+                    .find(|c| c.verdict != Verdict::AC)
+                    .map(|c| c.verdict)
+                    .unwrap_or(Verdict::AC);
+                (v, sol.expect.matches(v.as_str()))
+            };
         if !matched {
             all_solutions_matched = false;
             let first_bad_test = cells
@@ -1089,6 +1149,26 @@ pub fn build_package(
     // persisted report matches the post-writeback package contents on disk.
     if wrote_back_sample {
         package_hash = compute_package_hash(ws, slug)?;
+    }
+
+    // P0-2: During subset runs, preserve untouched `(test_index, solution)` cells from the
+    // previous report with `stale = true` so subset runs never wipe out the matrix overview.
+    if is_subset && let Some(prev) = load_latest_report(ws, slug) {
+        let fresh_keys: HashSet<(usize, String)> = matrix_cells
+            .iter()
+            .map(|c| (c.test_index, c.solution.clone()))
+            .collect();
+        for mut old_cell in prev.matrix {
+            if !fresh_keys.contains(&(old_cell.test_index, old_cell.solution.clone())) {
+                old_cell.stale = true;
+                matrix_cells.push(old_cell);
+            }
+        }
+        matrix_cells.sort_by(|a, b| {
+            a.test_index
+                .cmp(&b.test_index)
+                .then_with(|| a.solution.cmp(&b.solution))
+        });
     }
 
     let report = BuildReport {
@@ -1577,6 +1657,59 @@ fn std_cache_key(sol_bin_hash: &str, input_hash: &str, limits: RunLimits) -> Str
     format!("{:x}", h.finalize())
 }
 
+fn read_bounded_output_preview(path: &Path) -> Option<String> {
+    use std::io::Read;
+    const MAX_BYTES: usize = 1024;
+    const MAX_LINE_CHARS: usize = 200;
+
+    let mut f = fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; MAX_BYTES + 1];
+    let n = f.read(&mut buf).ok()?;
+    if n == 0 {
+        return None;
+    }
+    let truncated_by_size = n > MAX_BYTES;
+    buf.truncate(n.min(MAX_BYTES));
+    let text = String::from_utf8_lossy(&buf);
+
+    let mut out = String::new();
+    let mut truncated = truncated_by_size;
+    for (i, line) in text.lines().enumerate() {
+        let char_count = line.chars().count();
+        let clean = if char_count > MAX_LINE_CHARS {
+            truncated = true;
+            let prefix: String = line.chars().take(MAX_LINE_CHARS).collect();
+            format!("{prefix}… (+{} chars)", char_count - MAX_LINE_CHARS)
+        } else {
+            line.to_owned()
+        };
+        let sep = usize::from(i > 0);
+        if out.len() + sep + clean.len() > MAX_BYTES {
+            truncated = true;
+            let rem = MAX_BYTES.saturating_sub(out.len() + sep);
+            if rem > 0 {
+                if i > 0 {
+                    out.push('\n');
+                }
+                let mut end = rem.min(clean.len());
+                while end > 0 && !clean.is_char_boundary(end) {
+                    end -= 1;
+                }
+                out.push_str(&clean[..end]);
+            }
+            break;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&clean);
+    }
+    if truncated && !out.ends_with('…') {
+        out.push('…');
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn run_cache_key(
     sol_bin_hash: &str,
     input_hash: &str,
@@ -1585,7 +1718,7 @@ fn run_cache_key(
     ans_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"xcpc-run-v1\0");
+    h.update(b"xcpc-run-v2\0");
     h.update(sol_bin_hash.as_bytes());
     h.update(b"\0");
     h.update(input_hash.as_bytes());

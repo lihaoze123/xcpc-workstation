@@ -475,7 +475,18 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
         }
     }
 
-    // 2. Expand `[[test]]` specs in order.
+    // 2. Expand `[[test]]` specs in order, disambiguating duplicate generated base names
+    // sequentially across rules (e.g. gen_random-1..3, gen_random-4..5).
+    let mut base_name_totals: BTreeMap<String, u32> = BTreeMap::new();
+    for spec in &meta.test {
+        if let (None, Some(gen_name)) = (&spec.file, &spec.generator) {
+            let repeat = spec.repeat.unwrap_or(1).max(1);
+            let base = spec.name.clone().unwrap_or_else(|| gen_name.clone());
+            *base_name_totals.entry(base).or_insert(0) += repeat;
+        }
+    }
+    let mut base_name_seq: BTreeMap<String, u32> = BTreeMap::new();
+
     for (spec_idx, spec) in meta.test.iter().enumerate() {
         let write_back_sample = spec.sample.unwrap_or(false);
         match (&spec.file, &spec.generator) {
@@ -503,6 +514,8 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                 let repeat = spec.repeat.unwrap_or(1).max(1);
                 let raw_template = spec.args.clone().unwrap_or_default();
                 let has_placeholder = raw_template.contains("{i}");
+                let base_name = spec.name.clone().unwrap_or_else(|| gen_name.clone());
+                let total_for_base = base_name_totals.get(&base_name).copied().unwrap_or(repeat);
                 for i in 1..=repeat {
                     let expanded_raw = if has_placeholder {
                         raw_template.replace("{i}", &i.to_string())
@@ -522,11 +535,12 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                         ))
                     })?;
                     let idx = tests.len() + 1;
-                    let base_name = spec.name.clone().unwrap_or_else(|| gen_name.clone());
-                    let name = if repeat > 1 {
-                        format!("{base_name}-{i}")
+                    let seq_num = base_name_seq.entry(base_name.clone()).or_insert(0);
+                    *seq_num += 1;
+                    let name = if total_for_base > 1 {
+                        format!("{base_name}-{seq_num}")
                     } else {
-                        base_name
+                        base_name.clone()
                     };
                     let gen_cmd = if expanded_raw.trim().is_empty() {
                         gen_name.clone()
