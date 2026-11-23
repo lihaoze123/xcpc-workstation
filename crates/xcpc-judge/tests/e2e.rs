@@ -8,9 +8,10 @@ use xcpc_judge::{
     BuildMode, BuildOptions, CppStd, GateStatus, PackageFreshness, PackageSourceKind,
     ProgressEvent, SourceLanguage, StressOptions, Verdict, add_generator_test, add_hand_test,
     build_package, check_dirty_inputs, check_package_freshness, create_package_source,
-    detect_toolchain, init_package, inspect_package, inspect_test_case, normalize_dirty_inputs,
-    parse_compiler_diagnostics, parse_memory_limit_kib, parse_time_limit_ms, remove_test_rule,
-    set_package_checker, set_solution_config, stress_package, update_generator_test,
+    delete_generator, delete_self_test, delete_solution, detect_toolchain, init_package,
+    inspect_package, inspect_test_case, normalize_dirty_inputs, parse_compiler_diagnostics,
+    parse_memory_limit_kib, parse_time_limit_ms, remove_test_rule, set_package_checker,
+    set_solution_config, stress_package, update_generator_test,
 };
 use xcpc_storage::{Workspace, init_workspace};
 
@@ -1279,4 +1280,110 @@ int main() { throw std::bad_alloc(); }
         .unwrap();
     assert_eq!(wa_cell.verdict, Verdict::WA);
     assert_eq!(wa_cell.output_preview.as_deref(), Some("999999"));
+}
+
+#[test]
+fn delete_solution_generator_and_self_test_apis() {
+    let extra_toml = r#"
+# Keep comment intact!
+custom_keep = 42
+
+[[test]]
+gen = "gen_tree"
+args = "-n 10 {i}"
+repeat = 2
+
+[[test]]
+gen = "gen_other"
+args = "-n 5"
+
+[[test]]
+gen = "gen_tree"
+args = "-n 100"
+
+[solutions.std]
+main = true
+
+[solutions.brute]
+expect = "AC"
+"#;
+    let (dir, ws) = setup_workspace_with_problem("del-pkg", extra_toml);
+    let prob_dir = ws.resolve("problems/del-pkg").unwrap();
+
+    ws.write(
+        "problems/del-pkg/solutions/std.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write(
+        "problems/del-pkg/solutions/brute.17.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write(
+        "problems/del-pkg/generators/gen_tree.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write(
+        "problems/del-pkg/generators/gen_other.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+    ws.write("problems/del-pkg/tests/validator/valid/01.in", b"1 2\n")
+        .unwrap();
+    ws.write("problems/del-pkg/tests/checker/ok-1/in", b"1\n")
+        .unwrap();
+    ws.write("problems/del-pkg/tests/checker/ok-1/out", b"1\n")
+        .unwrap();
+    ws.write("problems/del-pkg/tests/checker/ok-1/ans", b"1\n")
+        .unwrap();
+
+    // Read-only workspace rejects all 3 delete APIs.
+    let ro_ws = Workspace::open(dir.path(), true).unwrap();
+    assert!(delete_solution(&ro_ws, "del-pkg", "brute").is_err());
+    assert!(delete_generator(&ro_ws, "del-pkg", "gen_tree.cpp", true).is_err());
+    assert!(delete_self_test(&ro_ws, "del-pkg", "tests/validator/valid/01.in").is_err());
+
+    // 1. delete_solution removes `brute.17.cpp` and `[solutions.brute]`, rejects traversal.
+    assert!(delete_solution(&ws, "del-pkg", "../evil").is_err());
+    delete_solution(&ws, "del-pkg", "brute").unwrap();
+    assert!(!prob_dir.join("solutions/brute.17.cpp").exists());
+    let p = ws.load_problem("del-pkg").unwrap();
+    assert!(!p.meta.solutions.contains_key("brute"));
+    assert!(p.meta.solutions.contains_key("std"));
+
+    // 2. delete_generator removes file + referencing [[test]] rules when requested.
+    assert!(delete_generator(&ws, "del-pkg", "../gen_tree.cpp", true).is_err());
+    let removed = delete_generator(&ws, "del-pkg", "gen_tree.cpp", true).unwrap();
+    assert_eq!(removed, 2);
+    assert!(!prob_dir.join("generators/gen_tree.cpp").exists());
+    let p = ws.load_problem("del-pkg").unwrap();
+    assert_eq!(p.meta.test.len(), 1);
+    assert_eq!(p.meta.test[0].generator.as_deref(), Some("gen_other"));
+
+    // With remove_referencing_tests = false, leaves [[test]] untouched.
+    let removed_none = delete_generator(&ws, "del-pkg", "gen_other.cpp", false).unwrap();
+    assert_eq!(removed_none, 0);
+    assert!(!prob_dir.join("generators/gen_other.cpp").exists());
+    let p = ws.load_problem("del-pkg").unwrap();
+    assert_eq!(p.meta.test.len(), 1);
+
+    // 3. delete_self_test enforces validator/checker dir containment and cleans empty checker case dir.
+    assert!(delete_self_test(&ws, "del-pkg", "tests/validator/../../problem.toml").is_err());
+    assert!(delete_self_test(&ws, "del-pkg", "solutions/std.cpp").is_err());
+
+    delete_self_test(&ws, "del-pkg", "tests/validator/valid/01.in").unwrap();
+    assert!(!prob_dir.join("tests/validator/valid/01.in").exists());
+
+    delete_self_test(&ws, "del-pkg", "tests/checker/ok-1/in").unwrap();
+    assert!(prob_dir.join("tests/checker/ok-1").is_dir());
+    delete_self_test(&ws, "del-pkg", "tests/checker/ok-1/out").unwrap();
+    delete_self_test(&ws, "del-pkg", "tests/checker/ok-1/ans").unwrap();
+    assert!(!prob_dir.join("tests/checker/ok-1").exists());
+
+    // Comments and unknown fields preserved in problem.toml.
+    let toml_after = ws.read_text("problems/del-pkg/problem.toml").unwrap();
+    assert!(toml_after.contains("# Keep comment intact!"));
+    assert!(toml_after.contains("custom_keep = 42"));
 }

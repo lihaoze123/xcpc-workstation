@@ -1599,6 +1599,224 @@ pub fn remove_test_rule(ws: &Workspace, slug: &str, rule_index: usize) -> Result
     Ok(())
 }
 
+/// Deletes a solution's source file under `problems/<slug>/solutions/` (if present) and
+/// removes `[solutions.<name>]` from `problem.toml` via `toml_edit`.
+pub fn delete_solution(ws: &Workspace, slug: &str, name: &str) -> Result<()> {
+    if ws.is_read_only() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::ReadOnly));
+    }
+    let clean = validate_safe_stem(name, "solution")?;
+    let stem = SourceLanguage::logical_stem(Path::new(clean)).unwrap_or_else(|| clean.to_owned());
+
+    let problem = ws.load_problem(slug)?;
+    let prob_dir = ws.resolve(&problem.dir)?;
+    let sol_dir = prob_dir.join("solutions");
+
+    if sol_dir.is_dir() {
+        let canon_sol_dir = fs::canonicalize(&sol_dir)
+            .map_err(|e| io_err(format!("canonicalize {}", sol_dir.display()), e))?;
+        let entries: Vec<PathBuf> = fs::read_dir(&sol_dir)
+            .map_err(|e| io_err(format!("read {}", sol_dir.display()), e))?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+
+        for path in entries {
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !meta.file_type().is_file() {
+                continue;
+            }
+            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let matches = fname == clean
+                || SourceLanguage::logical_stem(&path).as_deref() == Some(stem.as_str());
+            if matches {
+                let canon = fs::canonicalize(&path)
+                    .map_err(|e| io_err(format!("canonicalize {}", path.display()), e))?;
+                if !canon.starts_with(&canon_sol_dir) {
+                    return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+                        path.display().to_string(),
+                    )));
+                }
+                fs::remove_file(&canon)
+                    .map_err(|e| io_err(format!("remove {}", canon.display()), e))?;
+            }
+        }
+    }
+
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let mut changed = false;
+    if let Some(sols_tbl) = doc.get_mut("solutions").and_then(Item::as_table_mut) {
+        if sols_tbl.remove(&stem).is_some() {
+            changed = true;
+        }
+        if sols_tbl.is_empty() {
+            doc.remove("solutions");
+            changed = true;
+        }
+    }
+
+    if changed {
+        ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Deletes `problems/<slug>/generators/<filename>`.
+///
+/// When `remove_referencing_tests` is `true`, also removes all `[[test]]` entries in
+/// `problem.toml` whose `gen` matches the generator's logical stem, returning the count
+/// of removed test rules.
+pub fn delete_generator(
+    ws: &Workspace,
+    slug: &str,
+    filename: &str,
+    remove_referencing_tests: bool,
+) -> Result<usize> {
+    if ws.is_read_only() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::ReadOnly));
+    }
+    let clean = validate_safe_stem(filename, "generator")?;
+    let problem = ws.load_problem(slug)?;
+    let prob_dir = ws.resolve(&problem.dir)?;
+    let gen_dir = prob_dir.join("generators");
+
+    if !gen_dir.is_dir() {
+        return Err(JudgeError::GeneratorNotFound(clean.to_owned()));
+    }
+    let target = gen_dir.join(clean);
+    let meta = fs::symlink_metadata(&target)
+        .map_err(|_| JudgeError::GeneratorNotFound(clean.to_owned()))?;
+    if !meta.file_type().is_file() {
+        return Err(JudgeError::GeneratorNotFound(clean.to_owned()));
+    }
+    let canon_gen_dir = fs::canonicalize(&gen_dir)
+        .map_err(|e| io_err(format!("canonicalize {}", gen_dir.display()), e))?;
+    let canon_target = fs::canonicalize(&target)
+        .map_err(|e| io_err(format!("canonicalize {}", target.display()), e))?;
+    if !canon_target.starts_with(&canon_gen_dir) {
+        return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+            clean.to_owned(),
+        )));
+    }
+    fs::remove_file(&canon_target)
+        .map_err(|e| io_err(format!("remove {}", canon_target.display()), e))?;
+
+    if !remove_referencing_tests {
+        return Ok(0);
+    }
+
+    let stem = SourceLanguage::logical_stem(Path::new(clean)).unwrap_or_else(|| clean.to_owned());
+    let toml_rel = format!("{}/problem.toml", problem.dir);
+    let raw_toml = ws.read_text(&toml_rel)?;
+    let mut doc: DocumentMut = raw_toml
+        .parse()
+        .map_err(|e| JudgeError::InvalidConfig(format!("parse {toml_rel}: {e}")))?;
+
+    let mut removed = 0usize;
+    if let Some(arr) = doc.get_mut("test").and_then(Item::as_array_of_tables_mut) {
+        let mut to_remove = Vec::new();
+        for (idx, tbl) in arr.iter().enumerate() {
+            if let Some(g) = tbl.get("gen").and_then(|v| v.as_str())
+                && (g == stem || g == clean)
+            {
+                to_remove.push(idx);
+            }
+        }
+        removed = to_remove.len();
+        for idx in to_remove.into_iter().rev() {
+            arr.remove(idx);
+        }
+        if arr.is_empty() {
+            doc.remove("test");
+        }
+    }
+
+    if removed > 0 {
+        ws.write(&toml_rel, doc.to_string().as_bytes())?;
+    }
+    Ok(removed)
+}
+
+/// Deletes a validator or checker self-test file strictly inside
+/// `problems/<slug>/tests/validator/` or `problems/<slug>/tests/checker/`.
+/// If deleting under `tests/checker/<case>/` leaves the case directory empty, removes it too.
+pub fn delete_self_test(ws: &Workspace, slug: &str, rel_path: &str) -> Result<()> {
+    if ws.is_read_only() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::ReadOnly));
+    }
+    let clean = rel_path.trim().replace('\\', "/");
+    let is_checker = clean.starts_with("tests/checker/");
+    let is_validator = clean.starts_with("tests/validator/");
+    if (!is_checker && !is_validator)
+        || clean.starts_with('/')
+        || Path::new(&clean).components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        })
+    {
+        return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+            rel_path.to_owned(),
+        )));
+    }
+
+    let problem = ws.load_problem(slug)?;
+    let prob_dir = ws.resolve(&problem.dir)?;
+    let allowed_root = if is_checker {
+        prob_dir.join("tests/checker")
+    } else {
+        prob_dir.join("tests/validator")
+    };
+    if !allowed_root.is_dir() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::NotFound(
+            rel_path.to_owned(),
+        )));
+    }
+
+    let target = prob_dir.join(&clean);
+    let meta = fs::symlink_metadata(&target)
+        .map_err(|_| JudgeError::Storage(xcpc_storage::Error::NotFound(rel_path.to_owned())))?;
+    if !meta.file_type().is_file() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+            rel_path.to_owned(),
+        )));
+    }
+
+    let canon_root = fs::canonicalize(&allowed_root)
+        .map_err(|e| io_err(format!("canonicalize {}", allowed_root.display()), e))?;
+    let canon_target = fs::canonicalize(&target)
+        .map_err(|e| io_err(format!("canonicalize {}", target.display()), e))?;
+    if !canon_target.starts_with(&canon_root) {
+        return Err(JudgeError::Storage(xcpc_storage::Error::PathEscape(
+            rel_path.to_owned(),
+        )));
+    }
+
+    fs::remove_file(&canon_target)
+        .map_err(|e| io_err(format!("remove {}", canon_target.display()), e))?;
+
+    if is_checker
+        && let Some(parent) = canon_target.parent()
+        && parent != canon_root
+        && parent.starts_with(&canon_root)
+        && fs::read_dir(parent)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(false)
+    {
+        let _ = fs::remove_dir(parent);
+    }
+
+    Ok(())
+}
+
 /// Normalizes dirty hand-written inputs in `samples/` and `tests/` (strips UTF-8 BOM,
 /// converts `\r\n`/`\r` to `\n`, ensures trailing `\n` for non-empty files).
 /// Returns sorted list of fixed relative paths inside `problems/<slug>/`.
