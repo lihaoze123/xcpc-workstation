@@ -662,8 +662,8 @@ export const en: Record<MessageKey, string> = {
   "assets.insertAtCaret": "Insert at Caret",
 
   // ── Phase 3A/3B: Local Polygon Authoring Console & Toolchain ───────────────
-  "studio.mode.statement": "Statements",
-  "studio.mode.authoring": "Authoring",
+  "studio.mode.statement": "Write",
+  "studio.mode.authoring": "Build",
   "studio.tab.build": "Authoring",
   "palette.action.tabBuild": "Switch to Authoring",
   "palette.action.initPackage": "Prepare Data & Solutions",
@@ -833,6 +833,9 @@ export const en: Record<MessageKey, string> = {
   "build.status.needsReverify": "Needs Re-verify",
   "build.status.issues": "{count} Issues",
   "build.running.preparing": "Preparing verification run",
+  "build.running.progress": "Running",
+  "build.checks.noChecksYet": "No checks yet. Click Verify in the top bar to inspect results here.",
+  "build.table.staleTag": "stale",
   "build.action.verifySelected": "Verify ({count})",
   "build.filter.button": "Filter",
   "build.filter.activeCount": "Filter ({count})",

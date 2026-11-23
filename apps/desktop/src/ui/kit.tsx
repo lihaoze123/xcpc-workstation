@@ -333,6 +333,7 @@ export function Segmented<T extends string>(props: {
               <Text
                 style={{
                   fontSize: 13,
+                  numberOfLines: 1,
                   transitionProperty: "colors",
                   transitionDuration: ms(120),
                   transitionTimingFunction: EASE_STANDARD,

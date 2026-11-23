@@ -1,12 +1,13 @@
-// Local Polygon Authoring Console (Phase 3B "less is more" architecture):
+// Local Polygon Authoring Console (Phase 3B polished edition):
 // - Zero stacked toolbars: Authoring controls live directly in StudioView's TitleBar trailing slot
-// - Decluttered Left Object Tree (~228pt) with logical test groups (Samples / Rules / Self-tests)
-// - P0-2 Single State Model: structure from live disk `inspection`, verdicts merge `liveCells` + `report.matrix`
-// - Zero-jitter live runs: reserved 2px progress hairline at top of right pane, in-place Verify/Cancel swap
-// - P1-7 Right-overlay 3-column diagnostic drawer (never squeezes the table)
-// - Quiet footer below Results Table for Safety Margin metrics & Only-Anomalies toggle
+// - P0-2 Quiet Results Table ("only anomalies speak"): borderless expected cells, solid red/amber anomalies only, 2px primary selection ring
+// - P0-3 Zero layout push: Checks & Filter render as anchored overlay popovers; TitleBar cluster fixed; Esc closes popovers first
+// - P1-1 Fluid solution columns (120–180px), 560px (~72ch) small preview max-width
+// - P1-4 Unified Detail Page Grammar across all objects + inline generator batch editor + dropdown test selector
+// - P1-5 State consistency: preserves untouched summaries (`旧`) and full-run safety margin across subset runs
 
 import { cleanup, colorScheme, computed, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { Input } from "nsh/base";
 import type {
   PackageBuildStatusJs,
   PackageInspectionResultJs,
@@ -19,7 +20,7 @@ import { Btn, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { goSpace, onExternalChange, preview, type UiError } from "../store";
-import { MONO } from "../theme";
+import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import {
   BUILTIN_CHECKERS,
@@ -42,6 +43,7 @@ import {
   mergeLiveMatrixCells,
   nextActionForCheck,
   partitionGates,
+  resolveEffectiveSafetyMargin,
   resolveSingleStatusBadge,
   resolveSolutionHeaderSpecs,
   solutionRole,
@@ -49,15 +51,18 @@ import {
   type BuildReportData,
   type MatrixCellData,
   type PackageInspectionData,
+  type SafetyMarginData,
+  type SolutionSummaryData,
   type TestSummaryData,
 } from "./buildLogic";
 import { AddGeneratorBatchModal, ConfirmDeleteRuleModal, CreateSourceModal } from "./PackageModals";
 
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
-  statusPill(): { label: string; bg: string; fg: string; expanded: boolean };
+  closePopovers(): boolean;
+  statusPill(): { label: string; bg: string; fg: string; dotColor?: string; expanded: boolean };
   toggleChecks(): void;
-  showFilter(): boolean;
+  canFilter(): boolean;
   filterCount(): number;
   toggleFilter(): void;
   running(): boolean;
@@ -65,53 +70,59 @@ export interface BuildConsoleController {
   cancelRun(): void;
 }
 
-/** Authoring actions rendered directly in StudioView's TitleBar trailing slot (zero stacked toolbars). */
+/**
+ * Authoring actions rendered directly in StudioView's TitleBar trailing slot:
+ * - Status pill: neutral surface + small semantic dot (green tint ONLY when ready for contest)
+ * - Filter button: stays present in fixed slot (disabled when not on Results view)
+ * - Primary CTA: constant "验证" label (swaps in-place with outline "取消" while running)
+ */
 export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController; readOnly: boolean }) {
   const pill = () => props.ctrl.statusPill();
   const running = () => props.ctrl.running();
   const filterCount = () => props.ctrl.filterCount();
+  const canFilter = () => props.ctrl.canFilter();
 
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-      {/* Single Status Pill (clickable to expand/collapse checks) */}
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+      {/* Single Status Pill (neutral surface + small semantic dot; green tint only when ready) */}
       <View
         testID="build-single-status-pill"
         onPress={() => props.ctrl.toggleChecks()}
         style={{
-          height: 24,
+          height: 26,
+          minWidth: 102,
           paddingLeft: 9,
           paddingRight: 7,
           borderRadius: 6,
           backgroundColor: pill().bg,
           flexDirection: "row",
           alignItems: "center",
-          gap: 4,
+          justifyContent: "center",
+          gap: 6,
           flexShrink: 0,
         }}
       >
-        <Text style={{ fontSize: 12, fontWeight: 500, color: pill().fg, fontVariant: ["tabular-nums"] }}>
+        <If when={!!pill().dotColor}>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pill().dotColor, flexShrink: 0 }} />
+        </If>
+        <Text style={{ fontSize: 12, fontWeight: 500, color: pill().fg, fontVariant: ["tabular-nums"], numberOfLines: 1 }}>
           {pill().label}
         </Text>
         <Icon name={pill().expanded ? "chevronDown" : "chevronRight"} size={12} tone="secondary-foreground" />
       </View>
 
-      {/* Filter toggle (when on Results view) */}
-      <If when={props.ctrl.showFilter()}>
-        <Btn
-          testID="build-filter-toggle"
-          label={
-            filterCount() > 0
-              ? t("build.filter.activeCount", { count: filterCount() })
-              : t("build.filter.button")
-          }
-          icon="list"
-          variant={filterCount() > 0 ? "outline" : "ghost"}
-          onPress={() => props.ctrl.toggleFilter()}
-        />
-      </If>
+      {/* Filter button — stays in place (disabled when on detail view so status pill never shifts!) */}
+      <Btn
+        testID="build-filter-toggle"
+        label={filterCount() > 0 ? `${t("build.filter.button")} ${filterCount()}` : t("build.filter.button")}
+        icon="list"
+        variant={filterCount() > 0 ? "outline" : "ghost"}
+        disabled={!canFilter()}
+        onPress={() => props.ctrl.toggleFilter()}
+      />
 
-      {/* Fixed-width primary CTA slot: Verify <-> outline Cancel in-place (zero horizontal shift) */}
-      <View style={{ width: 132, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
+      {/* Fixed-width primary CTA slot: constant "验证" <-> outline "取消" in-place */}
+      <View style={{ width: 108, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
         <If
           when={!running()}
           else={
@@ -121,33 +132,38 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
               icon="x"
               variant="outline"
               onPress={() => props.ctrl.cancelRun()}
-              style={{ width: 132 }}
+              style={{ width: 108 }}
             />
           }
         >
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <Btn
               testID="build-verify-btn"
-              label={
-                filterCount() > 0
-                  ? t("build.action.verifySelected", { count: filterCount() })
-                  : t("build.action.verify")
-              }
+              label={t("build.action.verify")}
               icon="play"
               variant="primary"
               disabled={props.readOnly}
               tooltip={tip(t("build.action.verify"), "mod+b")}
               onPress={() => props.ctrl.startRun("verify")}
               style={{
-                width: 106,
+                width: 82,
                 borderTopRightRadius: 0,
                 borderBottomRightRadius: 0,
               }}
             />
             <AppMenu
               align="end"
-              minWidth={176}
-              entries={[{ id: "debug", label: t("build.action.quickRun"), icon: "play" }]}
+              minWidth={184}
+              entries={[
+                {
+                  id: "debug",
+                  label:
+                    filterCount() > 0
+                      ? t("build.action.verifySelected", { count: filterCount() })
+                      : t("build.action.quickRun"),
+                  icon: "play",
+                },
+              ]}
               onSelect={(id) => {
                 if (id === "debug") props.ctrl.startRun("debug");
               }}
@@ -190,7 +206,6 @@ type TreeSelection =
 type TestPaneTab = "input" | "sample_ans" | "std_out";
 
 const COL_TEST_W = 200;
-const COL_SOL_W = 112;
 
 export function BuildConsole(props: {
   problemId: string;
@@ -214,9 +229,19 @@ export function BuildConsole(props: {
 
   const selectedCell = signal<{ testIndex: number; solution: string } | undefined>(undefined);
   const testPaneTab = signal<TestPaneTab>("input");
-  const testEditing = signal(false);
   const testPreview = signal<TestCasePreviewJs | undefined>(undefined);
   const fileRefreshKey = signal(0);
+
+  // Preserved full-run snapshots so subset runs never wipe untouched column summaries or footer metrics (P1-5)
+  const lastFullSummaries = signal<Map<string, SolutionSummaryData>>(new Map());
+  const lastFullMargin = signal<SafetyMarginData | undefined>(undefined);
+
+  // Inline generator batch editor state (P1-4)
+  const batchEditRuleIdx = signal<number | undefined>(undefined);
+  const batchEditGen = signal("");
+  const batchEditArgs = signal("");
+  const batchEditRepeat = signal("1");
+  const batchEditTag = signal("");
 
   // Modals & transient feedback
   const createModalKind = signal<"solution" | "generator" | undefined>(undefined);
@@ -239,21 +264,24 @@ export function BuildConsole(props: {
         lastSlug = slug;
         selection.set({ kind: "results" });
         selectedCell.set(undefined);
-        testEditing.set(false);
         testPaneTab.set("input");
         filterSolutions.set([]);
         filterTests.set([]);
+        filterOpen.set(false);
         onlyAnomalyRows.set(false);
         checksExpanded.set(false);
         dirtyUndoNotice.set(undefined);
         notice.set(undefined);
         finishedReport.set(undefined);
         liveCells.set([]);
+        lastFullSummaries.set(new Map());
+        lastFullMargin.set(undefined);
+        batchEditRuleIdx.set(undefined);
       }
     });
   });
 
-  // Subscribe to external filesystem changes (Fix A-2: CLI rebuilds, external editor saves)
+  // Subscribe to external filesystem changes (Fix A-2)
   const unsubWatch = onExternalChange((paths, rescan) => {
     const slug = untracked(() => props.problemId);
     const relevant =
@@ -271,7 +299,6 @@ export function BuildConsole(props: {
   });
   cleanup(unsubWatch);
 
-  // Parse live inspection from disk
   const inspection = computed<PackageInspectionData | undefined>(() => {
     const raw = props.inspectionResult?.inspectionJson;
     if (!raw) return undefined;
@@ -292,6 +319,22 @@ export function BuildConsole(props: {
       if (!disk || fin.built_at_epoch_secs >= disk.built_at_epoch_secs) return fin;
     }
     return disk;
+  });
+
+  // Snapshot full-run summaries & safety margin whenever a non-subset (or std-bearing) report arrives (P1-5)
+  effect(() => {
+    const rep = activeReport();
+    if (!rep) return;
+    untracked(() => {
+      if (rep.solutions && rep.solutions.length > 0) {
+        const next = new Map(lastFullSummaries());
+        for (const s of rep.solutions) next.set(s.name, s);
+        lastFullSummaries.set(next);
+      }
+      if (!rep.subset || rep.safety_margin.std_max_time_ms > 0) {
+        lastFullMargin.set(rep.safety_margin);
+      }
+    });
   });
 
   const isRunningThis = computed(
@@ -316,7 +359,7 @@ export function BuildConsole(props: {
         try {
           liveCells.set(JSON.parse(next.liveCellsJson) as MatrixCellData[]);
         } catch {
-          // ignore malformed partial json
+          // ignore
         }
       }
       if (!next.running) {
@@ -373,7 +416,14 @@ export function BuildConsole(props: {
     return activeReport()?.tests ?? [];
   });
 
-  // Logical test groups for the Left Object Tree (Samples / Rules / Self-tests)
+  const testTags = computed(() => {
+    const set = new Set<string>();
+    for (const r of testRows()) {
+      if (r.tag && r.tag.trim()) set.add(r.tag.trim());
+    }
+    return Array.from(set).sort();
+  });
+
   const testGroups = computed(() => groupTestRows(inspection()?.expanded_tests, testRows()));
   const selfTestFiles = computed(() => inspection()?.files?.self_test_files ?? []);
   const hasSelfTestFailure = computed(() =>
@@ -385,10 +435,14 @@ export function BuildConsole(props: {
   );
 
   const summaryBySolution = computed(() => {
-    const m = new Map<string, NonNullable<BuildReportData["solutions"]>[number]>();
+    const m = new Map<string, SolutionSummaryData>();
     for (const s of activeReport()?.solutions ?? []) m.set(s.name, s);
     return m;
   });
+
+  const effectiveSafetyMargin = computed(() =>
+    resolveEffectiveSafetyMargin(activeReport(), lastFullMargin()),
+  );
 
   const gates = computed(() => activeReport()?.gates ?? inspection()?.gates ?? []);
   const partitionedGates = computed(() => partitionGates(gates()));
@@ -432,7 +486,7 @@ export function BuildConsole(props: {
     return matrixLookup().get(matrixCellKey(sel.testIndex, sel.solution));
   });
 
-  // Refresh test case preview whenever the selected test changes or disk refreshes
+  // Refresh test case preview & batch edit defaults whenever selection changes
   effect(() => {
     const sel = selection();
     const slug = props.problemId;
@@ -441,7 +495,7 @@ export function BuildConsole(props: {
     untracked(() => {
       if (sel.kind !== "testGroup") {
         testPreview.set(undefined);
-        testEditing.set(false);
+        batchEditRuleIdx.set(undefined);
         return;
       }
       const p = preview.inspectTestCase(slug, String(sel.testIndex), 40, 20);
@@ -452,22 +506,38 @@ export function BuildConsole(props: {
       } else if (curTab === "std_out" && !p.stdOutputAvailable && !(p.ansAvailable && p.ansSource === "std")) {
         testPaneTab.set("input");
       }
+      const grp = testGroups().find((g) => g.id === sel.groupId);
+      if (grp && grp.kind === "rule" && grp.genCmd && grp.ruleIndex != null) {
+        if (batchEditRuleIdx() !== grp.ruleIndex) {
+          const parts = grp.genCmd.trim().split(/\s+/);
+          batchEditRuleIdx.set(grp.ruleIndex);
+          batchEditGen.set(parts[0] ?? "");
+          batchEditArgs.set(parts.slice(1).join(" "));
+          batchEditRepeat.set(String(grp.tests.length));
+          batchEditTag.set(grp.tag ?? "");
+        }
+      } else {
+        batchEditRuleIdx.set(undefined);
+      }
     });
   });
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  function selectTestByIndex(testIndex: number, startEditing = false) {
+  function selectTestByIndex(testIndex: number) {
     const grp = testGroups().find((g) => g.tests.some((t) => t.index === testIndex));
     const groupId = grp?.id ?? "samples";
     testPaneTab.set("input");
-    testEditing.set(startEditing);
+    checksExpanded.set(false);
+    filterOpen.set(false);
     selection.set({ kind: "testGroup", groupId, testIndex });
   }
 
   function startRun(mode: "debug" | "verify") {
     if (props.readOnly || isRunningThis()) return;
     notice.set(undefined);
+    checksExpanded.set(false);
+    filterOpen.set(false);
     const hasFilter = filterTests().length > 0 || filterSolutions().length > 0;
     const effectiveMode = hasFilter ? "debug" : mode;
     const testsArg = hasFilter && filterTests().length > 0 ? filterTests() : null;
@@ -494,6 +564,22 @@ export function BuildConsole(props: {
     startRun("verify");
   }
 
+  function closePopovers(): boolean {
+    if (selectedCell()) {
+      selectedCell.set(undefined);
+      return true;
+    }
+    if (checksExpanded()) {
+      checksExpanded.set(false);
+      return true;
+    }
+    if (filterOpen()) {
+      filterOpen.set(false);
+      return true;
+    }
+    return false;
+  }
+
   const activeFilterCount = computed(() => filterTests().length + filterSolutions().length);
   const progressRatio = computed(() => {
     if (!isRunningThis()) return 0;
@@ -502,52 +588,62 @@ export function BuildConsole(props: {
     return Math.max(0.06, Math.min(1, buildStatus().completed / tot));
   });
 
+  // P1-6: Neutral surface + small semantic dot; tinted green ONLY for ready-for-contest
   const statusPillStyle = computed(() => {
     const st = singleStatus();
     const dark = colorScheme() === "dark";
     if (st.kind === "ready") {
       return {
         label: t("build.status.ready"),
-        bg: dark ? "rgba(34, 197, 94, 0.12)" : "rgba(22, 163, 74, 0.08)",
+        bg: dark ? "rgba(34, 197, 94, 0.14)" : "rgba(22, 163, 74, 0.10)",
         fg: dark ? "#4ade80" : "#15803d",
+        dotColor: dark ? "#4ade80" : "#16a34a",
         expanded: checksExpanded(),
       };
     }
+    const neutralBg = dark ? "rgba(255, 255, 255, 0.06)" : "rgba(24, 24, 27, 0.05)";
+    const neutralFg = dark ? "#e4e4e7" : "#27272a";
     if (st.kind === "issues") {
       return {
         label: t("build.status.issues", { count: st.issueCount }),
-        bg: dark ? "rgba(239, 68, 68, 0.14)" : "rgba(220, 38, 38, 0.08)",
-        fg: dark ? "#f87171" : "#b91c1c",
+        bg: neutralBg,
+        fg: neutralFg,
+        dotColor: dark ? "#f87171" : "#dc2626",
         expanded: checksExpanded(),
       };
     }
     if (st.kind === "needs_reverify") {
       return {
         label: t("build.status.needsReverify"),
-        bg: dark ? "rgba(245, 158, 11, 0.14)" : "rgba(217, 119, 6, 0.09)",
-        fg: dark ? "#fbbf24" : "#b45309",
+        bg: neutralBg,
+        fg: neutralFg,
+        dotColor: dark ? "#fbbf24" : "#d97706",
         expanded: checksExpanded(),
       };
     }
     return {
       label: t("build.status.unverified"),
-      bg: dark ? "rgba(255, 255, 255, 0.06)" : "rgba(24, 24, 27, 0.05)",
+      bg: neutralBg,
       fg: dark ? "#a1a1aa" : "#52525b",
+      dotColor: dark ? "#71717a" : "#a1a1aa",
       expanded: checksExpanded(),
     };
   });
 
-  // Expose live controller for StudioView's TitleBar trailing slot
   props.controller?.({
     triggerPrimaryRun,
+    closePopovers,
     statusPill: () => statusPillStyle(),
     toggleChecks: () => {
-      if (selection().kind !== "results") selection.set({ kind: "results" });
+      filterOpen.set(false);
       checksExpanded.set(!checksExpanded());
     },
-    showFilter: () => selection().kind === "results",
+    canFilter: () => selection().kind === "results",
     filterCount: () => activeFilterCount(),
-    toggleFilter: () => filterOpen.set(!filterOpen()),
+    toggleFilter: () => {
+      checksExpanded.set(false);
+      filterOpen.set(!filterOpen());
+    },
     running: () => isRunningThis(),
     startRun,
     cancelRun,
@@ -561,6 +657,8 @@ export function BuildConsole(props: {
   }
 
   function openFileInTree(relPath: string) {
+    checksExpanded.set(false);
+    filterOpen.set(false);
     if (relPath === "validator.cpp" || relPath === inspection()?.files?.validator) {
       selection.set({ kind: "validator" });
       return;
@@ -585,7 +683,7 @@ export function BuildConsole(props: {
     openExternal(relPath);
   }
 
-  // Fix A-1: Immediately select the newly created hand test and open its inline editor bound to its exact fileRel!
+  // Fix A-1: Immediately select the newly created hand test (directly editable via InlineFileEditor!)
   function handleAddHandTest() {
     if (props.readOnly) return;
     const res = preview.addHandTest(props.problemId, null, "hand", "");
@@ -608,7 +706,6 @@ export function BuildConsole(props: {
     }
     if (targetIndex == null) targetIndex = testRows().length + 1;
     testPaneTab.set("input");
-    testEditing.set(true);
     selection.set({ kind: "testGroup", groupId: `rule:${res.ruleIndex}`, testIndex: targetIndex });
   }
 
@@ -627,6 +724,22 @@ export function BuildConsole(props: {
     }
     props.onRefreshPackage();
     selection.set({ kind: "selfTests", relPath: res.relPath });
+  }
+
+  function handleSaveBatchRule() {
+    const rIdx = batchEditRuleIdx();
+    if (rIdx == null || props.readOnly) return;
+    const gen = batchEditGen().trim();
+    if (!gen) return;
+    const rep = Math.max(1, Math.min(200, Number.parseInt(batchEditRepeat().trim(), 10) || 1));
+    const tg = batchEditTag().trim() || null;
+    const res = preview.updateGeneratorTest(props.problemId, rIdx, gen, batchEditArgs().trim(), rep, tg, null);
+    if (!res.ok) {
+      notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+      return;
+    }
+    finishedReport.set(undefined);
+    props.onRefreshPackage();
   }
 
   function handleNormalizeDirty() {
@@ -697,7 +810,7 @@ export function BuildConsole(props: {
   }
 
   return (
-    <View style={{ flex: 1, minHeight: 0 }} class="bg-card" testID="build-console">
+    <View style={{ flex: 1, minHeight: 0, position: "relative" }} class="bg-card" testID="build-console">
       <If
         when={hasPackage()}
         else={
@@ -729,13 +842,12 @@ export function BuildConsole(props: {
               paddingTop: 8,
               paddingBottom: 8,
               borderBottomWidth: 1,
-              borderLeftWidth: 3,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "space-between",
               gap: 10,
             }}
-            class="border-b-border border-l-destructive bg-muted/30"
+            class="border-b-border bg-muted/30"
           >
             <View style={{ flex: 1, minWidth: 0 }}>
               <ErrorDisplay error={notice()} onDismiss={() => notice.set(undefined)} />
@@ -770,7 +882,7 @@ export function BuildConsole(props: {
             }}
             class="border-border bg-background/30"
           >
-            {/* 1. Results overview (no redundant count badge) */}
+            {/* 1. Results overview */}
             <TreeRow
               testID="tree-item-results"
               icon="table"
@@ -800,7 +912,7 @@ export function BuildConsole(props: {
               />
             </View>
 
-            {/* 3. Solutions (crown icon identifies main solution without redundant 标程 pill) */}
+            {/* 3. Solutions (uniform `预期 WA` labels, small semantic dot, no ✓) */}
             <View style={{ gap: 2 }}>
               <TreeSectionHeader
                 label={t("build.tree.solutions")}
@@ -820,7 +932,7 @@ export function BuildConsole(props: {
               <Each of={solutionSpecs()} key={(s) => s.name}>
                 {(spec) => {
                   const role = () => solutionRole(spec());
-                  const sum = () => summaryBySolution().get(spec().name);
+                  const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
                   return (
                     <TreeRow
                       testID={`tree-item-solution-${spec().name}`}
@@ -829,9 +941,7 @@ export function BuildConsole(props: {
                       sub={
                         role() === "main"
                           ? undefined
-                          : role() === "alt"
-                            ? t("build.role.alt")
-                            : spec().expected.join("/")
+                          : `${t("build.programs.expectPrefix")} ${spec().expected.join("/")}`
                       }
                       active={selection().kind === "solution" && (selection() as { kind: "solution"; name: string }).name === spec().name}
                       statusDot={sum() ? (sum()!.matched ? "ok" : "fail") : undefined}
@@ -872,7 +982,7 @@ export function BuildConsole(props: {
               </Each>
             </View>
 
-            {/* 5. Test Data — logically grouped: Samples / Rules (Batches) / Self-tests */}
+            {/* 5. Test Data — logically grouped: Samples / Disambiguated Rules / Self-tests */}
             <View style={{ gap: 2 }}>
               <TreeSectionHeader
                 label={`${t("build.tree.tests")} (${testRows().length})`}
@@ -932,7 +1042,6 @@ export function BuildConsole(props: {
                       statusDot={grp().hasValidatorFail ? "fail" : undefined}
                       onPress={() => {
                         const firstIdx = grp().tests[0]?.index ?? 1;
-                        testEditing.set(false);
                         testPaneTab.set("input");
                         selection.set({ kind: "testGroup", groupId: grp().id, testIndex: firstIdx });
                       }}
@@ -941,7 +1050,6 @@ export function BuildConsole(props: {
                 }}
               </Each>
 
-              {/* Self-tests logical group */}
               <TreeRow
                 testID="tree-item-self-tests"
                 icon="shieldCheck"
@@ -965,106 +1073,7 @@ export function BuildConsole(props: {
             {/* A. Results Overview — starts immediately at top of right pane */}
             <If when={selection().kind === "results"}>
               <View style={{ flex: 1, minHeight: 0 }}>
-                {/* Expandable Borderless Check List (Failed -> Suggestions -> Passed collapsed to 1 row) */}
-                <If when={checksExpanded() && gates().length > 0}>
-                  <View
-                    testID="build-checks-panel"
-                    style={{
-                      borderBottomWidth: 1,
-                      paddingLeft: 16,
-                      paddingRight: 16,
-                      paddingTop: 10,
-                      paddingBottom: 10,
-                      gap: 6,
-                    }}
-                    class="border-border bg-background/20"
-                  >
-                    <Each of={partitionedGates().attention} key={(g) => g.id}>
-                      {(gate) => {
-                        const action = () => nextActionForCheck(gate(), activeReport(), inspection()?.files);
-                        return (
-                          <View
-                            style={{
-                              paddingLeft: 10,
-                              paddingTop: 4,
-                              paddingBottom: 4,
-                              borderLeftWidth: 2,
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 10,
-                            }}
-                            class={gate().status === "fail" ? "border-l-destructive" : "border-l-chart-4"}
-                          >
-                            <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Icon
-                                name={gate().status === "fail" ? "circleAlert" : "triangleAlert"}
-                                size={13}
-                                tone={gate().status === "fail" ? "destructive" : "chart-4"}
-                              />
-                              <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
-                                {humanizeCheckText(gate().title, isZh())}
-                              </Text>
-                              <Text
-                                style={{ fontSize: 12, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
-                                class="text-secondary-foreground"
-                              >
-                                {humanizeCheckText(gate().message, isZh())}
-                              </Text>
-                            </View>
-                            <If when={action()}>
-                              {(act) => (
-                                <Btn
-                                  label={t("build.check.fix")}
-                                  variant="ghost"
-                                  onPress={() => {
-                                    const a = act();
-                                    if (a.kind === "view_test") selectTestByIndex(a.testIndex);
-                                    else if (a.kind === "select_cell") selectedCell.set({ testIndex: a.testIndex, solution: a.solution });
-                                    else if (a.kind === "open_file") openFileInTree(a.relPath);
-                                  }}
-                                />
-                              )}
-                            </If>
-                          </View>
-                        );
-                      }}
-                    </Each>
-
-                    {/* Passed checks collapsed to 1 row */}
-                    <If when={partitionedGates().passed.length > 0}>
-                      <View style={{ gap: 4 }}>
-                        <View
-                          onPress={() => passedChecksExpanded.set(!passedChecksExpanded())}
-                          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 2, paddingTop: 2 }}
-                        >
-                          <Icon name="check" size={13} tone="secondary-foreground" />
-                          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                            {t("build.checks.passedCollapsed", { count: partitionedGates().passed.length })}
-                          </Text>
-                          <Icon
-                            name={passedChecksExpanded() ? "chevronDown" : "chevronRight"}
-                            size={12}
-                            tone="muted-foreground"
-                          />
-                        </View>
-                        <If when={passedChecksExpanded()}>
-                          <View style={{ paddingLeft: 18, gap: 3 }}>
-                            <Each of={partitionedGates().passed} key={(g) => g.id}>
-                              {(gate) => (
-                                <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-                                  {`${humanizeCheckText(gate().title, isZh())}  ${humanizeCheckText(gate().message, isZh())}`}
-                                </Text>
-                              )}
-                            </Each>
-                          </View>
-                        </If>
-                      </View>
-                    </If>
-                  </View>
-                </If>
-
-                {/* Dirty inputs borderless left-accented notice + Undo */}
+                {/* Dirty inputs notice + Undo (only when dirty inputs exist or just fixed) */}
                 <If when={dirtyInputs().length > 0}>
                   <View
                     testID="dirty-inputs-banner"
@@ -1074,13 +1083,12 @@ export function BuildConsole(props: {
                       paddingTop: 7,
                       paddingBottom: 7,
                       borderBottomWidth: 1,
-                      borderLeftWidth: 3,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
                       gap: 10,
                     }}
-                    class="border-b-border border-l-chart-4 bg-background/30"
+                    class="border-b-border bg-background/30"
                   >
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1, minWidth: 0 }}>
                       <Icon name="triangleAlert" size={14} tone="chart-4" />
@@ -1108,13 +1116,12 @@ export function BuildConsole(props: {
                       paddingTop: 6,
                       paddingBottom: 6,
                       borderBottomWidth: 1,
-                      borderLeftWidth: 3,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
                       gap: 10,
                     }}
-                    class="border-b-border border-l-primary bg-background/30"
+                    class="border-b-border bg-background/30"
                   >
                     <Text style={{ fontSize: 12 }} class="text-foreground">
                       {t("build.dirtyInputs.fixedNotice", { count: dirtyUndoNotice()! })}
@@ -1132,32 +1139,24 @@ export function BuildConsole(props: {
                   </View>
                 </If>
 
-                {/* Compile failures borderless left-accented rows */}
+                {/* Compile failures (neutral clean row, no heavy box) */}
                 <If when={compileFailures().length > 0}>
                   <View style={{ borderBottomWidth: 1 }} class="border-border bg-background/20">
                     <Each of={compileFailures()} key={(cf) => cf.target}>
                       {(cf) => (
-                        <View
-                          style={{
-                            paddingLeft: 16,
-                            paddingRight: 14,
-                            paddingTop: 8,
-                            paddingBottom: 8,
-                            borderLeftWidth: 3,
-                            gap: 4,
-                          }}
-                          class="border-l-destructive"
-                        >
-                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <View style={{ paddingLeft: 16, paddingRight: 14, paddingTop: 8, paddingBottom: 8, gap: 4 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Icon name="circleAlert" size={13} tone="destructive" />
                             <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-destructive">
                               {t("build.compileError.title", { target: cf().source_path })}
                             </Text>
-                            <Btn
-                              label={t("build.compileError.openSource")}
-                              icon="code"
-                              variant="ghost"
+                            <Text
                               onPress={() => openFileInTree(cf().source_path)}
-                            />
+                              style={{ fontSize: 12, fontWeight: 500 }}
+                              class="text-primary"
+                            >
+                              {t("build.compileError.openSource")}
+                            </Text>
                           </View>
                           <Text
                             style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16, numberOfLines: 4, textOverflow: "ellipsis" }}
@@ -1171,60 +1170,9 @@ export function BuildConsole(props: {
                   </View>
                 </If>
 
-                {/* Subset filter bar (collapsible) */}
-                <If when={filterOpen()}>
-                  <View
-                    style={{
-                      paddingLeft: 16,
-                      paddingRight: 16,
-                      paddingTop: 8,
-                      paddingBottom: 8,
-                      borderBottomWidth: 1,
-                      gap: 6,
-                    }}
-                    class="border-border bg-background/40"
-                  >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-                        {t("build.tree.solutions")}
-                      </Text>
-                      <Each of={solutionSpecs()} key={(s) => s.name}>
-                        {(spec) => {
-                          const active = () => filterSolutions().includes(spec().name);
-                          return (
-                            <View
-                              onPress={() => filterSolutions.set(toggleSubsetSelection(filterSolutions(), spec().name))}
-                              class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
-                              style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
-                            >
-                              <Text
-                                style={{ fontSize: 11, fontWeight: 500 }}
-                                class={active() ? "text-primary-foreground" : "text-foreground"}
-                              >
-                                {spec().name}
-                              </Text>
-                            </View>
-                          );
-                        }}
-                      </Each>
-                      <If when={activeFilterCount() > 0}>
-                        <Btn
-                          label={t("build.filter.clear")}
-                          icon="filterX"
-                          variant="ghost"
-                          onPress={() => {
-                            filterSolutions.set([]);
-                            filterTests.set([]);
-                          }}
-                        />
-                      </If>
-                    </View>
-                  </View>
-                </If>
-
-                {/* Borderless Full-Bleed Results Table (starts directly at top!) */}
+                {/* P0-2 Quiet Results Table with P1-1 fluid column widths (min 120, max 180) */}
                 <Scroll horizontal style={{ flex: 1, minHeight: 0 }} contentStyle={{ flexGrow: 1 }}>
-                  <View style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * COL_SOL_W + 24 }}>
+                  <View style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * 120 + 32 }}>
                     {/* Sticky Header Row */}
                     <View
                       style={{
@@ -1246,7 +1194,15 @@ export function BuildConsole(props: {
                         {(spec) => (
                           <View
                             onPress={() => selection.set({ kind: "solution", name: spec().name })}
-                            style={{ width: COL_SOL_W, flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 8 }}
+                            style={{
+                              flex: 1,
+                              minWidth: 120,
+                              maxWidth: 180,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 4,
+                              paddingRight: 10,
+                            }}
                           >
                             <If when={spec().is_main}>
                               <Icon name="crown" size={12} tone="secondary-foreground" />
@@ -1262,7 +1218,7 @@ export function BuildConsole(props: {
                       </Each>
                     </View>
 
-                    {/* Sticky Summary Conclusion Row */}
+                    {/* Sticky Summary Conclusion Row (P1-5: preserves previous summary with `旧` on subset runs) */}
                     <View
                       style={{
                         height: 30,
@@ -1283,16 +1239,28 @@ export function BuildConsole(props: {
                         {(spec) => {
                           const conclusion = () => {
                             const sum = summaryBySolution().get(spec().name);
+                            const prevSum = lastFullSummaries().get(spec().name);
                             const cells: MatrixCellData[] = [];
                             const lookup = matrixLookup();
                             for (const row of testRows()) {
                               const c = lookup.get(matrixCellKey(row.index, spec().name));
                               if (c) cells.push(c);
                             }
-                            return formatSolutionConclusion(sum, cells, isZh());
+                            return formatSolutionConclusion(sum, cells, isZh(), isRunningThis(), prevSum);
                           };
                           return (
-                            <View style={{ width: COL_SOL_W, flexShrink: 0, paddingRight: 8 }}>
+                            <View
+                              style={{
+                                flex: 1,
+                                minWidth: 120,
+                                maxWidth: 180,
+                                paddingRight: 10,
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 5,
+                                opacity: conclusion().stale ? 0.55 : 1,
+                              }}
+                            >
                               <Text
                                 style={{ fontSize: 11, fontWeight: 500, fontVariant: ["tabular-nums"] }}
                                 class={
@@ -1305,6 +1273,11 @@ export function BuildConsole(props: {
                               >
                                 {conclusion().text}
                               </Text>
+                              <If when={Boolean(conclusion().stale)}>
+                                <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+                                  {t("build.table.staleTag")}
+                                </Text>
+                              </If>
                             </View>
                           );
                         }}
@@ -1326,7 +1299,7 @@ export function BuildConsole(props: {
                             }}
                             class="border-border/60 hover:bg-muted/30"
                           >
-                            {/* Test case label cell -> jumps directly to that test in right pane */}
+                            {/* Test case label cell */}
                             <View
                               onPress={() => selectTestByIndex(row().index)}
                               style={{
@@ -1340,12 +1313,12 @@ export function BuildConsole(props: {
                             >
                               <Text
                                 style={{ fontSize: 12, fontVariant: ["tabular-nums"], width: 20, flexShrink: 0 }}
-                                class="text-secondary-foreground"
+                                class="text-muted-foreground"
                               >
                                 {String(row().index).padStart(2, "0")}
                               </Text>
                               <Text
-                                style={{ fontSize: 13, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                 class="text-foreground"
                               >
                                 {row().name}
@@ -1354,17 +1327,17 @@ export function BuildConsole(props: {
                                 <Icon name="triangleAlert" size={12} tone="destructive" />
                               </If>
                               <If when={row().size_bytes > 0}>
-                                <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-secondary-foreground">
+                                <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                                   {formatBytesCompact(row().size_bytes)}
                                 </Text>
                               </If>
                             </View>
 
-                            {/* Solution verdict cells (fixed 112px width, P1-6 visual coding) */}
+                            {/* P0-2 Quiet Solution Verdict Cells (fluid 120–180px, only anomalies have solid fill!) */}
                             <Each of={solutionSpecs()} key={(s) => s.name}>
                               {(spec) => {
                                 const cell = () => matrixLookup().get(matrixCellKey(row().index, spec().name));
-                                const sum = () => summaryBySolution().get(spec().name);
+                                const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
                                 const isAnom = () => {
                                   const c = cell();
                                   if (!c) return false;
@@ -1378,20 +1351,23 @@ export function BuildConsole(props: {
                                   <View
                                     onPress={() => {
                                       if (cell()) {
+                                        checksExpanded.set(false);
+                                        filterOpen.set(false);
                                         selectedCell.set({ testIndex: row().index, solution: spec().name });
                                       }
                                     }}
                                     style={{
-                                      width: COL_SOL_W,
-                                      flexShrink: 0,
-                                      paddingRight: 8,
+                                      flex: 1,
+                                      minWidth: 120,
+                                      maxWidth: 180,
+                                      paddingRight: 10,
                                       justifyContent: "center",
                                     }}
                                   >
                                     <If
                                       when={cell()}
                                       else={
-                                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                                        <Text style={{ fontSize: 12, paddingLeft: 6 }} class="text-muted-foreground">
                                           {"-"}
                                         </Text>
                                       }
@@ -1405,40 +1381,35 @@ export function BuildConsole(props: {
                                               paddingLeft: 7,
                                               paddingRight: 7,
                                               borderRadius: 5,
-                                              borderWidth: 1,
+                                              borderWidth: isPicked() ? 2 : 0,
                                               backgroundColor: st().bg,
-                                              borderColor: isPicked() ? st().fg : st().border,
-                                              opacity: c().stale ? 0.55 : 1,
+                                              borderColor: isPicked() ? token("primary") : "transparent",
+                                              opacity: c().stale ? 0.5 : 1,
                                               flexDirection: "row",
                                               alignItems: "center",
                                               justifyContent: "space-between",
-                                              gap: 4,
+                                              gap: 6,
                                             }}
                                           >
-                                            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-                                              <If when={isAnom()}>
-                                                <Icon name="triangleAlert" size={11} tone="destructive" />
-                                              </If>
-                                              <Text
-                                                style={{
-                                                  fontSize: 11,
-                                                  fontWeight: 600,
-                                                  color: st().fg,
-                                                  fontVariant: ["tabular-nums"],
-                                                }}
-                                              >
-                                                {c().verdict}
-                                              </Text>
-                                            </View>
+                                            <Text
+                                              style={{
+                                                fontSize: 11.5,
+                                                fontWeight: st().bold ? 600 : 500,
+                                                color: st().fg,
+                                                fontVariant: ["tabular-nums"],
+                                              }}
+                                            >
+                                              {c().verdict}
+                                            </Text>
                                             <Text
                                               style={{
                                                 fontSize: 11,
                                                 color: st().fg,
-                                                opacity: 0.85,
+                                                opacity: st().solid ? 0.9 : 0.72,
                                                 fontVariant: ["tabular-nums"],
                                               }}
                                             >
-                                              {`${c().cpu_time_ms}ms`}
+                                              {`${c().cpu_time_ms} ms`}
                                             </Text>
                                           </View>
                                         );
@@ -1455,8 +1426,8 @@ export function BuildConsole(props: {
                   </View>
                 </Scroll>
 
-                {/* Quiet Footer Bar: Safety Margin metrics + Live progress detail + Only Anomalies toggle */}
-                <If when={Boolean(activeReport()?.safety_margin) || anomalousRowIndices().size > 0 || isRunningThis()}>
+                {/* Quiet Footer Bar: Preserved Safety Margin metrics + Clean Progress Count (`32 / 396`) + Only Anomalies */}
+                <If when={Boolean(effectiveSafetyMargin()) || anomalousRowIndices().size > 0 || isRunningThis()}>
                   <View
                     testID="results-quiet-footer"
                     style={{
@@ -1476,14 +1447,16 @@ export function BuildConsole(props: {
                         when={!isRunningThis()}
                         else={
                           <Text
-                            style={{ fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
+                            style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }}
                             class="text-secondary-foreground"
                           >
-                            {buildStatus().detail || t("build.running.preparing")}
+                            {buildStatus().total > 0
+                              ? `${t("build.running.progress")} ${buildStatus().completed} / ${buildStatus().total}`
+                              : t("build.running.preparing")}
                           </Text>
                         }
                       >
-                        <If when={activeReport()?.safety_margin}>
+                        <If when={effectiveSafetyMargin()}>
                           {(m) => (
                             <>
                               <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
@@ -1534,11 +1507,11 @@ export function BuildConsole(props: {
                   </View>
                 </If>
 
-                {/* P1-7 Right-Overlay 3-Column Diagnostic Drawer (absolute, NEVER squeezes table!) */}
+                {/* P1-3 & P1-7 Conclusion-First Right-Overlay 3-Column Diagnostic Drawer */}
                 <If when={selectedCellData()}>
                   {(cell) => {
                     const spec = () => solutionSpecs().find((s) => s.name === cell().solution);
-                    const sum = () => summaryBySolution().get(cell().solution);
+                    const sum = () => summaryBySolution().get(cell().solution) ?? lastFullSummaries().get(cell().solution);
                     const rowMeta = () => testRows().find((r) => r.index === cell().test_index);
                     const isAnom = () => {
                       const sp = spec();
@@ -1548,6 +1521,7 @@ export function BuildConsole(props: {
                       <CellDiagnosticDrawer
                         problemId={props.problemId}
                         cell={cell()}
+                        expected={spec()?.expected ?? ["AC"]}
                         isAnomaly={isAnom()}
                         genCmd={rowMeta()?.gen_cmd}
                         solutionRelPath={spec()?.source_rel}
@@ -1567,7 +1541,7 @@ export function BuildConsole(props: {
               </View>
             </If>
 
-            {/* B. Logical Test Group Detail View (Samples / Batch / Hand test) */}
+            {/* B. Logical Test Group Detail View (P1-4 unified grammar + dropdown selector + inline batch editor) */}
             <If when={selection().kind === "testGroup"}>
               {(() => {
                 const curSel = () =>
@@ -1580,7 +1554,11 @@ export function BuildConsole(props: {
                 const prev = () => testPreview();
                 const fileRel = () => prev()?.fileRel ?? null;
                 const ruleIdx = () => activeGroup()?.ruleIndex ?? prev()?.ruleIndex ?? null;
-                const editable = () => !props.readOnly && canInlineEditTest(prev());
+                const directlyEditable = () =>
+                  !props.readOnly && testPaneTab() === "input" && canInlineEditTest(prev()) && Boolean(fileRel());
+                const isGenBatch = () => Boolean(activeGroup()?.kind === "rule" && activeGroup()?.genCmd && ruleIdx() != null);
+                const genStems = () => (inspection()?.files?.generators ?? []).map(logicalSolutionName).filter(Boolean);
+
                 const paneItems = () => {
                   const p = prev();
                   const items: { value: TestPaneTab; label: string }[] = [
@@ -1617,147 +1595,85 @@ export function BuildConsole(props: {
                   };
                 };
 
+                const testDropdownSelector = () =>
+                  (activeGroup()?.tests.length ?? 0) > 1 ? (
+                    <AppMenu
+                      align="end"
+                      minWidth={200}
+                      entries={(activeGroup()?.tests ?? []).map((item) => ({
+                        id: String(item.index),
+                        label: `#${String(item.index).padStart(2, "0")} ${item.name}`,
+                        checked: item.index === activeIdx(),
+                      }))}
+                      onSelect={(id) => {
+                        const nextIdx = Number.parseInt(id, 10);
+                        if (!Number.isNaN(nextIdx)) {
+                          selection.set({
+                            kind: "testGroup",
+                            groupId: activeGroup()!.id,
+                            testIndex: nextIdx,
+                          });
+                        }
+                      }}
+                      trigger={
+                        <View
+                          testID="batch-test-dropdown"
+                          class="border border-border bg-card hover:bg-muted"
+                          style={{
+                            height: 28,
+                            paddingLeft: 9,
+                            paddingRight: 7,
+                            borderRadius: 6,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 5,
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                            {`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? ""}`}
+                          </Text>
+                          <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                        </View>
+                      }
+                    />
+                  ) : undefined;
+
+                const deleteRuleBtn = () =>
+                  !props.readOnly && activeGroup()?.kind !== "samples" && ruleIdx() != null ? (
+                    <IconBtn
+                      testID="test-delete-rule-btn"
+                      icon="trash"
+                      tone="muted-foreground"
+                      tooltip={tip(t("build.tests.deleteRule"))}
+                      onPress={() => deleteRuleIndex.set(ruleIdx()!)}
+                    />
+                  ) : undefined;
+
                 return (
                   <View style={{ flex: 1, minHeight: 0 }}>
-                    {/* Header: Name + Target relative path + Fixed-slot controls */}
-                    <View
-                      style={{
-                        height: 44,
-                        paddingLeft: 16,
-                        paddingRight: 14,
-                        borderBottomWidth: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 10,
-                      }}
-                      class="border-border"
-                    >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-                        <Text style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                          {`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? prev()?.name ?? ""}`}
-                        </Text>
-                        <If when={fileRel()}>
-                          {(rel) => (
-                            <Text
-                              style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
-                              class="text-secondary-foreground"
-                            >
-                              {rel()}
-                            </Text>
-                          )}
-                        </If>
-                      </View>
-
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        <If when={paneItems().length > 1 && !testEditing()}>
-                          <Segmented
-                            items={paneItems()}
-                            value={testPaneTab()}
-                            onChange={(v) => testPaneTab.set(v)}
-                            itemWidth={isZh() ? 86 : 98}
-                          />
-                        </If>
-                        <If when={editable() && testPaneTab() === "input"}>
-                          <Btn
-                            testID="test-inline-edit-toggle"
-                            label={testEditing() ? t("build.tests.doneEdit") : t("build.tests.inlineEdit")}
-                            icon={testEditing() ? "check" : "pencil"}
-                            variant={testEditing() ? "outline" : "ghost"}
-                            onPress={() => testEditing.set(!testEditing())}
-                          />
-                        </If>
-                        <If when={!props.readOnly && activeGroup()?.kind !== "samples" && ruleIdx() != null}>
-                          <IconBtn
-                            testID="test-delete-rule-btn"
-                            icon="trash"
-                            tone="destructive"
-                            tooltip={tip(t("build.tests.deleteRule"))}
-                            onPress={() => deleteRuleIndex.set(ruleIdx()!)}
-                          />
-                        </If>
-                      </View>
-                    </View>
-
-                    {/* Compact batch member selector strip when group has > 1 test case */}
-                    <If when={(activeGroup()?.tests.length ?? 0) > 1}>
-                      <Scroll
-                        horizontal
-                        style={{ maxHeight: 38, borderBottomWidth: 1 }}
-                        contentStyle={{
-                          paddingLeft: 16,
-                          paddingRight: 16,
-                          paddingTop: 6,
-                          paddingBottom: 6,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                        class="border-border bg-background/30"
-                      >
-                        <Each of={activeGroup()?.tests ?? []} key={(item) => String(item.index)}>
-                          {(item) => {
-                            const selected = () => item().index === activeIdx();
-                            return (
-                              <View
-                                onPress={() => {
-                                  testEditing.set(false);
-                                  selection.set({
-                                    kind: "testGroup",
-                                    groupId: activeGroup()!.id,
-                                    testIndex: item().index,
-                                  });
-                                }}
-                                class={selected() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
-                                style={{
-                                  height: 24,
-                                  paddingLeft: 8,
-                                  paddingRight: 8,
-                                  borderRadius: 5,
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  gap: 4,
-                                }}
-                              >
-                                <Text
-                                  style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                                  class={selected() ? "text-foreground" : "text-secondary-foreground"}
-                                >
-                                  {`#${String(item().index).padStart(2, "0")}`}
-                                </Text>
-                                <If when={item().validator_ok === false}>
-                                  <Icon name="triangleAlert" size={11} tone="destructive" />
-                                </If>
-                              </View>
-                            );
-                          }}
-                        </Each>
-                      </Scroll>
-                    </If>
-
                     {/* Validator failure callout */}
                     <If when={row()?.validator_ok === false}>
                       <View
                         style={{
-                          paddingLeft: 16,
-                          paddingRight: 14,
+                          paddingLeft: 20,
+                          paddingRight: 16,
                           paddingTop: 8,
                           paddingBottom: 8,
                           borderBottomWidth: 1,
-                          borderLeftWidth: 3,
                           flexDirection: "row",
                           alignItems: "center",
                           justifyContent: "space-between",
                           gap: 10,
                         }}
-                        class="border-b-border border-l-destructive bg-background/30"
+                        class="border-b-border bg-muted/30"
                       >
-                        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Icon name="circleAlert" size={14} tone="destructive" />
                           <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-destructive">
                             {t("build.tests.validatorFailed")}
                           </Text>
                           <If when={!!row()?.validator_message}>
-                            <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-foreground">
+                            <Text style={{ fontSize: 12, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {row()!.validator_message!}
                             </Text>
                           </If>
@@ -1765,70 +1681,196 @@ export function BuildConsole(props: {
                         <Btn
                           label={t("build.tests.openValidator")}
                           icon="shieldCheck"
-                          variant="outline"
+                          variant="ghost"
                           onPress={() => selection.set({ kind: "validator" })}
                         />
                       </View>
                     </If>
 
-                    {/* Body: Either InlineFileEditor (Fix A-1) or Bounded Preview (Fix A-6) */}
+                    {/* Directly editable small hand/sample test -> Unified InlineFileEditor (NO dual 编辑/完成 mode!) */}
                     <If
-                      when={testEditing() && !!fileRel() && testPaneTab() === "input"}
+                      when={directlyEditable()}
                       else={
-                        <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 16, gap: 12 }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                          {/* Unified Detail Header for non-editable / generated / large / output views */}
+                          <View
+                            style={{
+                              minHeight: 52,
+                              paddingLeft: 20,
+                              paddingRight: 16,
+                              paddingTop: 8,
+                              paddingBottom: 8,
+                              borderBottomWidth: 1,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                            }}
+                            class="border-border bg-background/30"
+                          >
+                            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                                <Icon
+                                  name={activeGroup()?.kind === "samples" ? "fileText" : isGenBatch() ? "sparkles" : "database"}
+                                  size={14.5}
+                                  tone="secondary-foreground"
+                                />
+                                <Text style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                                  {`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? prev()?.name ?? ""}`}
+                                </Text>
+                              </View>
+                              <If when={fileRel() || activeGroup()?.genCmd}>
+                                <Text style={{ fontSize: 11.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                  {fileRel() ?? activeGroup()?.genCmd ?? ""}
+                                </Text>
+                              </If>
+                            </View>
+
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                              {testDropdownSelector()}
+                              <If when={paneItems().length > 1}>
+                                <Segmented
+                                  items={paneItems()}
+                                  value={testPaneTab()}
+                                  onChange={(v) => testPaneTab.set(v)}
+                                  itemWidth={isZh() ? 86 : 98}
+                                />
+                              </If>
+                              <If when={fileRel()}>
+                                {(rel) => (
+                                  <Btn
+                                    label={t("build.quickEdit.openExternal")}
+                                    icon="folderOpen"
+                                    variant="ghost"
+                                    onPress={() => openExternal(rel())}
+                                  />
+                                )}
+                              </If>
+                              {deleteRuleBtn()}
+                            </View>
+                          </View>
+
+                          {/* P1-4 Inline Generator Batch Config Bar (editable generator / args / repeat / tag) */}
+                          <If when={isGenBatch() && !props.readOnly}>
+                            <View
+                              testID="generator-batch-editor-bar"
+                              style={{
+                                paddingLeft: 20,
+                                paddingRight: 16,
+                                paddingTop: 8,
+                                paddingBottom: 8,
+                                borderBottomWidth: 1,
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 8,
+                                flexWrap: "wrap",
+                              }}
+                              class="border-border bg-background/20"
+                            >
+                              <AppMenu
+                                align="start"
+                                minWidth={180}
+                                entries={genStems().map((g) => ({
+                                  id: g,
+                                  label: g,
+                                  checked: g === batchEditGen(),
+                                }))}
+                                onSelect={(id) => batchEditGen.set(id)}
+                                trigger={
+                                  <View
+                                    class="border border-border bg-card hover:bg-muted"
+                                    style={{ height: 28, paddingLeft: 8, paddingRight: 6, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 5 }}
+                                  >
+                                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                      {batchEditGen() || t("build.tests.genModalGenerator")}
+                                    </Text>
+                                    <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                  </View>
+                                }
+                              />
+                              <Input
+                                value={batchEditArgs()}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                placeholder="-n 100 {i}"
+                                onChange={(e) => batchEditArgs.set(e.value)}
+                                onSubmit={handleSaveBatchRule}
+                                class="flex-1 min-w-[140px] h-7 px-2 rounded-md border border-border bg-card text-[12px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+                                style={{ fontFamily: MONO }}
+                              />
+                              <Input
+                                value={batchEditRepeat()}
+                                keyboardType="number-pad"
+                                onChange={(e) => batchEditRepeat.set(e.value)}
+                                onSubmit={handleSaveBatchRule}
+                                class="w-14 h-7 px-2 rounded-md border border-border bg-card text-[12px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+                                style={{ fontVariant: ["tabular-nums"] }}
+                              />
+                              <Input
+                                value={batchEditTag()}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                placeholder={t("build.tests.genModalTag")}
+                                onChange={(e) => batchEditTag.set(e.value)}
+                                onSubmit={handleSaveBatchRule}
+                                class="w-24 h-7 px-2 rounded-md border border-border bg-card text-[12px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
+                              />
+                              <Btn
+                                testID="batch-rule-save-btn"
+                                label={t("build.quickEdit.save")}
+                                icon="check"
+                                variant="outline"
+                                onPress={handleSaveBatchRule}
+                              />
+                            </View>
+                          </If>
+
+                          {/* Bounded Preview with P1-1 maxWidth: 560 (~72ch) for small previews */}
+                          <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 20, gap: 12 }}>
+                            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                               {activeContent().linesExact != null
                                 ? `${formatBytesCompact(activeContent().bytes)}   ${t("build.tests.linesCount", { count: activeContent().linesExact! })}`
                                 : formatBytesCompact(activeContent().bytes)}
                             </Text>
-                            <If when={fileRel()}>
-                              {(rel) => (
-                                <Btn
-                                  label={t("build.quickEdit.openExternal")}
-                                  icon="folderOpen"
-                                  variant="ghost"
-                                  onPress={() => openExternal(rel())}
-                                />
-                              )}
-                            </If>
-                          </View>
 
-                          <If when={activeContent().truncated}>
-                            <View
-                              testID="test-truncation-banner"
-                              style={{
-                                paddingLeft: 10,
-                                paddingTop: 6,
-                                paddingBottom: 6,
-                                borderLeftWidth: 2,
-                              }}
-                              class="border-l-chart-4 bg-muted/30"
-                            >
-                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                                {activeContent().omitted != null
-                                  ? t("build.tests.truncatedWithOmitted", { bytes: formatBytesCompact(activeContent().omitted!) })
-                                  : t("build.tests.truncatedBanner")}
-                              </Text>
-                            </View>
-                          </If>
-
-                          <View style={{ padding: 12, borderRadius: 6 }} class="bg-muted/40">
-                            <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
-                              {activeContent().head || t("build.tests.emptyContent")}
-                            </Text>
-                            <If when={activeContent().truncated && activeContent().tail.length > 0}>
-                              <View style={{ paddingTop: 8, paddingBottom: 8 }}>
-                                <Text style={{ fontSize: 11, fontFamily: MONO }} class="text-muted-foreground">
-                                  {"…"}
+                            <If when={activeContent().truncated}>
+                              <View
+                                testID="test-truncation-banner"
+                                style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 6, paddingBottom: 6, borderRadius: 6, maxWidth: 680 }}
+                                class="bg-muted/40"
+                              >
+                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                  {activeContent().omitted != null
+                                    ? t("build.tests.truncatedWithOmitted", { bytes: formatBytesCompact(activeContent().omitted!) })
+                                    : t("build.tests.truncatedBanner")}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
-                                {activeContent().tail}
-                              </Text>
                             </If>
-                          </View>
-                        </Scroll>
+
+                            <View
+                              style={{
+                                padding: 14,
+                                borderRadius: 6,
+                                maxWidth: activeContent().truncated ? 820 : 560,
+                              }}
+                              class="bg-muted/40"
+                            >
+                              <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
+                                {activeContent().head || t("build.tests.emptyContent")}
+                              </Text>
+                              <If when={activeContent().truncated && activeContent().tail.length > 0}>
+                                <View style={{ paddingTop: 8, paddingBottom: 8 }}>
+                                  <Text style={{ fontSize: 11, fontFamily: MONO }} class="text-muted-foreground">
+                                    {"…"}
+                                  </Text>
+                                </View>
+                                <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
+                                  {activeContent().tail}
+                                </Text>
+                              </If>
+                            </View>
+                          </Scroll>
+                        </View>
                       }
                     >
                       <InlineFileEditor
@@ -1836,6 +1878,22 @@ export function BuildConsole(props: {
                         relPath={fileRel()!}
                         readOnly={props.readOnly}
                         refreshKey={fileRefreshKey()}
+                        title={`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? prev()?.name ?? ""}`}
+                        icon={activeGroup()?.kind === "samples" ? "fileText" : "database"}
+                        extraActions={
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            {testDropdownSelector()}
+                            <If when={paneItems().length > 1}>
+                              <Segmented
+                                items={paneItems()}
+                                value={testPaneTab()}
+                                onChange={(v) => testPaneTab.set(v)}
+                                itemWidth={isZh() ? 86 : 98}
+                              />
+                            </If>
+                            {deleteRuleBtn()}
+                          </View>
+                        }
                         onSaved={() => {
                           finishedReport.set(undefined);
                           props.onRefreshPackage();
@@ -1848,7 +1906,7 @@ export function BuildConsole(props: {
               })()}
             </If>
 
-            {/* C. Self-Tests Logical Group View */}
+            {/* C. Self-Tests Logical Group View (P1-4 unified header + crisp status dots) */}
             <If when={selection().kind === "selfTests"}>
               {(() => {
                 const activeRel = () => {
@@ -1859,7 +1917,7 @@ export function BuildConsole(props: {
                 return (
                   <View style={{ flex: 1, minHeight: 0 }}>
                     <If
-                      when={selfTestFiles().length > 0}
+                      when={selfTestFiles().length > 0 && !!activeRel()}
                       else={
                         <EmptyState
                           icon="shieldCheck"
@@ -1868,101 +1926,71 @@ export function BuildConsole(props: {
                         />
                       }
                     >
-                      {/* Compact self-test selector pills */}
-                      <Scroll
-                        horizontal
-                        style={{ maxHeight: 40, borderBottomWidth: 1 }}
-                        contentStyle={{
-                          paddingLeft: 16,
-                          paddingRight: 16,
-                          paddingTop: 7,
-                          paddingBottom: 7,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                        class="border-border bg-background/30"
-                      >
-                        <Each of={selfTestFiles()} key={(p) => p}>
-                          {(rel) => {
-                            const selected = () => activeRel() === rel();
-                            const res = () => matchSelfTestResult(rel(), activeReport()?.self_tests);
-                            const shortName = () => rel().split("/").slice(-2).join("/");
-                            return (
+                      <InlineFileEditor
+                        problemId={props.problemId}
+                        relPath={activeRel()!}
+                        readOnly={props.readOnly}
+                        refreshKey={fileRefreshKey()}
+                        title={t("build.tree.selfTests")}
+                        icon="shieldCheck"
+                        extraActions={
+                          <AppMenu
+                            align="end"
+                            minWidth={210}
+                            entries={selfTestFiles().map((rel) => ({
+                              id: rel,
+                              label: rel.split("/").slice(-2).join("/"),
+                              checked: rel === activeRel(),
+                            }))}
+                            onSelect={(id) => selection.set({ kind: "selfTests", relPath: id })}
+                            trigger={
                               <View
-                                onPress={() => selection.set({ kind: "selfTests", relPath: rel() })}
-                                class={selected() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
+                                class="border border-border bg-card hover:bg-muted"
                                 style={{
-                                  height: 24,
-                                  paddingLeft: 8,
-                                  paddingRight: 8,
-                                  borderRadius: 5,
+                                  height: 28,
+                                  paddingLeft: 9,
+                                  paddingRight: 7,
+                                  borderRadius: 6,
                                   flexDirection: "row",
                                   alignItems: "center",
-                                  gap: 5,
+                                  gap: 6,
                                 }}
                               >
-                                <Text
-                                  style={{ fontSize: 12, fontWeight: 500 }}
-                                  class={selected() ? "text-foreground" : "text-secondary-foreground"}
-                                >
-                                  {shortName()}
+                                <If when={Boolean(matchSelfTestResult(activeRel()!, activeReport()?.self_tests))}>
+                                  <View
+                                    style={{
+                                      width: 6,
+                                      height: 6,
+                                      borderRadius: 3,
+                                      backgroundColor: matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed
+                                        ? "#16a34a"
+                                        : "#dc2626",
+                                    }}
+                                  />
+                                </If>
+                                <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                  {activeRel()!.split("/").slice(-2).join("/")}
                                 </Text>
-                                <If when={res()?.passed === false}>
-                                  <Icon name="triangleAlert" size={11} tone="destructive" />
-                                </If>
-                                <If when={res()?.passed === true}>
-                                  <Icon name="check" size={11} tone="muted-foreground" />
-                                </If>
+                                <Icon name="chevronDown" size={12} tone="muted-foreground" />
                               </View>
-                            );
-                          }}
-                        </Each>
-                      </Scroll>
-
-                      <If when={activeRel()}>
-                        {(rel) => (
-                          <InlineFileEditor
-                            problemId={props.problemId}
-                            relPath={rel()}
-                            readOnly={props.readOnly}
-                            refreshKey={fileRefreshKey()}
-                            onSaved={() => {
-                              finishedReport.set(undefined);
-                              props.onRefreshPackage();
-                            }}
-                            onOpenExternal={openExternal}
+                            }
                           />
-                        )}
-                      </If>
+                        }
+                        onSaved={() => {
+                          finishedReport.set(undefined);
+                          props.onRefreshPackage();
+                        }}
+                        onOpenExternal={openExternal}
+                      />
                     </If>
                   </View>
                 );
               })()}
             </If>
 
-            {/* D. Validator Detail View */}
+            {/* D. Validator Detail View (P1-4 unified header) */}
             <If when={selection().kind === "validator"}>
               <View style={{ flex: 1, minHeight: 0 }}>
-                <View
-                  style={{
-                    height: 44,
-                    paddingLeft: 16,
-                    paddingRight: 14,
-                    borderBottomWidth: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                  class="border-border"
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Icon name="shieldCheck" size={15} tone="secondary-foreground" />
-                    <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
-                      {t("build.tree.validator")}
-                    </Text>
-                  </View>
-                </View>
                 <If
                   when={inspection()?.files?.validator}
                   else={
@@ -1979,6 +2007,8 @@ export function BuildConsole(props: {
                       relPath={rel()}
                       readOnly={props.readOnly}
                       refreshKey={fileRefreshKey()}
+                      title={t("build.tree.validator")}
+                      icon="shieldCheck"
                       onSaved={() => {
                         finishedReport.set(undefined);
                         props.onRefreshPackage();
@@ -1990,28 +2020,10 @@ export function BuildConsole(props: {
               </View>
             </If>
 
-            {/* E. Checker Detail View */}
+            {/* E. Checker Detail View (P1-4 unified header) */}
             <If when={selection().kind === "checker"}>
-              <View style={{ flex: 1, minHeight: 0 }}>
-                <View
-                  style={{
-                    height: 44,
-                    paddingLeft: 16,
-                    paddingRight: 14,
-                    borderBottomWidth: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                  }}
-                  class="border-border"
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Icon name="scale" size={15} tone="secondary-foreground" />
-                    <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
-                      {t("build.tree.checker")}
-                    </Text>
-                  </View>
+              {(() => {
+                const checkerDropdown = () => (
                   <AppMenu
                     align="end"
                     minWidth={200}
@@ -2049,67 +2061,86 @@ export function BuildConsole(props: {
                       </View>
                     }
                   />
-                </View>
+                );
 
-                <If
-                  when={inspection()?.checker === "checker.cpp" ? inspection()?.files?.custom_checker : undefined}
-                  else={
-                    <View style={{ padding: 24, gap: 8 }}>
-                      <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                        {t("build.programs.builtinCheckerActive", { name: inspection()?.checker || "wcmp" })}
-                      </Text>
-                      <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-                        {t("build.programs.builtinCheckerHint")}
-                      </Text>
-                    </View>
-                  }
-                >
-                  {(rel) => (
-                    <InlineFileEditor
-                      problemId={props.problemId}
-                      relPath={rel()}
-                      readOnly={props.readOnly}
-                      refreshKey={fileRefreshKey()}
-                      onSaved={() => {
-                        finishedReport.set(undefined);
-                        props.onRefreshPackage();
-                      }}
-                      onOpenExternal={openExternal}
-                    />
-                  )}
-                </If>
-              </View>
+                return (
+                  <View style={{ flex: 1, minHeight: 0 }}>
+                    <If
+                      when={inspection()?.checker === "checker.cpp" ? inspection()?.files?.custom_checker : undefined}
+                      else={
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                          <View
+                            style={{
+                              minHeight: 52,
+                              paddingLeft: 20,
+                              paddingRight: 16,
+                              paddingTop: 8,
+                              paddingBottom: 8,
+                              borderBottomWidth: 1,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                            }}
+                            class="border-border bg-background/30"
+                          >
+                            <View style={{ gap: 2 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                                <Icon name="scale" size={14.5} tone="secondary-foreground" />
+                                <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                                  {t("build.tree.checker")}
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                {t("build.programs.builtinCheckerActive", { name: inspection()?.checker || "wcmp" })}
+                              </Text>
+                            </View>
+                            {checkerDropdown()}
+                          </View>
+                          <View style={{ padding: 24, maxWidth: 560, gap: 8 }}>
+                            <Text style={{ fontSize: 12.5, lineHeight: 19 }} class="text-secondary-foreground">
+                              {t("build.programs.builtinCheckerHint")}
+                            </Text>
+                          </View>
+                        </View>
+                      }
+                    >
+                      {(rel) => (
+                        <InlineFileEditor
+                          problemId={props.problemId}
+                          relPath={rel()}
+                          readOnly={props.readOnly}
+                          refreshKey={fileRefreshKey()}
+                          title={t("build.tree.checker")}
+                          icon="scale"
+                          extraActions={checkerDropdown()}
+                          onSaved={() => {
+                            finishedReport.set(undefined);
+                            props.onRefreshPackage();
+                          }}
+                          onOpenExternal={openExternal}
+                        />
+                      )}
+                    </If>
+                  </View>
+                );
+              })()}
             </If>
 
-            {/* F. Generator Detail View */}
+            {/* F. Generator Detail View (P1-4 unified header) */}
             <If when={selection().kind === "generator"}>
               {(() => {
                 const file = () =>
                   selection().kind === "generator" ? (selection() as { kind: "generator"; file: string }).file : "";
                 return (
                   <View style={{ flex: 1, minHeight: 0 }}>
-                    <View
-                      style={{
-                        height: 44,
-                        paddingLeft: 16,
-                        paddingRight: 14,
-                        borderBottomWidth: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                      class="border-border"
-                    >
-                      <Icon name="sparkles" size={15} tone="secondary-foreground" />
-                      <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
-                        {logicalSolutionName(file())}
-                      </Text>
-                    </View>
                     <InlineFileEditor
                       problemId={props.problemId}
                       relPath={`generators/${file()}`}
                       readOnly={props.readOnly}
                       refreshKey={fileRefreshKey()}
+                      title={logicalSolutionName(file())}
+                      icon="sparkles"
                       onSaved={() => {
                         finishedReport.set(undefined);
                         props.onRefreshPackage();
@@ -2121,93 +2152,22 @@ export function BuildConsole(props: {
               })()}
             </If>
 
-            {/* G. Solution Detail View */}
+            {/* G. Solution Detail View (P1-4 unified header) */}
             <If when={selection().kind === "solution"}>
               {(() => {
                 const solName = () =>
                   selection().kind === "solution" ? (selection() as { kind: "solution"; name: string }).name : "";
                 const spec = () => solutionSpecs().find((s) => s.name === solName());
                 const role = () => (spec() ? solutionRole(spec()!) : "alt");
+                const roleLabel = () =>
+                  role() === "main"
+                    ? t("build.role.main")
+                    : role() === "alt"
+                      ? t("build.role.alt")
+                      : t("build.role.wrong");
+
                 return (
                   <View style={{ flex: 1, minHeight: 0 }}>
-                    <View
-                      style={{
-                        height: 44,
-                        paddingLeft: 16,
-                        paddingRight: 14,
-                        borderBottomWidth: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 10,
-                      }}
-                      class="border-border"
-                    >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Icon name={role() === "main" ? "crown" : "code"} size={15} tone="secondary-foreground" />
-                        <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
-                          {solName()}
-                        </Text>
-                        <View
-                          style={{ height: 20, paddingLeft: 7, paddingRight: 7, borderRadius: 4, borderWidth: 1, justifyContent: "center" }}
-                          class="bg-muted border-border"
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-foreground">
-                            {role() === "main"
-                              ? t("build.role.main")
-                              : role() === "alt"
-                                ? t("build.role.alt")
-                                : t("build.role.wrong")}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <If when={!props.readOnly && !!spec()}>
-                        <AppMenu
-                          align="end"
-                          minWidth={184}
-                          entries={[
-                            ...(!spec()!.is_main
-                              ? [{ id: "set_main", label: t("build.programs.setMain"), icon: "crown" as IconName }]
-                              : []),
-                            ...EXPECT_PRESETS.map((preset) => ({
-                              id: `expect:${preset.join(",")}`,
-                              label: `${t("build.programs.expectPrefix")} ${preset.join(" / ")}`,
-                              checked: spec()!.expected.join(",") === preset.join(","),
-                              disabled: spec()!.is_main && preset.join(",") !== "AC",
-                            })),
-                          ]}
-                          onSelect={(id) => {
-                            if (id === "set_main") {
-                              handleSolutionConfig(solName(), true, ["AC"]);
-                            } else if (id.startsWith("expect:")) {
-                              const exp = id.slice("expect:".length).split(",");
-                              handleSolutionConfig(solName(), null, exp);
-                            }
-                          }}
-                          trigger={
-                            <View
-                              testID={`solution-config-trigger-${solName()}`}
-                              class="border border-border bg-card hover:bg-muted"
-                              style={{
-                                height: 28,
-                                paddingLeft: 9,
-                                paddingRight: 7,
-                                borderRadius: 6,
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 5,
-                              }}
-                            >
-                              <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
-                                {`${t("build.programs.expectPrefix")} ${spec()!.expected.join("/")}`}
-                              </Text>
-                              <Icon name="chevronDown" size={12} tone="muted-foreground" />
-                            </View>
-                          }
-                        />
-                      </If>
-                    </View>
                     <If when={spec()?.source_rel}>
                       {(rel) => (
                         <InlineFileEditor
@@ -2215,6 +2175,56 @@ export function BuildConsole(props: {
                           relPath={rel()}
                           readOnly={props.readOnly}
                           refreshKey={fileRefreshKey()}
+                          title={solName()}
+                          icon={role() === "main" ? "crown" : "code"}
+                          badge={roleLabel()}
+                          extraActions={
+                            !props.readOnly && spec() ? (
+                              <AppMenu
+                                align="end"
+                                minWidth={184}
+                                entries={[
+                                  ...(!spec()!.is_main
+                                    ? [{ id: "set_main", label: t("build.programs.setMain"), icon: "crown" as IconName }]
+                                    : []),
+                                  ...EXPECT_PRESETS.map((preset) => ({
+                                    id: `expect:${preset.join(",")}`,
+                                    label: `${t("build.programs.expectPrefix")} ${preset.join(" / ")}`,
+                                    checked: spec()!.expected.join(",") === preset.join(","),
+                                    disabled: spec()!.is_main && preset.join(",") !== "AC",
+                                  })),
+                                ]}
+                                onSelect={(id) => {
+                                  if (id === "set_main") {
+                                    handleSolutionConfig(solName(), true, ["AC"]);
+                                  } else if (id.startsWith("expect:")) {
+                                    const exp = id.slice("expect:".length).split(",");
+                                    handleSolutionConfig(solName(), null, exp);
+                                  }
+                                }}
+                                trigger={
+                                  <View
+                                    testID={`solution-config-trigger-${solName()}`}
+                                    class="border border-border bg-card hover:bg-muted"
+                                    style={{
+                                      height: 28,
+                                      paddingLeft: 9,
+                                      paddingRight: 7,
+                                      borderRadius: 6,
+                                      flexDirection: "row",
+                                      alignItems: "center",
+                                      gap: 5,
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                      {`${t("build.programs.expectPrefix")} ${spec()!.expected.join("/")}`}
+                                    </Text>
+                                    <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                  </View>
+                                }
+                              />
+                            ) : undefined
+                          }
                           onSaved={() => {
                             finishedReport.set(undefined);
                             props.onRefreshPackage();
@@ -2229,6 +2239,201 @@ export function BuildConsole(props: {
             </If>
           </View>
         </View>
+
+        {/* ── P0-3 Anchored Overlay Popover: Issues / Checks (NEVER pushes table down!) ── */}
+        <If when={checksExpanded()}>
+          <View
+            testID="build-checks-panel"
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 14,
+              width: 440,
+              maxHeight: 380,
+              borderRadius: 10,
+              borderWidth: 1,
+              boxShadow: popoverShadow(),
+              overflow: "hidden",
+            }}
+            class="bg-popover border-border"
+          >
+            <Scroll style={{ maxHeight: 380 }} contentStyle={{ padding: 12, gap: 8 }}>
+              <If
+                when={gates().length > 0}
+                else={
+                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                    {t("build.checks.noChecksYet")}
+                  </Text>
+                }
+              >
+                <Each of={partitionedGates().attention} key={(g) => g.id}>
+                  {(gate) => {
+                    const action = () => nextActionForCheck(gate(), activeReport(), inspection()?.files);
+                    return (
+                      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, paddingTop: 2, paddingBottom: 2 }}>
+                        <View style={{ paddingTop: 2 }}>
+                          <Icon
+                            name={gate().status === "fail" ? "circleAlert" : "triangleAlert"}
+                            size={13.5}
+                            tone={gate().status === "fail" ? "destructive" : "chart-4"}
+                          />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                            <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                              {humanizeCheckText(gate().title, isZh())}
+                            </Text>
+                            <If when={action()}>
+                              {(act) => (
+                                <Text
+                                  onPress={() => {
+                                    checksExpanded.set(false);
+                                    const a = act();
+                                    if (a.kind === "view_test") selectTestByIndex(a.testIndex);
+                                    else if (a.kind === "select_cell") {
+                                      selection.set({ kind: "results" });
+                                      selectedCell.set({ testIndex: a.testIndex, solution: a.solution });
+                                    } else if (a.kind === "open_file") openFileInTree(a.relPath);
+                                  }}
+                                  style={{ fontSize: 12, fontWeight: 500 }}
+                                  class="text-primary"
+                                >
+                                  {t("build.check.fix")}
+                                </Text>
+                              )}
+                            </If>
+                          </View>
+                          <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                            {humanizeCheckText(gate().message, isZh())}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  }}
+                </Each>
+
+                <If when={partitionedGates().passed.length > 0}>
+                  <View style={{ borderTopWidth: partitionedGates().attention.length > 0 ? 1 : 0, paddingTop: partitionedGates().attention.length > 0 ? 8 : 0, gap: 4 }} class="border-border">
+                    <View
+                      onPress={() => passedChecksExpanded.set(!passedChecksExpanded())}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+                    >
+                      <Icon name="check" size={13} tone="secondary-foreground" />
+                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                        {t("build.checks.passedCollapsed", { count: partitionedGates().passed.length })}
+                      </Text>
+                      <Icon
+                        name={passedChecksExpanded() ? "chevronDown" : "chevronRight"}
+                        size={12}
+                        tone="muted-foreground"
+                      />
+                    </View>
+                    <If when={passedChecksExpanded()}>
+                      <View style={{ paddingLeft: 18, gap: 3 }}>
+                        <Each of={partitionedGates().passed} key={(g) => g.id}>
+                          {(gate) => (
+                            <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                              {`${humanizeCheckText(gate().title, isZh())}  ${humanizeCheckText(gate().message, isZh())}`}
+                            </Text>
+                          )}
+                        </Each>
+                      </View>
+                    </If>
+                  </View>
+                </If>
+              </If>
+            </Scroll>
+          </View>
+        </If>
+
+        {/* ── P0-3 Anchored Overlay Popover: Subset Filter (Solutions + Test Tags, NEVER pushes table!) ── */}
+        <If when={filterOpen()}>
+          <View
+            testID="build-filter-popover"
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 14,
+              width: 360,
+              borderRadius: 10,
+              borderWidth: 1,
+              boxShadow: popoverShadow(),
+              padding: 12,
+              gap: 10,
+            }}
+            class="bg-popover border-border"
+          >
+            <View style={{ gap: 6 }}>
+              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
+                {t("build.tree.solutions")}
+              </Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                <Each of={solutionSpecs()} key={(s) => s.name}>
+                  {(spec) => {
+                    const active = () => filterSolutions().includes(spec().name);
+                    return (
+                      <View
+                        onPress={() => filterSolutions.set(toggleSubsetSelection(filterSolutions(), spec().name))}
+                        class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
+                        style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
+                      >
+                        <Text
+                          style={{ fontSize: 12, fontWeight: 500 }}
+                          class={active() ? "text-primary-foreground" : "text-foreground"}
+                        >
+                          {spec().name}
+                        </Text>
+                      </View>
+                    );
+                  }}
+                </Each>
+              </View>
+            </View>
+
+            <If when={testTags().length > 0}>
+              <View style={{ gap: 6 }}>
+                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
+                  {t("build.filter.testsGroup")}
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  <Each of={testTags()} key={(tg) => tg}>
+                    {(tg) => {
+                      const active = () => filterTests().includes(tg());
+                      return (
+                        <View
+                          onPress={() => filterTests.set(toggleSubsetSelection(filterTests(), tg()))}
+                          class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
+                          style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
+                        >
+                          <Text
+                            style={{ fontSize: 12, fontWeight: 500 }}
+                            class={active() ? "text-primary-foreground" : "text-foreground"}
+                          >
+                            {tg()}
+                          </Text>
+                        </View>
+                      );
+                    }}
+                  </Each>
+                </View>
+              </View>
+            </If>
+
+            <If when={activeFilterCount() > 0}>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", borderTopWidth: 1, paddingTop: 8 }} class="border-border">
+                <Btn
+                  label={t("build.filter.clear")}
+                  icon="filterX"
+                  variant="ghost"
+                  onPress={() => {
+                    filterSolutions.set([]);
+                    filterTests.set([]);
+                  }}
+                />
+              </View>
+            </If>
+          </View>
+        </If>
 
         {/* Modals */}
         <CreateSourceModal
@@ -2277,7 +2482,8 @@ function TreeSectionHeader(props: { label: string; action?: ReturnType<typeof Ic
         justifyContent: "space-between",
       }}
     >
-      <Text style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.3 }} class="text-secondary-foreground">
+      {/* P2: 11px muted regular weight for clear hierarchy */}
+      <Text style={{ fontSize: 11, fontWeight: 400, letterSpacing: 0.2 }} class="text-muted-foreground">
         {props.label}
       </Text>
       {props.action}
@@ -2332,11 +2538,12 @@ function TreeRow(props: {
           {props.sub!}
         </Text>
       </If>
+      {/* P1-6: small semantic dot instead of checkmark ✓ */}
       <If when={props.statusDot === "fail"}>
-        <Icon name="triangleAlert" size={12} tone="destructive" />
+        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#dc2626", flexShrink: 0 }} />
       </If>
       <If when={props.statusDot === "ok"}>
-        <Icon name="check" size={12} tone="muted-foreground" />
+        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#16a34a", opacity: 0.65, flexShrink: 0 }} />
       </If>
     </View>
   );

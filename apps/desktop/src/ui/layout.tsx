@@ -67,19 +67,19 @@ export const HEADER = (TOOLBAR - 28) / 2 + 28 + 8 + 22 + 12;
 /** An empty state: a soft icon, one sentence (and a quieter second), one way on. */
 export function EmptyState(props: { icon: IconName; title: string; hint?: string; action?: JSX.Element; style?: StyleProp<ViewStyle> }) {
   return (
-    <View style={[{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingBottom: 48 }, props.style]}>
-      <View style={{ width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" }} class="bg-muted">
+    <View style={[{ flex: 1, alignItems: "center", justifyContent: "center", paddingBottom: 48 }, props.style]}>
+      <View style={{ width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", marginBottom: 24 }} class="bg-muted">
         <Icon name={props.icon} size={20} tone="muted-foreground" />
       </View>
-      <View style={{ alignItems: "center", gap: 4 }}>
-        <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: 500 }} class="text-foreground">{props.title}</Text>
+      <View style={{ alignItems: "center", gap: 8, maxWidth: 320 }}>
+        <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: 500, textAlign: "center" }} class="text-foreground">{props.title}</Text>
         {props.hint && (
-          <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: 12.5, lineHeight: 19, textAlign: "center" }} class="text-secondary-foreground">
             {props.hint}
           </Text>
         )}
       </View>
-      {props.action && <View style={{ marginTop: 4 }}>{props.action}</View>}
+      {props.action && <View style={{ marginTop: 24 }}>{props.action}</View>}
     </View>
   );
 }

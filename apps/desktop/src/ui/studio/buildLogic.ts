@@ -706,53 +706,114 @@ export function mergeLiveMatrixCells(
 }
 
 /**
- * P1-6 Visual Coding:
- * - Expected-match cells (including wrong solutions getting expected WA/TLE) use calm, muted neutral styling.
- * - ONLY unexpected / mismatch cells pop with high-contrast semantic tint + border.
+ * P0-2 Quiet Results Table ("only anomalies speak"):
+ * - Expected AC: transparent bg, no border, quiet muted text.
+ * - Expected non-AC (wrong solution getting expected WA/TLE): transparent bg, no border, bold neutral foreground.
+ * - Unexpected / mismatch ONLY: solid semantic fill (red for should-pass-but-failed, amber for should-fail-but-passed; NEVER green!).
  */
 export function cellVisualStyle(
   verdict: string,
   isAnomaly: boolean,
   dark: boolean,
-): { bg: string; fg: string; border: string } {
+): { bg: string; fg: string; border: string; bold: boolean; solid: boolean } {
+  const upper = verdict.toUpperCase();
   if (!isAnomaly) {
-    // Calm, low-saturation neutral pill for expected verdicts.
+    if (upper === "AC") {
+      return dark
+        ? { bg: "transparent", fg: "#a1a1aa", border: "transparent", bold: false, solid: false }
+        : { bg: "transparent", fg: "#71717a", border: "transparent", bold: false, solid: false };
+    }
     return dark
-      ? { bg: "rgba(255, 255, 255, 0.04)", fg: "#a1a1aa", border: "rgba(255, 255, 255, 0.07)" }
-      : { bg: "rgba(24, 24, 27, 0.035)", fg: "#52525b", border: "rgba(24, 24, 27, 0.07)" };
+      ? { bg: "transparent", fg: "#f4f4f5", border: "transparent", bold: true, solid: false }
+      : { bg: "transparent", fg: "#18181b", border: "transparent", bold: true, solid: false };
   }
-  const base = verdictBadgeStyle(verdict, dark);
+  // Unexpected AC (wrong solution passed!) -> solid vivid amber, NEVER green.
+  if (upper === "AC") {
+    return dark
+      ? { bg: "#d97706", fg: "#ffffff", border: "transparent", bold: true, solid: true }
+      : { bg: "#d97706", fg: "#ffffff", border: "transparent", bold: true, solid: true };
+  }
+  // Unexpected failure -> solid vivid red.
+  return dark
+    ? { bg: "#dc2626", fg: "#ffffff", border: "transparent", bold: true, solid: true }
+    : { bg: "#dc2626", fg: "#ffffff", border: "transparent", bold: true, solid: true };
+}
+
+/**
+ * P1-3 Conclusion-first diagnostic headline:
+ * semantic color ONLY on the conclusion line (red = unexpected fail, amber = unexpected pass, muted = expected).
+ */
+export function formatCellConclusion(
+  verdict: string,
+  expected: readonly string[],
+  isAnomaly: boolean,
+  isZh: boolean,
+): { text: string; tone: "red" | "amber" | "muted" } {
+  const upper = verdict.toUpperCase();
+  const expText = (expected.length > 0 ? expected : ["AC"]).join("/");
+  if (!isAnomaly) {
+    return {
+      text: isZh ? `符合预期（${upper}）` : `Expected (${upper})`,
+      tone: "muted",
+    };
+  }
+  if (upper === "AC") {
+    return {
+      text: isZh ? `应为 ${expText}，实际通过` : `Expected ${expText}, got AC`,
+      tone: "amber",
+    };
+  }
   return {
-    bg: base.bg,
-    fg: base.fg,
-    border: base.fg,
+    text: isZh ? `应为 ${expText}，实际 ${upper}` : `Expected ${expText}, got ${upper}`,
+    tone: "red",
   };
 }
 
 /**
- * P1-6 Human-readable solution summary conclusion (never confusing `0/6` ratios for wrong solutions).
+ * P1-5 & P1-6 Human-readable solution summary conclusion:
+ * - Never stuck on "运行中" when not actively running
+ * - Preserves previous summary with `stale: true` on untouched columns after subset runs
  */
 export function formatSolutionConclusion(
   summary: SolutionSummaryData | undefined,
   cellsForSolution: readonly MatrixCellData[],
   isZh: boolean,
-): { text: string; tone: "ok" | "fail" | "muted" } {
-  if (!summary && cellsForSolution.length === 0) {
-    return { text: isZh ? "未运行" : "Not run", tone: "muted" };
+  isRunning = false,
+  prevSummary?: SolutionSummaryData,
+): { text: string; tone: "ok" | "fail" | "muted"; stale?: boolean } {
+  const effective = summary ?? prevSummary;
+  const isStale = !summary && (Boolean(prevSummary) || (cellsForSolution.length > 0 && cellsForSolution.every((c) => c.stale)));
+  if (!effective && cellsForSolution.length === 0) {
+    return { text: isRunning ? (isZh ? "运行中" : "Running") : (isZh ? "未运行" : "Not run"), tone: "muted" };
   }
-  if (summary?.matched) {
-    return { text: isZh ? "符合预期" : "Expected", tone: "ok" };
+  if (effective?.matched) {
+    return { text: isZh ? "符合预期" : "Expected", tone: "ok", stale: isStale };
   }
-  // Count non-AC or unexpected verdicts for a clear conclusion like "WA ×1".
-  const primary = summary?.actual_verdict ?? cellsForSolution[0]?.verdict ?? "ERR";
+  const primary = effective?.actual_verdict ?? cellsForSolution[0]?.verdict ?? "ERR";
   const count = cellsForSolution.filter((c) => c.verdict.toUpperCase() === primary.toUpperCase()).length;
-  if (summary && !summary.matched) {
+  if (effective && !effective.matched) {
     return {
       text: count > 0 ? `${primary} ×${count}` : primary,
       tone: "fail",
+      stale: isStale,
     };
   }
-  return { text: isZh ? "运行中" : "Running", tone: "muted" };
+  if (isRunning) {
+    return { text: isZh ? "运行中" : "Running", tone: "muted" };
+  }
+  return { text: isZh ? "已缓存" : "Cached", tone: "muted", stale: true };
+}
+
+/** P1-5: Preserves the last valid full-run safety margin when a subset run excludes `std`. */
+export function resolveEffectiveSafetyMargin(
+  report: BuildReportData | undefined,
+  lastFullMargin: SafetyMarginData | undefined,
+): SafetyMarginData | undefined {
+  if (!report) return lastFullMargin;
+  if (report.subset && report.safety_margin.std_max_time_ms === 0 && lastFullMargin) {
+    return lastFullMargin;
+  }
+  return report.safety_margin;
 }
 
 export type SingleStatusKind = "ready" | "needs_reverify" | "issues" | "unverified";
@@ -839,6 +900,8 @@ export interface LogicalTestGroup {
   kind: "samples" | "rule";
   ruleIndex: number | null;
   label: string;
+  genCmd?: string | null;
+  tag?: string | null;
   tests: TestSummaryData[];
   hasValidatorFail: boolean;
 }
@@ -908,6 +971,7 @@ export function groupTestRows(
   for (const rIdx of ruleOrder) {
     const bucket = byRule.get(rIdx)!;
     const first = bucket.tests[0];
+    const batchTag = first?.tag?.trim() || null;
     let label = first?.name ?? `rule-${rIdx + 1}`;
     if (bucket.tests.length > 1) {
       const genStem = bucket.genCmd?.trim().split(/\s+/)[0];
@@ -915,13 +979,15 @@ export function groupTestRows(
         genStem && genStem.length > 0
           ? genStem
           : label.replace(/-\d+$/, "");
-      label = `${base} ×${bucket.tests.length}`;
+      label = batchTag ? `${base} (${batchTag}) ×${bucket.tests.length}` : `${base} ×${bucket.tests.length}`;
     }
     out.push({
       id: `rule:${rIdx}`,
       kind: "rule",
       ruleIndex: rIdx,
       label,
+      genCmd: bucket.genCmd ?? null,
+      tag: batchTag,
       tests: bucket.tests,
       hasValidatorFail: bucket.tests.some((t) => t.validator_ok === false),
     });

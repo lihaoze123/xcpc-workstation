@@ -64,6 +64,7 @@ import { Samples } from "./Samples";
 
 type StudioMode = "statement" | "authoring";
 type Tab = "statement" | "samples" | "editorial";
+const lastStudioModeByProblem = new Map<string, StudioMode>();
 const SAVE_AFTER = 500;
 const TAB_DEFS: readonly { value: Tab; labelKey: MessageKey; keys: string }[] = [
   { value: "statement", labelKey: "studio.tab.statement", keys: "alt+1" },
@@ -260,11 +261,13 @@ export function StudioView(props: { active: boolean }) {
       if (want === "build" && s.target === "problem") {
         packageRefreshSeq.set(packageRefreshSeq() + 1);
         studioMode.set("authoring");
+        lastStudioModeByProblem.set(s.id, "authoring");
       } else if (want && want !== "build") {
         studioMode.set("statement");
+        if (s.target === "problem") lastStudioModeByProblem.set(s.id, "statement");
         tab.set(want);
       } else if (s.target === "problem" && !want) {
-        studioMode.set("statement");
+        studioMode.set(lastStudioModeByProblem.get(s.id) ?? "statement");
       }
     });
   });
@@ -518,10 +521,12 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function setStudioMode(next: StudioMode) {
-    if (target()?.target !== "problem") return;
+    const t = target();
+    if (t?.target !== "problem") return;
     if (next === "authoring") {
       packageRefreshSeq.set(packageRefreshSeq() + 1);
     }
+    lastStudioModeByProblem.set(t.id, next);
     studioMode.set(next);
   }
 
@@ -862,6 +867,7 @@ export function StudioView(props: { active: boolean }) {
       assetsOpen.set(false);
       return;
     }
+    if (isAuthoring() && buildConsole()?.closePopovers()) return;
     if (editorActions?.closeFind()) return;
     if (canvas?.closeHud()) return;
     if (notice()) {
@@ -976,7 +982,7 @@ export function StudioView(props: { active: boolean }) {
                   items={modeItems()}
                   value={studioMode()}
                   onChange={setStudioMode}
-                  itemWidth={locale() === "en" ? 88 : 60}
+                  itemWidth={locale() === "en" ? 76 : 64}
                 />
               </View>
             </If>

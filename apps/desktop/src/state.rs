@@ -3212,6 +3212,40 @@ impl State {
         }
     }
 
+    pub(crate) fn update_generator_test(
+        &self,
+        slug: &str,
+        rule_index: u32,
+        generator: &str,
+        args: &str,
+        repeat: u32,
+        tag: Option<&str>,
+        name: Option<&str>,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::update_generator_test(
+            &ws,
+            slug,
+            rule_index as usize,
+            generator,
+            args,
+            repeat,
+            tag,
+            name,
+        ) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
     pub(crate) fn remove_test_rule(&self, slug: &str, rule_index: u32) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -3504,7 +3538,23 @@ fn package_status_opt(ws: &Workspace, slug: &str) -> Option<String> {
     let freshness = xcpc_judge::check_package_freshness(ws, slug).ok()?;
     match freshness {
         xcpc_judge::PackageFreshness::NotAPackage => None,
-        other => Some(freshness_status_str(&other).to_owned()),
+        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => Some("verified_fresh".to_owned()),
+        xcpc_judge::PackageFreshness::Failed { .. } => Some("failed".to_owned()),
+        other => {
+            // P1-5: Keep Library `package_status` consistent with Authoring's status pill
+            // whenever the latest report has failed gates or compile failures.
+            if let Some(report) = xcpc_judge::load_latest_report(ws, slug)
+                && (!report.ok
+                    || !report.compile_failures.is_empty()
+                    || report
+                        .gates
+                        .iter()
+                        .any(|g| g.status == xcpc_judge::GateStatus::Fail))
+            {
+                return Some("failed".to_owned());
+            }
+            Some(freshness_status_str(&other).to_owned())
+        }
     }
 }
 

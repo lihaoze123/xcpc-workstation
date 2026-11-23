@@ -9,6 +9,7 @@ import {
   dedupDetectedCompilers,
   formatAcVsTleMargin,
   formatBytesCompact,
+  formatCellConclusion,
   formatMemoryKib,
   formatSolutionConclusion,
   formatStdTimeRatio,
@@ -27,6 +28,7 @@ import {
   normalizeCxxOverrideInput,
   partitionGates,
   problemSlugFromDiagnosticFile,
+  resolveEffectiveSafetyMargin,
   resolveSingleStatusBadge,
   resolveSolutionHeaderSpecs,
   selectMatrixCell,
@@ -513,31 +515,57 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     expect(merged.get(matrixCellKey(1, "std"))?.stale).toBe(false);
     expect(merged.get(matrixCellKey(2, "std"))?.stale).toBe(true);
 
-    // Expected-match cells use calm muted styling; anomalies pop with vivid border.
-    const calm = cellVisualStyle("WA", false, false);
-    const pop = cellVisualStyle("WA", true, false);
-    expect(calm.fg).not.toBe(pop.fg);
-    expect(pop.border).toBe(pop.fg);
+    // P0-2 Quiet Results Table: expected cells are borderless/transparent; ONLY anomalies get solid fill (amber for unexpected AC, red for unexpected fail).
+    const quietAc = cellVisualStyle("AC", false, false);
+    expect(quietAc.bg).toBe("transparent");
+    expect(quietAc.bold).toBe(false);
+    const expectedWa = cellVisualStyle("WA", false, false);
+    expect(expectedWa.bg).toBe("transparent");
+    expect(expectedWa.bold).toBe(true);
+    const unexpectedAc = cellVisualStyle("AC", true, false);
+    expect(unexpectedAc.solid).toBe(true);
+    expect(unexpectedAc.bg).toBe("#d97706"); // amber, NEVER green
+    const unexpectedWa = cellVisualStyle("WA", true, false);
+    expect(unexpectedWa.solid).toBe(true);
+    expect(unexpectedWa.bg).toBe("#dc2626"); // vivid red
 
-    // Human-readable solution conclusions.
-    expect(formatSolutionConclusion(undefined, [], true).text).toBe("未运行");
+    // P1-3 Conclusion-first diagnostic headline.
+    expect(formatCellConclusion("AC", ["WA"], true, true)).toEqual({ text: "应为 WA，实际通过", tone: "amber" });
+    expect(formatCellConclusion("WA", ["AC"], true, true)).toEqual({ text: "应为 AC，实际 WA", tone: "red" });
+    expect(formatCellConclusion("WA", ["WA"], false, true)).toEqual({ text: "符合预期（WA）", tone: "muted" });
+
+    // P1-5 Human-readable solution conclusions + subset safety margin preservation.
+    expect(formatSolutionConclusion(undefined, [], true, false).text).toBe("未运行");
+    expect(formatSolutionConclusion(undefined, [], true, true).text).toBe("运行中");
+    const prevStd = {
+      name: "std",
+      is_main: true,
+      expected: ["AC"],
+      actual_verdict: "AC",
+      matched: true,
+      max_time_ms: 12,
+      max_memory_kib: 1024,
+      passed_tests: 5,
+      total_tests: 5,
+    };
+    const untouchedAfterSubset = formatSolutionConclusion(undefined, [], true, false, prevStd);
+    expect(untouchedAfterSubset).toEqual({ text: "符合预期", tone: "ok", stale: true });
     expect(
-      formatSolutionConclusion(
+      resolveEffectiveSafetyMargin(
         {
-          name: "wrong_wa",
-          is_main: false,
-          expected: ["WA"],
-          actual_verdict: "WA",
-          matched: true,
-          max_time_ms: 10,
-          max_memory_kib: 1024,
-          passed_tests: 1,
-          total_tests: 5,
+          problem_id: "p",
+          package_hash: "h",
+          mode: "debug",
+          verified: false,
+          ok: true,
+          subset: true,
+          built_at_epoch_secs: 2,
+          checker: "wcmp",
+          safety_margin: { max_input_bytes: 10, time_limit_ms: 1000, memory_limit_kib: 262144, std_max_time_ms: 0, std_time_ratio: 0, std_max_memory_kib: 0 },
         },
-        [],
-        true,
-      ).text,
-    ).toBe("符合预期");
+        { max_input_bytes: 500, time_limit_ms: 1000, memory_limit_kib: 262144, std_max_time_ms: 120, std_time_ratio: 0.12, std_max_memory_kib: 4096 },
+      )?.std_max_time_ms,
+    ).toBe(120);
 
     // Single status badge collapses freshness + issues cleanly.
     expect(resolveSingleStatusBadge("verified_fresh", 0, 0, true)).toEqual({ kind: "ready", issueCount: 0 });
@@ -577,23 +605,23 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
         { index: 1, name: "sample-01", is_sample: true, rule_index: null },
         { index: 2, name: "sample-02", is_sample: true, rule_index: null },
         { index: 3, name: "hand-01", is_sample: false, rule_index: 0 },
-        { index: 4, name: "gen_random-1", is_sample: false, gen_cmd: "gen_random -n 100 1", rule_index: 1 },
-        { index: 5, name: "gen_random-2", is_sample: false, gen_cmd: "gen_random -n 100 2", rule_index: 1 },
-        { index: 6, name: "gen_random-3", is_sample: false, gen_cmd: "gen_random -n 100 3", rule_index: 1 },
+        { index: 4, name: "gen_random-1", is_sample: false, tag: "small", gen_cmd: "gen_random -n 100 1", rule_index: 1 },
+        { index: 5, name: "gen_random-2", is_sample: false, tag: "small", gen_cmd: "gen_random -n 100 2", rule_index: 1 },
+        { index: 6, name: "gen_random-3", is_sample: false, tag: "small", gen_cmd: "gen_random -n 100 3", rule_index: 1 },
       ],
       [
         { index: 1, name: "sample-01", is_sample: true, size_bytes: 10, validator_ok: true },
         { index: 2, name: "sample-02", is_sample: true, size_bytes: 12, validator_ok: false },
         { index: 3, name: "hand-01", is_sample: false, size_bytes: 8, validator_ok: true },
-        { index: 4, name: "gen_random-1", is_sample: false, size_bytes: 20, validator_ok: true },
-        { index: 5, name: "gen_random-2", is_sample: false, size_bytes: 22, validator_ok: true },
-        { index: 6, name: "gen_random-3", is_sample: false, size_bytes: 24, validator_ok: true },
+        { index: 4, name: "gen_random-1", tag: "small", is_sample: false, size_bytes: 20, validator_ok: true },
+        { index: 5, name: "gen_random-2", tag: "small", is_sample: false, size_bytes: 22, validator_ok: true },
+        { index: 6, name: "gen_random-3", tag: "small", is_sample: false, size_bytes: 24, validator_ok: true },
       ],
     );
     expect(groups.map((g) => ({ id: g.id, label: g.label, count: g.tests.length, fail: g.hasValidatorFail }))).toEqual([
       { id: "samples", label: "samples", count: 2, fail: true },
       { id: "rule:0", label: "hand-01", count: 1, fail: false },
-      { id: "rule:1", label: "gen_random ×3", count: 3, fail: false },
+      { id: "rule:1", label: "gen_random (small) ×3", count: 3, fail: false },
     ]);
   });
 });

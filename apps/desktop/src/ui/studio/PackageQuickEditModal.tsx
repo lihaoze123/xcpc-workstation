@@ -246,12 +246,12 @@ export function PackageQuickEditModal(props: {
                   hardTabs={false}
                   softWrap={false}
                   readOnly={props.readOnly}
-                  fontFamily={editorMono()}
+                  fontFamily={editorMono() === "monospace" ? editorMono() : `'JetBrains Mono NL', ${editorMono()}`}
                   fontSize={editorFontSize()}
                   lineHeight={Math.round(editorFontSize() * editorLineHeight())}
                   activeLine
                   class="bg-card"
-                  classes={{ content: "pl-3 pr-4 pt-3 pb-6" }}
+                  classes={{ content: "pl-6 pr-6 pt-4 pb-6" }}
                   onChange={(e) => {
                     draftText = e.value;
                     dirty.set(e.value !== initialText());

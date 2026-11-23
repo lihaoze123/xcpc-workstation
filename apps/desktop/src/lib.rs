@@ -1301,6 +1301,29 @@ impl Preview {
         )
     }
 
+    /// Updates the 0-based generator `[[test]]` rule in `problem.toml` in-place via `toml_edit`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_generator_test(
+        &self,
+        slug: String,
+        rule_index: u32,
+        generator: String,
+        args: String,
+        repeat: u32,
+        tag: Option<String>,
+        name: Option<String>,
+    ) -> ActionResult {
+        self.state.update_generator_test(
+            &slug,
+            rule_index,
+            &generator,
+            &args,
+            repeat,
+            tag.as_deref(),
+            name.as_deref(),
+        )
+    }
+
     /// Removes the 0-based `[[test]]` rule from `problem.toml`.
     pub fn remove_test_rule(&self, slug: String, rule_index: u32) -> ActionResult {
         self.state.remove_test_rule(&slug, rule_index)

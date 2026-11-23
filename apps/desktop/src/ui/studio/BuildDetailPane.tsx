@@ -1,32 +1,44 @@
 // Focused detail subcomponents for the Authoring console:
-// - InlineFileEditor: frameless conflict-checked single-file editor (Fix A-3, P0-3)
-// - CellDiagnosticDrawer: right-side overlay drawer with 3-column Input / Expected / Actual diff (P1-7)
+// - InlineFileEditor: unified frameless conflict-checked editor (P1-4, Fix A-3, P0-3, P2 no-ligatures)
+// - CellDiagnosticDrawer: conclusion-first right-side overlay drawer with 3-column Input / Expected / Actual diff (P1-3, P1-7)
 
-import { Clipboard, colorScheme, effect, keymap, Scroll, signal, Text, untracked, View } from "nsh";
+import { Clipboard, colorScheme, effect, keymap, Scroll, signal, Text, untracked, View, windowSize, type JSX } from "nsh";
 import { Editor } from "nsh/base";
 import type { TestCasePreviewJs } from "xcpc-workstation/native";
 import { ErrorDisplay } from "../ErrorDisplay";
-import { Icon } from "../Icon";
-import { t } from "../i18n";
+import { Icon, type IconName } from "../Icon";
+import { locale, t } from "../i18n";
 import { Btn, IconBtn, tip } from "../kit";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO, popoverShadow } from "../theme";
 import {
-  cellVisualStyle,
   formatBytesCompact,
+  formatCellConclusion,
   formatMemoryKib,
   type MatrixCellData,
 } from "./buildLogic";
 
+/** No-ligature monospace font stack so `!=`, `<=`, `>=` never render as ligatures in code/TOML editors (P2). */
+function codeNoLigatureFont(): string {
+  const base = editorMono();
+  return base === "monospace" ? base : `'JetBrains Mono NL', ${base}`;
+}
+
 /**
- * Frameless inline file editor with explicit target relative path, SHA-256 conflict detection
- * (Fix A-3), 256 KiB safety cap, and external-editor escape hatch.
+ * Unified frameless inline file editor (P1-4):
+ * - Single header (`Icon + Name + Role chip | Right actions`) with target relative path shown ONCE below the name
+ * - Directly editable with `保存` button appearing cleanly only when dirty (never a faded disabled cyan CTA)
+ * - SHA-256 external-edit conflict detection (Fix A-3), 256 KiB cap, 24px horizontal padding, no ligatures
  */
 export function InlineFileEditor(props: {
   problemId: string;
   relPath: string;
   readOnly: boolean;
   refreshKey?: number;
+  title?: string;
+  icon?: IconName;
+  badge?: string;
+  extraActions?: JSX.Element;
   onSaved: () => void;
   onOpenExternal: (relPath: string) => void;
 }) {
@@ -73,7 +85,6 @@ export function InlineFileEditor(props: {
     void props.refreshKey;
     untracked(() => {
       if (!rel) return;
-      // Avoid clobbering unsaved user edits on background refresh for the same file.
       if (loadedFor === `${slug}:${rel}` && dirty()) return;
       loadFile(slug, rel);
     });
@@ -114,51 +125,87 @@ export function InlineFileEditor(props: {
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
-      {/* Target path & save bar (P0-3: always displays target relative path) */}
+      {/* Unified Detail Header (P1-4): Name + Role chip + target relative path once below */}
       <View
         style={{
-          height: 36,
-          paddingLeft: 14,
-          paddingRight: 12,
+          minHeight: props.title ? 52 : 38,
+          paddingLeft: 20,
+          paddingRight: 16,
+          paddingTop: 8,
+          paddingBottom: 8,
           borderBottomWidth: 1,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 8,
+          gap: 12,
         }}
-        class="border-border bg-background/40"
+        class="border-border bg-background/30"
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
-          <Text
-            testID="inline-editor-target-path"
-            style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
-            class="text-secondary-foreground"
-          >
-            {props.relPath}
-          </Text>
-          <If when={dirty()}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <If when={!!props.title}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+              <If when={!!props.icon}>
+                <Icon name={props.icon!} size={14.5} tone="secondary-foreground" />
+              </If>
+              <Text
+                style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
+                class="text-foreground"
+              >
+                {props.title!}
+              </Text>
+              <If when={!!props.badge}>
+                <View
+                  style={{ height: 19, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                  class="bg-muted"
+                >
+                  <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
+                    {props.badge!}
+                  </Text>
+                </View>
+              </If>
+              <If when={dirty()}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
+              </If>
+              <If when={savedFeedback() && !dirty()}>
+                <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
+                  {t("build.quickEdit.saved")}
+                </Text>
+              </If>
+            </View>
           </If>
-          <If when={savedFeedback() && !dirty()}>
-            <Text style={{ fontSize: 12, flexShrink: 0 }} class="text-secondary-foreground">
-              {t("build.quickEdit.saved")}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text
+              testID="inline-editor-target-path"
+              style={{ fontSize: 11.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+              class="text-muted-foreground"
+            >
+              {props.relPath}
             </Text>
-          </If>
+            <If when={!props.title && dirty()}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
+            </If>
+            <If when={!props.title && savedFeedback() && !dirty()}>
+              <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
+                {t("build.quickEdit.saved")}
+              </Text>
+            </If>
+          </View>
         </View>
+
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {props.extraActions}
           <Btn
             label={t("build.quickEdit.openExternal")}
             icon="folderOpen"
             variant="ghost"
             onPress={() => props.onOpenExternal(props.relPath)}
           />
-          <If when={!props.readOnly && !tooLarge()}>
+          <If when={!props.readOnly && !tooLarge() && dirty()}>
             <Btn
               testID="inline-file-save-btn"
               label={t("build.quickEdit.save")}
               icon="check"
               variant="primary"
-              disabled={!dirty()}
               tooltip={tip(t("build.quickEdit.save"), "mod+s")}
               onPress={() => saveFile(false)}
             />
@@ -171,18 +218,17 @@ export function InlineFileEditor(props: {
         <View
           testID="inline-editor-conflict-bar"
           style={{
-            paddingLeft: 14,
-            paddingRight: 12,
+            paddingLeft: 20,
+            paddingRight: 16,
             paddingTop: 8,
             paddingBottom: 8,
             borderBottomWidth: 1,
-            borderLeftWidth: 3,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
             gap: 10,
           }}
-          class="border-b-border border-l-chart-4 bg-muted/40"
+          class="border-b-border bg-muted/40"
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1, minWidth: 0 }}>
             <Icon name="triangleAlert" size={14} tone="chart-4" />
@@ -241,12 +287,12 @@ export function InlineFileEditor(props: {
                 hardTabs={false}
                 softWrap={false}
                 readOnly={props.readOnly}
-                fontFamily={editorMono()}
+                fontFamily={codeNoLigatureFont()}
                 fontSize={editorFontSize()}
                 lineHeight={Math.round(editorFontSize() * editorLineHeight())}
                 activeLine
                 class="bg-card"
-                classes={{ content: "pl-3 pr-4 pt-3 pb-6" }}
+                classes={{ content: "pl-6 pr-6 pt-4 pb-6" }}
                 onChange={(e) => {
                   draftText = e.value;
                   dirty.set(e.value !== initialText());
@@ -261,13 +307,15 @@ export function InlineFileEditor(props: {
 }
 
 /**
- * P1-7 Right-side overlay diagnostic drawer: positioned over the right edge of the results
- * table so opening/closing NEVER squeezes or reflows the table. Shows 3-column Input / Expected
- * Answer / Actual Output snippets, stderr, copyable single-step repro command, and in-place jumps.
+ * P1-3 Conclusion-first right-side overlay diagnostic drawer:
+ * - Line 1: Large human conclusion (`应为 WA，实际通过` amber / `应为 AC，实际 WA` red / `符合预期（WA）` muted)
+ * - Order: Conclusion -> 3-column Input / Expected / Actual -> Single-step repro command -> Neutral checker output
+ * - Responsive width so narrow windows are never crushed; absolute positioned so the table never reflows
  */
 export function CellDiagnosticDrawer(props: {
   problemId: string;
   cell: MatrixCellData;
+  expected: readonly string[];
   isAnomaly: boolean;
   genCmd?: string | null;
   solutionRelPath?: string;
@@ -286,7 +334,22 @@ export function CellDiagnosticDrawer(props: {
     });
   });
 
-  const badge = () => cellVisualStyle(props.cell.verdict, props.isAnomaly, colorScheme() === "dark");
+  const conclusion = () =>
+    formatCellConclusion(props.cell.verdict, props.expected, props.isAnomaly, locale() === "zh-CN");
+
+  const conclusionColor = () => {
+    const tone = conclusion().tone;
+    const dark = colorScheme() === "dark";
+    if (tone === "red") return dark ? "#f87171" : "#dc2626";
+    if (tone === "amber") return dark ? "#fbbf24" : "#d97706";
+    return dark ? "#a1a1aa" : "#52525b";
+  };
+
+  const drawerWidth = () => {
+    const w = windowSize().width;
+    if (w <= 0) return 460;
+    return Math.min(460, Math.max(320, w - 280));
+  };
 
   const inputSnippet = () => {
     const p = testPreview();
@@ -317,62 +380,42 @@ export function CellDiagnosticDrawer(props: {
         top: 0,
         right: 0,
         bottom: 0,
-        width: 460,
+        width: drawerWidth(),
         borderLeftWidth: 1,
         boxShadow: popoverShadow(),
       }}
       class="bg-card border-border"
     >
-      {/* Drawer Header */}
+      {/* Drawer Header: Conclusion-first (P1-3) */}
       <View
         style={{
-          paddingLeft: 14,
+          paddingLeft: 16,
           paddingRight: 10,
-          paddingTop: 10,
-          paddingBottom: 10,
+          paddingTop: 12,
+          paddingBottom: 12,
           borderBottomWidth: 1,
-          gap: 8,
+          gap: 6,
         }}
         class="border-border"
       >
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-            <View
-              style={{
-                height: 22,
-                paddingLeft: 7,
-                paddingRight: 7,
-                borderRadius: 5,
-                borderWidth: 1,
-                backgroundColor: badge().bg,
-                borderColor: badge().border,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              <If when={props.isAnomaly}>
-                <Icon name="triangleAlert" size={11} tone="destructive" />
-              </If>
-              <Text style={{ fontSize: 11, fontWeight: 600, color: badge().fg, fontVariant: ["tabular-nums"] }}>
-                {props.cell.verdict}
-              </Text>
-            </View>
-            <Text
-              style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
-              class="text-foreground"
-            >
-              {`#${props.cell.test_index} ${props.cell.test_name}`}
-            </Text>
-          </View>
+          <Text
+            testID="diag-conclusion-headline"
+            style={{ fontSize: 14, fontWeight: 600, color: conclusionColor(), flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+          >
+            {conclusion().text}
+          </Text>
           <IconBtn icon="x" size={26} iconSize={14} onPress={props.onClose} />
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-            {`${props.cell.solution}   ${props.cell.cpu_time_ms} ms   ${formatMemoryKib(props.cell.peak_memory_kib)}`}
+          <Text
+            style={{ fontSize: 12, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+            class="text-secondary-foreground"
+          >
+            {`#${props.cell.test_index} ${props.cell.test_name}   ${props.cell.solution}   ${props.cell.cpu_time_ms} ms   ${formatMemoryKib(props.cell.peak_memory_kib)}`}
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
             <If when={props.solutionRelPath}>
               {(rel) => (
                 <Btn
@@ -395,60 +438,39 @@ export function CellDiagnosticDrawer(props: {
         </View>
       </View>
 
-      {/* Drawer Scroll Body */}
-      <Scroll style={{ flex: 1 }} contentStyle={{ padding: 14, gap: 14 }}>
-        {/* Checker message */}
-        <If when={!!props.cell.checker_message}>
-          <View
-            style={{
-              paddingLeft: 10,
-              paddingTop: 6,
-              paddingBottom: 6,
-              borderLeftWidth: 2,
-              gap: 3,
-            }}
-            class={props.isAnomaly ? "border-l-destructive" : "border-l-border"}
-          >
-            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-              {t("build.diag.checkerOutput")}
-            </Text>
-            <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
-              {props.cell.checker_message}
-            </Text>
-          </View>
-        </If>
-
-        {/* 3-column Input / Expected Answer / Actual Output */}
+      {/* Drawer Scroll Body: 3-column I/O -> Repro command -> Neutral checker output */}
+      <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 16 }}>
+        {/* 1. 3-column Input / Expected Answer / Actual Output */}
         <View style={{ gap: 6 }}>
           <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
             {t("build.diag.ioComparison")}
           </Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
                 {t("build.diag.input")}
               </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/60">
+              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
                 <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
                   {inputSnippet()}
                 </Text>
               </Scroll>
             </View>
             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
                 {t("build.diag.expected")}
               </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/60">
+              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
                 <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
                   {expectedSnippet()}
                 </Text>
               </Scroll>
             </View>
             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
                 {t("build.diag.actual")}
               </Text>
-              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/60">
+              <Scroll style={{ borderRadius: 6, maxHeight: 168 }} contentStyle={{ padding: 8 }} class="bg-muted/50">
                 <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
                   {actualSnippet()}
                 </Text>
@@ -457,35 +479,7 @@ export function CellDiagnosticDrawer(props: {
           </View>
         </View>
 
-        {/* Generator command */}
-        <If when={!!props.genCmd}>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-              {t("build.diag.genCmd")}
-            </Text>
-            <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/60">
-              <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-foreground">
-                {props.genCmd!}
-              </Text>
-            </View>
-          </View>
-        </If>
-
-        {/* Stderr */}
-        <If when={!!props.cell.stderr}>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
-              {t("build.diag.stderr")}
-            </Text>
-            <Scroll style={{ borderRadius: 6, maxHeight: 120 }} contentStyle={{ padding: 8 }} class="bg-muted/60">
-              <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
-                {props.cell.stderr}
-              </Text>
-            </Scroll>
-          </View>
-        </If>
-
-        {/* Copyable single-step repro command */}
+        {/* 2. Copyable single-step repro command */}
         <If when={!!props.cell.repro_cmd}>
           <View style={{ gap: 4 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -505,11 +499,52 @@ export function CellDiagnosticDrawer(props: {
                 }}
               />
             </View>
-            <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/60">
+            <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/50">
               <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-foreground">
                 {props.cell.repro_cmd!}
               </Text>
             </View>
+          </View>
+        </If>
+
+        {/* 3. Checker output (neutral gray, NO red left accent bar!) */}
+        <If when={!!props.cell.checker_message}>
+          <View style={{ gap: 4 }}>
+            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+              {t("build.diag.checkerOutput")}
+            </Text>
+            <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/40">
+              <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+                {props.cell.checker_message}
+              </Text>
+            </View>
+          </View>
+        </If>
+
+        {/* 4. Generator command & Stderr (when present) */}
+        <If when={!!props.genCmd}>
+          <View style={{ gap: 4 }}>
+            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+              {t("build.diag.genCmd")}
+            </Text>
+            <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted/40">
+              <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-secondary-foreground">
+                {props.genCmd!}
+              </Text>
+            </View>
+          </View>
+        </If>
+
+        <If when={!!props.cell.stderr}>
+          <View style={{ gap: 4 }}>
+            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+              {t("build.diag.stderr")}
+            </Text>
+            <Scroll style={{ borderRadius: 6, maxHeight: 120 }} contentStyle={{ padding: 8 }} class="bg-muted/40">
+              <Text style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16 }} class="text-secondary-foreground">
+                {props.cell.stderr}
+              </Text>
+            </Scroll>
           </View>
         </If>
       </Scroll>
