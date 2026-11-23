@@ -47,4 +47,5 @@
 - **安全边界在 Core 层强制执行**：写入一律原子化（临时文件 + rename）；冻结的比赛只读，写入返回明确错误码；**解冻只开放给 GUI/CLI（需二次确认），不开放给 MCP**；支持 `--read-only`；文件访问不得越出工作区目录。
 - 不要超出当前阶段的范围（见 `docs/roadmap.md`）。`problem.toml` 读写要保留未知字段。
 - **做减法（less is more）**：提方案时默认给最小集合，意义不明确的功能、控件、选项直接不做（不写成「推迟」，也不在界面上留占位）。项目尚未正式发布，不考虑迁移、向后兼容或用户习惯（比如快捷键编号可以随时重排）。
+- **当且仅当本地 lint 全部通过时才允许提交**：每次 `jj commit` / 推送前必须先在本地跑通与 `.github/workflows/lint.yml` 一致的检查（`cargo fmt --all -- --check`，改过脚本时补跑 `bash -n scripts/*.sh packaging/linux/*.sh`、`shellcheck -e SC2086 scripts/*.sh packaging/linux/*.sh` 与 `python3 -m py_compile scripts/*.py`），未通过禁止提交。
 - **UI 文案克制与流畅感硬约束**：主工作区不放冗余标题，不暴露技术细节（`SQLite FTS5`、`12ms`、`theme.toml`、`MCP Ready` 等）；成功状态不提示；耗时不到 150ms 的操作不显示 loading；嵌套圆角同心；数字用 `tabular-nums`；不能有 1px 布局抖动。**交互流畅感是一等公民**：采用温润物理弹簧手感（`ζ = 0.86–0.90`，过冲 `≤ 1%`，随时可打断；按压 `scale(0.97)` 仅限纯色主按钮）；连续手势（缩放、平移、拖拽）全程只动 GPU 合成器 `transform`、结束时单次原子提交，禁止每帧重排或与 `scrollTo` 竞态；切换与刷新零闪白，高频输入 1 帧内响应（≤16ms）。Token 与工程铁律以 `docs/design-system.md`（尤其是 §8）为准。
