@@ -5,10 +5,12 @@ use std::sync::atomic::AtomicBool;
 
 use tempfile::TempDir;
 use xcpc_judge::{
-    BuildMode, BuildOptions, CppStd, GateStatus, PackageFreshness, ProgressEvent, SourceLanguage,
-    StressOptions, Verdict, build_package, check_dirty_inputs, check_package_freshness,
-    detect_toolchain, init_package, inspect_package, inspect_test_case, parse_compiler_diagnostics,
-    parse_memory_limit_kib, parse_time_limit_ms, stress_package,
+    BuildMode, BuildOptions, CppStd, GateStatus, PackageFreshness, PackageSourceKind,
+    ProgressEvent, SourceLanguage, StressOptions, Verdict, add_generator_test, add_hand_test,
+    build_package, check_dirty_inputs, check_package_freshness, create_package_source,
+    detect_toolchain, init_package, inspect_package, inspect_test_case, normalize_dirty_inputs,
+    parse_compiler_diagnostics, parse_memory_limit_kib, parse_time_limit_ms, remove_test_rule,
+    set_package_checker, set_solution_config, stress_package,
 };
 use xcpc_storage::{Workspace, init_workspace};
 
@@ -757,4 +759,267 @@ int main() {
         outcome.peak_memory_kib
     );
     drop(parent_ballast);
+}
+
+#[test]
+fn inspect_test_case_large_multiline_single_line_and_ans() {
+    let extra_toml = r#"
+[[test]]
+file = "tests/big-multi.in"
+name = "big-multi"
+tag = "max"
+
+[[test]]
+file = "tests/big-single.in"
+name = "big-single"
+tag = "max"
+
+[[test]]
+file = "tests/wide-small.in"
+name = "wide-small"
+tag = "edge"
+"#;
+    let (_dir, ws) = setup_workspace_with_problem("big-data", extra_toml);
+    let prob_dir = ws.resolve("problems/big-data").unwrap();
+    fs::create_dir_all(prob_dir.join("tests")).unwrap();
+    fs::create_dir_all(prob_dir.join("samples")).unwrap();
+
+    // Sample 01 with manual .ans.
+    ws.write("problems/big-data/samples/01.in", b"1 2\n")
+        .unwrap();
+    ws.write("problems/big-data/samples/01.ans", b"3\n")
+        .unwrap();
+
+    // 1. 5 MiB multi-line file.
+    let mut big_multi = String::with_capacity(5 * 1024 * 1024 + 1024);
+    for i in 1..=200_000 {
+        use std::fmt::Write;
+        let _ = writeln!(big_multi, "line-{i:06} 1234567890 9876543210");
+    }
+    assert!(big_multi.len() > 5 * 1024 * 1024);
+    fs::write(prob_dir.join("tests/big-multi.in"), &big_multi).unwrap();
+
+    // Create a matching built .ans for test #2 (1=sample-01, 2=big-multi).
+    let build_tests_dir = xcpc_judge::build_dir_for(&ws, "big-data").join("tests");
+    fs::create_dir_all(&build_tests_dir).unwrap();
+    fs::write(build_tests_dir.join("002.ans"), "42\n99\n").unwrap();
+
+    // 2. 500 KiB single-line file (e.g. 100k ints on line 1, plus line 2 "SECOND_LINE").
+    let mut big_single = String::with_capacity(600 * 1024);
+    for i in 0..100_000 {
+        use std::fmt::Write;
+        if i > 0 {
+            big_single.push(' ');
+        }
+        let _ = write!(big_single, "{i}");
+    }
+    big_single.push_str("\nSECOND_LINE\n");
+    assert!(big_single.len() > 500 * 1024);
+    fs::write(prob_dir.join("tests/big-single.in"), &big_single).unwrap();
+
+    // 3. Small file with one wide line (> 200 chars) + line 2 ("LINE2"), fits in head+tail.
+    let wide_small = format!("{}\nLINE2\n", "x".repeat(400));
+    fs::write(prob_dir.join("tests/wide-small.in"), &wide_small).unwrap();
+
+    // Sample preview includes .ans from samples/01.ans, rule_index == None, file_rel == Some.
+    let p_sample = inspect_test_case(&ws, "big-data", "1", 10, 5).unwrap();
+    assert!(p_sample.available_on_disk);
+    assert!(p_sample.ans_available);
+    assert_eq!(p_sample.ans_head, "3");
+    assert_eq!(p_sample.ans_total_lines, Some(1));
+    assert_eq!(p_sample.rule_index, None);
+    assert_eq!(p_sample.file_rel.as_deref(), Some("samples/01.in"));
+
+    // 5 MiB multi-line preview: fast, bounded, head starts at line-000001, tail ends at line-200000.
+    let t0 = std::time::Instant::now();
+    let p_multi = inspect_test_case(&ws, "big-data", "big-multi", 5, 5).unwrap();
+    assert!(
+        t0.elapsed().as_millis() < 500,
+        "inspect_test_case took too long: {:?}",
+        t0.elapsed()
+    );
+    assert!(p_multi.available_on_disk);
+    assert!(p_multi.truncated);
+    assert!(p_multi.size_bytes > 5 * 1024 * 1024);
+    assert!(p_multi.head.contains("line-000001"));
+    assert!(p_multi.tail.contains("line-200000"));
+    assert!(p_multi.head.len() <= 4096 + 64);
+    assert!(p_multi.tail.len() <= 4096 + 64);
+    assert!(p_multi.ans_available);
+    assert_eq!(p_multi.ans_head, "42\n99");
+    assert_eq!(p_multi.ans_total_lines, Some(2));
+    assert_eq!(p_multi.rule_index, Some(0));
+    assert_eq!(p_multi.file_rel.as_deref(), Some("tests/big-multi.in"));
+
+    // 500 KiB single-line preview: per-line truncated, bounded, truncated == true.
+    let p_single = inspect_test_case(&ws, "big-data", "big-single", 5, 5).unwrap();
+    assert!(p_single.available_on_disk);
+    assert!(p_single.truncated);
+    assert!(p_single.head.contains("chars)"));
+    assert!(p_single.head.len() <= 4096 + 64);
+    assert!(p_single.tail.contains("SECOND_LINE"));
+
+    // Small file with wide line: line 1 truncated, line 2 preserved, truncated == true even with empty tail.
+    let p_wide = inspect_test_case(&ws, "big-data", "wide-small", 10, 5).unwrap();
+    assert!(p_wide.truncated);
+    assert!(p_wide.tail.is_empty());
+    assert!(p_wide.head.contains("(+200 chars)"));
+    assert!(p_wide.head.contains("LINE2"));
+}
+
+#[test]
+fn structured_package_mutation_apis_preserve_comments_and_unknown_fields() {
+    let extra_toml = r#"
+# Keep this author comment!
+custom_extra = "preserve-me"
+
+[solutions.std]
+main = true
+"#;
+    let (_dir, ws) = setup_workspace_with_problem("mut-pkg", extra_toml);
+    ws.write(
+        "problems/mut-pkg/solutions/std.cpp",
+        b"int main() { return 0; }\n",
+    )
+    .unwrap();
+
+    // 1. set_package_checker: built-in then custom checker.cpp.
+    set_package_checker(&ws, "mut-pkg", "ncmp").unwrap();
+    assert!(set_package_checker(&ws, "mut-pkg", "bogus_chk").is_err());
+    let p = ws.load_problem("mut-pkg").unwrap();
+    assert_eq!(
+        p.meta.package.as_ref().and_then(|c| c.checker.as_deref()),
+        Some("ncmp")
+    );
+
+    set_package_checker(&ws, "mut-pkg", "checker.cpp").unwrap();
+    let chk_path = ws.resolve("problems/mut-pkg/checker.cpp").unwrap();
+    assert!(chk_path.is_file());
+    // Modify checker.cpp and call set_package_checker again -> must NOT overwrite.
+    ws.write("problems/mut-pkg/checker.cpp", b"// custom\n")
+        .unwrap();
+    set_package_checker(&ws, "mut-pkg", "checker.cpp").unwrap();
+    assert_eq!(
+        ws.read_text("problems/mut-pkg/checker.cpp").unwrap(),
+        "// custom\n"
+    );
+
+    // 2. create_package_source: rejects path traversal, creates files without overwriting.
+    assert!(create_package_source(&ws, "mut-pkg", PackageSourceKind::Solution, "../evil").is_err());
+    let sol_rel =
+        create_package_source(&ws, "mut-pkg", PackageSourceKind::Solution, "brute").unwrap();
+    assert_eq!(sol_rel, "solutions/brute.cpp");
+    let gen_rel =
+        create_package_source(&ws, "mut-pkg", PackageSourceKind::Generator, "gen_tree").unwrap();
+    assert_eq!(gen_rel, "generators/gen_tree.cpp");
+    let val_rel =
+        create_package_source(&ws, "mut-pkg", PackageSourceKind::Validator, "validator").unwrap();
+    assert_eq!(val_rel, "validator.cpp");
+    let v_ok = create_package_source(
+        &ws,
+        "mut-pkg",
+        PackageSourceKind::ValidatorSelfTestValid,
+        "01",
+    )
+    .unwrap();
+    assert_eq!(v_ok, "tests/validator/valid/01.in");
+    let v_bad = create_package_source(
+        &ws,
+        "mut-pkg",
+        PackageSourceKind::ValidatorSelfTestInvalid,
+        "01",
+    )
+    .unwrap();
+    assert_eq!(v_bad, "tests/validator/invalid/01.in");
+
+    let insp = inspect_package(&ws, "mut-pkg").unwrap();
+    assert!(
+        insp.files
+            .self_test_files
+            .contains(&"tests/validator/valid/01.in".to_owned())
+    );
+    assert!(
+        insp.files
+            .self_test_files
+            .contains(&"tests/validator/invalid/01.in".to_owned())
+    );
+
+    // 3. set_solution_config: set expect/tags on brute, then switch main to brute.
+    set_solution_config(
+        &ws,
+        "mut-pkg",
+        "brute",
+        None,
+        Some(vec!["WA".into(), "TLE".into()]),
+        Some(vec!["small".into()]),
+    )
+    .unwrap();
+    let p = ws.load_problem("mut-pkg").unwrap();
+    assert_eq!(
+        p.meta.solutions["brute"]
+            .expect
+            .as_ref()
+            .unwrap()
+            .normalized(),
+        vec!["WA", "TLE"]
+    );
+    assert_eq!(
+        p.meta.solutions["brute"].tags.as_deref(),
+        Some(&["small".to_string()][..])
+    );
+
+    set_solution_config(&ws, "mut-pkg", "brute", Some(true), None, None).unwrap();
+    let p = ws.load_problem("mut-pkg").unwrap();
+    assert_eq!(p.meta.solutions["brute"].main, Some(true));
+    assert!(p.meta.solutions["brute"].expect.is_none());
+    assert_ne!(p.meta.solutions["std"].main, Some(true));
+
+    // 4. add_hand_test, add_generator_test, remove_test_rule.
+    let hand = add_hand_test(
+        &ws,
+        "mut-pkg",
+        Some("edge-min"),
+        Some("edge"),
+        "\u{feff}1 2\r\n3 4",
+    )
+    .unwrap();
+    assert_eq!(hand.rule_index, 0);
+    assert_eq!(hand.file_rel.as_deref(), Some("tests/hand-01.in"));
+    assert_eq!(
+        ws.read_text("problems/mut-pkg/tests/hand-01.in").unwrap(),
+        "1 2\n3 4\n"
+    );
+
+    let gen_added = add_generator_test(
+        &ws,
+        "mut-pkg",
+        "gen_tree",
+        "-n 100 {i}",
+        5,
+        Some("max"),
+        Some("tree-max"),
+    )
+    .unwrap();
+    assert_eq!(gen_added.rule_index, 1);
+    assert!(add_generator_test(&ws, "mut-pkg", "gen_tree", "", 0, None, None).is_err());
+
+    remove_test_rule(&ws, "mut-pkg", 0).unwrap();
+    let p = ws.load_problem("mut-pkg").unwrap();
+    assert_eq!(p.meta.test.len(), 1);
+    assert_eq!(p.meta.test[0].generator.as_deref(), Some("gen_tree"));
+
+    // 5. normalize_dirty_inputs fixes BOM + CRLF + missing trailing newline.
+    ws.write("problems/mut-pkg/samples/01.in", b"\xEF\xBB\xBF1 2\r\n3 4")
+        .unwrap();
+    let fixed = normalize_dirty_inputs(&ws, "mut-pkg").unwrap();
+    assert_eq!(fixed, vec!["samples/01.in"]);
+    assert_eq!(
+        ws.read_text("problems/mut-pkg/samples/01.in").unwrap(),
+        "1 2\n3 4\n"
+    );
+
+    // 6. Verify comments and unknown fields were preserved across all toml_edit writes.
+    let final_toml = ws.read_text("problems/mut-pkg/problem.toml").unwrap();
+    assert!(final_toml.contains("# Keep this author comment!"));
+    assert!(final_toml.contains("custom_extra = \"preserve-me\""));
 }

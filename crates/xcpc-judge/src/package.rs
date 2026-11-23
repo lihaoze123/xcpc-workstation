@@ -99,6 +99,9 @@ pub struct ExpandedTest {
     /// Human-readable generator command string if generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gen_cmd: Option<String>,
+    /// 0-based index of the `[[test]]` rule in `problem.toml`, or `None` for leading `samples/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_index: Option<usize>,
 }
 
 /// One discovered solution combining `solutions/*.cpp` on disk with `[solutions.<name>]`.
@@ -467,6 +470,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                     manual_ans_rel: ans_rel,
                 },
                 gen_cmd: None,
+                rule_index: None,
             });
         }
     }
@@ -492,6 +496,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                         file_rel: file.clone(),
                     },
                     gen_cmd: None,
+                    rule_index: Some(spec_idx),
                 });
             }
             (None, Some(gen_name)) => {
@@ -540,6 +545,7 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
                             args_raw: expanded_raw,
                         },
                         gen_cmd: Some(gen_cmd),
+                        rule_index: Some(spec_idx),
                     });
                 }
             }

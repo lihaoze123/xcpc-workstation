@@ -16,8 +16,10 @@ pub use build::{BuildOptions, ProgressCallback, build_package};
 pub use cache::{JudgeCache, default_cache_root};
 pub use error::{JudgeError, Result};
 pub use ops::{
-    InitPackageResult, PackageFiles, PackageInspection, PackageSolutionInfo, StressOptions,
-    StressResult, TestCasePreview, init_package, inspect_package, inspect_test_case,
+    AddedTestInfo, InitPackageResult, PackageFiles, PackageInspection, PackageSolutionInfo,
+    PackageSourceKind, StressOptions, StressResult, TestCasePreview, add_generator_test,
+    add_hand_test, create_package_source, init_package, inspect_package, inspect_test_case,
+    normalize_dirty_inputs, remove_test_rule, set_package_checker, set_solution_config,
     stress_package,
 };
 pub use package::{
