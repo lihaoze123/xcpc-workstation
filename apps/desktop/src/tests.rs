@@ -2678,7 +2678,7 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert!(!save_escape.ok);
     assert_eq!(save_escape.code.as_deref(), Some("path_escape"));
 
-    // Generator batch & rule removal.
+    // Generator batch, update, rule removal, and delete APIs (solution, generator, self-test, sample).
     let gen_added =
         state.add_generator_test("sum", "gen_random", "-n 100 {i}", 2, Some("max"), None);
     assert!(
@@ -2686,5 +2686,70 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
         "add_generator_test failed: {:?}",
         gen_added.error
     );
+    assert!(
+        state
+            .update_generator_test(
+                "sum",
+                gen_added.rule_index,
+                "gen_random",
+                "-n 200 {i}",
+                3,
+                Some("large"),
+                None,
+            )
+            .ok
+    );
     assert!(state.remove_test_rule("sum", gen_added.rule_index).ok);
+
+    // Delete solution removes file & config cleanly.
+    assert!(state.delete_solution("sum", "wrong_wa").ok);
+    assert!(
+        !ws_dir
+            .0
+            .join("problems/sum/solutions/wrong_wa.cpp")
+            .exists()
+    );
+
+    // Delete self-test removes file cleanly and rejects path escape.
+    let self_created = state.create_package_source("sum", "validator_self_test_valid", "99-temp");
+    assert!(self_created.ok);
+    assert!(state.delete_self_test("sum", &self_created.rel_path).ok);
+    assert!(!state.delete_self_test("sum", "../problem.toml").ok);
+
+    // Delete generator with referencing test rules removes both.
+    let gen_ref = state.add_generator_test("sum", "gen_random", "-n 10 {i}", 2, Some("tmp"), None);
+    assert!(gen_ref.ok);
+    assert!(state.delete_generator("sum", "gen_random.cpp", true).ok);
+    assert!(
+        !ws_dir
+            .0
+            .join("problems/sum/generators/gen_random.cpp")
+            .exists()
+    );
+
+    // Delete sample renumbers remaining samples contiguously.
+    assert!(
+        state
+            .save_samples(
+                "sum",
+                vec![
+                    SamplePairJs {
+                        name: "01".into(),
+                        input: "1 2\n".into(),
+                        output: "3\n".into(),
+                    },
+                    SamplePairJs {
+                        name: "02".into(),
+                        input: "4 5\n".into(),
+                        output: "9\n".into(),
+                    },
+                ],
+            )
+            .ok
+    );
+    assert!(state.delete_sample("sum", 1).ok);
+    let detail_after_del = state.problem_detail("sum");
+    assert_eq!(detail_after_del.samples.len(), 1);
+    assert_eq!(detail_after_del.samples[0].name, "01");
+    assert_eq!(detail_after_del.samples[0].input, "4 5\n");
 }

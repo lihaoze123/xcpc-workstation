@@ -142,6 +142,7 @@ export function AddGeneratorBatchModal(props: {
   open: boolean;
   problemId: string;
   generators: readonly string[];
+  initialGenerator?: string;
   onClose: () => void;
   onAdded: () => void;
 }) {
@@ -156,7 +157,8 @@ export function AddGeneratorBatchModal(props: {
     if (props.open) {
       untracked(() => {
         const stems = genStems();
-        selectedGen.set(stems[0] ?? "");
+        const preferred = props.initialGenerator && stems.includes(props.initialGenerator) ? props.initialGenerator : stems[0] ?? "";
+        selectedGen.set(preferred);
         args.set("-n 100 {i}");
         repeat.set("5");
         tag.set("random");
@@ -312,6 +314,59 @@ export function ConfirmDeleteRuleModal(props: {
             }
             variant="danger"
             onPress={props.onConfirm}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+export type PendingDeleteTarget =
+  | { kind: "solution"; name: string }
+  | { kind: "generator"; file: string; stem: string; refBatchCount: number }
+  | { kind: "sample"; sampleIndex: number }
+  | { kind: "selfTest"; relPath: string };
+
+export function ConfirmPackageDeleteModal(props: {
+  target: PendingDeleteTarget | undefined;
+  onClose: () => void;
+  onConfirm: (target: PendingDeleteTarget) => void;
+}) {
+  const title = () => {
+    const cur = props.target;
+    if (!cur) return "";
+    if (cur.kind === "solution") return t("build.delete.solutionTitle", { name: cur.name });
+    if (cur.kind === "generator") return t("build.delete.generatorTitle", { name: cur.stem });
+    if (cur.kind === "sample") return t("build.delete.sampleTitle", { index: cur.sampleIndex });
+    return t("build.delete.selfTestTitle", { name: cur.relPath.split("/").slice(-2).join("/") });
+  };
+
+  const subtitle = () => {
+    const cur = props.target;
+    if (!cur) return "";
+    if (cur.kind === "solution") return t("build.delete.solutionDesc");
+    if (cur.kind === "generator") {
+      return cur.refBatchCount > 0
+        ? t("build.delete.generatorDescWithRefs", { count: cur.refBatchCount })
+        : t("build.delete.generatorDesc");
+    }
+    if (cur.kind === "sample") return t("build.delete.sampleDesc");
+    return t("build.delete.selfTestDesc");
+  };
+
+  return (
+    <Modal open={props.target !== undefined} onClose={props.onClose} width={400} testID="confirm-package-delete-modal">
+      <View style={{ padding: 18, gap: 14 }}>
+        <ModalHeader icon="trash" title={title()} subtitle={subtitle()} />
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+          <Btn label={t("common.cancel")} onPress={props.onClose} />
+          <Btn
+            testID="confirm-package-delete-btn"
+            label={t("common.delete")}
+            variant="danger"
+            onPress={() => {
+              if (props.target) props.onConfirm(props.target);
+            }}
           />
         </View>
       </View>

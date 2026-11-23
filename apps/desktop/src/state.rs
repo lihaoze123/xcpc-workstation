@@ -3262,6 +3262,100 @@ impl State {
         }
     }
 
+    pub(crate) fn delete_solution(&self, slug: &str, name: &str) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::delete_solution(&ws, slug, name) {
+            Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn delete_generator(
+        &self,
+        slug: &str,
+        filename: &str,
+        remove_referencing_tests: bool,
+    ) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::delete_generator(&ws, slug, filename, remove_referencing_tests) {
+            Ok(_) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core
+                        .index
+                        .refresh_path(&ws, &format!("problems/{slug}/problem.toml"));
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn delete_self_test(&self, slug: &str, rel_path: &str) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        match xcpc_judge::delete_self_test(&ws, slug, rel_path) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn delete_sample(&self, slug: &str, sample_index: u32) -> ActionResult {
+        let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        if ws.is_read_only() {
+            return ActionResult::err("read_only", "workspace is read-only");
+        }
+        let problem = match ws.load_problem(slug) {
+            Ok(p) => p,
+            Err(e) => return ActionResult::from_storage_err(e),
+        };
+        let idx = sample_index.saturating_sub(1) as usize;
+        if sample_index == 0 || idx >= problem.samples.len() {
+            return ActionResult::err("not_found", format!("sample #{sample_index} not found"));
+        }
+        let remaining: Vec<SamplePairJs> = problem
+            .samples
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != idx)
+            .map(|(_, s)| SamplePairJs {
+                name: s.name,
+                input: s.input,
+                output: s.output,
+            })
+            .collect();
+        self.save_samples(slug, remaining)
+    }
+
     pub(crate) fn normalize_dirty_inputs(&self, slug: &str) -> NormalizeDirtyResultJs {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return NormalizeDirtyResultJs {

@@ -1329,6 +1329,32 @@ impl Preview {
         self.state.remove_test_rule(&slug, rule_index)
     }
 
+    /// Deletes a solution source file and removes its `[solutions.<name>]` table from `problem.toml`.
+    pub fn delete_solution(&self, slug: String, name: String) -> ActionResult {
+        self.state.delete_solution(&slug, &name)
+    }
+
+    /// Deletes a generator source file and optionally removes referencing `[[test]]` rules.
+    pub fn delete_generator(
+        &self,
+        slug: String,
+        filename: String,
+        remove_referencing_tests: bool,
+    ) -> ActionResult {
+        self.state
+            .delete_generator(&slug, &filename, remove_referencing_tests)
+    }
+
+    /// Deletes a validator or checker self-test file inside `problems/<slug>/tests/{validator,checker}/`.
+    pub fn delete_self_test(&self, slug: String, rel_path: String) -> ActionResult {
+        self.state.delete_self_test(&slug, &rel_path)
+    }
+
+    /// Deletes the 1-based sample pair (`samples/NN.{in,ans}`) and renumbers remaining samples contiguously.
+    pub fn delete_sample(&self, slug: String, sample_index: u32) -> ActionResult {
+        self.state.delete_sample(&slug, sample_index)
+    }
+
     /// Normalizes CRLF, UTF-8 BOM, and missing trailing newlines across hand-written inputs.
     pub fn normalize_dirty_inputs(&self, slug: String) -> NormalizeDirtyResultJs {
         self.state.normalize_dirty_inputs(&slug)

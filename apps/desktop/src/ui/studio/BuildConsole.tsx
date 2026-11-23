@@ -6,8 +6,9 @@
 // - P1-4 Unified Detail Page Grammar across all objects + inline generator batch editor + dropdown test selector
 // - P1-5 State consistency: preserves untouched summaries (`旧`) and full-run safety margin across subset runs
 
-import { cleanup, colorScheme, computed, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { cleanup, colorScheme, computed, effect, Scroll, signal, Text, untracked, View, type ContextMenuEvent } from "nsh";
 import { Input } from "nsh/base";
+import { Menu as DesktopMenu } from "nsh/desktop";
 import type {
   PackageBuildStatusJs,
   PackageInspectionResultJs,
@@ -55,7 +56,13 @@ import {
   type SolutionSummaryData,
   type TestSummaryData,
 } from "./buildLogic";
-import { AddGeneratorBatchModal, ConfirmDeleteRuleModal, CreateSourceModal } from "./PackageModals";
+import {
+  AddGeneratorBatchModal,
+  ConfirmDeleteRuleModal,
+  ConfirmPackageDeleteModal,
+  CreateSourceModal,
+  type PendingDeleteTarget,
+} from "./PackageModals";
 
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
@@ -264,7 +271,9 @@ export function BuildConsole(props: {
   // Modals & transient feedback
   const createModalKind = signal<"solution" | "generator" | undefined>(undefined);
   const addGenModalOpen = signal(false);
+  const addGenInitial = signal<string | undefined>(undefined);
   const deleteRuleIndex = signal<number | undefined>(undefined);
+  const pendingDelete = signal<PendingDeleteTarget | undefined>(undefined);
   const dirtyUndoNotice = signal<number | undefined>(undefined);
   const notice = signal<UiError | undefined>(undefined);
 
@@ -834,6 +843,64 @@ export function BuildConsole(props: {
     props.onRefreshPackage();
   }
 
+  function countReferencingBatches(genStem: string): number {
+    return testGroups().filter(
+      (g) => g.kind === "rule" && g.genCmd?.trim().split(/\s+/)[0] === genStem,
+    ).length;
+  }
+
+  function handleConfirmPackageDelete(target: PendingDeleteTarget) {
+    pendingDelete.set(undefined);
+    if (props.readOnly) return;
+    if (target.kind === "solution") {
+      const res = preview.deleteSolution(props.problemId, target.name);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
+      selection.set({ kind: "results" });
+      props.onRefreshPackage();
+    } else if (target.kind === "generator") {
+      const res = preview.deleteGenerator(props.problemId, target.file, true);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
+      selection.set({ kind: "results" });
+      props.onRefreshPackage();
+    } else if (target.kind === "sample") {
+      const res = preview.deleteSample(props.problemId, target.sampleIndex);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
+      const remainingSamples = Math.max(0, (testGroups().find((g) => g.kind === "samples")?.tests.length ?? 1) - 1);
+      if (remainingSamples > 0) {
+        selection.set({
+          kind: "testGroup",
+          groupId: "samples",
+          testIndex: Math.min(target.sampleIndex, remainingSamples),
+        });
+      } else {
+        selection.set({ kind: "results" });
+      }
+      props.onRefreshPackage();
+    } else if (target.kind === "selfTest") {
+      const remaining = selfTestFiles().filter((f) => f !== target.relPath);
+      const res = preview.deleteSelfTest(props.problemId, target.relPath);
+      if (!res.ok) {
+        notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
+        return;
+      }
+      finishedReport.set(undefined);
+      selection.set({ kind: "selfTests", relPath: remaining[0] });
+      props.onRefreshPackage();
+    }
+  }
+
   return (
     <View style={{ flex: 1, minHeight: 0, position: "relative" }} class="bg-card" testID="build-console">
       <If
@@ -926,6 +993,16 @@ export function BuildConsole(props: {
                 sub={!inspection()?.files?.validator ? t("build.tree.missing") : undefined}
                 active={selection().kind === "validator"}
                 onPress={() => selection.set({ kind: "validator" })}
+                onContextMenu={(e) => {
+                  const valFile = inspection()?.files?.validator;
+                  void DesktopMenu.popup(
+                    [
+                      { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "validator" }) },
+                      ...(valFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(valFile) }] : []),
+                    ],
+                    e.pagePosition,
+                  );
+                }}
               />
               <TreeRow
                 testID="tree-item-checker"
@@ -934,6 +1011,16 @@ export function BuildConsole(props: {
                 sub={inspection()?.checker || "wcmp"}
                 active={selection().kind === "checker"}
                 onPress={() => selection.set({ kind: "checker" })}
+                onContextMenu={(e) => {
+                  const chkFile = inspection()?.checker === "checker.cpp" ? inspection()?.files?.custom_checker : undefined;
+                  void DesktopMenu.popup(
+                    [
+                      { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "checker" }) },
+                      ...(chkFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(chkFile) }] : []),
+                    ],
+                    e.pagePosition,
+                  );
+                }}
               />
             </View>
 
@@ -971,6 +1058,28 @@ export function BuildConsole(props: {
                       active={selection().kind === "solution" && (selection() as { kind: "solution"; name: string }).name === spec().name}
                       statusDot={sum() ? (sum()!.matched ? "ok" : "fail") : undefined}
                       onPress={() => selection.set({ kind: "solution", name: spec().name })}
+                      onContextMenu={(e) => {
+                        const s = spec();
+                        void DesktopMenu.popup(
+                          [
+                            { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "solution", name: s.name }) },
+                            ...(s.source_rel
+                              ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(s.source_rel!) }]
+                              : []),
+                            ...(!s.is_main && !props.readOnly
+                              ? [{ label: t("build.programs.setMain"), onSelect: () => handleSolutionConfig(s.name, true, ["AC"]) }]
+                              : []),
+                            { type: "separator" as const },
+                            {
+                              label: t("build.menu.deleteSolution"),
+                              destructive: true,
+                              disabled: props.readOnly,
+                              onSelect: () => pendingDelete.set({ kind: "solution", name: s.name }),
+                            },
+                          ],
+                          e.pagePosition,
+                        );
+                      }}
                     />
                   );
                 }}
@@ -1002,6 +1111,41 @@ export function BuildConsole(props: {
                     label={logicalSolutionName(file())}
                     active={selection().kind === "generator" && (selection() as { kind: "generator"; file: string }).file === file()}
                     onPress={() => selection.set({ kind: "generator", file: file() })}
+                    onContextMenu={(e) => {
+                      const f = file();
+                      const stem = logicalSolutionName(f);
+                      void DesktopMenu.popup(
+                        [
+                          { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "generator", file: f }) },
+                          { label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(`generators/${f}`) },
+                          ...(!props.readOnly
+                            ? [
+                                {
+                                  label: t("build.menu.newBatchFromGen"),
+                                  onSelect: () => {
+                                    addGenInitial.set(stem);
+                                    addGenModalOpen.set(true);
+                                  },
+                                },
+                              ]
+                            : []),
+                          { type: "separator" as const },
+                          {
+                            label: t("build.menu.deleteGenerator"),
+                            destructive: true,
+                            disabled: props.readOnly,
+                            onSelect: () =>
+                              pendingDelete.set({
+                                kind: "generator",
+                                file: f,
+                                stem,
+                                refBatchCount: countReferencingBatches(stem),
+                              }),
+                          },
+                        ],
+                        e.pagePosition,
+                      );
+                    }}
                   />
                 )}
               </Each>
@@ -1031,8 +1175,10 @@ export function BuildConsole(props: {
                       }
                       onSelect={(id) => {
                         if (id === "hand") handleAddHandTest();
-                        else if (id === "gen") addGenModalOpen.set(true);
-                        else if (id === "valid") handleAddSelfTest("validator_self_test_valid");
+                        else if (id === "gen") {
+                          addGenInitial.set(undefined);
+                          addGenModalOpen.set(true);
+                        } else if (id === "valid") handleAddSelfTest("validator_self_test_valid");
                         else if (id === "invalid") handleAddSelfTest("validator_self_test_invalid");
                       }}
                       trigger={
@@ -1070,6 +1216,47 @@ export function BuildConsole(props: {
                         testPaneTab.set("input");
                         selection.set({ kind: "testGroup", groupId: grp().id, testIndex: firstIdx });
                       }}
+                      onContextMenu={(e) => {
+                        const g = grp();
+                        const firstIdx = g.tests[0]?.index ?? 1;
+                        if (g.kind === "samples") {
+                          void DesktopMenu.popup(
+                            [
+                              {
+                                label: t("build.menu.viewSamples"),
+                                onSelect: () => {
+                                  testPaneTab.set("input");
+                                  selection.set({ kind: "testGroup", groupId: g.id, testIndex: firstIdx });
+                                },
+                              },
+                              { label: t("build.menu.openSamplesDir"), onSelect: () => openExternal("samples") },
+                            ],
+                            e.pagePosition,
+                          );
+                        } else {
+                          void DesktopMenu.popup(
+                            [
+                              {
+                                label: t("build.menu.viewTests"),
+                                onSelect: () => {
+                                  testPaneTab.set("input");
+                                  selection.set({ kind: "testGroup", groupId: g.id, testIndex: firstIdx });
+                                },
+                              },
+                              { type: "separator" as const },
+                              {
+                                label: t("build.menu.deleteBatch"),
+                                destructive: true,
+                                disabled: props.readOnly || g.ruleIndex == null,
+                                onSelect: () => {
+                                  if (g.ruleIndex != null) deleteRuleIndex.set(g.ruleIndex);
+                                },
+                              },
+                            ],
+                            e.pagePosition,
+                          );
+                        }
+                      }}
                     />
                   );
                 }}
@@ -1082,6 +1269,30 @@ export function BuildConsole(props: {
                 active={selection().kind === "selfTests"}
                 statusDot={hasSelfTestFailure() ? "fail" : undefined}
                 onPress={() => selection.set({ kind: "selfTests", relPath: selfTestFiles()[0] })}
+                onContextMenu={(e) => {
+                  void DesktopMenu.popup(
+                    [
+                      {
+                        label: t("build.menu.viewSelfTests"),
+                        onSelect: () => selection.set({ kind: "selfTests", relPath: selfTestFiles()[0] }),
+                      },
+                      ...(!props.readOnly
+                        ? [
+                            { type: "separator" as const },
+                            {
+                              label: t("build.tests.addValidSelfTest"),
+                              onSelect: () => handleAddSelfTest("validator_self_test_valid"),
+                            },
+                            {
+                              label: t("build.tests.addInvalidSelfTest"),
+                              onSelect: () => handleAddSelfTest("validator_self_test_invalid"),
+                            },
+                          ]
+                        : []),
+                    ],
+                    e.pagePosition,
+                  );
+                }}
               />
             </View>
           </Scroll>
@@ -1686,16 +1897,32 @@ export function BuildConsole(props: {
                     />
                   ) : undefined;
 
-                const deleteRuleBtn = () =>
-                  !props.readOnly && activeGroup()?.kind !== "samples" && ruleIdx() != null ? (
-                    <IconBtn
-                      testID="test-delete-rule-btn"
-                      icon="trash"
-                      tone="muted-foreground"
-                      tooltip={tip(t("build.tests.deleteRule"))}
-                      onPress={() => deleteRuleIndex.set(ruleIdx()!)}
-                    />
-                  ) : undefined;
+                const deleteRuleBtn = () => {
+                  if (props.readOnly) return undefined;
+                  if (activeGroup()?.kind === "samples") {
+                    return (
+                      <IconBtn
+                        testID="sample-delete-btn"
+                        icon="trash"
+                        tone="muted-foreground"
+                        tooltip={tip(t("build.delete.sampleTooltip"))}
+                        onPress={() => pendingDelete.set({ kind: "sample", sampleIndex: activeIdx() })}
+                      />
+                    );
+                  }
+                  if (ruleIdx() != null) {
+                    return (
+                      <IconBtn
+                        testID="test-delete-rule-btn"
+                        icon="trash"
+                        tone="muted-foreground"
+                        tooltip={tip(t("build.tests.deleteRule"))}
+                        onPress={() => deleteRuleIndex.set(ruleIdx()!)}
+                      />
+                    );
+                  }
+                  return undefined;
+                };
 
                 return (
                   <View style={{ flex: 1, minHeight: 0 }}>
@@ -1983,47 +2210,58 @@ export function BuildConsole(props: {
                         title={t("build.tree.selfTests")}
                         icon="shieldCheck"
                         extraActions={
-                          <AppMenu
-                            align="end"
-                            minWidth={210}
-                            entries={selfTestFiles().map((rel) => ({
-                              id: rel,
-                              label: rel.split("/").slice(-2).join("/"),
-                              checked: rel === activeRel(),
-                            }))}
-                            onSelect={(id) => selection.set({ kind: "selfTests", relPath: id })}
-                            trigger={
-                              <View
-                                class="border border-border bg-card hover:bg-muted"
-                                style={{
-                                  height: 28,
-                                  paddingLeft: 9,
-                                  paddingRight: 7,
-                                  borderRadius: 6,
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  gap: 6,
-                                }}
-                              >
-                                <If when={Boolean(matchSelfTestResult(activeRel()!, activeReport()?.self_tests))}>
-                                  <View
-                                    style={{
-                                      width: 6,
-                                      height: 6,
-                                      borderRadius: 3,
-                                      backgroundColor: matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed
-                                        ? "#16a34a"
-                                        : "#dc2626",
-                                    }}
-                                  />
-                                </If>
-                                <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
-                                  {activeRel()!.split("/").slice(-2).join("/")}
-                                </Text>
-                                <Icon name="chevronDown" size={12} tone="muted-foreground" />
-                              </View>
-                            }
-                          />
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            <AppMenu
+                              align="end"
+                              minWidth={210}
+                              entries={selfTestFiles().map((rel) => ({
+                                id: rel,
+                                label: rel.split("/").slice(-2).join("/"),
+                                checked: rel === activeRel(),
+                              }))}
+                              onSelect={(id) => selection.set({ kind: "selfTests", relPath: id })}
+                              trigger={
+                                <View
+                                  class="border border-border bg-card hover:bg-muted"
+                                  style={{
+                                    height: 28,
+                                    paddingLeft: 9,
+                                    paddingRight: 7,
+                                    borderRadius: 6,
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    gap: 6,
+                                  }}
+                                >
+                                  <If when={Boolean(matchSelfTestResult(activeRel()!, activeReport()?.self_tests))}>
+                                    <View
+                                      style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: 3,
+                                        backgroundColor: matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed
+                                          ? "#16a34a"
+                                          : "#dc2626",
+                                      }}
+                                    />
+                                  </If>
+                                  <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                    {activeRel()!.split("/").slice(-2).join("/")}
+                                  </Text>
+                                  <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                </View>
+                              }
+                            />
+                            <If when={!props.readOnly}>
+                              <IconBtn
+                                testID="selftest-delete-btn"
+                                icon="trash"
+                                tone="muted-foreground"
+                                tooltip={tip(t("build.delete.selfTestTooltip"))}
+                                onPress={() => pendingDelete.set({ kind: "selfTest", relPath: activeRel()! })}
+                              />
+                            </If>
+                          </View>
                         }
                         onSaved={() => {
                           finishedReport.set(undefined);
@@ -2190,6 +2428,26 @@ export function BuildConsole(props: {
                       refreshKey={fileRefreshKey()}
                       title={logicalSolutionName(file())}
                       icon="sparkles"
+                      extraActions={
+                        !props.readOnly ? (
+                          <IconBtn
+                            testID="generator-delete-btn"
+                            icon="trash"
+                            tone="muted-foreground"
+                            tooltip={tip(t("build.menu.deleteGenerator"))}
+                            onPress={() => {
+                              const f = file();
+                              const stem = logicalSolutionName(f);
+                              pendingDelete.set({
+                                kind: "generator",
+                                file: f,
+                                stem,
+                                refBatchCount: countReferencingBatches(stem),
+                              });
+                            }}
+                          />
+                        ) : undefined
+                      }
                       onSaved={() => {
                         finishedReport.set(undefined);
                         props.onRefreshPackage();
@@ -2229,49 +2487,58 @@ export function BuildConsole(props: {
                           badge={roleLabel()}
                           extraActions={
                             !props.readOnly && spec() ? (
-                              <AppMenu
-                                align="end"
-                                minWidth={184}
-                                entries={[
-                                  ...(!spec()!.is_main
-                                    ? [{ id: "set_main", label: t("build.programs.setMain"), icon: "crown" as IconName }]
-                                    : []),
-                                  ...EXPECT_PRESETS.map((preset) => ({
-                                    id: `expect:${preset.join(",")}`,
-                                    label: `${t("build.programs.expectPrefix")} ${preset.join(" / ")}`,
-                                    checked: spec()!.expected.join(",") === preset.join(","),
-                                    disabled: spec()!.is_main && preset.join(",") !== "AC",
-                                  })),
-                                ]}
-                                onSelect={(id) => {
-                                  if (id === "set_main") {
-                                    handleSolutionConfig(solName(), true, ["AC"]);
-                                  } else if (id.startsWith("expect:")) {
-                                    const exp = id.slice("expect:".length).split(",");
-                                    handleSolutionConfig(solName(), null, exp);
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <AppMenu
+                                  align="end"
+                                  minWidth={184}
+                                  entries={[
+                                    ...(!spec()!.is_main
+                                      ? [{ id: "set_main", label: t("build.programs.setMain"), icon: "crown" as IconName }]
+                                      : []),
+                                    ...EXPECT_PRESETS.map((preset) => ({
+                                      id: `expect:${preset.join(",")}`,
+                                      label: `${t("build.programs.expectPrefix")} ${preset.join(" / ")}`,
+                                      checked: spec()!.expected.join(",") === preset.join(","),
+                                      disabled: spec()!.is_main && preset.join(",") !== "AC",
+                                    })),
+                                  ]}
+                                  onSelect={(id) => {
+                                    if (id === "set_main") {
+                                      handleSolutionConfig(solName(), true, ["AC"]);
+                                    } else if (id.startsWith("expect:")) {
+                                      const exp = id.slice("expect:".length).split(",");
+                                      handleSolutionConfig(solName(), null, exp);
+                                    }
+                                  }}
+                                  trigger={
+                                    <View
+                                      testID={`solution-config-trigger-${solName()}`}
+                                      class="border border-border bg-card hover:bg-muted"
+                                      style={{
+                                        height: 28,
+                                        paddingLeft: 9,
+                                        paddingRight: 7,
+                                        borderRadius: 6,
+                                        flexDirection: "row",
+                                        alignItems: "center",
+                                        gap: 5,
+                                      }}
+                                    >
+                                      <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                        {`${t("build.programs.expectPrefix")} ${spec()!.expected.join("/")}`}
+                                      </Text>
+                                      <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                    </View>
                                   }
-                                }}
-                                trigger={
-                                  <View
-                                    testID={`solution-config-trigger-${solName()}`}
-                                    class="border border-border bg-card hover:bg-muted"
-                                    style={{
-                                      height: 28,
-                                      paddingLeft: 9,
-                                      paddingRight: 7,
-                                      borderRadius: 6,
-                                      flexDirection: "row",
-                                      alignItems: "center",
-                                      gap: 5,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
-                                      {`${t("build.programs.expectPrefix")} ${spec()!.expected.join("/")}`}
-                                    </Text>
-                                    <Icon name="chevronDown" size={12} tone="muted-foreground" />
-                                  </View>
-                                }
-                              />
+                                />
+                                <IconBtn
+                                  testID="solution-delete-btn"
+                                  icon="trash"
+                                  tone="muted-foreground"
+                                  tooltip={tip(t("build.menu.deleteSolution"))}
+                                  onPress={() => pendingDelete.set({ kind: "solution", name: solName() })}
+                                />
+                              </View>
                             ) : undefined
                           }
                           onSaved={() => {
@@ -2547,7 +2814,11 @@ export function BuildConsole(props: {
           open={addGenModalOpen()}
           problemId={props.problemId}
           generators={inspection()?.files?.generators ?? []}
-          onClose={() => addGenModalOpen.set(false)}
+          initialGenerator={addGenInitial()}
+          onClose={() => {
+            addGenModalOpen.set(false);
+            addGenInitial.set(undefined);
+          }}
           onAdded={() => {
             finishedReport.set(undefined);
             props.onRefreshPackage();
@@ -2558,6 +2829,11 @@ export function BuildConsole(props: {
           testCount={countTestsInRule(inspection()?.expanded_tests, deleteRuleIndex())}
           onClose={() => deleteRuleIndex.set(undefined)}
           onConfirm={handleConfirmDeleteRule}
+        />
+        <ConfirmPackageDeleteModal
+          target={pendingDelete()}
+          onClose={() => pendingDelete.set(undefined)}
+          onConfirm={handleConfirmPackageDelete}
         />
       </If>
     </View>
@@ -2594,12 +2870,14 @@ function TreeRow(props: {
   active: boolean;
   statusDot?: "ok" | "fail";
   onPress: () => void;
+  onContextMenu?: (e: ContextMenuEvent) => void;
   testID?: string;
 }) {
   return (
     <View
       testID={props.testID}
       onPress={props.onPress}
+      onContextMenu={props.onContextMenu}
       class={props.active ? "bg-muted" : "hover:bg-muted/60"}
       style={{
         height: 28,
