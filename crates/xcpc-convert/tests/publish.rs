@@ -1326,10 +1326,7 @@ fn embedded_english_example_workspace_compiles_cleanly_for_statements_and_editor
             .is_file()
     );
     assert!(
-        ws.load_problem("crc-check")
-            .unwrap()
-            .default_language()
-            == xcpc_domain::Language::English
+        ws.load_problem("crc-check").unwrap().default_language() == xcpc_domain::Language::English
     );
 
     let mut engine = publish::engine(&ws, &FontOptions::from_env());
