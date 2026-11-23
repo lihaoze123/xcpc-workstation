@@ -23,8 +23,8 @@ use serde::Serialize;
 use serde_json::json;
 use xcpc_convert::publish::{self, Kind, Report, Target};
 use xcpc_domain::{
-    ContestMetaPatch, DiffKind, Language, LimitsPatch, OverridePatch, Patch, RatingTier,
-    SearchQuery,
+    BatchItemStatus, BatchReport, ContestMetaPatch, DiffKind, GroupFilter, Language, LimitsPatch,
+    OverridePatch, Patch, RatingTier, SearchQuery,
 };
 use xcpc_engine::{Engine, FontOptions};
 use xcpc_storage::{Workspace, WorkspaceIndex};
@@ -67,10 +67,25 @@ enum Command {
         /// Target directory (defaults to current directory `.`).
         dir: Option<PathBuf>,
     },
-    /// Typeset a problem or a contest and write its PDF.
+    /// Typeset a problem, a contest, or an ad-hoc merged booklet of problems and write its PDF.
     Build {
-        #[command(flatten)]
-        what: What,
+        /// What to typeset: `problem`, `contest`, or `problems` (merged booklet).
+        kind: BuildKind,
+        /// Problem ID, contest ID, or one or more problem IDs (when kind is `problems`).
+        #[arg(value_name = "ID", required = true)]
+        ids: Vec<String>,
+        /// The editorial book instead of the statements.
+        #[arg(long)]
+        editorial: bool,
+        /// The language to set the problem(s) in (a contest has its own).
+        #[arg(long, alias = "lang")]
+        language: Option<Lang>,
+        /// Booklet title (for `build problems`).
+        #[arg(long)]
+        title: Option<String>,
+        /// Show cover page (`true` or `false`; for `build problems`).
+        #[arg(long)]
+        cover: Option<bool>,
         /// Write the PDF here (default: build/<title>.pdf in the workspace).
         #[arg(long = "output", alias = "out", short = 'o')]
         out: Option<PathBuf>,
@@ -98,7 +113,7 @@ enum Command {
         #[arg(long)]
         page: Option<usize>,
     },
-    /// Search problems in the workspace by text, tags, rating range, or source platform.
+    /// Search problems in the workspace by text, tags, rating range, source platform, or group.
     Search {
         /// Free-text query matched against ID, title, tags, sources, statement, and editorial.
         #[arg(value_name = "QUERY")]
@@ -115,10 +130,21 @@ enum Command {
         /// Filter by external source platform (e.g. codeforces, atcoder, luogu).
         #[arg(long)]
         platform: Option<String>,
+        /// Filter by persistent group name (conflicts with `--ungrouped`).
+        #[arg(long, conflicts_with = "ungrouped")]
+        group: Option<String>,
+        /// Only show ungrouped problems (conflicts with `--group`).
+        #[arg(long)]
+        ungrouped: bool,
+    },
+    /// Manage persistent problem groups (list, create, rename, delete, reorder).
+    Group {
+        #[command(subcommand)]
+        action: GroupCommand,
     },
     /// Show detailed metadata, content hashes, pages, and statistics for a problem or contest.
     Show { kind: TargetKind, id: String },
-    /// Manage problems (e.g. duplicate an existing problem into a new slug).
+    /// Manage problems (duplicate, batch group/tag/rating updates, delete).
     Problem {
         #[command(subcommand)]
         action: ProblemCommand,
@@ -142,11 +168,12 @@ enum Command {
     Export {
         /// Target OJ format (`domjudge` or `hydro`).
         format: ExportFormat,
-        /// Export a single `problem` or an entire `contest`.
-        kind: TargetKind,
-        /// Problem ID or contest ID.
-        id: String,
-        /// Output `.zip` path (for problem) or directory (for contest). Defaults under `build/`.
+        /// Export a single `problem`, an entire `contest`, or a batch of `problems`.
+        kind: ExportKind,
+        /// Problem ID, contest ID, or one or more problem IDs (when kind is `problems`).
+        #[arg(value_name = "ID", required = true)]
+        ids: Vec<String>,
+        /// Output `.zip` path (for problem) or directory (for contest / problems). Defaults under `build/`.
         #[arg(long = "output", alias = "out", short = 'o')]
         out: Option<PathBuf>,
         /// Bypass strict verification check (built testdata is still required).
@@ -167,6 +194,35 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum GroupCommand {
+    /// List persistent problem groups and ungrouped count.
+    List,
+    /// Create a new declared group in `workspace.toml`.
+    Create {
+        /// Group name (1..=64 chars, no control characters).
+        name: String,
+    },
+    /// Rename a group in `workspace.toml` and all member problems.
+    Rename {
+        /// Existing group name.
+        old_name: String,
+        /// New group name.
+        new_name: String,
+    },
+    /// Delete a group (moves member problems to ungrouped without deleting problems).
+    Delete {
+        /// Group name to delete.
+        name: String,
+    },
+    /// Reorder declared groups in `workspace.toml` (must be a strict permutation).
+    Reorder {
+        /// Complete ordered list of declared group names.
+        #[arg(value_name = "GROUP")]
+        order: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProblemCommand {
     /// Duplicate an existing problem directory (`problems/<source_id>/`) into `problems/<new_id>/`.
     Duplicate {
@@ -177,6 +233,45 @@ enum ProblemCommand {
         /// Optional new title (defaults to source problem's title).
         #[arg(long)]
         title: Option<String>,
+    },
+    /// Batch-assign problems to a persistent group, or clear their group with `--clear`.
+    Group {
+        /// Clear the group assignment from the specified problems.
+        #[arg(long)]
+        clear: bool,
+        /// Group name followed by problem IDs (or only problem IDs when `--clear` is set).
+        #[arg(value_name = "ARGS", required = true)]
+        args: Vec<String>,
+    },
+    /// Batch-add and/or remove tags across one or more problems.
+    Tag {
+        /// Tag(s) to add (repeatable or comma-separated).
+        #[arg(long = "add", value_name = "TAG", value_delimiter = ',')]
+        add: Vec<String>,
+        /// Tag(s) to remove (repeatable or comma-separated).
+        #[arg(long = "remove", value_name = "TAG", value_delimiter = ',')]
+        remove: Vec<String>,
+        /// Problem IDs.
+        #[arg(value_name = "ID", required = true)]
+        ids: Vec<String>,
+    },
+    /// Batch-set a difficulty rating across problems, or clear it with `--clear`.
+    Rating {
+        /// Clear the rating from the specified problems.
+        #[arg(long)]
+        clear: bool,
+        /// Rating integer followed by problem IDs (or only problem IDs when `--clear` is set).
+        #[arg(value_name = "ARGS", required = true)]
+        args: Vec<String>,
+    },
+    /// Batch-delete one or more problems (skips problems referenced by unfrozen contests).
+    Delete {
+        /// Problem IDs to delete.
+        #[arg(value_name = "ID", required = true)]
+        ids: Vec<String>,
+        /// Skip interactive confirmation.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -189,8 +284,9 @@ enum PackageCommand {
     },
     /// Compile, generate tests, validate, and run solutions against the checker.
     Build {
-        /// Problem ID (slug under problems/).
-        id: String,
+        /// One or more problem IDs (slugs under problems/).
+        #[arg(value_name = "ID", required = true)]
+        ids: Vec<String>,
         /// Run full strict acceptance verification (all tests × all solutions, all hard gates).
         #[arg(long)]
         strict: bool,
@@ -235,6 +331,12 @@ enum ImportCommand {
         /// Override target problem slug or contest ID.
         #[arg(long)]
         id: Option<String>,
+        /// Assign imported problem(s) to this persistent group (overrides auto-grouping).
+        #[arg(long)]
+        group: Option<String>,
+        /// Disable automatic grouping by contest name for Polygon contest imports.
+        #[arg(long)]
+        no_auto_group: bool,
     },
 }
 
@@ -401,6 +503,20 @@ struct What {
 enum TargetKind {
     Problem,
     Contest,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum BuildKind {
+    Problem,
+    Contest,
+    Problems,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ExportKind {
+    Problem,
+    Contest,
+    Problems,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -685,42 +801,101 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Build {
-            what,
+            kind,
+            ids,
+            editorial,
+            language,
+            title,
+            cover,
             out,
             emit_typst,
         } => {
             let ws = open_workspace(cli)?;
-            let target = what.target();
+            let doc_kind = if *editorial {
+                Kind::Editorial
+            } else {
+                Kind::Statements
+            };
+            let doc_lang = language.map(Lang::into_language);
             let mut engine = publish::engine(&ws, &fonts(cli));
-            let (compiled, doc, report) = publish::check(
-                &ws,
-                &mut engine,
-                &target,
-                what.kind(),
-                what.language(),
-                None,
-            )?;
-            if let (Some(path), Some(doc)) = (emit_typst, doc.as_ref()) {
-                if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-                    std::fs::create_dir_all(dir)
-                        .with_context(|| format!("creating {}", dir.display()))?;
+            match kind {
+                BuildKind::Problem | BuildKind::Contest => {
+                    if ids.len() != 1 {
+                        return Err(Fatal {
+                            code: "invalid_arguments",
+                            message: "expected exactly one ID for `build problem` / `build contest`"
+                                .to_owned(),
+                            human: Some("`build problem` 或 `build contest` 只能指定一个 ID；批量合并请使用 `build problems`。".to_owned()),
+                            exit_code: 2,
+                        });
+                    }
+                    let id = &ids[0];
+                    let target = match kind {
+                        BuildKind::Problem => Target::Problem(id.clone()),
+                        BuildKind::Contest => Target::Contest(id.clone()),
+                        BuildKind::Problems => unreachable!(),
+                    };
+                    let (compiled, doc, report) =
+                        publish::check(&ws, &mut engine, &target, doc_kind, doc_lang, None)?;
+                    if let (Some(path), Some(doc)) = (emit_typst, doc.as_ref()) {
+                        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                            std::fs::create_dir_all(dir)
+                                .with_context(|| format!("creating {}", dir.display()))?;
+                        }
+                        xcpc_storage::write_atomic(path, doc.source.as_bytes())
+                            .with_context(|| format!("writing {}", path.display()))?;
+                    }
+                    let mut outputs = Vec::new();
+                    if let (Some(compiled), true) = (compiled, report.ok) {
+                        let pdf = compiled
+                            .pdf()
+                            .map_err(|e| anyhow::anyhow!("PDF export failed: {}", e[0].message))?;
+                        outputs.push(write_output(
+                            &ws,
+                            out.as_ref(),
+                            &publish::default_output(&ws, &target, doc_kind),
+                            &pdf,
+                        )?);
+                    }
+                    Ok(finish(cli, Output { report, outputs }))
                 }
-                xcpc_storage::write_atomic(path, doc.source.as_bytes())
-                    .with_context(|| format!("writing {}", path.display()))?;
+                BuildKind::Problems => {
+                    let opts = publish::MergedBookOptions {
+                        title: title.clone(),
+                        language: doc_lang,
+                        kind: doc_kind,
+                        template: None,
+                        cover: *cover,
+                    };
+                    let unique_count = {
+                        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+                        ids.iter().filter(|id| seen.insert(id.as_str())).count()
+                    };
+                    let default_rel = publish::default_merged_output(unique_count, &opts);
+                    if out.is_none() {
+                        ws.check_writable(&default_rel)?;
+                    }
+                    let doc = publish::document_problems(&ws, ids, &opts)?;
+                    if let Some(path) = emit_typst {
+                        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                            std::fs::create_dir_all(dir)
+                                .with_context(|| format!("creating {}", dir.display()))?;
+                        }
+                        xcpc_storage::write_atomic(path, doc.source.as_bytes())
+                            .with_context(|| format!("writing {}", path.display()))?;
+                    }
+                    engine.reset_files();
+                    let (compiled, report) = publish::compile(&mut engine, &doc);
+                    let mut outputs = Vec::new();
+                    if let (Some(compiled), true) = (compiled, report.ok) {
+                        let pdf = compiled
+                            .pdf()
+                            .map_err(|e| anyhow::anyhow!("PDF export failed: {}", e[0].message))?;
+                        outputs.push(write_output(&ws, out.as_ref(), &default_rel, &pdf)?);
+                    }
+                    Ok(finish(cli, Output { report, outputs }))
+                }
             }
-            let mut outputs = Vec::new();
-            if let (Some(compiled), true) = (compiled, report.ok) {
-                let pdf = compiled
-                    .pdf()
-                    .map_err(|e| anyhow::anyhow!("PDF export failed: {}", e[0].message))?;
-                outputs.push(write_output(
-                    &ws,
-                    out.as_ref(),
-                    &publish::default_output(&ws, &target, what.kind()),
-                    &pdf,
-                )?);
-            }
-            Ok(finish(cli, Output { report, outputs }))
         }
         Command::Check { what } => {
             let ws = open_workspace(cli)?;
@@ -791,17 +966,25 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             rating_min,
             rating_max,
             platform,
+            group,
+            ungrouped,
         } => {
             let ws = open_workspace(cli)?;
             let index = WorkspaceIndex::scan(&ws)?;
             let joined = query.join(" ");
             let text = (!joined.trim().is_empty()).then_some(joined);
+            let group_filter = if *ungrouped {
+                Some(GroupFilter::Ungrouped)
+            } else {
+                group.as_ref().map(|g| GroupFilter::Named(g.clone()))
+            };
             let q = SearchQuery {
                 text,
                 tags: tags.clone(),
                 rating_min: *rating_min,
                 rating_max: *rating_max,
                 platform: platform.clone(),
+                group: group_filter,
             };
             let problems = index.search_problems(&q);
             if cli.json {
@@ -876,6 +1059,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Group { action } => run_group(cli, action),
         Command::Problem { action } => run_problem(cli, action),
         Command::Contest { action } => run_contest(cli, action),
         Command::Package { action } => run_package(cli, action),
@@ -883,10 +1067,10 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         Command::Export {
             format,
             kind,
-            id,
+            ids,
             out,
             force,
-        } => run_export(cli, *format, *kind, id, out.as_ref(), *force),
+        } => run_export(cli, *format, *kind, ids, out.as_ref(), *force),
         Command::Template { action } => run_template(cli, action),
     }
 }
@@ -897,9 +1081,16 @@ fn run_import(cli: &Cli, action: &ImportCommand) -> Result<ExitCode, Fatal> {
         return Err(xcpc_storage::Error::ReadOnly.into());
     }
     match action {
-        ImportCommand::Polygon { zip, id } => {
+        ImportCommand::Polygon {
+            zip,
+            id,
+            group,
+            no_auto_group,
+        } => {
             let opts = xcpc_packages::PolygonImportOptions {
                 target_id: id.clone(),
+                group: group.clone(),
+                no_auto_group: *no_auto_group,
                 ..Default::default()
             };
             let res = xcpc_packages::import_polygon(&ws, zip, &opts)?;
@@ -921,8 +1112,8 @@ fn run_import(cli: &Cli, action: &ImportCommand) -> Result<ExitCode, Fatal> {
 fn run_export(
     cli: &Cli,
     format: ExportFormat,
-    kind: TargetKind,
-    id: &str,
+    kind: ExportKind,
+    ids: &[String],
     out: Option<&PathBuf>,
     force: bool,
 ) -> Result<ExitCode, Fatal> {
@@ -931,37 +1122,81 @@ fn run_export(
         return Err(xcpc_storage::Error::ReadOnly.into());
     }
     let oj_format = format.into_oj_format();
-    let target = match kind {
-        TargetKind::Problem => xcpc_packages::ExportTarget::Problem(id.to_owned()),
-        TargetKind::Contest => xcpc_packages::ExportTarget::Contest(id.to_owned()),
-    };
-    let output_path = match out {
-        Some(path) => path.clone(),
-        None => match kind {
-            TargetKind::Problem => ws
-                .root()
-                .join(format!("build/{id}-{}.zip", oj_format.as_str())),
-            TargetKind::Contest => ws.root().join(format!("build/{id}-{}", oj_format.as_str())),
-        },
-    };
-    let opts = xcpc_packages::ExportOjOptions {
-        format: oj_format,
-        output_path,
-        force,
-        language: None,
-    };
-    let res = xcpc_packages::export_oj_package(&ws, &target, &opts)?;
-    if cli.json {
-        let mut value = serde_json::to_value(&res).expect("serializable");
-        value["ok"] = json!(true);
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value).expect("serializable")
-        );
-    } else {
-        print_export_oj_result(&res);
+    match kind {
+        ExportKind::Problem | ExportKind::Contest => {
+            if ids.len() != 1 {
+                return Err(Fatal {
+                    code: "invalid_arguments",
+                    message: "expected exactly one ID for `export problem` / `export contest`"
+                        .to_owned(),
+                    human: Some(
+                        "`export problem` 或 `export contest` 只能指定一个 ID；批量导出请使用 `export <format> problems <ID>...`。"
+                            .to_owned(),
+                    ),
+                    exit_code: 2,
+                });
+            }
+            let id = &ids[0];
+            let target = match kind {
+                ExportKind::Problem => xcpc_packages::ExportTarget::Problem(id.clone()),
+                ExportKind::Contest => xcpc_packages::ExportTarget::Contest(id.clone()),
+                ExportKind::Problems => unreachable!(),
+            };
+            let output_path = match out {
+                Some(path) => path.clone(),
+                None => match kind {
+                    ExportKind::Problem => ws
+                        .root()
+                        .join(format!("build/{id}-{}.zip", oj_format.as_str())),
+                    ExportKind::Contest => {
+                        ws.root().join(format!("build/{id}-{}", oj_format.as_str()))
+                    }
+                    ExportKind::Problems => unreachable!(),
+                },
+            };
+            let opts = xcpc_packages::ExportOjOptions {
+                format: oj_format,
+                output_path,
+                force,
+                language: None,
+            };
+            let res = xcpc_packages::export_oj_package(&ws, &target, &opts)?;
+            if cli.json {
+                let mut value = serde_json::to_value(&res).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_export_oj_result(&res);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        ExportKind::Problems => {
+            let output_path = out.cloned().unwrap_or_default();
+            let opts = xcpc_packages::ExportOjOptions {
+                format: oj_format,
+                output_path,
+                force,
+                language: None,
+            };
+            let res = xcpc_packages::export_oj_packages_batch(&ws, ids, &opts, None, None)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&res).expect("serializable")
+                );
+            } else {
+                print_batch_export_oj_result(&res);
+            }
+            if res.ok {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::from(1))
+            }
+        }
     }
-    Ok(ExitCode::SUCCESS)
 }
 
 fn print_polygon_import_result(res: &xcpc_packages::PolygonImportResult) {
@@ -990,6 +1225,59 @@ fn print_polygon_import_result(res: &xcpc_packages::PolygonImportResult) {
                     "  {label}\t{}\t{}（样例 {}，测试点 {}）",
                     p.id, p.title, p.samples_count, p.tests_count
                 );
+            }
+        }
+    }
+    if let Some(ref g) = res.group {
+        println!("  分组：{g}");
+    }
+    print_package_warnings(&res.warnings);
+}
+
+fn print_batch_export_oj_result(res: &xcpc_packages::BatchExportOjResult) {
+    let format_label = match res.format {
+        xcpc_packages::OjFormat::Domjudge => "DOMjudge",
+        xcpc_packages::OjFormat::Hydro => "Hydro",
+    };
+    println!(
+        "批量导出 {format_label} 题目包（输出目录：{}）：已导出 {}，跳过 {}，失败 {}",
+        res.output_dir, res.exported, res.skipped, res.failed
+    );
+    for item in &res.items {
+        match item.status {
+            xcpc_packages::BatchExportItemStatus::Exported => {
+                let forced = if item.forced { " [强制导出]" } else { "" };
+                println!(
+                    "  [导出] {} -> {}（样例 {}，测试点 {}，{}）{forced}",
+                    item.problem_id,
+                    item.zip_path.as_deref().unwrap_or("-"),
+                    item.sample_count,
+                    item.secret_count,
+                    format_bytes(item.size_bytes.unwrap_or(0)),
+                );
+            }
+            xcpc_packages::BatchExportItemStatus::Skipped => {
+                println!(
+                    "  [跳过] {}：{}",
+                    item.problem_id,
+                    item.message
+                        .as_deref()
+                        .or(item.code.as_deref())
+                        .unwrap_or("已跳过")
+                );
+            }
+            xcpc_packages::BatchExportItemStatus::Failed => {
+                println!(
+                    "  [失败] {}：{}",
+                    item.problem_id,
+                    item.message
+                        .as_deref()
+                        .or(item.code.as_deref())
+                        .unwrap_or("导出失败")
+                );
+            }
+            xcpc_packages::BatchExportItemStatus::Cancelled => {
+                println!("  [取消] {}", item.problem_id);
             }
         }
     }
@@ -1079,7 +1367,7 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
             Ok(ExitCode::SUCCESS)
         }
         PackageCommand::Build {
-            id,
+            ids,
             strict,
             tests,
             solutions,
@@ -1097,24 +1385,41 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
                 solution_jobs: *jobs,
                 ..Default::default()
             };
-            let report = xcpc_judge::build_package(&ws, id, &opts, None, None)?;
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).expect("serializable")
-                );
+            if ids.len() == 1 {
+                let report = xcpc_judge::build_package(&ws, &ids[0], &opts, None, None)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).expect("serializable")
+                    );
+                } else {
+                    print_build_report(&report);
+                }
+                let passed = if *strict {
+                    report.ok && report.verified
+                } else {
+                    report.ok
+                };
+                if passed {
+                    Ok(ExitCode::SUCCESS)
+                } else {
+                    Ok(ExitCode::from(1))
+                }
             } else {
-                print_build_report(&report);
-            }
-            let passed = if *strict {
-                report.ok && report.verified
-            } else {
-                report.ok
-            };
-            if passed {
-                Ok(ExitCode::SUCCESS)
-            } else {
-                Ok(ExitCode::from(1))
+                let report = xcpc_judge::build_packages_batch(&ws, ids, &opts, None, None)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).expect("serializable")
+                    );
+                } else {
+                    print_batch_build_report(&report);
+                }
+                if report.ok {
+                    Ok(ExitCode::SUCCESS)
+                } else {
+                    Ok(ExitCode::from(1))
+                }
             }
         }
         PackageCommand::Stress {
@@ -1379,6 +1684,172 @@ fn print_stress_result(res: &xcpc_judge::StressResult) {
     }
 }
 
+fn print_batch_build_report(report: &xcpc_judge::BatchBuildReport) {
+    println!(
+        "批量构建完成（共 {} 题，耗时 {} ms）：通过 {}，失败 {}，跳过 {}",
+        report.total, report.elapsed_ms, report.passed, report.failed, report.skipped
+    );
+    for item in &report.items {
+        let tag = match item.status {
+            xcpc_judge::BatchBuildItemStatus::Passed => {
+                if item.verified {
+                    "已验收"
+                } else {
+                    "通过"
+                }
+            }
+            xcpc_judge::BatchBuildItemStatus::Failed => "失败",
+            xcpc_judge::BatchBuildItemStatus::Skipped => "跳过",
+            xcpc_judge::BatchBuildItemStatus::Error => "错误",
+            xcpc_judge::BatchBuildItemStatus::Cancelled => "取消",
+        };
+        if let Some(ref msg) = item.message {
+            println!(
+                "  [{tag}] {}（{}ms）：{msg}",
+                item.problem_id, item.elapsed_ms
+            );
+        } else {
+            println!("  [{tag}] {}（{}ms）", item.problem_id, item.elapsed_ms);
+        }
+    }
+}
+
+fn run_group(cli: &Cli, action: &GroupCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    match action {
+        GroupCommand::List => {
+            let (groups, ungrouped_count) = ws.list_groups()?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "groups": groups,
+                        "ungrouped_count": ungrouped_count,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                for g in &groups {
+                    if g.declared {
+                        println!("{}\t{}", g.name, g.count);
+                    } else {
+                        println!("{}\t{}\t[undeclared]", g.name, g.count);
+                    }
+                }
+                println!("(ungrouped)\t{ungrouped_count}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        GroupCommand::Create { name } => {
+            let norm = ws.create_group(name)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "name": norm,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("created group {norm}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        GroupCommand::Rename { old_name, new_name } => {
+            let report = ws.rename_group(old_name, new_name)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "old_name": report.old_name,
+                        "new_name": report.new_name,
+                        "updated_problems": report.updated_problems,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "renamed group {} -> {} ({} problem(s) updated)",
+                    report.old_name, report.new_name, report.updated_problems
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        GroupCommand::Delete { name } => {
+            let report = ws.delete_group(name)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "name": report.name,
+                        "ungrouped_problems": report.ungrouped_problems,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "deleted group {} ({} problem(s) moved to ungrouped)",
+                    report.name, report.ungrouped_problems
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        GroupCommand::Reorder { order } => {
+            let groups = ws.reorder_groups(order)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "groups": groups,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("reordered groups: {}", groups.join(", "));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn finish_batch(cli: &Cli, report: &BatchReport, verb: &str) -> ExitCode {
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).expect("serializable")
+        );
+    } else {
+        println!(
+            "{verb}: total={} succeeded={} skipped={} failed={}",
+            report.total, report.succeeded, report.skipped, report.failed
+        );
+        for item in &report.items {
+            let tag = match item.status {
+                BatchItemStatus::Ok => "ok",
+                BatchItemStatus::Skipped => "skipped",
+                BatchItemStatus::Failed => "failed",
+            };
+            if let Some(ref msg) = item.message {
+                println!("  [{tag}] {}: {msg}", item.id);
+            } else if let Some(ref code) = item.code {
+                println!("  [{tag}] {}: {code}", item.id);
+            } else {
+                println!("  [{tag}] {}", item.id);
+            }
+        }
+    }
+    if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
 fn run_problem(cli: &Cli, action: &ProblemCommand) -> Result<ExitCode, Fatal> {
     let ws = open_workspace(cli)?;
     match action {
@@ -1407,6 +1878,97 @@ fn run_problem(cli: &Cli, action: &ProblemCommand) -> Result<ExitCode, Fatal> {
                 );
             }
             Ok(ExitCode::SUCCESS)
+        }
+        ProblemCommand::Group { clear, args } => {
+            let (group, ids): (Option<&str>, &[String]) = if *clear {
+                (None, args.as_slice())
+            } else {
+                if args.len() < 2 {
+                    return Err(Fatal {
+                        code: "invalid_arguments",
+                        message: "expected `<GROUP> <ID>...` (or `--clear <ID>...`)".to_owned(),
+                        human: Some(
+                            "请提供分组名称和至少一个题目 ID（或使用 `--clear <ID>...` 清空分组）。"
+                                .to_owned(),
+                        ),
+                        exit_code: 2,
+                    });
+                }
+                (Some(args[0].as_str()), &args[1..])
+            };
+            let report = ws.batch_set_group(ids, group)?;
+            Ok(finish_batch(cli, &report, "problem group"))
+        }
+        ProblemCommand::Tag { add, remove, ids } => {
+            if add.is_empty() && remove.is_empty() {
+                return Err(Fatal {
+                    code: "invalid_arguments",
+                    message: "specify at least one `--add <TAG>` or `--remove <TAG>`".to_owned(),
+                    human: Some("请至少指定一个 `--add <TAG>` 或 `--remove <TAG>`。".to_owned()),
+                    exit_code: 2,
+                });
+            }
+            let report = ws.batch_edit_tags(ids, add, remove)?;
+            Ok(finish_batch(cli, &report, "problem tag"))
+        }
+        ProblemCommand::Rating { clear, args } => {
+            let (rating, ids): (Option<u32>, &[String]) = if *clear {
+                (None, args.as_slice())
+            } else {
+                if args.len() < 2 {
+                    return Err(Fatal {
+                        code: "invalid_arguments",
+                        message: "expected `<RATING> <ID>...` (or `--clear <ID>...`)".to_owned(),
+                        human: Some(
+                            "请提供难度数值和至少一个题目 ID（或使用 `--clear <ID>...` 清除难度）。"
+                                .to_owned(),
+                        ),
+                        exit_code: 2,
+                    });
+                }
+                let parsed: u32 = args[0].parse().map_err(|_| Fatal {
+                    code: "invalid_arguments",
+                    message: format!(
+                        "invalid rating {:?}: expected a non-negative integer",
+                        args[0]
+                    ),
+                    human: Some(format!("难度值「{}」无效，请输入非负整数。", args[0])),
+                    exit_code: 2,
+                })?;
+                (Some(parsed), &args[1..])
+            };
+            let report = ws.batch_set_rating(ids, rating)?;
+            Ok(finish_batch(cli, &report, "problem rating"))
+        }
+        ProblemCommand::Delete { ids, yes } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            if !*yes {
+                eprint!(
+                    "Delete {} problem(s) ({})? Type \"yes\" to confirm: ",
+                    ids.len(),
+                    ids.join(", ")
+                );
+                let _ = std::io::stderr().flush();
+                let mut line = String::new();
+                let n = std::io::stdin()
+                    .read_line(&mut line)
+                    .context("reading confirmation from stdin")?;
+                if n == 0 || !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                    return Err(Fatal {
+                        code: "unconfirmed",
+                        message: "delete aborted: confirmation not received".to_owned(),
+                        human: Some(
+                            "删除已取消：未收到确认。请使用 `--yes` 或输入 `yes` 确认删除。"
+                                .to_owned(),
+                        ),
+                        exit_code: 2,
+                    });
+                }
+            }
+            let report = ws.batch_delete_problems(ids)?;
+            Ok(finish_batch(cli, &report, "problem delete"))
         }
     }
 }

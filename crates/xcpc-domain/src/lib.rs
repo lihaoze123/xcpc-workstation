@@ -409,6 +409,8 @@ pub struct SolutionSpec {
 pub struct ProblemMeta {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -691,6 +693,28 @@ pub fn check_id(id: &str) -> Result<(), InvalidId> {
     }
 }
 
+/// Maximum number of Unicode scalar values in a persistent group name.
+pub const MAX_GROUP_NAME_CHARS: usize = 64;
+
+/// Why a group name is not valid.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "invalid group name {0:?}: must be non-empty, contain no control characters, and be at most {MAX_GROUP_NAME_CHARS} characters"
+)]
+pub struct InvalidGroupName(pub String);
+
+/// Trims and validates a persistent group name.
+pub fn normalize_group_name(s: &str) -> Result<String, InvalidGroupName> {
+    let trimmed = s.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_GROUP_NAME_CHARS
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(InvalidGroupName(s.to_owned()));
+    }
+    Ok(trimmed.to_owned())
+}
+
 /// Maximum number of problems in a single contest (`A` through `Z`).
 pub const MAX_CONTEST_PROBLEMS: usize = 26;
 
@@ -838,6 +862,8 @@ pub struct ProblemMetaPatch {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
+    pub group: Patch<String>,
+    #[serde(default)]
     pub rating: Patch<u32>,
     #[serde(default)]
     pub tags: Option<Vec<String>>,
@@ -910,6 +936,8 @@ pub struct ProblemSummary {
     pub id: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -919,6 +947,104 @@ pub struct ProblemSummary {
     pub has_solutions: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statement_path: Option<String>,
+}
+
+/// Filter by persistent problem group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "name", rename_all = "snake_case")]
+pub enum GroupFilter {
+    Named(String),
+    Ungrouped,
+}
+
+/// Summary of one persistent problem group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupSummary {
+    pub name: String,
+    pub count: usize,
+    /// `true` when declared in `workspace.toml`; `false` when only referenced by `problem.toml`.
+    pub declared: bool,
+}
+
+/// Outcome of renaming a persistent problem group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenameGroupReport {
+    pub old_name: String,
+    pub new_name: String,
+    pub updated_problems: usize,
+}
+
+/// Outcome of deleting a persistent problem group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteGroupReport {
+    pub name: String,
+    pub ungrouped_problems: usize,
+}
+
+/// Per-item status in a batch operation report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchItemStatus {
+    Ok,
+    Skipped,
+    Failed,
+}
+
+/// Per-item outcome in a batch operation report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchItemOutcome {
+    pub id: String,
+    pub status: BatchItemStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referencing_contests: Vec<String>,
+}
+
+/// Unified report returned by batch operations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchReport {
+    pub ok: bool,
+    pub total: usize,
+    pub succeeded: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub items: Vec<BatchItemOutcome>,
+}
+
+impl BatchReport {
+    /// Builds a [`BatchReport`] from per-item outcomes, computing summary counts.
+    pub fn from_items(items: Vec<BatchItemOutcome>) -> Self {
+        let mut succeeded = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        for item in &items {
+            match item.status {
+                BatchItemStatus::Ok => succeeded += 1,
+                BatchItemStatus::Skipped => skipped += 1,
+                BatchItemStatus::Failed => failed += 1,
+            }
+        }
+        Self {
+            ok: failed == 0,
+            total: items.len(),
+            succeeded,
+            skipped,
+            failed,
+            items,
+        }
+    }
+}
+
+/// Outcome of adding multiple problems to a contest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchAddToContestResult {
+    pub contest_id: String,
+    pub added_ids: Vec<String>,
+    pub problem_count: usize,
+    pub report: BatchReport,
 }
 
 /// Structured filter + normalized text query for searching the problem library.
@@ -934,6 +1060,8 @@ pub struct SearchQuery {
     pub rating_max: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupFilter>,
 }
 
 /// Difficulty tier matching `docs/design-system.md` §3.3, plus `Unrated`.
@@ -1393,5 +1521,81 @@ expect = ["WA", "TLE"]
         let serialized = toml::to_string(&meta).unwrap();
         let again: ProblemMeta = toml::from_str(&serialized).unwrap();
         assert_eq!(meta, again);
+    }
+
+    #[test]
+    fn normalize_group_name_boundaries() {
+        assert_eq!(normalize_group_name("  省赛候选  ").unwrap(), "省赛候选");
+        assert_eq!(normalize_group_name("ungrouped").unwrap(), "ungrouped");
+
+        // Exact 64 Chinese characters allowed.
+        let exact_64 = "题".repeat(MAX_GROUP_NAME_CHARS);
+        assert_eq!(normalize_group_name(&exact_64).unwrap(), exact_64);
+
+        // 65 characters rejected.
+        let over_64 = "题".repeat(MAX_GROUP_NAME_CHARS + 1);
+        assert!(normalize_group_name(&over_64).is_err());
+
+        // Empty / whitespace-only rejected.
+        for bad in ["", "   ", "\t\n"] {
+            assert!(normalize_group_name(bad).is_err(), "{bad:?}");
+        }
+
+        // Control characters rejected.
+        for bad in ["a\nb", "a\rb", "a\tb", "a\0b", "\x1bfoo"] {
+            assert!(normalize_group_name(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn group_filter_and_batch_types_serde_roundtrip() {
+        let named = GroupFilter::Named("ungrouped".into());
+        let named_json = serde_json::to_string(&named).unwrap();
+        assert_eq!(named_json, r#"{"kind":"named","name":"ungrouped"}"#);
+        assert_eq!(
+            serde_json::from_str::<GroupFilter>(&named_json).unwrap(),
+            named
+        );
+
+        let ungrouped = GroupFilter::Ungrouped;
+        let ungrouped_json = serde_json::to_string(&ungrouped).unwrap();
+        assert_eq!(ungrouped_json, r#"{"kind":"ungrouped"}"#);
+        assert_eq!(
+            serde_json::from_str::<GroupFilter>(&ungrouped_json).unwrap(),
+            ungrouped
+        );
+
+        let report = BatchReport::from_items(vec![
+            BatchItemOutcome {
+                id: "p1".into(),
+                status: BatchItemStatus::Ok,
+                code: None,
+                message: None,
+                referencing_contests: Vec::new(),
+            },
+            BatchItemOutcome {
+                id: "p2".into(),
+                status: BatchItemStatus::Skipped,
+                code: Some("problem_referenced".into()),
+                message: Some("referenced".into()),
+                referencing_contests: vec!["c1".into()],
+            },
+        ]);
+        assert!(report.ok);
+        assert_eq!(report.total, 2);
+        assert_eq!(report.succeeded, 1);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.failed, 0);
+        let report_json = serde_json::to_string(&report).unwrap();
+        assert_eq!(
+            serde_json::from_str::<BatchReport>(&report_json).unwrap(),
+            report
+        );
+
+        let meta_toml = "title = \"Grouped\"\ngroup = \"省赛候选\"\n";
+        let meta: ProblemMeta = toml::from_str(meta_toml).unwrap();
+        assert_eq!(meta.group.as_deref(), Some("省赛候选"));
+        let back: ProblemMeta = toml::from_str(&toml::to_string(&meta).unwrap()).unwrap();
+        assert_eq!(meta, back);
     }
 }

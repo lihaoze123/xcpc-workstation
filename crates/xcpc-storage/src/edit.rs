@@ -8,9 +8,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
 use xcpc_domain::{
-    ContestItem, ContestMeta, ContestMetaPatch, DiffKind, LimitsPatch, MAX_CONTEST_PROBLEMS,
-    OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch, Source, TemplateOptionValue,
-    TemplateOptionsMap, TemplateOptionsPatch, UnfreezeProblemDiff, check_id, label_for_index,
+    BatchAddToContestResult, BatchItemOutcome, BatchItemStatus, BatchReport, ContestItem,
+    ContestMeta, ContestMetaPatch, DeleteGroupReport, DiffKind, GroupSummary, LimitsPatch,
+    MAX_CONTEST_PROBLEMS, OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch,
+    RenameGroupReport, Source, TemplateOptionValue, TemplateOptionsMap, TemplateOptionsPatch,
+    UnfreezeProblemDiff, check_id, label_for_index, normalize_group_name,
 };
 
 use crate::{
@@ -83,6 +85,275 @@ impl Workspace {
         let rendered = doc.to_string();
         let _: toml::Table = parse_toml(WORKSPACE_FILE, &rendered)?;
         self.write(WORKSPACE_FILE, rendered.as_bytes())
+    }
+
+    // ---- Persistent problem groups -----------------------------------------------------
+
+    /// Updates `groups = [...]` in `workspace.toml` via `toml_edit`, preserving comments,
+    /// key order, `[template-options]`, and unknown fields. Removes the key when `groups`
+    /// is empty.
+    pub(crate) fn write_workspace_groups(&self, groups: &[String]) -> Result<()> {
+        self.check_writable(WORKSPACE_FILE)?;
+        let raw = match self.read_text(WORKSPACE_FILE) {
+            Ok(s) => s,
+            Err(Error::NotFound(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
+        let mut doc = parse_doc(WORKSPACE_FILE, &raw)?;
+        let root = doc.as_table_mut();
+
+        if groups.is_empty() {
+            root.remove("groups");
+        } else {
+            let mut arr = Array::new();
+            for group in groups {
+                arr.push(group.as_str());
+            }
+            set_scalar(root, "groups", Value::Array(arr));
+        }
+
+        let rendered = doc.to_string();
+        let _: toml::Table = parse_toml(WORKSPACE_FILE, &rendered)?;
+        self.write(WORKSPACE_FILE, rendered.as_bytes())
+    }
+
+    /// Lists all persistent groups (declared groups in `workspace.toml` order, followed by
+    /// undeclared groups referenced in `problem.toml` in lexicographical order) along with
+    /// the count of ungrouped problems.
+    pub fn list_groups(&self) -> Result<(Vec<GroupSummary>, usize)> {
+        let declared = self.workspace_groups();
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut ungrouped = 0usize;
+
+        for id in self.list_problems()? {
+            let rel = format!("problems/{id}/problem.toml");
+            let Ok(raw) = self.read_text(&rel) else {
+                continue;
+            };
+            let Ok(meta) = parse_toml::<ProblemMeta>(&rel, &raw) else {
+                continue;
+            };
+            if let Some(norm) = meta
+                .group
+                .as_deref()
+                .and_then(|g| normalize_group_name(g).ok())
+            {
+                *counts.entry(norm).or_insert(0) += 1;
+            } else {
+                ungrouped += 1;
+            }
+        }
+
+        let mut summaries = Vec::with_capacity(declared.len() + counts.len());
+        for name in declared {
+            let count = counts.remove(&name).unwrap_or(0);
+            summaries.push(GroupSummary {
+                name,
+                count,
+                declared: true,
+            });
+        }
+        for (name, count) in counts {
+            summaries.push(GroupSummary {
+                name,
+                count,
+                declared: false,
+            });
+        }
+        Ok((summaries, ungrouped))
+    }
+
+    /// Validates `name` and idempotently appends it to `workspace.toml`'s `groups` list.
+    pub fn ensure_group_registered(&self, name: &str) -> Result<String> {
+        let norm = normalize_group_name(name)?;
+        self.check_writable(WORKSPACE_FILE)?;
+        let mut groups = self.workspace_groups();
+        if !groups.iter().any(|g| g == &norm) {
+            groups.push(norm.clone());
+            self.write_workspace_groups(&groups)?;
+        }
+        Ok(norm)
+    }
+
+    /// Creates a new declared group in `workspace.toml`. Returns
+    /// [`Error::GroupAlreadyExists`] if a group with the same normalized name already exists.
+    pub fn create_group(&self, name: &str) -> Result<String> {
+        let norm = normalize_group_name(name)?;
+        self.check_writable(WORKSPACE_FILE)?;
+        let mut groups = self.workspace_groups();
+        if groups.iter().any(|g| g == &norm) {
+            return Err(Error::GroupAlreadyExists(norm));
+        }
+        groups.push(norm.clone());
+        self.write_workspace_groups(&groups)?;
+        Ok(norm)
+    }
+
+    /// Renames `old_name` to `new_name` in-place in `workspace.toml` (preserving order)
+    /// and updates every member problem's `problem.toml`.
+    pub fn rename_group(&self, old_name: &str, new_name: &str) -> Result<RenameGroupReport> {
+        let old_norm = normalize_group_name(old_name)?;
+        let new_norm = normalize_group_name(new_name)?;
+        self.check_writable(WORKSPACE_FILE)?;
+
+        let mut declared = self.workspace_groups();
+        let mut member_ids = Vec::new();
+        let mut new_in_problems = false;
+
+        for id in self.list_problems()? {
+            let rel = format!("problems/{id}/problem.toml");
+            let Ok(raw) = self.read_text(&rel) else {
+                continue;
+            };
+            let Ok(meta) = parse_toml::<ProblemMeta>(&rel, &raw) else {
+                continue;
+            };
+            if let Some(norm) = meta
+                .group
+                .as_deref()
+                .and_then(|g| normalize_group_name(g).ok())
+            {
+                if norm == old_norm {
+                    member_ids.push(id);
+                } else if norm == new_norm {
+                    new_in_problems = true;
+                }
+            }
+        }
+
+        let old_in_declared = declared.iter().any(|g| g == &old_norm);
+        if !old_in_declared && member_ids.is_empty() {
+            return Err(Error::NotFound(format!("group {old_norm:?}")));
+        }
+        let new_in_declared = declared.iter().any(|g| g == &new_norm);
+        if new_in_declared || new_in_problems {
+            return Err(Error::GroupAlreadyExists(new_norm));
+        }
+
+        if let Some(slot) = declared.iter_mut().find(|g| **g == old_norm) {
+            *slot = new_norm.clone();
+            self.write_workspace_groups(&declared)?;
+        }
+
+        let patch = ProblemMetaPatch {
+            group: Patch::Set(new_norm.clone()),
+            ..Default::default()
+        };
+        for pid in &member_ids {
+            self.update_problem_meta(pid, &patch)?;
+        }
+
+        Ok(RenameGroupReport {
+            old_name: old_norm,
+            new_name: new_norm,
+            updated_problems: member_ids.len(),
+        })
+    }
+
+    /// Removes `name` from `workspace.toml` and clears `group` on all member problems
+    /// (moving them to ungrouped without deleting any problem).
+    pub fn delete_group(&self, name: &str) -> Result<DeleteGroupReport> {
+        let norm = normalize_group_name(name)?;
+        self.check_writable(WORKSPACE_FILE)?;
+
+        let mut declared = self.workspace_groups();
+        let mut member_ids = Vec::new();
+        for id in self.list_problems()? {
+            let rel = format!("problems/{id}/problem.toml");
+            let Ok(raw) = self.read_text(&rel) else {
+                continue;
+            };
+            let Ok(meta) = parse_toml::<ProblemMeta>(&rel, &raw) else {
+                continue;
+            };
+            if meta
+                .group
+                .as_deref()
+                .and_then(|g| normalize_group_name(g).ok())
+                .as_deref()
+                == Some(norm.as_str())
+            {
+                member_ids.push(id);
+            }
+        }
+
+        let before_len = declared.len();
+        declared.retain(|g| g != &norm);
+        let was_declared = declared.len() != before_len;
+        if !was_declared && member_ids.is_empty() {
+            return Err(Error::NotFound(format!("group {norm:?}")));
+        }
+
+        if was_declared {
+            self.write_workspace_groups(&declared)?;
+        }
+
+        let patch = ProblemMetaPatch {
+            group: Patch::Clear,
+            ..Default::default()
+        };
+        for pid in &member_ids {
+            self.update_problem_meta(pid, &patch)?;
+        }
+
+        Ok(DeleteGroupReport {
+            name: norm,
+            ungrouped_problems: member_ids.len(),
+        })
+    }
+
+    /// Reorders declared groups in `workspace.toml` to match `ordered` (must be a strict
+    /// permutation of [`Self::workspace_groups`]).
+    pub fn reorder_groups(&self, ordered: &[String]) -> Result<Vec<String>> {
+        self.check_writable(WORKSPACE_FILE)?;
+        let current = self.workspace_groups();
+        let mut norm_ordered = Vec::with_capacity(ordered.len());
+        for g in ordered {
+            norm_ordered.push(normalize_group_name(g)?);
+        }
+
+        let current_set: HashSet<&str> = current.iter().map(String::as_str).collect();
+        let next_set: HashSet<&str> = norm_ordered.iter().map(String::as_str).collect();
+        if norm_ordered.len() != current.len()
+            || next_set.len() != norm_ordered.len()
+            || current_set != next_set
+        {
+            return Err(Error::Invalid {
+                path: WORKSPACE_FILE.to_owned(),
+                message: "reorder list must be a permutation of the workspace's current groups"
+                    .to_owned(),
+            });
+        }
+
+        self.write_workspace_groups(&norm_ordered)?;
+        Ok(norm_ordered)
+    }
+
+    /// Assigns `id` to `group` (registering `group` in `workspace.toml` if needed) or
+    /// clears its group when `group` is `None`.
+    pub fn set_problem_group(&self, id: &str, group: Option<&str>) -> Result<ProblemMeta> {
+        check_id(id)?;
+        let rel = format!("problems/{id}/problem.toml");
+        self.check_writable(&rel)?;
+        match group {
+            Some(g) => {
+                let norm = normalize_group_name(g)?;
+                let patch = ProblemMetaPatch {
+                    group: Patch::Set(norm.clone()),
+                    ..Default::default()
+                };
+                let meta = self.update_problem_meta(id, &patch)?;
+                self.ensure_group_registered(&norm)?;
+                Ok(meta)
+            }
+            None => {
+                let patch = ProblemMetaPatch {
+                    group: Patch::Clear,
+                    ..Default::default()
+                };
+                self.update_problem_meta(id, &patch)
+            }
+        }
     }
 
     // ---- Problem mutations -------------------------------------------------------------
@@ -232,6 +503,16 @@ impl Workspace {
         if let Some(title) = &patch.title {
             set_scalar(root, "title", Value::from(title.as_str()));
         }
+        match &patch.group {
+            Patch::Keep => {}
+            Patch::Set(g) => {
+                let norm = normalize_group_name(g)?;
+                set_scalar(root, "group", Value::from(norm.as_str()));
+            }
+            Patch::Clear => {
+                root.remove("group");
+            }
+        }
         match &patch.rating {
             Patch::Keep => {}
             Patch::Set(r) => set_scalar(root, "rating", Value::from(i64::from(*r))),
@@ -343,7 +624,10 @@ impl Workspace {
         let meta_rel = format!("problems/{id}/problem.toml");
         let meta_exists = self.resolve(&meta_rel)?.is_file();
         if let Some(toml_text) = files.get("problem.toml") {
-            let _: ProblemMeta = parse_toml(&meta_rel, toml_text)?;
+            let meta: ProblemMeta = parse_toml(&meta_rel, toml_text)?;
+            if let Some(group) = &meta.group {
+                normalize_group_name(group)?;
+            }
         } else if !meta_exists {
             return Err(Error::Invalid {
                 path: meta_rel,
@@ -422,6 +706,343 @@ impl Workspace {
             return Err(Error::PathEscape(name.to_owned()));
         }
         self.read_text(&format!("problems/{id}/solutions/{name}"))
+    }
+
+    // ---- Batch operations --------------------------------------------------------------
+
+    /// Batch-assigns `ids` to `group` (or clears `group` when `None`).
+    ///
+    /// Pre-validates read-only mode and `group` name; skips problems whose group is already
+    /// equal without writing to disk; registers `group` in `workspace.toml` once if at least
+    /// one target problem exists.
+    pub fn batch_set_group(&self, ids: &[String], group: Option<&str>) -> Result<BatchReport> {
+        let patch = Patch::from_option(group.map(str::to_owned));
+        self.batch_update_problems(ids, &patch, &[], &[], &Patch::Keep)
+    }
+
+    /// Batch-edits tags across `ids`: removes `remove` (case-insensitive) and appends
+    /// missing `add` tags, skipping problems with no effective change.
+    pub fn batch_edit_tags(
+        &self,
+        ids: &[String],
+        add: &[String],
+        remove: &[String],
+    ) -> Result<BatchReport> {
+        self.batch_update_problems(ids, &Patch::Keep, add, remove, &Patch::Keep)
+    }
+
+    /// Batch-sets (or clears) `rating` across `ids`, skipping unchanged problems.
+    pub fn batch_set_rating(&self, ids: &[String], rating: Option<u32>) -> Result<BatchReport> {
+        self.batch_update_problems(ids, &Patch::Keep, &[], &[], &Patch::from_option(rating))
+    }
+
+    /// Combined batch metadata update (`group`, `tags_add`/`tags_remove`, `rating`) that
+    /// writes each modified problem's `problem.toml` at most once via `toml_edit`.
+    pub fn batch_update_problems(
+        &self,
+        ids: &[String],
+        group: &Patch<String>,
+        tags_add: &[String],
+        tags_remove: &[String],
+        rating: &Patch<u32>,
+    ) -> Result<BatchReport> {
+        if self.is_read_only() {
+            return Err(Error::ReadOnly);
+        }
+        let norm_group = match group {
+            Patch::Keep => Patch::Keep,
+            Patch::Clear => Patch::Clear,
+            Patch::Set(g) => Patch::Set(normalize_group_name(g)?),
+        };
+        let clean_add = normalize_tag_list(tags_add);
+        let remove_lower: HashSet<String> = normalize_tag_list(tags_remove)
+            .into_iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+
+        let unique_ids = dedup_preserve_order(ids);
+        let mut items = Vec::with_capacity(unique_ids.len());
+        let mut any_present = false;
+
+        for id in unique_ids {
+            if let Err(err) = check_id(&id).map_err(Error::from) {
+                items.push(failed_outcome(&id, &err));
+                continue;
+            }
+            let rel = format!("problems/{id}/problem.toml");
+            let raw = match self.read_text(&rel) {
+                Ok(text) => text,
+                Err(Error::NotFound(_)) => {
+                    let err = Error::NotFound(format!("problem {id:?}"));
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+                Err(err) => {
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+            };
+            let meta: ProblemMeta = match parse_toml(&rel, &raw) {
+                Ok(m) => m,
+                Err(err) => {
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+            };
+            any_present = true;
+
+            let current_group = meta
+                .group
+                .as_deref()
+                .and_then(|g| normalize_group_name(g).ok());
+            let group_patch = match &norm_group {
+                Patch::Keep => Patch::Keep,
+                Patch::Set(g) => {
+                    if current_group.as_deref() == Some(g.as_str()) {
+                        Patch::Keep
+                    } else {
+                        Patch::Set(g.clone())
+                    }
+                }
+                Patch::Clear => {
+                    if current_group.is_some() {
+                        Patch::Clear
+                    } else {
+                        Patch::Keep
+                    }
+                }
+            };
+
+            let tags_patch = if clean_add.is_empty() && remove_lower.is_empty() {
+                None
+            } else {
+                let mut next_tags: Vec<String> = meta
+                    .tags
+                    .iter()
+                    .filter(|t| !remove_lower.contains(&t.to_lowercase()))
+                    .cloned()
+                    .collect();
+                for tag in &clean_add {
+                    let lower = tag.to_lowercase();
+                    if !next_tags.iter().any(|t| t.to_lowercase() == lower) {
+                        next_tags.push(tag.clone());
+                    }
+                }
+                (next_tags != meta.tags).then_some(next_tags)
+            };
+
+            let rating_patch = match rating {
+                Patch::Keep => Patch::Keep,
+                Patch::Set(r) => {
+                    if meta.rating == Some(*r) {
+                        Patch::Keep
+                    } else {
+                        Patch::Set(*r)
+                    }
+                }
+                Patch::Clear => {
+                    if meta.rating.is_some() {
+                        Patch::Clear
+                    } else {
+                        Patch::Keep
+                    }
+                }
+            };
+
+            if group_patch.is_keep() && tags_patch.is_none() && rating_patch.is_keep() {
+                items.push(skipped_outcome(&id, None, None));
+                continue;
+            }
+
+            let patch = ProblemMetaPatch {
+                group: group_patch,
+                tags: tags_patch,
+                rating: rating_patch,
+                ..Default::default()
+            };
+            match self.update_problem_meta(&id, &patch) {
+                Ok(_) => items.push(ok_outcome(&id)),
+                Err(err) => items.push(failed_outcome(&id, &err)),
+            }
+        }
+
+        if any_present && let Patch::Set(g) = &norm_group {
+            self.ensure_group_registered(g)?;
+        }
+
+        Ok(BatchReport::from_items(items))
+    }
+
+    /// Atomically adds multiple problems to an existing contest via [`Self::compose_contest`].
+    ///
+    /// Pre-checks read-only, frozen, and archived guards; skips problems already in the
+    /// contest (`already_in_contest`); records missing/invalid IDs as `Failed`; atomically
+    /// refuses with [`Error::TooManyProblems`] if the resulting total would exceed 26.
+    pub fn batch_add_to_contest(
+        &self,
+        contest_id: &str,
+        problem_ids: &[String],
+    ) -> Result<BatchAddToContestResult> {
+        check_id(contest_id)?;
+        let rel = format!("contests/{contest_id}/contest.toml");
+        self.check_writable(&rel)?;
+
+        let contest = self.load_contest(contest_id)?;
+        let existing_ids: Vec<String> =
+            contest.meta.problems.iter().map(|p| p.id.clone()).collect();
+        let existing_set: HashSet<&str> = existing_ids.iter().map(String::as_str).collect();
+
+        let unique_ids = dedup_preserve_order(problem_ids);
+        let mut items = Vec::with_capacity(unique_ids.len());
+        let mut to_add = Vec::new();
+
+        for pid in unique_ids {
+            if let Err(err) = check_id(&pid).map_err(Error::from) {
+                items.push(failed_outcome(&pid, &err));
+                continue;
+            }
+            if existing_set.contains(pid.as_str()) {
+                items.push(skipped_outcome(
+                    &pid,
+                    Some("already_in_contest".to_owned()),
+                    Some(format!("题目「{pid}」已在比赛「{contest_id}」中。")),
+                ));
+                continue;
+            }
+            let prob_meta = format!("problems/{pid}/problem.toml");
+            match self.resolve(&prob_meta) {
+                Ok(path) if path.is_file() => {
+                    to_add.push(pid.clone());
+                    items.push(ok_outcome(&pid));
+                }
+                Ok(_) => {
+                    let err = Error::NotFound(format!("problem {pid:?}"));
+                    items.push(failed_outcome(&pid, &err));
+                }
+                Err(err) => {
+                    items.push(failed_outcome(&pid, &err));
+                }
+            }
+        }
+
+        let total_after = existing_ids.len() + to_add.len();
+        if total_after > MAX_CONTEST_PROBLEMS {
+            return Err(Error::TooManyProblems(total_after));
+        }
+
+        let problem_count = if !to_add.is_empty() {
+            let mut final_ids = existing_ids;
+            final_ids.extend(to_add.iter().cloned());
+            let updated = self.compose_contest(contest_id, &final_ids, None)?;
+            updated.meta.problems.len()
+        } else {
+            existing_ids.len()
+        };
+
+        Ok(BatchAddToContestResult {
+            contest_id: contest_id.to_owned(),
+            added_ids: to_add,
+            problem_count,
+            report: BatchReport::from_items(items),
+        })
+    }
+
+    /// Batch-deletes problems from `problems/<id>/` with a single `list_contests()` scan.
+    ///
+    /// Unfrozen contests (regardless of `archived`) block deletion (`Skipped` with
+    /// `problem_referenced` and `referencing_contests`); frozen contests do not block.
+    /// Symlinks are refused with `path_escape`; deleted paths are recorded in
+    /// `SelfWriteTracker` before removal.
+    pub fn batch_delete_problems(&self, ids: &[String]) -> Result<BatchReport> {
+        if self.is_read_only() {
+            return Err(Error::ReadOnly);
+        }
+
+        let mut refs: HashMap<String, Vec<String>> = HashMap::new();
+        for cid in self.list_contests()? {
+            let contest = self.load_contest(&cid)?;
+            if !contest.meta.frozen {
+                for item in &contest.meta.problems {
+                    refs.entry(item.id.clone()).or_default().push(cid.clone());
+                }
+            }
+        }
+
+        let unique_ids = dedup_preserve_order(ids);
+        let mut items = Vec::with_capacity(unique_ids.len());
+
+        for id in unique_ids {
+            if let Err(err) = check_id(&id).map_err(Error::from) {
+                items.push(failed_outcome(&id, &err));
+                continue;
+            }
+            let dir_rel = format!("problems/{id}");
+            let dir_path = match self.resolve(&dir_rel) {
+                Ok(p) => p,
+                Err(err) => {
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+            };
+            let meta = match fs::symlink_metadata(&dir_path) {
+                Ok(m) => m,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let err = Error::NotFound(format!("problem {id:?}"));
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+                Err(e) => {
+                    let err = io(&dir_rel, e);
+                    items.push(failed_outcome(&id, &err));
+                    continue;
+                }
+            };
+            if meta.file_type().is_symlink() {
+                let err = Error::PathEscape(dir_rel);
+                items.push(failed_outcome(&id, &err));
+                continue;
+            }
+            if !dir_path.join("problem.toml").is_file() {
+                let err = Error::NotFound(format!("problem {id:?}"));
+                items.push(failed_outcome(&id, &err));
+                continue;
+            }
+
+            if let Some(contests) = refs.get(&id)
+                && !contests.is_empty()
+            {
+                let err = Error::Referenced {
+                    id: id.clone(),
+                    contests: contests.clone(),
+                };
+                items.push(BatchItemOutcome {
+                    id: id.clone(),
+                    status: BatchItemStatus::Skipped,
+                    code: Some(err.code().to_owned()),
+                    message: Some(err.human_message()),
+                    referencing_contests: contests.clone(),
+                });
+                continue;
+            }
+
+            let meta_rel = format!("{dir_rel}/problem.toml");
+            if let Some(tracker) = &self.self_writes {
+                tracker.record(&meta_rel, crate::watcher::SELF_DELETE_SENTINEL);
+                tracker.record(&dir_rel, crate::watcher::SELF_DELETE_SENTINEL);
+            }
+            if let Err(e) = fs::remove_dir_all(&dir_path) {
+                if let Some(tracker) = &self.self_writes {
+                    tracker.unrecord(&meta_rel);
+                    tracker.unrecord(&dir_rel);
+                }
+                let err = io(&dir_rel, e);
+                items.push(failed_outcome(&id, &err));
+                continue;
+            }
+            items.push(ok_outcome(&id));
+        }
+
+        Ok(BatchReport::from_items(items))
     }
 
     // ---- Contest composition & overrides -----------------------------------------------
@@ -1120,6 +1741,62 @@ impl Workspace {
 }
 
 // ---- Validation & TOML helpers ---------------------------------------------------------
+
+fn dedup_preserve_order(ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+fn normalize_tag_list(tags: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(tags.len());
+    let mut out = Vec::with_capacity(tags.len());
+    for raw in tags {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_lowercase()) {
+            out.push(trimmed.to_owned());
+        }
+    }
+    out
+}
+
+fn ok_outcome(id: &str) -> BatchItemOutcome {
+    BatchItemOutcome {
+        id: id.to_owned(),
+        status: BatchItemStatus::Ok,
+        code: None,
+        message: None,
+        referencing_contests: Vec::new(),
+    }
+}
+
+fn skipped_outcome(id: &str, code: Option<String>, message: Option<String>) -> BatchItemOutcome {
+    BatchItemOutcome {
+        id: id.to_owned(),
+        status: BatchItemStatus::Skipped,
+        code,
+        message,
+        referencing_contests: Vec::new(),
+    }
+}
+
+fn failed_outcome(id: &str, err: &Error) -> BatchItemOutcome {
+    BatchItemOutcome {
+        id: id.to_owned(),
+        status: BatchItemStatus::Failed,
+        code: Some(err.code().to_owned()),
+        message: Some(err.human_message()),
+        referencing_contests: Vec::new(),
+    }
+}
 
 fn is_safe_single_filename(name: &str) -> bool {
     !name.is_empty()

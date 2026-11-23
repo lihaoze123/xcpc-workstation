@@ -1921,3 +1921,455 @@ fn watcher_and_problem_whitelist_cover_phase3a_package_paths() {
         "expected watcher event for problems/pkg/solutions/std.cpp"
     );
 }
+
+#[test]
+fn groups_crud_preserves_toml_comments_and_unknown_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    // Seed workspace.toml with comments, unknown field, and template-options.
+    let initial_ws_toml = "\
+# workspace header comment
+template = \"olymp-classic\"
+custom_note = \"keep-me\"
+
+[template-options.olymp-classic]
+margin-x = \"18mm\"
+";
+    ws.write(WORKSPACE_FILE, initial_ws_toml.as_bytes())
+        .unwrap();
+
+    ws.create_problem("p1", "Problem 1").unwrap();
+    ws.create_problem("p2", "Problem 2").unwrap();
+    ws.create_problem("p3", "Problem 3").unwrap();
+
+    // Add comment & unknown key to p1/problem.toml.
+    let p1_raw = "\
+# keep problem comment
+title = \"Problem 1\"
+extra_key = 42
+
+[limits]
+time = \"1s\"
+memory = \"256MB\"
+";
+    ws.write("problems/p1/problem.toml", p1_raw.as_bytes())
+        .unwrap();
+
+    // Create declared groups (trimming whitespace).
+    assert_eq!(ws.create_group("  省赛候选  ").unwrap(), "省赛候选");
+    assert_eq!(ws.create_group("校赛备选").unwrap(), "校赛备选");
+    // Duplicate rejected with GroupAlreadyExists.
+    let dup = ws.create_group("省赛候选").unwrap_err();
+    assert_eq!(dup.code(), "group_already_exists");
+    assert!(dup.human_message().contains("省赛候选"));
+
+    // Invalid group name rejected.
+    let bad = ws.create_group("bad\nname").unwrap_err();
+    assert_eq!(bad.code(), "invalid_group_name");
+    assert!(bad.human_message().contains("无效"));
+
+    // ensure_group_registered is idempotent.
+    assert_eq!(ws.ensure_group_registered("省赛候选").unwrap(), "省赛候选");
+    assert_eq!(ws.workspace_groups(), vec!["省赛候选", "校赛备选"]);
+
+    // Assign p1 via set_problem_group, and give p2 an undeclared group directly in problem.toml.
+    ws.set_problem_group("p1", Some("省赛候选")).unwrap();
+    ws.update_problem_meta(
+        "p2",
+        &ProblemMetaPatch {
+            group: Patch::Set("未声明组".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let (groups, ungrouped) = ws.list_groups().unwrap();
+    assert_eq!(ungrouped, 1); // p3
+    assert_eq!(
+        groups,
+        vec![
+            xcpc_domain::GroupSummary {
+                name: "省赛候选".into(),
+                count: 1,
+                declared: true,
+            },
+            xcpc_domain::GroupSummary {
+                name: "校赛备选".into(),
+                count: 0,
+                declared: true,
+            },
+            xcpc_domain::GroupSummary {
+                name: "未声明组".into(),
+                count: 1,
+                declared: false,
+            },
+        ]
+    );
+
+    // Rename group preserves workspace.toml order and updates member problem.toml.
+    let rename_rep = ws.rename_group("省赛候选", "区域赛候选").unwrap();
+    assert_eq!(rename_rep.updated_problems, 1);
+    assert_eq!(ws.workspace_groups(), vec!["区域赛候选", "校赛备选"]);
+    assert_eq!(
+        ws.load_problem("p1").unwrap().meta.group.as_deref(),
+        Some("区域赛候选")
+    );
+    // Rename missing group -> NotFound with Chinese message.
+    let nf = ws.rename_group("不存在", "新名字").unwrap_err();
+    assert_eq!(nf.code(), "not_found");
+    assert!(nf.human_message().contains("找不到分组「不存在」"));
+    // Rename to existing undeclared group -> GroupAlreadyExists.
+    let conflict = ws.rename_group("校赛备选", "未声明组").unwrap_err();
+    assert_eq!(conflict.code(), "group_already_exists");
+
+    // Reorder groups: strict permutation check.
+    assert!(
+        ws.reorder_groups(&["区域赛候选".into()])
+            .unwrap_err()
+            .code()
+            == "invalid_file"
+    );
+    let reordered = ws
+        .reorder_groups(&["校赛备选".into(), "区域赛候选".into()])
+        .unwrap();
+    assert_eq!(reordered, vec!["校赛备选", "区域赛候选"]);
+    assert_eq!(ws.workspace_groups(), vec!["校赛备选", "区域赛候选"]);
+
+    // Delete group clears member problems' group without deleting the problems.
+    let del_rep = ws.delete_group("区域赛候选").unwrap();
+    assert_eq!(del_rep.ungrouped_problems, 1);
+    assert_eq!(ws.workspace_groups(), vec!["校赛备选"]);
+    assert_eq!(ws.load_problem("p1").unwrap().meta.group, None);
+    assert!(ws.load_problem("p1").is_ok());
+
+    // Comments and unknown fields survived in both workspace.toml and p1/problem.toml.
+    let ws_after = ws.read_text(WORKSPACE_FILE).unwrap();
+    assert!(ws_after.contains("# workspace header comment"));
+    assert!(ws_after.contains("custom_note = \"keep-me\""));
+    assert!(ws_after.contains("margin-x = \"18mm\""));
+    let p1_after = ws.read_text("problems/p1/problem.toml").unwrap();
+    assert!(p1_after.contains("# keep problem comment"));
+    assert!(p1_after.contains("extra_key = 42"));
+
+    // write_problem_files validates meta.group.
+    let mut bad_files = BTreeMap::new();
+    bad_files.insert(
+        "problem.toml".into(),
+        "title = \"Bad\"\ngroup = \"   \"\n".into(),
+    );
+    assert_eq!(
+        ws.write_problem_files("p1", &bad_files, None)
+            .unwrap_err()
+            .code(),
+        "invalid_group_name"
+    );
+}
+
+#[test]
+fn index_groups_search_and_workspace_toml_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    ws.create_group("ungrouped").unwrap(); // Literal group named "ungrouped" must not collide.
+    ws.create_group("空分组").unwrap();
+    ws.create_problem("p1", "Alpha").unwrap();
+    ws.create_problem("p2", "Beta").unwrap();
+    ws.set_problem_group("p1", Some("ungrouped")).unwrap();
+
+    ws.compose_contest("c-active", &["p1".into()], None)
+        .unwrap();
+    ws.compose_contest("c-archived", &["p1".into()], None)
+        .unwrap();
+    ws.set_contest_archived("c-archived", true).unwrap();
+
+    let mut idx = WorkspaceIndex::scan(&ws).unwrap();
+    let (counts, ungrouped) = idx.group_counts();
+    assert_eq!(ungrouped, 1);
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts[0].name, "ungrouped");
+    assert_eq!(counts[0].count, 1);
+    assert!(counts[0].declared);
+    assert_eq!(counts[1].name, "空分组");
+    assert_eq!(counts[1].count, 0);
+
+    // GroupFilter::Named("ungrouped") vs GroupFilter::Ungrouped.
+    let named_hits = idx.search_problems(&SearchQuery {
+        group: Some(xcpc_domain::GroupFilter::Named("ungrouped".into())),
+        ..Default::default()
+    });
+    assert_eq!(named_hits.len(), 1);
+    assert_eq!(named_hits[0].id, "p1");
+
+    let ungrouped_hits = idx.search_problems(&SearchQuery {
+        group: Some(xcpc_domain::GroupFilter::Ungrouped),
+        ..Default::default()
+    });
+    assert_eq!(ungrouped_hits.len(), 1);
+    assert_eq!(ungrouped_hits[0].id, "p2");
+
+    // Non-archived contest mapping helper.
+    assert_eq!(idx.problem_contest_ids("p1"), vec!["c-active"]);
+    assert!(idx.problem_contest_ids("p2").is_empty());
+    let map = idx.problem_contest_map();
+    assert_eq!(map.get("p1").unwrap(), &vec!["c-active".to_owned()]);
+    assert!(!map.contains_key("p2"));
+
+    // External edit to workspace.toml refreshed via refresh_path("workspace.toml").
+    fs::write(
+        dir.path().join("workspace.toml"),
+        "groups = [\"空分组\", \"外部新增\"]\n",
+    )
+    .unwrap();
+    idx.refresh_path(&ws, "workspace.toml").unwrap();
+    let (counts2, _) = idx.group_counts();
+    assert_eq!(counts2[0].name, "空分组");
+    assert!(counts2[0].declared);
+    assert_eq!(counts2[1].name, "外部新增");
+    assert!(counts2[1].declared);
+    assert_eq!(counts2[2].name, "ungrouped");
+    assert!(!counts2[2].declared);
+}
+
+#[test]
+fn batch_metadata_operations_and_read_only_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.create_problem("p1", "P1").unwrap();
+    ws.create_problem("p2", "P2").unwrap();
+
+    // batch_set_group: dedups IDs, skips unchanged, fails missing/invalid, registers group once.
+    let rep = ws
+        .batch_set_group(
+            &[
+                "p1".into(),
+                "p1".into(),
+                "missing".into(),
+                "BAD_ID".into(),
+                "p2".into(),
+            ],
+            Some("省赛"),
+        )
+        .unwrap();
+    assert!(!rep.ok);
+    assert_eq!(rep.total, 4);
+    assert_eq!(rep.succeeded, 2);
+    assert_eq!(rep.skipped, 0);
+    assert_eq!(rep.failed, 2);
+    assert_eq!(ws.workspace_groups(), vec!["省赛"]);
+
+    // Second call skips unchanged without writing.
+    let rep2 = ws
+        .batch_set_group(&["p1".into(), "p2".into()], Some("省赛"))
+        .unwrap();
+    assert!(rep2.ok);
+    assert_eq!(rep2.succeeded, 0);
+    assert_eq!(rep2.skipped, 2);
+
+    // batch_edit_tags: add + case-insensitive remove.
+    let tag_rep = ws
+        .batch_edit_tags(
+            &["p1".into(), "p2".into()],
+            &["DP".into(), "dp".into(), " graph ".into()],
+            &[],
+        )
+        .unwrap();
+    assert!(tag_rep.ok);
+    assert_eq!(tag_rep.succeeded, 2);
+    assert_eq!(
+        ws.load_problem("p1").unwrap().meta.tags,
+        vec!["DP", "graph"]
+    );
+
+    let tag_rep2 = ws
+        .batch_edit_tags(
+            &["p1".into()],
+            &["greedy".into()],
+            &["dp".into(), "nonexistent".into()],
+        )
+        .unwrap();
+    assert!(tag_rep2.ok);
+    assert_eq!(tag_rep2.succeeded, 1);
+    assert_eq!(
+        ws.load_problem("p1").unwrap().meta.tags,
+        vec!["graph", "greedy"]
+    );
+
+    // batch_set_rating + batch_update_problems.
+    let rat_rep = ws
+        .batch_set_rating(&["p1".into(), "p2".into()], Some(1600))
+        .unwrap();
+    assert!(rat_rep.ok);
+    assert_eq!(rat_rep.succeeded, 2);
+    let rat_skip = ws.batch_set_rating(&["p1".into()], Some(1600)).unwrap();
+    assert_eq!(rat_skip.skipped, 1);
+
+    let upd_rep = ws
+        .batch_update_problems(
+            &["p1".into(), "p2".into()],
+            &Patch::Clear,
+            &["math".into()],
+            &["graph".into()],
+            &Patch::Set(1900),
+        )
+        .unwrap();
+    assert!(upd_rep.ok);
+    assert_eq!(upd_rep.succeeded, 2);
+    let p1 = ws.load_problem("p1").unwrap().meta;
+    assert_eq!(p1.group, None);
+    assert_eq!(p1.rating, Some(1900));
+    assert_eq!(p1.tags, vec!["greedy", "math"]);
+
+    // Read-only guard rejects all group & batch mutations.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    assert_eq!(ro.create_group("x").unwrap_err().code(), "read_only");
+    assert_eq!(
+        ro.batch_set_group(&["p1".into()], Some("x"))
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+    assert_eq!(
+        ro.batch_edit_tags(&["p1".into()], &["a".into()], &[])
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+    assert_eq!(
+        ro.batch_set_rating(&["p1".into()], Some(1200))
+            .unwrap_err()
+            .code(),
+        "read_only"
+    );
+    assert_eq!(
+        ro.batch_delete_problems(&["p1".into()]).unwrap_err().code(),
+        "read_only"
+    );
+}
+
+#[test]
+fn batch_add_to_contest_guards_and_26_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+
+    let mut all_ids = Vec::new();
+    for i in 1..=27 {
+        let id = format!("p{i:02}");
+        ws.create_problem(&id, &format!("Problem {i}")).unwrap();
+        all_ids.push(id);
+    }
+
+    ws.compose_contest("c1", &all_ids[0..2], None).unwrap();
+
+    // Add p02 (duplicate -> Skipped), p03 (Ok), missing (Failed).
+    let res = ws
+        .batch_add_to_contest("c1", &["p02".into(), "p03".into(), "missing".into()])
+        .unwrap();
+    assert_eq!(res.added_ids, vec!["p03"]);
+    assert_eq!(res.problem_count, 3);
+    assert_eq!(res.report.succeeded, 1);
+    assert_eq!(res.report.skipped, 1);
+    assert_eq!(res.report.failed, 1);
+    assert_eq!(
+        res.report.items[0].code.as_deref(),
+        Some("already_in_contest")
+    );
+
+    // Atomic 26-problem cap: adding p04..=p27 (24 problems) to 3 existing = 27 > 26 -> refused!
+    let cap_err = ws.batch_add_to_contest("c1", &all_ids[3..27]).unwrap_err();
+    assert_eq!(cap_err.code(), "too_many_problems");
+    // Contest remains untouched at 3 problems.
+    assert_eq!(ws.load_contest("c1").unwrap().meta.problems.len(), 3);
+
+    // Archived contest refuses batch_add_to_contest.
+    ws.set_contest_archived("c1", true).unwrap();
+    assert_eq!(
+        ws.batch_add_to_contest("c1", &["p04".into()])
+            .unwrap_err()
+            .code(),
+        "contest_archived"
+    );
+    ws.set_contest_archived("c1", false).unwrap();
+
+    // Frozen contest refuses batch_add_to_contest.
+    ws.freeze_commit("c1", b"%PDF-1.4\n", None).unwrap();
+    assert_eq!(
+        ws.batch_add_to_contest("c1", &["p04".into()])
+            .unwrap_err()
+            .code(),
+        "contest_frozen"
+    );
+}
+
+#[test]
+fn batch_delete_problems_reference_and_symlink_guards() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = init_workspace(dir.path()).unwrap();
+    ws.create_problem("p-free", "Free").unwrap();
+    ws.create_problem("p-active", "Active").unwrap();
+    ws.create_problem("p-archived-unfrozen", "Archived Unfrozen")
+        .unwrap();
+    ws.create_problem("p-frozen", "Frozen").unwrap();
+
+    ws.compose_contest("c-active", &["p-active".into()], None)
+        .unwrap();
+    ws.compose_contest("c-arch", &["p-archived-unfrozen".into()], None)
+        .unwrap();
+    ws.set_contest_archived("c-arch", true).unwrap();
+    ws.compose_contest("c-frozen", &["p-frozen".into()], None)
+        .unwrap();
+    ws.freeze_commit("c-frozen", b"%PDF-1.4\n", None).unwrap();
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            dir.path().join("problems/p-active"),
+            dir.path().join("problems/p-link"),
+        )
+        .unwrap();
+    }
+
+    let mut targets = vec![
+        "p-free".into(),
+        "p-active".into(),
+        "p-archived-unfrozen".into(),
+        "p-frozen".into(),
+        "missing".into(),
+    ];
+    #[cfg(unix)]
+    targets.push("p-link".into());
+
+    let rep = ws.batch_delete_problems(&targets).unwrap();
+    // p-free and p-frozen deleted; p-active and p-archived-unfrozen skipped; missing (+ p-link) failed.
+    assert_eq!(rep.succeeded, 2);
+    assert_eq!(rep.skipped, 2);
+    #[cfg(unix)]
+    assert_eq!(rep.failed, 2);
+    #[cfg(not(unix))]
+    assert_eq!(rep.failed, 1);
+
+    assert!(ws.load_problem("p-free").is_err());
+    assert!(ws.load_problem("p-frozen").is_err());
+    assert!(ws.load_problem("p-active").is_ok());
+    assert!(ws.load_problem("p-archived-unfrozen").is_ok());
+
+    let active_item = rep.items.iter().find(|i| i.id == "p-active").unwrap();
+    assert_eq!(active_item.status, xcpc_domain::BatchItemStatus::Skipped);
+    assert_eq!(active_item.code.as_deref(), Some("problem_referenced"));
+    assert_eq!(active_item.referencing_contests, vec!["c-active"]);
+
+    let arch_item = rep
+        .items
+        .iter()
+        .find(|i| i.id == "p-archived-unfrozen")
+        .unwrap();
+    assert_eq!(arch_item.status, xcpc_domain::BatchItemStatus::Skipped);
+    assert_eq!(arch_item.referencing_contests, vec!["c-arch"]);
+
+    #[cfg(unix)]
+    {
+        let link_item = rep.items.iter().find(|i| i.id == "p-link").unwrap();
+        assert_eq!(link_item.status, xcpc_domain::BatchItemStatus::Failed);
+        assert_eq!(link_item.code.as_deref(), Some("path_escape"));
+    }
+}

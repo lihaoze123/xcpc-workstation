@@ -40,6 +40,7 @@ import minus from "./icons/minus.svg";
 import lock from "./icons/lock.svg";
 import lockOpen from "./icons/lock-open.svg";
 import palette from "./icons/palette.svg";
+import panelLeft from "./icons/panel-left.svg";
 import panelRight from "./icons/panel-right.svg";
 import pencil from "./icons/pencil.svg";
 import play from "./icons/play.svg";
@@ -66,7 +67,7 @@ const ICONS = {
   arrowLeft, arrowRight, bold, bot, check, chevronDown, chevronLeft, chevronRight, minus, chevronsUpDown, circleAlert, code, copy,
   cornerDownLeft, crown, database, ellipsis, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
   gripVertical, heading, image, info, italic, keyboard, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
-  palette, panelRight, pencil, play, plus, rotateCcw, scale, search, searchX, settings, shieldCheck, sigma, sparkles, squareCode, stamp, table,
+  palette, panelLeft, panelRight, pencil, play, plus, rotateCcw, scale, search, searchX, settings, shieldCheck, sigma, sparkles, squareCode, stamp, table,
   trash, triangleAlert, trophy, x, zoomIn, zoomOut,
 };
 

@@ -4,8 +4,12 @@
 //! executes C++ code. It checks the latest strict verification report from `xcpc-judge`
 //! and packages pre-built testdata from `build/problems/<slug>/tests/`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use xcpc_convert::publish;
 use xcpc_convert::{Book, Entry};
@@ -19,6 +23,7 @@ use xcpc_storage::Workspace;
 
 use crate::error::{PackageError, Result, io_err};
 use crate::types::{
+    BatchExportEvent, BatchExportItemResult, BatchExportItemStatus, BatchExportOjResult,
     ExportOjOptions, ExportOjResult, ExportTarget, ExportedArtifact, OjFormat, PackageWarning,
 };
 use crate::zip_util::AtomicZipWriter;
@@ -102,6 +107,336 @@ pub fn export_oj_package(
                 warnings,
             })
         }
+    }
+}
+
+/// Default relative output directory under the workspace for a batch OJ export:
+/// `build/batch-<format>-<YYYYMMDD-HHMMSS>`.
+pub fn default_batch_export_dir(format: OjFormat) -> PathBuf {
+    let ts = format_utc_timestamp(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
+    PathBuf::from(format!("build/batch-{}-{ts}", format.as_str()))
+}
+
+/// Formats a Unix timestamp (seconds since 1970-01-01T00:00:00Z) as `YYYYMMDD-HHMMSS` (UTC).
+fn format_utc_timestamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let hour = rem / 3600;
+    let min = (rem % 3600) / 60;
+    let sec = rem % 60;
+
+    // Howard Hinnant's civil_from_days algorithm (exact proleptic Gregorian calendar).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+
+    format!("{year:04}{m:02}{d:02}-{hour:02}{min:02}{sec:02}")
+}
+
+/// Batch-exports multiple problems to DOMjudge or Hydro ZIP packages (`<slug>.zip`)
+/// inside a single target directory.
+///
+/// - Enforces `ws.is_read_only()` upfront.
+/// - Strictly enforces static/dynamic separation ("动静分离"): NEVER compiles or runs C++.
+///   Pure-publishing, unverified, stale, or missing-testdata problems are recorded as
+///   `Skipped` (`not_a_package` / `not_verified` / `missing_testdata`) without aborting
+///   the rest of the batch.
+/// - Reuses one `Engine` instance across the batch and checks `cancel` between problems.
+/// - When `opts.output_path` is empty, writes into `ws.root()/build/batch-<format>-<YYYYMMDD-HHMMSS>/`.
+pub fn export_oj_packages_batch(
+    ws: &Workspace,
+    slugs: &[String],
+    opts: &ExportOjOptions,
+    cancel: Option<Arc<AtomicBool>>,
+    progress: Option<&(dyn Fn(BatchExportEvent) + Send + Sync)>,
+) -> Result<BatchExportOjResult> {
+    if ws.is_read_only() {
+        return Err(xcpc_storage::Error::ReadOnly.into());
+    }
+
+    // Deduplicate preserving caller order.
+    let mut seen = HashSet::with_capacity(slugs.len());
+    let mut unique_slugs = Vec::with_capacity(slugs.len());
+    for slug in slugs {
+        if seen.insert(slug.clone()) {
+            unique_slugs.push(slug.clone());
+        }
+    }
+
+    let output_dir = if opts.output_path.as_os_str().is_empty() {
+        ws.root().join(default_batch_export_dir(opts.format))
+    } else {
+        opts.output_path.clone()
+    };
+    let output_dir_str = output_dir.display().to_string();
+
+    let total = unique_slugs.len();
+    let mut items = Vec::with_capacity(total);
+    let mut warnings = Vec::new();
+    let mut exported = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    let mut cancelled_count = 0usize;
+    let mut cancelled = false;
+    let mut dir_created = false;
+
+    let mut engine = Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf()));
+
+    for (idx, slug) in unique_slugs.iter().enumerate() {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+            for rem in &unique_slugs[idx..] {
+                items.push(BatchExportItemResult {
+                    problem_id: rem.clone(),
+                    status: BatchExportItemStatus::Cancelled,
+                    zip_path: None,
+                    size_bytes: None,
+                    sample_count: 0,
+                    secret_count: 0,
+                    verified: false,
+                    forced: false,
+                    code: Some("cancelled".to_owned()),
+                    message: Some("已取消批量导出。".to_owned()),
+                });
+                cancelled_count += 1;
+            }
+            cancelled = true;
+            if let Some(cb) = progress {
+                cb(BatchExportEvent::Cancelled {
+                    completed: idx,
+                    total,
+                });
+            }
+            break;
+        }
+
+        if let Some(cb) = progress {
+            cb(BatchExportEvent::ProblemStarted {
+                problem_id: slug.clone(),
+                index: idx,
+                total,
+            });
+        }
+
+        let item = export_batch_single_item(
+            ws,
+            slug,
+            opts,
+            &output_dir,
+            &mut dir_created,
+            &mut engine,
+            &mut warnings,
+        );
+
+        match item.status {
+            BatchExportItemStatus::Exported => exported += 1,
+            BatchExportItemStatus::Skipped => skipped += 1,
+            BatchExportItemStatus::Failed => failed += 1,
+            BatchExportItemStatus::Cancelled => cancelled_count += 1,
+        }
+
+        if let Some(cb) = progress {
+            cb(BatchExportEvent::ProblemFinished {
+                item: item.clone(),
+                index: idx,
+                total,
+            });
+        }
+        items.push(item);
+    }
+
+    if let Some(cb) = progress {
+        cb(BatchExportEvent::AllFinished {
+            exported,
+            skipped,
+            failed,
+            cancelled: cancelled_count,
+            total,
+            output_dir: output_dir_str.clone(),
+        });
+    }
+
+    Ok(BatchExportOjResult {
+        ok: failed == 0 && !cancelled,
+        format: opts.format,
+        output_dir: output_dir_str,
+        cancelled,
+        total,
+        exported,
+        skipped,
+        failed,
+        cancelled_count,
+        items,
+        warnings,
+    })
+}
+
+fn export_batch_single_item(
+    ws: &Workspace,
+    slug: &str,
+    opts: &ExportOjOptions,
+    output_dir: &Path,
+    dir_created: &mut bool,
+    engine: &mut Engine,
+    warnings: &mut Vec<PackageWarning>,
+) -> BatchExportItemResult {
+    let problem = match ws.load_problem(slug) {
+        Ok(p) => p,
+        Err(e) => {
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Failed,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(e.code().to_owned()),
+                message: Some(e.human_message()),
+            };
+        }
+    };
+
+    let prob_dir = match ws.resolve(&problem.dir) {
+        Ok(d) => d,
+        Err(e) => {
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Failed,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(e.code().to_owned()),
+                message: Some(e.human_message()),
+            };
+        }
+    };
+
+    // Pure publishing problem (no local Polygon package): always Skipped with `not_a_package`.
+    if !problem.meta.has_package_in_dir(&prob_dir) {
+        return BatchExportItemResult {
+            problem_id: slug.to_owned(),
+            status: BatchExportItemStatus::Skipped,
+            zip_path: None,
+            size_bytes: None,
+            sample_count: 0,
+            secret_count: 0,
+            verified: false,
+            forced: false,
+            code: Some("not_a_package".to_owned()),
+            message: Some(format!("题目「{slug}」不是题目包（仅含题面），已跳过。")),
+        };
+    }
+
+    let prepared = match prepare_export_item(ws, &problem, None, None, opts, warnings) {
+        Ok(p) => p,
+        Err(e @ PackageError::NotVerified { .. }) => {
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Skipped,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(e.code().to_owned()),
+                message: Some(e.human_message()),
+            };
+        }
+        Err(e @ PackageError::MissingTestdata { .. }) => {
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Skipped,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(e.code().to_owned()),
+                message: Some(e.human_message()),
+            };
+        }
+        Err(e) => {
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Failed,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(e.code().to_owned()),
+                message: Some(e.human_message()),
+            };
+        }
+    };
+
+    if !*dir_created {
+        if let Err(e) = fs::create_dir_all(output_dir) {
+            let err = io_err(
+                format!("create output directory {}", output_dir.display()),
+                e,
+            );
+            return BatchExportItemResult {
+                problem_id: slug.to_owned(),
+                status: BatchExportItemStatus::Failed,
+                zip_path: None,
+                size_bytes: None,
+                sample_count: 0,
+                secret_count: 0,
+                verified: false,
+                forced: false,
+                code: Some(err.code().to_owned()),
+                message: Some(err.human_message()),
+            };
+        }
+        *dir_created = true;
+    }
+
+    let zip_path = output_dir.join(format!("{}.zip", problem.id));
+    match write_oj_zip(ws, &prepared, &zip_path, opts, engine) {
+        Ok(artifact) => BatchExportItemResult {
+            problem_id: artifact.problem_id,
+            status: BatchExportItemStatus::Exported,
+            zip_path: Some(artifact.zip_path),
+            size_bytes: Some(artifact.size_bytes),
+            sample_count: artifact.sample_count,
+            secret_count: artifact.secret_count,
+            verified: artifact.verified,
+            forced: artifact.forced,
+            code: None,
+            message: None,
+        },
+        Err(e) => BatchExportItemResult {
+            problem_id: slug.to_owned(),
+            status: BatchExportItemStatus::Failed,
+            zip_path: None,
+            size_bytes: None,
+            sample_count: 0,
+            secret_count: 0,
+            verified: false,
+            forced: false,
+            code: Some(e.code().to_owned()),
+            message: Some(e.human_message()),
+        },
     }
 }
 

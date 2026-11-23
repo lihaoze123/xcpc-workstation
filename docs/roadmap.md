@@ -200,7 +200,7 @@
 
 ### Phase 3B+（Phase 3C 前置）：题库界面全面升级与命令面板优化
 
-2026-11-23 讨论确认，排在 Phase 3B 之后、Phase 3C 之前，围绕大规模题库（几十至数百题）的组织、批量运维、视觉密排与快捷检索做一次集中升级：
+2026-11-23 讨论确认，排在 Phase 3B 之后、Phase 3C 之前，详细规格见 [specs/library-upgrade-and-command-palette.md](./specs/library-upgrade-and-command-palette.md)。围绕大规模题库（几十至数百题）的组织、批量运维、视觉密排与快捷检索做一次集中升级：
 
 1. **持久化单层分组 + 动态视图分组（两者结合）**：
    - **数据模型**：`problem.toml` 新增可选字段 `group = "<名称>"`（不移动 `problems/<slug>/` 目录，不破坏比赛活引用，多人 Git 协同零冲突）；`workspace.toml` 新增可选 `groups = [...]` 维护分组顺序与空分组。Core 提供分组的创建、重命名、删除、排序与批量归组原子写回。
@@ -224,8 +224,8 @@
    - **有输入查询**：按分组设上限（题目最多 8 条、比赛最多 4 条、操作不截断）；
    - 支持 **`>` 前缀**仅过滤并检索操作。
 5. **CLI / MCP 最小闭环**：
-   - `search_problems` / `upsert_problem` 支持 `group` 字段筛选与写入；
-   - 补齐 `xcpc group` 与批量元数据/删除操作的 Core 语义接口、CLI 与 MCP 入口。
+   - `search_problems` / `write_problem` 支持 `group` 字段筛选与写入；
+   - 补齐 `xcpc group` 与批量元数据/删除/导出操作的 Core 语义接口、CLI 与 MCP 入口。
 
 **不做**：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、OS 强安全沙箱与判外部提交、Nix / Hull 互通、CPLib 专门支持、通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
 

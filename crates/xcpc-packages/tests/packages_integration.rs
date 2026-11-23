@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use tempfile::TempDir;
 use xcpc_domain::{
@@ -10,8 +14,9 @@ use xcpc_domain::{
 };
 use xcpc_judge::{BuildMode, BuildOptions, build_package};
 use xcpc_packages::{
-    ExportOjOptions, ExportTarget, OjFormat, PolygonImportKind, PolygonImportOptions,
-    export_oj_package, import_polygon,
+    BatchExportEvent, BatchExportItemStatus, ExportOjOptions, ExportTarget, OjFormat,
+    PolygonImportKind, PolygonImportOptions, export_oj_package, export_oj_packages_batch,
+    import_polygon,
 };
 use xcpc_storage::{Workspace, init_workspace};
 use zip::write::SimpleFileOptions;
@@ -985,7 +990,307 @@ fn polygon_contest_xml_resolves_problems_by_url_slug() {
     let res = import_polygon(&ws, &zip_path, &PolygonImportOptions::default()).unwrap();
     assert_eq!(res.kind, PolygonImportKind::Contest);
     assert_eq!(res.contest_id.as_deref(), Some("contest-57383"));
+    assert_eq!(res.group.as_deref(), Some("2026 选拔赛"));
     assert_eq!(res.problems.len(), 1);
     assert_eq!(res.problems[0].id, "spiral-matrix");
     assert_eq!(res.problems[0].label.as_deref(), Some("A"));
+}
+
+#[test]
+fn polygon_contest_import_auto_grouping_modes() {
+    let tmp = TempDir::new().unwrap();
+    let ws = init_workspace(tmp.path().join("ws")).unwrap();
+
+    // Seed workspace.toml with an existing group and a comment to verify preservation.
+    ws.write(
+        "workspace.toml",
+        b"# keep this comment\ngroups = [\"existing-group\"]\n",
+    )
+    .unwrap();
+
+    let make_contest_zip = |name: &str, contest_title: &str, prob_slug: &str| {
+        let zip_path = tmp.path().join(name);
+        let contest_xml = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<contest>
+  <names>
+    <name language="chinese" value="{contest_title}"/>
+  </names>
+  <problems>
+    <problem index="A" path="problems/{prob_slug}"/>
+  </problems>
+</contest>
+"#
+        );
+        let prob_xml = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<problem short-name="{prob_slug}">
+  <names><name language="chinese" value="题 {prob_slug}"/></names>
+  <judging><testset name="tests"><time-limit>1000</time-limit><memory-limit>268435456</memory-limit><tests/></testset></judging>
+</problem>
+"#
+        );
+        create_zip(
+            &zip_path,
+            &[
+                ("contest.xml", contest_xml.as_bytes()),
+                (
+                    &format!("problems/{prob_slug}/problem.xml"),
+                    prob_xml.as_bytes(),
+                ),
+            ],
+        );
+        zip_path
+    };
+
+    // 1. Default auto-grouping collapses whitespace and registers in workspace.toml.
+    let zip1 = make_contest_zip("c1.zip", "  2026   春季  热身赛  ", "p-auto");
+    let res1 = import_polygon(
+        &ws,
+        &zip1,
+        &PolygonImportOptions {
+            target_id: Some("c-auto".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(res1.group.as_deref(), Some("2026 春季 热身赛"));
+    assert_eq!(
+        ws.load_problem("p-auto").unwrap().meta.group.as_deref(),
+        Some("2026 春季 热身赛")
+    );
+    assert_eq!(
+        ws.workspace_groups(),
+        vec!["existing-group".to_owned(), "2026 春季 热身赛".to_owned()]
+    );
+    let ws_toml = std::fs::read_to_string(ws.resolve("workspace.toml").unwrap()).unwrap();
+    assert!(
+        ws_toml.contains("# keep this comment"),
+        "workspace.toml comment should be preserved: {ws_toml}"
+    );
+
+    // 2. `no_auto_group: true` leaves problems ungrouped.
+    let zip2 = make_contest_zip("c2.zip", "不自动分组比赛", "p-noauto");
+    let res2 = import_polygon(
+        &ws,
+        &zip2,
+        &PolygonImportOptions {
+            target_id: Some("c-noauto".into()),
+            no_auto_group: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(res2.group, None);
+    assert_eq!(ws.load_problem("p-noauto").unwrap().meta.group, None);
+
+    // 3. Explicit `group` overrides contest name (even if `no_auto_group` is set).
+    let zip3 = make_contest_zip("c3.zip", "原比赛名", "p-explicit");
+    let res3 = import_polygon(
+        &ws,
+        &zip3,
+        &PolygonImportOptions {
+            target_id: Some("c-explicit".into()),
+            group: Some("  省赛候选  ".into()),
+            no_auto_group: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(res3.group.as_deref(), Some("省赛候选"));
+    assert_eq!(
+        ws.load_problem("p-explicit").unwrap().meta.group.as_deref(),
+        Some("省赛候选")
+    );
+    assert!(ws.workspace_groups().contains(&"省赛候选".to_owned()));
+
+    // 4. Single-problem import supports explicit `group` and rejects invalid group names.
+    let single_zip = tmp.path().join("single.zip");
+    let single_entries = build_synthetic_polygon_problem_entries("single-grouped");
+    let single_refs: Vec<(&str, &[u8])> = single_entries
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_slice()))
+        .collect();
+    create_zip(&single_zip, &single_refs);
+
+    let bad_err = import_polygon(
+        &ws,
+        &single_zip,
+        &PolygonImportOptions {
+            group: Some("bad\nname".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(bad_err.code(), "invalid_group_name");
+    assert!(ws.load_problem("single-grouped").is_err());
+
+    let ok_single = import_polygon(
+        &ws,
+        &single_zip,
+        &PolygonImportOptions {
+            group: Some("单题分组".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(ok_single.group.as_deref(), Some("单题分组"));
+    assert_eq!(
+        ws.load_problem("single-grouped")
+            .unwrap()
+            .meta
+            .group
+            .as_deref(),
+        Some("单题分组")
+    );
+    assert!(ws.workspace_groups().contains(&"单题分组".to_owned()));
+}
+
+#[test]
+fn batch_export_oj_mixed_gates_cancellation_and_readonly() {
+    let tmp = TempDir::new().unwrap();
+    let ws = init_workspace(tmp.path().join("ws")).unwrap();
+
+    seed_verifiable_problem(&ws, "pkg-verified", false);
+    seed_verifiable_problem(&ws, "pkg-unverified", false);
+
+    // Pure publishing problem (no package files).
+    ws.create_problem("pure-stmt", "纯题面").unwrap();
+    ws.write(
+        "problems/pure-stmt/statement.md",
+        b"Just a statement.\n\n## Input\n\nx\n\n## Output\n\ny\n",
+    )
+    .unwrap();
+
+    // Strictly verify only `pkg-verified`.
+    let build_opts = BuildOptions {
+        mode: BuildMode::Verify,
+        cache_dir: Some(tmp.path().join("cache")),
+        ..Default::default()
+    };
+    let build_res = build_package(&ws, "pkg-verified", &build_opts, None, None).unwrap();
+    assert!(
+        build_res.verified,
+        "pkg-verified failed: {:?}",
+        build_res.gates
+    );
+
+    // 1. Mixed batch: verified + duplicate + unverified + pure publishing + missing.
+    let out_dir = tmp.path().join("batch-out");
+    let events = Arc::new(Mutex::new(Vec::<BatchExportEvent>::new()));
+    let events_cb = Arc::clone(&events);
+    let slugs = vec![
+        "pkg-verified".to_owned(),
+        "pkg-verified".to_owned(), // duplicate should be deduplicated
+        "pkg-unverified".to_owned(),
+        "pure-stmt".to_owned(),
+        "missing-prob".to_owned(),
+    ];
+    let opts = ExportOjOptions {
+        format: OjFormat::Domjudge,
+        output_path: out_dir.clone(),
+        force: false,
+        language: None,
+    };
+    let report = export_oj_packages_batch(
+        &ws,
+        &slugs,
+        &opts,
+        None,
+        Some(&move |ev| {
+            events_cb.lock().unwrap().push(ev);
+        }),
+    )
+    .unwrap();
+
+    assert!(!report.ok, "missing-prob failed so ok should be false");
+    assert!(!report.cancelled);
+    assert_eq!(report.total, 4);
+    assert_eq!(report.exported, 1);
+    assert_eq!(report.skipped, 2);
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.cancelled_count, 0);
+
+    assert_eq!(report.items[0].problem_id, "pkg-verified");
+    assert_eq!(report.items[0].status, BatchExportItemStatus::Exported);
+    assert!(out_dir.join("pkg-verified.zip").is_file());
+    let zip_entries = read_zip_entries(&out_dir.join("pkg-verified.zip"));
+    assert!(zip_entries.contains_key("domjudge-problem.ini"));
+    assert!(zip_entries.contains_key("problem.pdf"));
+
+    assert_eq!(report.items[1].problem_id, "pkg-unverified");
+    assert_eq!(report.items[1].status, BatchExportItemStatus::Skipped);
+    assert_eq!(report.items[1].code.as_deref(), Some("not_verified"));
+
+    assert_eq!(report.items[2].problem_id, "pure-stmt");
+    assert_eq!(report.items[2].status, BatchExportItemStatus::Skipped);
+    assert_eq!(report.items[2].code.as_deref(), Some("not_a_package"));
+
+    assert_eq!(report.items[3].problem_id, "missing-prob");
+    assert_eq!(report.items[3].status, BatchExportItemStatus::Failed);
+    assert_eq!(report.items[3].code.as_deref(), Some("not_found"));
+
+    // Verify event ordering & serde `kind` tag.
+    let evs = events.lock().unwrap();
+    assert!(matches!(
+        evs.first(),
+        Some(BatchExportEvent::ProblemStarted { index: 0, .. })
+    ));
+    assert!(matches!(
+        evs.last(),
+        Some(BatchExportEvent::AllFinished {
+            exported: 1,
+            skipped: 2,
+            failed: 1,
+            cancelled: 0,
+            total: 4,
+            ..
+        })
+    ));
+    let ev_json = serde_json::to_string(evs.last().unwrap()).unwrap();
+    assert!(ev_json.contains(r#""kind":"all_finished""#));
+
+    // 2. Cancellation between problems via AtomicBool.
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_trigger = Arc::clone(&cancel_flag);
+    let cancel_out = tmp.path().join("batch-cancel");
+    let cancel_report = export_oj_packages_batch(
+        &ws,
+        &[
+            "pure-stmt".to_owned(),
+            "pkg-verified".to_owned(),
+            "pkg-unverified".to_owned(),
+        ],
+        &ExportOjOptions {
+            format: OjFormat::Hydro,
+            output_path: cancel_out,
+            force: false,
+            language: None,
+        },
+        Some(cancel_flag),
+        Some(&move |ev| {
+            if matches!(ev, BatchExportEvent::ProblemFinished { index: 0, .. }) {
+                cancel_trigger.store(true, Ordering::Relaxed);
+            }
+        }),
+    )
+    .unwrap();
+    assert!(cancel_report.cancelled);
+    assert!(!cancel_report.ok);
+    assert_eq!(cancel_report.skipped, 1);
+    assert_eq!(cancel_report.cancelled_count, 2);
+    assert_eq!(
+        cancel_report.items[1].status,
+        BatchExportItemStatus::Cancelled
+    );
+    assert_eq!(
+        cancel_report.items[2].status,
+        BatchExportItemStatus::Cancelled
+    );
+
+    // 3. Read-only workspace is rejected upfront.
+    let ro_ws = Workspace::open(ws.root(), true).unwrap();
+    let ro_err = export_oj_packages_batch(&ro_ws, &["pkg-verified".to_owned()], &opts, None, None)
+        .unwrap_err();
+    assert_eq!(ro_err.code(), "read_only");
 }

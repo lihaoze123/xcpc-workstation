@@ -21,8 +21,9 @@ use std::sync::mpsc;
 
 use sha2::{Digest, Sha256};
 use xcpc_domain::{
-    ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, Problem, ProblemMeta, Sample,
-    SampleInventory, Statement, TemplateOptionValue, TemplateOptionsMap, TextFile, check_id,
+    ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, MAX_GROUP_NAME_CHARS, Problem,
+    ProblemMeta, Sample, SampleInventory, Statement, TemplateOptionValue, TemplateOptionsMap,
+    TextFile, check_id, normalize_group_name,
 };
 
 pub mod assets;
@@ -198,6 +199,16 @@ pub enum Error {
     NotFrozen(String),
     #[error("path {0:?} is not allowed")]
     DisallowedPath(String),
+    #[error("invalid group name {0:?}")]
+    InvalidGroupName(String),
+    #[error("group {0:?} already exists")]
+    GroupAlreadyExists(String),
+}
+
+impl From<xcpc_domain::InvalidGroupName> for Error {
+    fn from(err: xcpc_domain::InvalidGroupName) -> Self {
+        Error::InvalidGroupName(err.0)
+    }
 }
 
 impl Error {
@@ -218,6 +229,8 @@ impl Error {
             Error::AlreadyFrozen(_) => "already_frozen",
             Error::NotFrozen(_) => "not_frozen",
             Error::DisallowedPath(_) => "disallowed_path",
+            Error::InvalidGroupName(_) => "invalid_group_name",
+            Error::GroupAlreadyExists(_) => "group_already_exists",
         }
     }
 
@@ -265,6 +278,12 @@ impl Error {
             Error::DisallowedPath(path) => {
                 format!("路径「{path}」不允许写入。请仅修改题目或比赛目录下的受管文件。")
             }
+            Error::InvalidGroupName(name) => format!(
+                "分组名称「{name}」无效。名称不能为空、不能包含控制字符，且长度不超过 {MAX_GROUP_NAME_CHARS} 个字符。"
+            ),
+            Error::GroupAlreadyExists(name) => {
+                format!("分组「{name}」已存在。请使用其他名称。")
+            }
         }
     }
 }
@@ -275,6 +294,9 @@ fn format_not_found_message(what: &str) -> String {
     }
     if let Some(id) = parse_quoted_after(what, "contest ") {
         return format!("找不到比赛「{id}」。请检查比赛 ID 是否存在。");
+    }
+    if let Some(name) = parse_quoted_after(what, "group ") {
+        return format!("找不到分组「{name}」。请检查分组名称是否存在。");
     }
     if let Some(id) = parse_quoted_after(what, "preset ") {
         return format!("找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal。");
@@ -516,6 +538,31 @@ impl Workspace {
         toml::from_str::<WsOpts>(&raw)
             .map(|w| w.template_options)
             .unwrap_or_default()
+    }
+
+    /// Reads the optional top-level `groups = [...]` declaration from `workspace.toml`,
+    /// normalizing each entry, ignoring empty/invalid items, and deduplicating in order.
+    pub fn workspace_groups(&self) -> Vec<String> {
+        let Ok(raw) = fs::read_to_string(self.root.join(WORKSPACE_FILE)) else {
+            return Vec::new();
+        };
+        let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+            return Vec::new();
+        };
+        let Some(arr) = table.get("groups").and_then(toml::Value::as_array) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for val in arr {
+            if let Some(s) = val.as_str()
+                && let Ok(norm) = normalize_group_name(s)
+                && seen.insert(norm.clone())
+            {
+                out.push(norm);
+            }
+        }
+        out
     }
 
     /// Reads `templates/preamble.typ` from the workspace if present and non-empty.
@@ -1153,6 +1200,9 @@ impl Workspace {
     /// Writes a problem's `problem.toml`.
     pub fn save_problem_meta(&self, id: &str, meta: &ProblemMeta) -> Result<()> {
         check_id(id)?;
+        if let Some(group) = &meta.group {
+            normalize_group_name(group)?;
+        }
         let text = toml::to_string(meta).expect("problem metadata serializes");
         self.write(&format!("problems/{id}/problem.toml"), text.as_bytes())
     }

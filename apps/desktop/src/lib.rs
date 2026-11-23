@@ -38,19 +38,21 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
-    AboutInfoJs, ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs,
+    AboutInfoJs, ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, BatchDeleteItemJs,
+    BatchDeleteResultJs, BatchExportRequestJs, BatchItemResultJs, BatchMutationResultJs,
+    BatchStartResultJs, BatchTaskEventJs, BatchTaskItemJs, BatchTaskSnapshotJs,
     CleanUnusedAssetsResultJs, ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs,
     ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
-    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
-    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
-    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PackageWarningJs,
-    PdfFreshnessJs, PickedFolder, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer,
-    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
-    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
-    ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs, SaveResult,
-    SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs, LimitsJs, MarkdownSpanJs,
+    MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs,
+    PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
+    PackageWarningJs, PdfFreshnessJs, PickedFolder, PolygonImportResultJs, PreviewDiagnostic,
+    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
+    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
+    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs,
+    SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -77,8 +79,10 @@ pub struct Preview {
 impl Drop for Preview {
     fn drop(&mut self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
-        // Stop the watcher before dropping our `Arc<State>` so any pending `next_change`
-        // blocking on `mpsc::Receiver::recv()` wakes up immediately and never leaks.
+        // Stop the watcher and any running batch task before dropping our `Arc<State>` so
+        // any pending `next_change` / `next_batch_event` blocking on `mpsc::Receiver::recv()`
+        // wakes up immediately and never leaks.
+        self.state.stop_batch_task();
         let old_watcher = self.state.stop_watcher();
         drop(old_watcher);
     }
@@ -714,6 +718,116 @@ impl Preview {
     /// `referencingContests` when any unfrozen contest references it.
     pub fn delete_problem(&self, id: String) -> ActionResult {
         self.state.delete_problem(&id)
+    }
+
+    // ---- Persistent problem groups & batch operations ----------------------------------
+
+    /// Creates a new persistent problem group in `workspace.toml`.
+    pub fn create_group(&self, name: String) -> ActionResult {
+        self.state.create_group(&name)
+    }
+
+    /// Renames a persistent problem group in `workspace.toml` and all member `problem.toml` files.
+    pub fn rename_group(&self, old_name: String, new_name: String) -> ActionResult {
+        self.state.rename_group(&old_name, &new_name)
+    }
+
+    /// Deletes a persistent problem group from `workspace.toml` and ungroups member problems
+    /// without deleting any problems.
+    pub fn delete_group(&self, name: String) -> ActionResult {
+        self.state.delete_group(&name)
+    }
+
+    /// Reorders declared persistent problem groups in `workspace.toml`.
+    pub fn reorder_groups(&self, names: Vec<String>) -> ActionResult {
+        self.state.reorder_groups(&names)
+    }
+
+    /// Sets or clears the persistent `group` on multiple problems in one batch.
+    pub fn batch_set_group(
+        &self,
+        ids: Vec<String>,
+        group: Option<String>,
+    ) -> BatchMutationResultJs {
+        self.state.batch_set_group(&ids, group.as_deref())
+    }
+
+    /// Adds and/or removes tags across multiple problems in one batch.
+    pub fn batch_edit_tags(
+        &self,
+        ids: Vec<String>,
+        add: Vec<String>,
+        remove: Vec<String>,
+    ) -> BatchMutationResultJs {
+        self.state.batch_edit_tags(&ids, &add, &remove)
+    }
+
+    /// Sets or clears `rating` across multiple problems in one batch.
+    pub fn batch_set_rating(&self, ids: Vec<String>, rating: Option<u32>) -> BatchMutationResultJs {
+        self.state.batch_set_rating(&ids, rating)
+    }
+
+    /// Atomically adds multiple problems to an existing contest, refusing if frozen/archived
+    /// or if the resulting total exceeds 26 problems.
+    pub fn batch_add_to_contest(
+        &self,
+        contest_id: String,
+        problem_ids: Vec<String>,
+    ) -> BatchMutationResultJs {
+        self.state.batch_add_to_contest(&contest_id, &problem_ids)
+    }
+
+    /// Batch-deletes multiple problems, skipping any referenced by unfrozen contests with
+    /// `code: "problem_referenced"` and `referencingContests`.
+    pub fn batch_delete_problems(&self, ids: Vec<String>) -> BatchDeleteResultJs {
+        self.state.batch_delete_problems(&ids)
+    }
+
+    /// Starts a strictly sequential background batch package build/verification task
+    /// (`mode`: `"verify"` or `"debug"`). Stream progress via `nextBatchEvent(taskId)`.
+    pub fn start_batch_build(&self, ids: Vec<String>, mode: String) -> BatchStartResultJs {
+        self.state.start_batch_build(ids, mode)
+    }
+
+    /// Starts a background batch export task (`format`: `"domjudge"`, `"hydro"`, or
+    /// `"merged_pdf"`). Stream progress via `nextBatchEvent(taskId)`.
+    pub fn start_batch_export(&self, req: BatchExportRequestJs) -> BatchStartResultJs {
+        self.state.start_batch_export(req)
+    }
+
+    /// Cooperatively cancels the currently running background batch task, if any.
+    pub fn cancel_batch_task(&self) -> ActionResult {
+        self.state.cancel_batch_task()
+    }
+
+    /// Returns the latest snapshot of the active or most recently completed batch task.
+    pub fn batch_task_status(&self) -> BatchTaskSnapshotJs {
+        self.state.batch_task_status()
+    }
+
+    /// Polling-free streaming event receiver for `taskId` returned by `startBatchBuild` or
+    /// `startBatchExport`. Blocks off the UI thread until the next event arrives or the task
+    /// stream closes (`kind === "closed"`).
+    pub async fn next_batch_event(this: Instance<Self>, task_id: u32) -> BatchTaskEventJs {
+        if this.is_disposed() {
+            return BatchTaskEventJs::closed(task_id, BatchTaskSnapshotJs::default());
+        }
+        let (rx_opt, fallback_snap) = this.with(|p| p.state.batch_event_receiver(task_id));
+        let Some(rx) = rx_opt else {
+            return BatchTaskEventJs::closed(task_id, fallback_snap);
+        };
+        blocking(move || {
+            let guard = match rx.lock() {
+                Ok(g) => g,
+                Err(_) => return BatchTaskEventJs::closed(task_id, fallback_snap),
+            };
+            match guard.recv() {
+                Ok(ev) => ev,
+                Err(_) => BatchTaskEventJs::closed(task_id, fallback_snap),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| BatchTaskEventJs::closed(task_id, BatchTaskSnapshotJs::default()))
     }
 
     /// Saves `samples` into `problems/<id>/samples/` as `01.in`/`01.ans`..`NN.in`/`NN.ans`,

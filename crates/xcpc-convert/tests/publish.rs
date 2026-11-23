@@ -1665,3 +1665,129 @@ fn minimal_preset_compiles_cjk_math_and_code_blocks_cleanly() {
     );
     assert!(compiled.unwrap().page_count() >= 1);
 }
+
+#[test]
+fn merged_pdf_statements_and_editorial_without_creating_contest() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+
+    for (id, title) in [("p-alpha", "第一题"), ("p-beta", "第二题")] {
+        ws.create_problem(id, title).unwrap();
+        ws.write(
+            &format!("problems/{id}/statement.md"),
+            "求 $a + b$。\n\n## 输入格式\n\n两个整数。\n\n## 输出格式\n\n一个整数。\n".as_bytes(),
+        )
+        .unwrap();
+        ws.write(
+            &format!("problems/{id}/editorial.md"),
+            format!("直接输出 $a + b$ 即可（{title}）。\n").as_bytes(),
+        )
+        .unwrap();
+        ws.write(&format!("problems/{id}/samples/01.in"), b"1 2\n")
+            .unwrap();
+        ws.write(&format!("problems/{id}/samples/01.ans"), b"3\n")
+            .unwrap();
+    }
+
+    let ids = vec!["p-alpha".to_owned(), "p-beta".to_owned()];
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+
+    // 1. Statements booklet with custom title -> A, B labels & default filename.
+    let opts_stmt = publish::MergedBookOptions {
+        title: Some("春季训练题集".into()),
+        language: Some(xcpc_domain::Language::Chinese),
+        kind: Kind::Statements,
+        template: None,
+        cover: Some(true),
+    };
+    let doc = publish::document_problems(&ws, &ids, &opts_stmt).unwrap();
+    assert_eq!(
+        doc.problems,
+        vec![
+            ("A".to_owned(), "p-alpha".to_owned()),
+            ("B".to_owned(), "p-beta".to_owned()),
+        ]
+    );
+
+    let outcome = publish::export_merged_pdf(&ws, &mut engine, &ids, &opts_stmt, None).unwrap();
+    assert!(
+        outcome.report.ok,
+        "diagnostics: {:#?}",
+        outcome.report.diagnostics
+    );
+    assert_eq!(outcome.path, "build/春季训练题集-试题册.pdf");
+    assert!(outcome.pages >= 2);
+    let pdf_bytes = ws.read_bytes(&outcome.path).unwrap();
+    assert!(pdf_bytes.starts_with(b"%PDF-"));
+    assert!(
+        ws.list_contests().unwrap().is_empty(),
+        "export_merged_pdf must not create any contests/<id>/ directory"
+    );
+
+    // 2. Editorial booklet with default title -> `build/题集-2题-题解.pdf`.
+    let opts_ed = publish::MergedBookOptions {
+        title: None,
+        language: Some(xcpc_domain::Language::Chinese),
+        kind: Kind::Editorial,
+        template: None,
+        cover: None,
+    };
+    let ed_outcome = publish::export_merged_pdf(&ws, &mut engine, &ids, &opts_ed, None).unwrap();
+    assert!(
+        ed_outcome.report.ok,
+        "diagnostics: {:#?}",
+        ed_outcome.report.diagnostics
+    );
+    assert_eq!(ed_outcome.path, "build/题集-2题-题解.pdf");
+    assert!(ed_outcome.pages >= 1);
+    assert!(
+        ws.read_bytes(&ed_outcome.path)
+            .unwrap()
+            .starts_with(b"%PDF-")
+    );
+
+    // 3. Read-only workspace is rejected upfront.
+    let ro_ws = Workspace::open(dir.path(), true).unwrap();
+    let err = publish::export_merged_pdf(&ro_ws, &mut engine, &ids, &opts_stmt, None).unwrap_err();
+    assert_eq!(err.code(), "read_only");
+}
+
+#[test]
+fn merged_pdf_over_26_problems_uses_numeric_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+
+    let mut ids = Vec::new();
+    for i in 1..=28 {
+        let id = format!("prob-{i:02}");
+        ws.create_problem(&id, &format!("Problem {i}")).unwrap();
+        ws.write(
+            &format!("problems/{id}/statement.md"),
+            b"Body.\n\n## Input\n\nx\n\n## Output\n\ny\n",
+        )
+        .unwrap();
+        ids.push(id);
+    }
+
+    let opts = publish::MergedBookOptions {
+        title: Some("28 Problems".into()),
+        language: Some(xcpc_domain::Language::English),
+        kind: Kind::Statements,
+        template: None,
+        cover: Some(false),
+    };
+    let doc = publish::document_problems(&ws, &ids, &opts).unwrap();
+    assert_eq!(doc.problems.len(), 28);
+    assert_eq!(doc.problems[0], ("1".to_owned(), "prob-01".to_owned()));
+    assert_eq!(doc.problems[25], ("26".to_owned(), "prob-26".to_owned()));
+    assert_eq!(doc.problems[27], ("28".to_owned(), "prob-28".to_owned()));
+
+    // Compile in-memory bytes helper works without writing to disk.
+    let mut engine = publish::engine(&ws, &FontOptions::from_env());
+    let (bytes, report, title) =
+        publish::compile_merged_pdf_bytes(&ws, &mut engine, &ids[..2], &opts).unwrap();
+    assert!(report.ok, "diagnostics: {:#?}", report.diagnostics);
+    assert_eq!(title, "28 Problems");
+    assert!(bytes.unwrap().starts_with(b"%PDF-"));
+    assert!(ws.list_contests().unwrap().is_empty());
+}

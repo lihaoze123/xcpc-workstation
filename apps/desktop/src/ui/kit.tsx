@@ -281,6 +281,7 @@ export function Segmented<T extends string>(props: {
     ? { flexDirection: "row", alignSelf: "stretch", alignItems: "stretch", opacity: props.disabled ? 0.5 : 1 }
     : {
         flexDirection: "row",
+        alignSelf: "flex-start",
         height: 28,
         padding: 2,
         borderRadius: 8,

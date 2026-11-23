@@ -30,8 +30,8 @@ use base64::Engine as _;
 use serde_json::{Map, Value, json};
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
-    ContestMetaPatch, Language, LimitsPatch, OverridePatch, Patch, ProblemMetaPatch, SearchQuery,
-    TemplateOptionValue, TemplateOptionsPatch,
+    ContestMetaPatch, GroupFilter, Language, LimitsPatch, OverridePatch, Patch, ProblemMetaPatch,
+    SearchQuery, TemplateOptionValue, TemplateOptionsPatch,
 };
 use xcpc_engine::{Engine, FontOptions};
 use xcpc_storage::{Workspace, WorkspaceIndex};
@@ -142,6 +142,9 @@ impl Server {
             "list_templates" => self.tool_list_templates(obj),
             "add_template" => self.tool_add_template(obj),
             "search_problems" => self.tool_search_problems(obj),
+            "manage_groups" => self.tool_manage_groups(obj),
+            "batch_update_problems" => self.tool_batch_update_problems(obj),
+            "batch_delete_problems" => self.tool_batch_delete_problems(obj),
             "get_problem" => self.tool_get_problem(obj),
             "get_contest" => self.tool_get_contest(obj),
             "write_problem" => self.tool_write_problem(obj),
@@ -270,6 +273,20 @@ impl Server {
         let rating_min = opt_u32(args, "rating_min").map_err(|m| fail("invalid_arguments", m))?;
         let rating_max = opt_u32(args, "rating_max").map_err(|m| fail("invalid_arguments", m))?;
         let platform = opt_str(args, "platform").map_err(|m| fail("invalid_arguments", m))?;
+        let group = opt_str(args, "group").map_err(|m| fail("invalid_arguments", m))?;
+        let ungrouped = opt_bool(args, "ungrouped").map_err(|m| fail("invalid_arguments", m))?;
+
+        if group.is_some() && ungrouped == Some(true) {
+            return Err(fail(
+                "invalid_arguments",
+                "specify only one of `group` or `ungrouped`",
+            ));
+        }
+        let group_filter = if ungrouped == Some(true) {
+            Some(GroupFilter::Ungrouped)
+        } else {
+            group.map(GroupFilter::Named)
+        };
 
         let index = WorkspaceIndex::scan(&self.ws).map_err(|e| fail(e.code(), e.to_string()))?;
         let search = SearchQuery {
@@ -278,12 +295,145 @@ impl Server {
             rating_min,
             rating_max,
             platform,
+            group: group_filter,
         };
         let problems = index.search_problems(&search);
         Ok(structured(json!({
             "ok": true,
             "problems": problems,
         })))
+    }
+
+    fn tool_manage_groups(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["action", "name", "new_name", "order"],
+            "manage_groups",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let action = req_str(args, "action").map_err(|m| fail("invalid_arguments", m))?;
+        match action.as_str() {
+            "list" => {
+                let (groups, ungrouped_count) = self
+                    .ws
+                    .list_groups()
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "groups": groups,
+                    "ungrouped_count": ungrouped_count,
+                })))
+            }
+            "create" => {
+                if self.ws.is_read_only() {
+                    return Err(fail("read_only", "the workspace is open read-only"));
+                }
+                let name = req_str(args, "name").map_err(|m| fail("invalid_arguments", m))?;
+                let norm = self
+                    .ws
+                    .create_group(&name)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "name": norm,
+                })))
+            }
+            "rename" => {
+                if self.ws.is_read_only() {
+                    return Err(fail("read_only", "the workspace is open read-only"));
+                }
+                let name = req_str(args, "name").map_err(|m| fail("invalid_arguments", m))?;
+                let new_name =
+                    req_str(args, "new_name").map_err(|m| fail("invalid_arguments", m))?;
+                let report = self
+                    .ws
+                    .rename_group(&name, &new_name)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "old_name": report.old_name,
+                    "new_name": report.new_name,
+                    "updated_problems": report.updated_problems,
+                })))
+            }
+            "delete" => {
+                if self.ws.is_read_only() {
+                    return Err(fail("read_only", "the workspace is open read-only"));
+                }
+                let name = req_str(args, "name").map_err(|m| fail("invalid_arguments", m))?;
+                let report = self
+                    .ws
+                    .delete_group(&name)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "name": report.name,
+                    "ungrouped_problems": report.ungrouped_problems,
+                })))
+            }
+            "reorder" => {
+                if self.ws.is_read_only() {
+                    return Err(fail("read_only", "the workspace is open read-only"));
+                }
+                let order = req_str_vec(args, "order").map_err(|m| fail("invalid_arguments", m))?;
+                let groups = self
+                    .ws
+                    .reorder_groups(&order)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                Ok(structured(json!({
+                    "ok": true,
+                    "groups": groups,
+                })))
+            }
+            other => Err(fail(
+                "invalid_arguments",
+                format!(
+                    "unknown action {other:?}: expected \"list\", \"create\", \"rename\", \"delete\", or \"reorder\""
+                ),
+            )),
+        }
+    }
+
+    fn tool_batch_update_problems(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &["ids", "group", "tags_add", "tags_remove", "rating"],
+            "batch_update_problems",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let ids = req_str_vec(args, "ids").map_err(|m| fail("invalid_arguments", m))?;
+        let group = patch_str(args, "group").map_err(|m| fail("invalid_arguments", m))?;
+        let tags_add = opt_str_vec(args, "tags_add").map_err(|m| fail("invalid_arguments", m))?;
+        let tags_remove =
+            opt_str_vec(args, "tags_remove").map_err(|m| fail("invalid_arguments", m))?;
+        let rating = patch_u32(args, "rating").map_err(|m| fail("invalid_arguments", m))?;
+
+        let report = self
+            .ws
+            .batch_update_problems(&ids, &group, &tags_add, &tags_remove, &rating)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(
+            serde_json::to_value(&report).expect("serializable"),
+        ))
+    }
+
+    fn tool_batch_delete_problems(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(args, &["ids"], "batch_delete_problems")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let ids = req_str_vec(args, "ids").map_err(|m| fail("invalid_arguments", m))?;
+        let report = self
+            .ws
+            .batch_delete_problems(&ids)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        Ok(structured(
+            serde_json::to_value(&report).expect("serializable"),
+        ))
     }
 
     fn tool_get_problem(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
@@ -832,10 +982,18 @@ impl Server {
         if self.ws.is_read_only() {
             return Err(fail("read_only", "the workspace is open read-only"));
         }
-        reject_unknown_keys(args, &["zip_path", "id"], "import_polygon")
-            .map_err(|m| fail("invalid_arguments", m))?;
+        reject_unknown_keys(
+            args,
+            &["zip_path", "id", "group", "no_auto_group"],
+            "import_polygon",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
         let zip_path = req_str(args, "zip_path").map_err(|m| fail("invalid_arguments", m))?;
         let target_id = opt_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let group = opt_str(args, "group").map_err(|m| fail("invalid_arguments", m))?;
+        let no_auto_group = opt_bool(args, "no_auto_group")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
 
         // Security boundary (docs/architecture.md §7.3): strictly require a `.zip` extension
         // before opening any external file; all writes remain confined to the workspace.
@@ -863,6 +1021,8 @@ impl Server {
 
         let opts = xcpc_packages::PolygonImportOptions {
             target_id,
+            group,
+            no_auto_group,
             ..Default::default()
         };
         let res = xcpc_packages::import_polygon(&self.ws, &resolved_zip, &opts)
@@ -878,7 +1038,7 @@ impl Server {
         }
         reject_unknown_keys(
             args,
-            &["format", "target", "id", "output", "force"],
+            &["format", "target", "id", "ids", "output", "force"],
             "export_oj_package",
         )
         .map_err(|m| fail("invalid_arguments", m))?;
@@ -891,6 +1051,63 @@ impl Server {
             )
         })?;
         let target_raw = req_str(args, "target").map_err(|m| fail("invalid_arguments", m))?;
+        let force = opt_bool(args, "force")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
+
+        if target_raw == "problems" {
+            if args.get("id").is_some_and(|v| !v.is_null()) {
+                return Err(fail(
+                    "invalid_arguments",
+                    "use `ids` (not `id`) when `target` is \"problems\"",
+                ));
+            }
+            let ids = req_str_vec(args, "ids").map_err(|m| fail("invalid_arguments", m))?;
+            if ids.is_empty() {
+                return Err(fail("invalid_arguments", "`ids` must not be empty"));
+            }
+            let output_rel =
+                match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
+                    Some(rel) => rel,
+                    None => xcpc_packages::default_batch_export_dir(format)
+                        .to_string_lossy()
+                        .into_owned(),
+                };
+            self.ws
+                .check_writable(&output_rel)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+            let output_path = self
+                .ws
+                .resolve(&output_rel)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+            let build_root = self.ws.root().join("build");
+            if !output_path.starts_with(&build_root) {
+                return Err(fail(
+                    "path_escape",
+                    format!(
+                        "`output` for batch export must stay inside `build/` (got {output_rel:?})"
+                    ),
+                ));
+            }
+            let opts = xcpc_packages::ExportOjOptions {
+                format,
+                output_path,
+                force,
+                language: None,
+            };
+            let res = xcpc_packages::export_oj_packages_batch(&self.ws, &ids, &opts, None, None)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+            return Ok(structured(
+                serde_json::to_value(&res).expect("serializable"),
+            ));
+        }
+
+        if args.get("ids").is_some_and(|v| !v.is_null()) {
+            return Err(fail(
+                "invalid_arguments",
+                "`ids` is only valid when `target` is \"problems\"",
+            ));
+        }
         let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
         let target = match target_raw.as_str() {
             "problem" => xcpc_packages::ExportTarget::Problem(id.clone()),
@@ -898,14 +1115,11 @@ impl Server {
             other => {
                 return Err(fail(
                     "invalid_arguments",
-                    format!("unknown target {other:?}: expected \"problem\" or \"contest\""),
+                    format!(
+                        "unknown target {other:?}: expected \"problem\", \"contest\", or \"problems\""
+                    ),
                 ));
             }
-        };
-        let force = match args.get("force") {
-            None | Some(Value::Null) => false,
-            Some(Value::Bool(b)) => *b,
-            Some(_) => return Err(fail("invalid_arguments", "`force` must be a boolean")),
         };
         let output_rel = match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
             Some(rel) => rel,
@@ -949,6 +1163,9 @@ fn is_known_tool(name: &str) -> bool {
             | "list_templates"
             | "add_template"
             | "search_problems"
+            | "manage_groups"
+            | "batch_update_problems"
+            | "batch_delete_problems"
             | "get_problem"
             | "get_contest"
             | "write_problem"
@@ -1058,6 +1275,14 @@ fn opt_str(obj: &Map<String, Value>, key: &str) -> Result<Option<String>, String
     }
 }
 
+fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(format!("`{key}` must be a boolean")),
+    }
+}
+
 fn opt_u32(obj: &Map<String, Value>, key: &str) -> Result<Option<u32>, String> {
     match obj.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -1067,6 +1292,21 @@ fn opt_u32(obj: &Map<String, Value>, key: &str) -> Result<Option<u32>, String> {
                 .ok_or_else(|| format!("`{key}` must be a non-negative integer"))?;
             u32::try_from(n)
                 .map(Some)
+                .map_err(|_| format!("`{key}` is out of range"))
+        }
+    }
+}
+
+fn patch_u32(obj: &Map<String, Value>, key: &str) -> Result<Patch<u32>, String> {
+    match obj.get(key) {
+        None => Ok(Patch::Keep),
+        Some(Value::Null) => Ok(Patch::Clear),
+        Some(v) => {
+            let n = v
+                .as_u64()
+                .ok_or_else(|| format!("`{key}` must be a non-negative integer or null"))?;
+            u32::try_from(n)
+                .map(Patch::Set)
                 .map_err(|_| format!("`{key}` is out of range"))
         }
     }
@@ -1259,8 +1499,8 @@ fn tools() -> Value {
         {
             "name": "search_problems",
             "title": "Search problems",
-            "description": "Search the workspace problem library by optional text, tags, rating range, or source platform. \
-                Returns metadata summaries only (ID, title, rating, tags, sources, editorial/solution presence; no statement body).",
+            "description": "Search the workspace problem library by optional text, tags, rating range, source platform, or persistent group. \
+                Returns metadata summaries only (ID, title, group, rating, tags, sources, editorial/solution presence; no statement body).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1270,10 +1510,64 @@ fn tools() -> Value {
                     "rating_min": { "type": "integer", "minimum": 0, "description": "Minimum rating (inclusive)." },
                     "rating_max": { "type": "integer", "minimum": 0, "description": "Maximum rating (inclusive)." },
                     "platform": { "type": "string", "description": "Filter by external source platform (e.g. codeforces, atcoder, luogu)." },
+                    "group": { "type": "string", "description": "Filter by exact persistent group name (mutually exclusive with `ungrouped: true`)." },
+                    "ungrouped": { "type": "boolean", "description": "When true, only return problems without a group (mutually exclusive with `group`)." },
                 },
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "manage_groups",
+            "title": "Manage persistent problem groups",
+            "description": "List, create, rename, delete, or reorder persistent problem groups stored in `workspace.toml` and `problem.toml`. \
+                Only `action=\"list\"` is allowed under `--read-only`; deleting a group moves member problems to ungrouped without deleting problems.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "create", "rename", "delete", "reorder"], "description": "Group operation to perform." },
+                    "name": { "type": "string", "description": "Group name (required for create, rename, delete)." },
+                    "new_name": { "type": "string", "description": "New group name (required for rename)." },
+                    "order": { "type": "array", "items": { "type": "string" }, "description": "Complete ordered list of declared group names (required for reorder)." },
+                },
+                "required": ["action"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
+        {
+            "name": "batch_update_problems",
+            "title": "Batch update problem metadata",
+            "description": "Atomically update `group`, `tags` (`tags_add`/`tags_remove`), and/or `rating` across multiple problems in a single call. \
+                Pass `null` for `group` or `rating` to clear the field; omit to keep unchanged. Refused under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Problem IDs to update." },
+                    "group": { "type": ["string", "null"], "description": "Set persistent group name, or null to clear." },
+                    "tags_add": { "type": "array", "items": { "type": "string" }, "description": "Tags to append if absent." },
+                    "tags_remove": { "type": "array", "items": { "type": "string" }, "description": "Tags to remove (case-insensitive)." },
+                    "rating": { "type": ["integer", "null"], "minimum": 0, "description": "Set difficulty rating, or null to clear." },
+                },
+                "required": ["ids"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "batch_delete_problems",
+            "title": "Batch delete problems",
+            "description": "Delete multiple problems from `problems/<id>/`. Problems referenced by any unfrozen contest are skipped with \
+                `code=\"problem_referenced\"` and `referencing_contests`. Refused under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Problem IDs to delete." },
+                },
+                "required": ["ids"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
         },
         {
             "name": "get_problem",
@@ -1586,6 +1880,8 @@ fn package_tools() -> Value {
                 "properties": {
                     "zip_path": { "type": "string", "description": "Local absolute or workspace-relative path to a Polygon `.zip` archive." },
                     "id": { "type": "string", "description": "Optional target problem slug or contest ID override." },
+                    "group": { "type": "string", "description": "Optional persistent group name to assign to imported problem(s) (overrides auto-grouping)." },
+                    "no_auto_group": { "type": "boolean", "description": "When true, disables automatic grouping by contest name for Polygon contest imports." },
                 },
                 "required": ["zip_path"],
                 "additionalProperties": false,
@@ -1595,19 +1891,20 @@ fn package_tools() -> Value {
         {
             "name": "export_oj_package",
             "title": "Export OJ package (DOMjudge / Hydro)",
-            "description": "Export a strictly verified problem or contest to minimal-set DOMjudge or Hydro ZIP package(s) inside the workspace. \
+            "description": "Export a strictly verified problem, contest, or batch of problems to minimal-set DOMjudge or Hydro ZIP package(s) inside the workspace. \
                 Never compiles or executes C++ code; requires prior `build_package` with mode=\"verify\" unless `force` is true \
-                (which still requires built testdata under `build/problems/<slug>/tests/`).",
+                (which still requires built testdata under `build/problems/<slug>/tests/`). Batch export (`target=\"problems\"`) confines output to `build/`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "format": { "type": "string", "enum": ["domjudge", "hydro"], "description": "Target OJ package format." },
-                    "target": { "type": "string", "enum": ["problem", "contest"], "description": "Whether to export a single problem or an entire contest." },
-                    "id": { "type": "string", "description": "Problem ID or contest ID." },
-                    "output": { "type": "string", "description": "Optional workspace-relative output path (`.zip` for problem, directory for contest; defaults under `build/`)." },
+                    "target": { "type": "string", "enum": ["problem", "contest", "problems"], "description": "Whether to export a single problem, an entire contest, or a batch of problems." },
+                    "id": { "type": "string", "description": "Problem ID or contest ID (required when target is \"problem\" or \"contest\")." },
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Problem IDs (required when target is \"problems\")." },
+                    "output": { "type": "string", "description": "Optional workspace-relative output path (`.zip` for problem, directory for contest or problems; batch export must stay inside `build/`)." },
                     "force": { "type": "boolean", "description": "Bypass strict verification check (default false; built testdata is still required)." },
                 },
-                "required": ["format", "target", "id"],
+                "required": ["format", "target"],
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
@@ -1665,6 +1962,9 @@ mod tests {
                 "list_templates",
                 "add_template",
                 "search_problems",
+                "manage_groups",
+                "batch_update_problems",
+                "batch_delete_problems",
                 "get_problem",
                 "get_contest",
                 "write_problem",

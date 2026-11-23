@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,344 @@ pub struct BuildOptions {
 
 /// Optional progress callback invoked during `build_package`.
 pub type ProgressCallback<'a> = &'a (dyn Fn(ProgressEvent) + Send + Sync);
+
+/// Outcome status of a single problem within `build_packages_batch`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchBuildItemStatus {
+    Passed,
+    Failed,
+    Skipped,
+    Error,
+    Cancelled,
+}
+
+/// Per-problem result entry in [`BatchBuildReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchBuildItemResult {
+    pub problem_id: String,
+    pub status: BatchBuildItemStatus,
+    pub verified: bool,
+    pub elapsed_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Live streaming progress event emitted by [`build_packages_batch`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchBuildEvent {
+    ProblemStarted {
+        problem_id: String,
+        index: usize,
+        total: usize,
+    },
+    ProblemProgress {
+        problem_id: String,
+        index: usize,
+        total: usize,
+        event: ProgressEvent,
+    },
+    ProblemFinished {
+        item: BatchBuildItemResult,
+        index: usize,
+        total: usize,
+    },
+    Cancelled {
+        completed: usize,
+        total: usize,
+    },
+    AllFinished {
+        passed: usize,
+        failed: usize,
+        skipped: usize,
+        cancelled: usize,
+        total: usize,
+        elapsed_ms: u64,
+    },
+}
+
+/// Aggregated report returned by [`build_packages_batch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchBuildReport {
+    pub ok: bool,
+    pub cancelled: bool,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub cancelled_count: usize,
+    pub elapsed_ms: u64,
+    pub items: Vec<BatchBuildItemResult>,
+}
+
+/// Builds and/or strictly verifies multiple problem packages strictly sequentially.
+///
+/// Deduplicates `slugs` preserving caller order, pre-checks workspace writability and active
+/// compiler once upfront, skips pure-publishing problems (`not_a_package`), and supports
+/// cooperative cancellation via `cancel`.
+pub fn build_packages_batch(
+    ws: &Workspace,
+    slugs: &[String],
+    opts: &BuildOptions,
+    cancel: Option<Arc<AtomicBool>>,
+    progress: Option<&(dyn Fn(BatchBuildEvent) + Send + Sync)>,
+) -> Result<BatchBuildReport> {
+    if ws.is_read_only() {
+        return Err(JudgeError::Storage(xcpc_storage::Error::ReadOnly));
+    }
+    resolve_active_compiler(opts.cxx_override.as_deref())?;
+
+    let mut seen = HashSet::with_capacity(slugs.len());
+    let unique_slugs: Vec<String> = slugs
+        .iter()
+        .filter(|s| seen.insert((*s).as_str()))
+        .cloned()
+        .collect();
+
+    let total = unique_slugs.len();
+    let batch_start = Instant::now();
+
+    let is_cancelled = || cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed));
+    let emit = |ev: BatchBuildEvent| {
+        if let Some(cb) = progress {
+            cb(ev);
+        }
+    };
+
+    let mut items = Vec::with_capacity(total);
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    let mut cancelled_count = 0usize;
+    let mut was_cancelled = false;
+
+    for (index, slug) in unique_slugs.iter().enumerate() {
+        if is_cancelled() {
+            was_cancelled = true;
+            for rem_slug in &unique_slugs[index..] {
+                cancelled_count += 1;
+                items.push(BatchBuildItemResult {
+                    problem_id: rem_slug.clone(),
+                    status: BatchBuildItemStatus::Cancelled,
+                    verified: false,
+                    elapsed_ms: 0,
+                    code: Some(JudgeError::Cancelled.code().to_owned()),
+                    message: Some(JudgeError::Cancelled.human_message()),
+                });
+            }
+            emit(BatchBuildEvent::Cancelled {
+                completed: index,
+                total,
+            });
+            break;
+        }
+
+        let item_start = Instant::now();
+
+        let problem = match ws.load_problem(slug) {
+            Ok(p) => p,
+            Err(e) => {
+                let je = JudgeError::Storage(e);
+                let item = BatchBuildItemResult {
+                    problem_id: slug.clone(),
+                    status: BatchBuildItemStatus::Error,
+                    verified: false,
+                    elapsed_ms: item_start.elapsed().as_millis() as u64,
+                    code: Some(je.code().to_owned()),
+                    message: Some(je.human_message()),
+                };
+                failed += 1;
+                emit(BatchBuildEvent::ProblemFinished {
+                    item: item.clone(),
+                    index,
+                    total,
+                });
+                items.push(item);
+                continue;
+            }
+        };
+
+        let prob_dir = match ws.resolve(&problem.dir) {
+            Ok(d) => d,
+            Err(e) => {
+                let je = JudgeError::Storage(e);
+                let item = BatchBuildItemResult {
+                    problem_id: slug.clone(),
+                    status: BatchBuildItemStatus::Error,
+                    verified: false,
+                    elapsed_ms: item_start.elapsed().as_millis() as u64,
+                    code: Some(je.code().to_owned()),
+                    message: Some(je.human_message()),
+                };
+                failed += 1;
+                emit(BatchBuildEvent::ProblemFinished {
+                    item: item.clone(),
+                    index,
+                    total,
+                });
+                items.push(item);
+                continue;
+            }
+        };
+
+        if !problem.meta.has_package_in_dir(&prob_dir) {
+            let item = BatchBuildItemResult {
+                problem_id: slug.clone(),
+                status: BatchBuildItemStatus::Skipped,
+                verified: false,
+                elapsed_ms: item_start.elapsed().as_millis() as u64,
+                code: Some("not_a_package".to_owned()),
+                message: Some(format!(
+                    "题目「{slug}」为纯出版题（未配置题目包），已跳过。"
+                )),
+            };
+            skipped += 1;
+            emit(BatchBuildEvent::ProblemFinished {
+                item: item.clone(),
+                index,
+                total,
+            });
+            items.push(item);
+            continue;
+        }
+
+        emit(BatchBuildEvent::ProblemStarted {
+            problem_id: slug.clone(),
+            index,
+            total,
+        });
+
+        let wrapped_cb = |ev: ProgressEvent| {
+            if let Some(cb) = progress {
+                cb(BatchBuildEvent::ProblemProgress {
+                    problem_id: slug.clone(),
+                    index,
+                    total,
+                    event: ev,
+                });
+            }
+        };
+        let inner_progress: Option<ProgressCallback<'_>> =
+            progress.map(|_| &wrapped_cb as ProgressCallback<'_>);
+
+        match build_package(ws, slug, opts, cancel.clone(), inner_progress) {
+            Ok(report) => {
+                let elapsed_ms = item_start.elapsed().as_millis() as u64;
+                let item = if report.ok {
+                    passed += 1;
+                    BatchBuildItemResult {
+                        problem_id: slug.clone(),
+                        status: BatchBuildItemStatus::Passed,
+                        verified: report.verified,
+                        elapsed_ms,
+                        code: None,
+                        message: None,
+                    }
+                } else {
+                    failed += 1;
+                    let msg = report
+                        .gates
+                        .iter()
+                        .find(|g| g.status == GateStatus::Fail)
+                        .map(|g| format!("{}：{}", g.title, g.message))
+                        .or_else(|| report.diagnostics.first().cloned())
+                        .unwrap_or_else(|| "题目包构建未通过验收门禁。".to_owned());
+                    BatchBuildItemResult {
+                        problem_id: slug.clone(),
+                        status: BatchBuildItemStatus::Failed,
+                        verified: false,
+                        elapsed_ms,
+                        code: Some("build_failed".to_owned()),
+                        message: Some(msg),
+                    }
+                };
+                emit(BatchBuildEvent::ProblemFinished {
+                    item: item.clone(),
+                    index,
+                    total,
+                });
+                items.push(item);
+            }
+            Err(JudgeError::Cancelled) => {
+                was_cancelled = true;
+                let item = BatchBuildItemResult {
+                    problem_id: slug.clone(),
+                    status: BatchBuildItemStatus::Cancelled,
+                    verified: false,
+                    elapsed_ms: item_start.elapsed().as_millis() as u64,
+                    code: Some(JudgeError::Cancelled.code().to_owned()),
+                    message: Some(JudgeError::Cancelled.human_message()),
+                };
+                cancelled_count += 1;
+                emit(BatchBuildEvent::ProblemFinished {
+                    item: item.clone(),
+                    index,
+                    total,
+                });
+                items.push(item);
+
+                for rem_slug in &unique_slugs[(index + 1)..] {
+                    cancelled_count += 1;
+                    items.push(BatchBuildItemResult {
+                        problem_id: rem_slug.clone(),
+                        status: BatchBuildItemStatus::Cancelled,
+                        verified: false,
+                        elapsed_ms: 0,
+                        code: Some(JudgeError::Cancelled.code().to_owned()),
+                        message: Some(JudgeError::Cancelled.human_message()),
+                    });
+                }
+                emit(BatchBuildEvent::Cancelled {
+                    completed: index,
+                    total,
+                });
+                break;
+            }
+            Err(e) => {
+                failed += 1;
+                let item = BatchBuildItemResult {
+                    problem_id: slug.clone(),
+                    status: BatchBuildItemStatus::Error,
+                    verified: false,
+                    elapsed_ms: item_start.elapsed().as_millis() as u64,
+                    code: Some(e.code().to_owned()),
+                    message: Some(e.human_message()),
+                };
+                emit(BatchBuildEvent::ProblemFinished {
+                    item: item.clone(),
+                    index,
+                    total,
+                });
+                items.push(item);
+            }
+        }
+    }
+
+    let elapsed_ms = batch_start.elapsed().as_millis() as u64;
+    emit(BatchBuildEvent::AllFinished {
+        passed,
+        failed,
+        skipped,
+        cancelled: cancelled_count,
+        total,
+        elapsed_ms,
+    });
+
+    Ok(BatchBuildReport {
+        ok: failed == 0 && !was_cancelled,
+        cancelled: was_cancelled,
+        total,
+        passed,
+        failed,
+        skipped,
+        cancelled_count,
+        elapsed_ms,
+        items,
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedSolutionRun {

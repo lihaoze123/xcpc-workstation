@@ -1444,3 +1444,376 @@ fn cli_import_polygon_and_export_oj_packages() {
     assert_eq!(ro_export.status.code(), Some(2));
     assert_eq!(parse_json_stdout(&ro_export)["error"]["code"], "read_only");
 }
+
+#[test]
+fn cli_groups_search_and_batch_metadata_and_delete() {
+    let dir = setup_workspace();
+
+    // 1. Group CRUD: create, list, rename, reorder, delete.
+    let c1 = run_xcpc(
+        Some(dir.path()),
+        &["--json", "group", "create", "省赛候选"],
+        None,
+    );
+    assert_eq!(c1.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&c1)["name"], "省赛候选");
+
+    let c2 = run_xcpc(
+        Some(dir.path()),
+        &["--json", "group", "create", "校赛备选"],
+        None,
+    );
+    assert_eq!(c2.status.code(), Some(0));
+
+    // Read-only allows `group list`, refuses mutations.
+    let ro_list = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "--json", "group", "list"],
+        None,
+    );
+    assert_eq!(ro_list.status.code(), Some(0));
+    let ro_list_j = parse_json_stdout(&ro_list);
+    assert_eq!(ro_list_j["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(ro_list_j["ungrouped_count"], 2);
+
+    let ro_create = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "--json", "group", "create", "禁止"],
+        None,
+    );
+    assert_eq!(ro_create.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_create)["error"]["code"], "read_only");
+
+    // Reorder groups.
+    let reo = run_xcpc(
+        Some(dir.path()),
+        &["--json", "group", "reorder", "校赛备选", "省赛候选"],
+        None,
+    );
+    assert_eq!(reo.status.code(), Some(0));
+    assert_eq!(
+        parse_json_stdout(&reo)["groups"],
+        serde_json::json!(["校赛备选", "省赛候选"])
+    );
+
+    // 2. Batch assign group + search --group / --ungrouped + conflict.
+    let pg = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "group", "省赛候选", "p1"],
+        None,
+    );
+    assert_eq!(pg.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&pg)["succeeded"], 1);
+
+    let sg = run_xcpc(
+        Some(dir.path()),
+        &["--json", "search", "--group", "省赛候选"],
+        None,
+    );
+    assert_eq!(sg.status.code(), Some(0));
+    let sg_probs = parse_json_stdout(&sg)["problems"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(sg_probs.len(), 1);
+    assert_eq!(sg_probs[0]["id"], "p1");
+
+    let su = run_xcpc(Some(dir.path()), &["--json", "search", "--ungrouped"], None);
+    assert_eq!(su.status.code(), Some(0));
+    let su_probs = parse_json_stdout(&su)["problems"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(su_probs.len(), 1);
+    assert_eq!(su_probs[0]["id"], "p2");
+
+    // `--group` conflicts with `--ungrouped` (clap usage error -> exit 2).
+    let conflict = run_xcpc(
+        Some(dir.path()),
+        &["search", "--group", "省赛候选", "--ungrouped"],
+        None,
+    );
+    assert_eq!(conflict.status.code(), Some(2));
+
+    // Rename group updates member problem.
+    let ren = run_xcpc(
+        Some(dir.path()),
+        &["--json", "group", "rename", "省赛候选", "省赛正选"],
+        None,
+    );
+    assert_eq!(ren.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&ren)["updated_problems"], 1);
+
+    // Clear group from p1.
+    let clr_g = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "group", "--clear", "p1"],
+        None,
+    );
+    assert_eq!(clr_g.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&clr_g)["succeeded"], 1);
+
+    // Delete group.
+    let del_g = run_xcpc(
+        Some(dir.path()),
+        &["--json", "group", "delete", "省赛正选"],
+        None,
+    );
+    assert_eq!(del_g.status.code(), Some(0));
+
+    // 3. Batch tags and ratings.
+    let tag_res = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json", "problem", "tag", "--add", "graphs", "--remove", "math", "p1", "p2",
+        ],
+        None,
+    );
+    assert_eq!(tag_res.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&tag_res)["succeeded"], 2);
+
+    let rat_set = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "rating", "2100", "p1", "p2"],
+        None,
+    );
+    assert_eq!(rat_set.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&rat_set)["succeeded"], 2);
+
+    let rat_clr = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "rating", "--clear", "p2"],
+        None,
+    );
+    assert_eq!(rat_clr.status.code(), Some(0));
+    assert_eq!(parse_json_stdout(&rat_clr)["succeeded"], 1);
+
+    // Read-only refuses problem tag/rating/group/delete.
+    for args in [
+        &[
+            "--read-only",
+            "--json",
+            "problem",
+            "group",
+            "校赛备选",
+            "p1",
+        ][..],
+        &[
+            "--read-only",
+            "--json",
+            "problem",
+            "tag",
+            "--add",
+            "x",
+            "p1",
+        ][..],
+        &["--read-only", "--json", "problem", "rating", "1500", "p1"][..],
+        &["--read-only", "--json", "problem", "delete", "--yes", "p1"][..],
+    ] {
+        let ro = run_xcpc(Some(dir.path()), args, None);
+        assert_eq!(ro.status.code(), Some(2), "args={args:?}");
+        assert_eq!(parse_json_stdout(&ro)["error"]["code"], "read_only");
+    }
+
+    // 4. Problem delete: reference guard + confirmation.
+    let compose = run_xcpc(
+        Some(dir.path()),
+        &["--json", "contest", "compose", "c1", "p1"],
+        None,
+    );
+    assert_eq!(compose.status.code(), Some(0));
+
+    // Without `--yes` and empty stdin -> aborted (`unconfirmed`, exit 2).
+    let unconf = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "delete", "p2"],
+        None,
+    );
+    assert_eq!(unconf.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&unconf)["error"]["code"], "unconfirmed");
+    assert!(dir.path().join("problems/p2").is_dir());
+
+    // With `--yes`: p1 is skipped (`problem_referenced`), p2 is deleted.
+    let del = run_xcpc(
+        Some(dir.path()),
+        &["--json", "problem", "delete", "--yes", "p1", "p2"],
+        None,
+    );
+    assert_eq!(del.status.code(), Some(0));
+    let dj = parse_json_stdout(&del);
+    assert_eq!(dj["succeeded"], 1);
+    assert_eq!(dj["skipped"], 1);
+    assert_eq!(dj["items"][0]["code"], "problem_referenced");
+    assert_eq!(
+        dj["items"][0]["referencing_contests"],
+        serde_json::json!(["c1"])
+    );
+    assert!(dir.path().join("problems/p1").is_dir());
+    assert!(!dir.path().join("problems/p2").exists());
+}
+
+#[test]
+fn cli_batch_build_packages_export_problems_import_group_and_merged_pdf() {
+    let dir = setup_workspace();
+    let external_dir = tempfile::tempdir().unwrap();
+    let poly_zip = external_dir.path().join("poly-batch.zip");
+    build_sample_polygon_zip(&poly_zip, "poly-batch");
+
+    // 1. `import polygon --group <name> --no-auto-group` assigns explicit group.
+    let imp = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "import",
+            "polygon",
+            poly_zip.to_str().unwrap(),
+            "--id",
+            "poly-1",
+            "--group",
+            "导入集",
+            "--no-auto-group",
+        ],
+        None,
+    );
+    assert_eq!(
+        imp.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&imp.stderr)
+    );
+    assert_eq!(parse_json_stdout(&imp)["group"], "导入集");
+
+    // 2. Multi-ID `package build <ID1> <ID2> --strict --json` runs batch build:
+    //    `poly-1` passes & is verified, pure-publishing `p2` is skipped (`not_a_package`).
+    let bb = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "poly-1", "p2", "--strict"],
+        None,
+    );
+    assert_eq!(
+        bb.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&bb.stdout),
+        String::from_utf8_lossy(&bb.stderr)
+    );
+    let bbj = parse_json_stdout(&bb);
+    assert_eq!(bbj["ok"], true);
+    assert_eq!(bbj["passed"], 1);
+    assert_eq!(bbj["skipped"], 1);
+    assert_eq!(bbj["items"][0]["problem_id"], "poly-1");
+    assert_eq!(bbj["items"][0]["verified"], true);
+    assert_eq!(bbj["items"][1]["problem_id"], "p2");
+    assert_eq!(bbj["items"][1]["status"], "skipped");
+    assert_eq!(bbj["items"][1]["code"], "not_a_package");
+
+    // 3. `export domjudge problems <ID>... -o <DIR> --json` exports verified & skips pure-publishing.
+    let export_dir = external_dir.path().join("batch-dj");
+    let be = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "export",
+            "domjudge",
+            "problems",
+            "poly-1",
+            "p2",
+            "-o",
+            export_dir.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        be.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&be.stderr)
+    );
+    let bej = parse_json_stdout(&be);
+    assert_eq!(bej["ok"], true);
+    assert_eq!(bej["exported"], 1);
+    assert_eq!(bej["skipped"], 1);
+    assert!(export_dir.join("poly-1.zip").is_file());
+
+    // Read-only rejects batch export.
+    let ro_be = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "export",
+            "hydro",
+            "problems",
+            "poly-1",
+        ],
+        None,
+    );
+    assert_eq!(ro_be.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_be)["error"]["code"], "read_only");
+
+    // 4. `build problems <ID>...` produces merged PDF without creating any contest directory.
+    let merged = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "build",
+            "problems",
+            "p1",
+            "p2",
+            "--title",
+            "精选训练",
+            "--lang",
+            "zh",
+            "--cover",
+            "true",
+        ],
+        None,
+    );
+    assert_eq!(
+        merged.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+    let mj = parse_json_stdout(&merged);
+    assert_eq!(mj["ok"], true);
+    assert!(mj["pages"].as_u64().unwrap() >= 2);
+    let out_pdf = mj["outputs"][0].as_str().unwrap();
+    assert!(Path::new(out_pdf).is_file());
+    // Must not create any contest directory.
+    let contests_entries: Vec<_> = fs::read_dir(dir.path().join("contests")).unwrap().collect();
+    assert!(contests_entries.is_empty());
+
+    // Editorial merged PDF with explicit `-o`.
+    let ed_pdf = external_dir.path().join("merged-editorial.pdf");
+    let merged_ed = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "build",
+            "problems",
+            "p1",
+            "p2",
+            "--editorial",
+            "-o",
+            ed_pdf.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        merged_ed.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&merged_ed.stderr)
+    );
+    assert!(ed_pdf.is_file());
+
+    // Read-only rejects `build problems` writing into default workspace `build/`.
+    let ro_merged = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "--json", "build", "problems", "p1", "p2"],
+        None,
+    );
+    assert_eq!(ro_merged.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_merged)["error"]["code"], "read_only");
+}

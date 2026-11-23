@@ -8,6 +8,7 @@ import { Command, type CommandEntry, type CommandItem } from "nsh/base";
 import { t } from "./i18n";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
+import { buildPaletteItems } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
 import { Modal } from "./Modal";
 import { shortcutsOpen } from "./ShortcutsModal";
@@ -20,6 +21,7 @@ import {
   hasWorkspace,
   importPolygon,
   info,
+  librarySidebarOpen,
   openStudio,
   paletteOpen,
   pickWorkspace,
@@ -27,8 +29,10 @@ import {
   requestNewWorkspace,
   selectedContest,
   selectedProblem,
+  space,
   studio,
   studioActions,
+  toggleLibrarySidebar,
   unfreezeFor,
 } from "./store";
 
@@ -98,6 +102,15 @@ function actions(): Action[] {
       when: hasWorkspace,
     },
     { id: "a:new-contest", icon: "plus", label: t("palette.action.newContest"), keywords: ["new", "contest", "create", "新建", "比赛", "xinjian", "bisai"], shortcut: "mod+shift+n", run: () => dialog.set({ kind: "newContest" }), when: hasWorkspace },
+    { id: "a:new-group", icon: "folderPlus", label: t("palette.action.newGroup"), keywords: ["new", "group", "folder", "create", "新建", "分组", "xinjian", "fenzu"], run: () => dialog.set({ kind: "newGroup" }), when: () => hasWorkspace() && !info().readOnly },
+    {
+      id: "a:toggle-group-sidebar",
+      icon: "panelLeft",
+      label: librarySidebarOpen() ? t("palette.action.hideGroupSidebar") : t("palette.action.showGroupSidebar"),
+      keywords: ["group", "sidebar", "panel", "toggle", "分组", "侧栏", "显示", "隐藏", "fenzu", "celan"],
+      run: () => toggleLibrarySidebar(),
+      when: () => hasWorkspace() && !inStudio && space() === "problems",
+    },
     { id: "a:space-problems", icon: "libraryBig", label: t("space.problems"), keywords: ["problems", "library", "题库", "tiku"], shortcut: inStudio ? undefined : "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
     { id: "a:space-contests", icon: "trophy", label: t("space.contests"), keywords: ["contests", "比赛", "bisai"], shortcut: inStudio ? undefined : "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
     { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio ? undefined : "mod+3", run: () => goSpace("settings"), when: hasWorkspace },
@@ -109,12 +122,6 @@ function actions(): Action[] {
     { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];
   return list.filter((a) => !a.when || a.when());
-}
-
-function matches(a: Action, q: string): boolean {
-  if (!q) return true;
-  const needle = q.toLowerCase();
-  return a.label.toLowerCase().includes(needle) || (a.keywords ?? []).some((k) => k.includes(needle));
 }
 
 /** Top breathing room below the title bar so the palette never touches the window's top edge. */
@@ -140,45 +147,28 @@ function PaletteBody() {
   const close = () => paletteOpen.set(false);
 
   const activeContest = () => {
-    const t = studio();
-    return t?.target === "contest" ? t.id : null;
+    const target = studio();
+    return target?.target === "contest" ? target.id : null;
   };
 
-  const jumps = computed(() => {
-    if (!hasWorkspace()) return [];
-    void info();
-    return preview.fuzzyJump(query().trim(), activeContest()).slice(0, 30);
-  });
-  const acts = computed(() => actions().filter((a) => matches(a, query().trim())));
+  const actionMode = () => query().trimStart().startsWith(">");
 
-  const items = computed<CommandItem[]>(() => {
-    const q = query().trim();
-    // Ranked within each section; the sections in a fixed order so each shows once.
-    const order = (kind: string) => (kind === "contest_item" ? 0 : kind === "problem" ? 1 : 2);
-    const ranked = jumps()
-      .map((h, i) => ({ h, i }))
-      .sort((a, b) => order(a.h.kind) - order(b.h.kind) || a.i - b.i)
-      .map((x) => x.h);
-    const j: CommandItem[] = ranked.map((h) => ({
-      id: `j:${h.visitKey}`,
-      label: h.title,
-      keywords: [h.id],
-      group:
-        h.kind === "contest"
-          ? t("palette.group.contest")
-          : h.kind === "contest_item"
-            ? t("palette.group.currentContest")
-            : t("palette.group.problem"),
-    }));
-    const a: CommandItem[] = acts().map((x) => ({
+  const jumps = computed(() => {
+    if (!hasWorkspace() || actionMode()) return [];
+    void info();
+    return preview.fuzzyJump(query().trim(), activeContest());
+  });
+
+  const built = computed(() => buildPaletteItems(query(), jumps(), actions(), activeContest()));
+
+  const items = computed<CommandItem[]>(() =>
+    built().items.map((x) => ({
       id: x.id,
       label: x.label,
-      group: t("palette.group.action"),
+      group: x.groupLabel,
       shortcut: x.shortcut ?? null,
-    }));
-    // Objects first (by frecency without a query), then what can be done here.
-    return [...j, ...a];
-  });
+    })),
+  );
 
   function select(id: string) {
     close();
@@ -229,7 +219,7 @@ function PaletteBody() {
       onCancel={close}
       autoFocus
       placeholder={t("palette.placeholder")}
-      searchPrefix={<Icon name="search" size={16} tone="muted-foreground" />}
+      searchPrefix={<Icon name="search" size={16} tone={actionMode() ? "primary" : "muted-foreground"} />}
       searchSuffix={<Kbd keys="escape" faint />}
       searchBarClass="px-3.5 flex-row items-center gap-2.5 border-b border-border"
       searchBarStyle={{ height: 44 }}
@@ -265,7 +255,7 @@ function PaletteBody() {
         <View style={{ height: 72, alignItems: "center", justifyContent: "center", gap: 6 }}>
           <Icon name="searchX" size={18} tone="muted-foreground" />
           <Text style={{ fontSize: 13 }} class="text-muted-foreground">
-            {t("common.searchNotFound", { query: query().trim() })}
+            {t("common.searchNotFound", { query: built().query || query().trim() })}
           </Text>
         </View>
       }

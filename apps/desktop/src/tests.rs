@@ -9,8 +9,8 @@ use xcpc_domain::Patch;
 use crate::Preview;
 use crate::cache::{CancelToken, Job, LayerKind, PixelCache, render_chunk, tiles};
 use crate::types::{
-    AppPrefsJs, ContestMetaPatchJs, OverridePatchJs, PreviewRequest, PreviewView,
-    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, SamplePairJs,
+    AppPrefsJs, BatchExportRequestJs, ContestMetaPatchJs, OverridePatchJs, PreviewRequest,
+    PreviewView, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, SamplePairJs,
 };
 
 fn rgba_src(w: u32, h: u32) -> (ImageSrc, usize) {
@@ -2752,4 +2752,317 @@ fn package_inspect_init_and_sandboxed_file_resolution() {
     assert_eq!(detail_after_del.samples.len(), 1);
     assert_eq!(detail_after_del.samples[0].name, "01");
     assert_eq!(detail_after_del.samples[0].input, "4 5\n");
+}
+
+// ---- Phase 3B+: Library groups, batch mutations & async batch task streaming -----------
+
+#[test]
+fn prefs_round_trip_library_sidebar_and_group_by() {
+    let data = TempDir::new("prefs-library-ui");
+    let preview = Preview::new(Some(data.0.display().to_string()));
+
+    // Defaults: sidebar open, no dynamic grouping override.
+    let initial = preview.load_prefs();
+    assert!(initial.library_sidebar_open);
+    assert_eq!(initial.library_group_by, None);
+
+    // Save valid preferences and verify JSON keys & reload round-trip.
+    for valid in [
+        "none",
+        "group",
+        "rating",
+        "platform",
+        "contest",
+        "package_status",
+    ] {
+        let mut p = preview.load_prefs();
+        p.library_sidebar_open = false;
+        p.library_group_by = Some(valid.to_owned());
+        preview.save_prefs(p);
+
+        let reloaded = Preview::new(Some(data.0.display().to_string())).load_prefs();
+        assert!(!reloaded.library_sidebar_open);
+        assert_eq!(reloaded.library_group_by.as_deref(), Some(valid));
+    }
+
+    let raw_json = std::fs::read_to_string(data.0.join("prefs.json")).unwrap();
+    let parsed: JsonValue = raw_json.parse().expect("valid prefs.json");
+    assert_eq!(parsed["librarySidebarOpen"], false);
+    assert_eq!(parsed["libraryGroupBy"], "package_status");
+
+    // Invalid libraryGroupBy values are rejected/cleared to None.
+    let mut bad = preview.load_prefs();
+    bad.library_sidebar_open = true;
+    bad.library_group_by = Some("not_a_valid_mode".to_owned());
+    preview.save_prefs(bad);
+    let after_bad = Preview::new(Some(data.0.display().to_string())).load_prefs();
+    assert!(after_bad.library_sidebar_open);
+    assert_eq!(after_bad.library_group_by, None);
+}
+
+#[test]
+fn group_crud_facets_search_and_detail() {
+    let (_dir, preview) = init_temp_preview("group-crud");
+    assert!(preview.create_problem("p1".into(), "Alpha".into()).ok);
+    assert!(preview.create_problem("p2".into(), "Beta".into()).ok);
+    assert!(preview.create_problem("p3".into(), "Gamma".into()).ok);
+
+    // Create groups & enforce validation / uniqueness.
+    assert!(preview.create_group("省赛候选".into()).ok);
+    assert!(preview.create_group("校赛备选".into()).ok);
+    let dup = preview.create_group("省赛候选".into());
+    assert!(!dup.ok);
+    assert_eq!(dup.code.as_deref(), Some("group_already_exists"));
+    let invalid = preview.create_group("   ".into());
+    assert!(!invalid.ok);
+    assert_eq!(invalid.code.as_deref(), Some("invalid_group_name"));
+
+    let facets = preview.workspace_facets();
+    assert_eq!(facets.total_count, 3);
+    assert_eq!(facets.ungrouped_count, 3);
+    assert_eq!(facets.groups.len(), 2);
+    assert_eq!(facets.groups[0].name, "省赛候选");
+    assert_eq!(facets.groups[0].count, 0);
+    assert!(facets.groups[0].declared);
+    assert_eq!(facets.groups[1].name, "校赛备选");
+
+    // Batch assign group and verify facets, search, and detail immediately reflect it.
+    let assign = preview.batch_set_group(vec!["p1".into(), "p2".into()], Some("省赛候选".into()));
+    assert!(assign.ok);
+    assert_eq!(assign.succeeded, 2);
+    assert_eq!(assign.skipped, 0);
+
+    // Re-assigning the same group skips unchanged problems.
+    let assign_again = preview.batch_set_group(vec!["p1".into()], Some("省赛候选".into()));
+    assert!(assign_again.ok);
+    assert_eq!(assign_again.succeeded, 0);
+    assert_eq!(assign_again.skipped, 1);
+
+    let detail = preview.problem_detail("p1".into());
+    assert_eq!(detail.group.as_deref(), Some("省赛候选"));
+
+    let in_group = preview.search_problems(ProblemSearchQuery {
+        group: Some("省赛候选".into()),
+        ..Default::default()
+    });
+    assert_eq!(in_group.len(), 2);
+    assert!(
+        in_group
+            .iter()
+            .all(|p| p.group.as_deref() == Some("省赛候选"))
+    );
+
+    let ungrouped = preview.search_problems(ProblemSearchQuery {
+        ungrouped_only: true,
+        ..Default::default()
+    });
+    assert_eq!(ungrouped.len(), 1);
+    assert_eq!(ungrouped[0].id, "p3");
+    assert_eq!(ungrouped[0].group, None);
+
+    // Reorder groups.
+    assert!(
+        preview
+            .reorder_groups(vec!["校赛备选".into(), "省赛候选".into()])
+            .ok
+    );
+    let facets_reordered = preview.workspace_facets();
+    assert_eq!(facets_reordered.groups[0].name, "校赛备选");
+    assert_eq!(facets_reordered.groups[1].name, "省赛候选");
+    assert_eq!(facets_reordered.groups[1].count, 2);
+    assert_eq!(facets_reordered.ungrouped_count, 1);
+
+    // Rename group updates workspace.toml + member problems + index.
+    assert!(preview.rename_group("省赛候选".into(), "区域赛".into()).ok);
+    let detail_renamed = preview.problem_detail("p1".into());
+    assert_eq!(detail_renamed.group.as_deref(), Some("区域赛"));
+    let facets_renamed = preview.workspace_facets();
+    assert_eq!(facets_renamed.groups[1].name, "区域赛");
+    assert_eq!(facets_renamed.groups[1].count, 2);
+
+    // Delete group removes the group and returns members to ungrouped without deleting problems.
+    assert!(preview.delete_group("区域赛".into()).ok);
+    let facets_deleted = preview.workspace_facets();
+    assert_eq!(facets_deleted.total_count, 3);
+    assert_eq!(facets_deleted.ungrouped_count, 3);
+    assert_eq!(facets_deleted.groups.len(), 1);
+    assert_eq!(preview.problem_detail("p1".into()).group, None);
+}
+
+#[test]
+fn batch_mutations_and_delete_with_contest_guards() {
+    let (_dir, preview) = init_temp_preview("batch-ops");
+    assert!(preview.create_problem("p1".into(), "One".into()).ok);
+    assert!(preview.create_problem("p2".into(), "Two".into()).ok);
+    assert!(preview.create_problem("p3".into(), "Three".into()).ok);
+    assert!(preview.create_contest("c1".into(), "Contest 1".into()).ok);
+
+    // Batch tags + rating.
+    let tag_res = preview.batch_edit_tags(
+        vec!["p1".into(), "p2".into()],
+        vec!["dp".into(), "math".into()],
+        vec![],
+    );
+    assert!(tag_res.ok);
+    assert_eq!(tag_res.succeeded, 2);
+
+    let rating_res = preview.batch_set_rating(vec!["p1".into(), "p2".into()], Some(1800));
+    assert!(rating_res.ok);
+    assert_eq!(rating_res.succeeded, 2);
+
+    // Batch add to contest populates contest_ids on ProblemSummaryJs with zero N+1.
+    let add_res = preview.batch_add_to_contest("c1".into(), vec!["p1".into(), "p2".into()]);
+    assert!(add_res.ok);
+    assert_eq!(add_res.succeeded, 2);
+
+    let add_dup = preview.batch_add_to_contest("c1".into(), vec!["p1".into()]);
+    assert!(add_dup.ok);
+    assert_eq!(add_dup.skipped, 1);
+    assert_eq!(add_dup.items[0].code.as_deref(), Some("already_in_contest"));
+
+    let hits = preview.search_problems(ProblemSearchQuery::default());
+    let p1 = hits.iter().find(|p| p.id == "p1").unwrap();
+    let p3 = hits.iter().find(|p| p.id == "p3").unwrap();
+    assert_eq!(p1.contest_ids, vec!["c1".to_owned()]);
+    assert_eq!(p1.rating, Some(1800));
+    assert!(p1.tags.contains(&"dp".to_owned()));
+    assert!(p3.contest_ids.is_empty());
+
+    // Batch delete skips problems referenced by unfrozen contest and deletes unreferenced ones.
+    let del_res = preview.batch_delete_problems(vec!["p1".into(), "p3".into()]);
+    assert!(del_res.ok);
+    assert_eq!(del_res.deleted, 1);
+    assert_eq!(del_res.skipped, 1);
+    assert_eq!(del_res.failed, 0);
+
+    let p1_del = del_res.items.iter().find(|i| i.id == "p1").unwrap();
+    assert_eq!(p1_del.status, "skipped");
+    assert_eq!(p1_del.code.as_deref(), Some("problem_referenced"));
+    assert_eq!(p1_del.referencing_contests, vec!["c1".to_owned()]);
+
+    let p3_del = del_res.items.iter().find(|i| i.id == "p3").unwrap();
+    assert_eq!(p3_del.status, "ok");
+
+    // Index is immediately fresh after batch delete.
+    let after_del = preview.search_problems(ProblemSearchQuery::default());
+    assert_eq!(after_del.len(), 2);
+    assert!(after_del.iter().all(|p| p.id != "p3"));
+}
+
+#[test]
+fn batch_task_streaming_completion_and_cancellation() {
+    let (dir, preview) = init_temp_preview("batch-stream");
+    assert!(preview.create_problem("p1".into(), "First".into()).ok);
+    assert!(preview.create_problem("p2".into(), "Second".into()).ok);
+
+    // 1. Batch OJ export on pure-publishing problems skips them cleanly and emits all_finished.
+    let started = preview.start_batch_export(BatchExportRequestJs {
+        format: "domjudge".into(),
+        problem_ids: vec!["p1".into(), "p2".into()],
+        ..Default::default()
+    });
+    assert!(started.ok, "start_batch_export failed: {:?}", started.error);
+    assert!(started.task_id > 0);
+
+    let (rx_opt, _) = preview.state.batch_event_receiver(started.task_id);
+    let rx = rx_opt.expect("event receiver should exist for active task");
+    let mut kinds = Vec::new();
+    let mut final_snap = None;
+    loop {
+        match rx.lock().unwrap().recv_timeout(Duration::from_secs(10)) {
+            Ok(ev) => {
+                kinds.push(ev.kind.clone());
+                if ev.kind == "all_finished" {
+                    final_snap = Some(ev.snapshot);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("timed out waiting for batch export stream to close; kinds={kinds:?}");
+            }
+        }
+    }
+    assert!(kinds.contains(&"problem_started".to_owned()));
+    assert!(kinds.contains(&"problem_finished".to_owned()));
+    assert_eq!(kinds.last().map(String::as_str), Some("all_finished"));
+    let snap = final_snap.expect("expected all_finished snapshot");
+    assert!(!snap.running);
+    assert_eq!(snap.skipped, 2);
+    assert_eq!(snap.succeeded, 0);
+
+    // 2. Merged PDF batch export compiles and writes a real PDF without creating contests/.
+    let pdf_start = preview.start_batch_export(BatchExportRequestJs {
+        format: "merged_pdf".into(),
+        problem_ids: vec!["p1".into(), "p2".into()],
+        title: Some("练习题集".into()),
+        language: Some("chinese".into()),
+        book: Some("statements".into()),
+        output_path: None,
+    });
+    assert!(
+        pdf_start.ok,
+        "start_batch_export(merged_pdf) failed: {:?}",
+        pdf_start.error
+    );
+    let (pdf_rx_opt, _) = preview.state.batch_event_receiver(pdf_start.task_id);
+    let pdf_rx = pdf_rx_opt.expect("pdf receiver");
+    let mut pdf_final = None;
+    loop {
+        match pdf_rx.lock().unwrap().recv_timeout(Duration::from_secs(20)) {
+            Ok(ev) => {
+                if ev.kind == "all_finished" || ev.kind == "error" {
+                    pdf_final = Some(ev);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("timed out waiting for merged PDF batch export");
+            }
+        }
+    }
+    let pdf_ev = pdf_final.expect("expected terminal PDF event");
+    assert_eq!(
+        pdf_ev.kind, "all_finished",
+        "merged PDF failed: {:?}",
+        pdf_ev.error
+    );
+    let out_path = pdf_ev
+        .snapshot
+        .output_path
+        .as_deref()
+        .expect("output_path should be set");
+    assert!(std::path::Path::new(out_path).is_file());
+    assert!(
+        !dir.0.join("contests").read_dir().unwrap().next().is_some(),
+        "merged_pdf must not create any contest directory"
+    );
+
+    // 3. Stopping batch task on workspace switch / Preview drop wakes a blocked receiver immediately with "closed".
+    let (manual_tx, manual_rx) = std::sync::mpsc::channel();
+    let rx_arc = std::sync::Arc::new(std::sync::Mutex::new(manual_rx));
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut slot = preview.state.batch_task.lock().unwrap();
+        slot.task_id = 999;
+        slot.running = true;
+        slot.cancel_flag = Some(cancel_flag.clone());
+        slot.close_tx = Some(manual_tx);
+        slot.event_rx = Some(rx_arc.clone());
+    }
+
+    assert!(preview.cancel_batch_task().ok);
+    assert!(cancel_flag.load(Ordering::Relaxed));
+    assert!(preview.batch_task_status().cancelled);
+
+    let (woke_tx, woke_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let ev = rx_arc.lock().unwrap().recv().ok();
+        let _ = woke_tx.send(ev.map(|e| e.kind));
+    });
+
+    drop(preview);
+    let woke_kind = woke_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("blocked batch receiver should wake immediately on Preview drop");
+    assert_eq!(woke_kind.as_deref(), Some("closed"));
 }

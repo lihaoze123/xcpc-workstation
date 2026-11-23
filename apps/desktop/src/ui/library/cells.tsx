@@ -1,0 +1,312 @@
+// Shared library table cells, tri-state checkbox, and header renderers (§5.2).
+// Reused verbatim by both flat <DataTable> and grouped <GroupedProblemList>.
+
+import { Text, View, type JSX } from "nsh";
+import type { ProblemSummaryJs } from "xcpc-workstation/native";
+import { t } from "../i18n";
+import { Icon } from "../Icon";
+import { Chip, RatingBadge, tip } from "../kit";
+import type { CheckboxTriState, LibraryColumnKey } from "../logic";
+import { colorTransition } from "../motion";
+import { MONO } from "../theme";
+
+export type LibraryRow = ProblemSummaryJs & {
+  ratingText: string;
+  tagsText: string;
+  source: string;
+  status: string;
+};
+
+export const ROW_LINE = 20;
+
+/** Compact 16x16 tri-state checkbox matching the design system's 4px radius & primary fill. */
+export function TriCheckbox(props: {
+  state: CheckboxTriState;
+  onPress?: () => void;
+  testID?: string;
+}) {
+  const checked = () => props.state !== "none";
+  return (
+    <View
+      testID={props.testID}
+      onPress={props.onPress}
+      class={
+        checked()
+          ? "bg-primary border border-primary hover:opacity-90"
+          : "bg-card border border-border hover:border-foreground/40"
+      }
+      style={{
+        width: 16,
+        height: 16,
+        borderRadius: 4,
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        ...colorTransition(120),
+      }}
+    >
+      {props.state === "all" && <Icon name="check" size={11} tone="primary-foreground" />}
+      {props.state === "partial" && <Icon name="minus" size={11} tone="primary-foreground" />}
+    </View>
+  );
+}
+
+/** Fixed 18pt status icon slot (renders a whisper-quiet dot when empty to keep 3-column visual rhythm). */
+function StatusSlot(props: { children?: JSX.Element; tooltipText?: string }) {
+  return (
+    <View
+      tooltip={props.tooltipText ? tip(props.tooltipText) : undefined}
+      style={{
+        width: 18,
+        height: 18,
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      {props.children ?? <View style={{ width: 3.5, height: 3.5, borderRadius: 2 }} class="bg-border" />}
+    </View>
+  );
+}
+
+export function renderLibraryCellContent(
+  key: LibraryColumnKey | string,
+  row: LibraryRow | undefined,
+  opts: {
+    selected: boolean;
+    showInlineId: boolean;
+    maxTags: number;
+    tagsWidth?: number;
+    onToggleSelect?: () => void;
+  },
+): JSX.Element | null {
+  if (!row) return null;
+
+  if (key === "select") {
+    return (
+      <TriCheckbox
+        state={opts.selected ? "all" : "none"}
+        onPress={opts.onToggleSelect}
+      />
+    );
+  }
+
+  if (key === "title") {
+    return (
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <Text
+          style={{
+            numberOfLines: 1,
+            textOverflow: "ellipsis",
+            fontSize: 13.5,
+            lineHeight: ROW_LINE,
+            flexShrink: 1,
+            minWidth: 0,
+          }}
+          class="text-foreground"
+        >
+          {row.title}
+        </Text>
+        {opts.showInlineId && (
+          <Text
+            style={{
+              numberOfLines: 1,
+              textOverflow: "ellipsis",
+              fontSize: 11.5,
+              lineHeight: ROW_LINE,
+              fontFamily: MONO,
+              maxWidth: 112,
+              flexShrink: 1,
+              minWidth: 0,
+            }}
+            class="text-muted-foreground"
+          >
+            {row.id}
+          </Text>
+        )}
+      </View>
+    );
+  }
+
+  if (key === "ratingText") {
+    return row.rating != null ? <RatingBadge rating={row.rating} /> : null;
+  }
+
+  if (key === "tagsText") {
+    // Budget tags against the column's inner width so `+N` is never clipped off-edge.
+    const maxChipW = 78;
+    const budget = Math.max(72, (opts.tagsWidth ?? 176) - 20);
+    const visible: string[] = [];
+    let used = 0;
+    for (let i = 0; i < row.tags.length && visible.length < opts.maxTags; i++) {
+      const tag = row.tags[i];
+      const est = Math.min(maxChipW, Math.ceil(tag.length * 6.8) + 14);
+      const gap = visible.length > 0 ? 4 : 0;
+      const remainingAfter = row.tags.length - (i + 1);
+      const overflowReserve = remainingAfter > 0 ? 30 : 0;
+      if (visible.length > 0 && used + gap + est + overflowReserve > budget) break;
+      visible.push(tag);
+      used += gap + est;
+    }
+    const overflow = Math.max(0, row.tags.length - visible.length);
+    return (
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
+        <Each of={visible} key={(tag) => tag}>
+          {(tag) => <Chip label={tag()} maxWidth={maxChipW} />}
+        </Each>
+        {overflow > 0 && (
+          <View
+            style={{
+              height: 20,
+              paddingLeft: 5,
+              paddingRight: 5,
+              borderRadius: 5,
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+            class="bg-muted"
+          >
+            <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              {`+${overflow}`}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (key === "status") {
+    const st = row.packageStatus;
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}>
+        {st === "verified_fresh" ? (
+          <StatusSlot tooltipText={t("library.status.verified")}>
+            <Icon name="shieldCheck" size={14} tone="primary" />
+          </StatusSlot>
+        ) : st === "stale" ? (
+          <StatusSlot tooltipText={t("library.status.stale")}>
+            <Icon name="circleAlert" size={14} tone="chart-4" />
+          </StatusSlot>
+        ) : st === "failed" ? (
+          <StatusSlot tooltipText={t("library.status.failed")}>
+            <Icon name="triangleAlert" size={14} tone="destructive" />
+          </StatusSlot>
+        ) : st === "unverified" ? (
+          <StatusSlot tooltipText={t("library.status.unverified")}>
+            <Icon name="database" size={13.5} tone="muted-foreground" />
+          </StatusSlot>
+        ) : (
+          <StatusSlot />
+        )}
+        {row.hasEditorial ? (
+          <StatusSlot tooltipText={t("library.status.hasEditorial")}>
+            <Icon name="filePenLine" size={13.5} tone="secondary-foreground" />
+          </StatusSlot>
+        ) : (
+          <StatusSlot />
+        )}
+        {row.hasSolutions ? (
+          <StatusSlot tooltipText={t("library.status.hasCode")}>
+            <Icon name="code" size={13.5} tone="secondary-foreground" />
+          </StatusSlot>
+        ) : (
+          <StatusSlot />
+        )}
+      </View>
+    );
+  }
+
+  if (key === "source") {
+    return (
+      <Text
+        style={{
+          numberOfLines: 1,
+          textOverflow: "ellipsis",
+          fontSize: 12,
+          lineHeight: ROW_LINE,
+          fontFamily: MONO,
+          flexShrink: 1,
+          minWidth: 0,
+        }}
+        class="text-secondary-foreground"
+      >
+        {row.source}
+      </Text>
+    );
+  }
+
+  return null;
+}
+
+export function cellPadding(key: string): { paddingLeft: number; paddingRight: number; justifyContent: "flex-start" | "center" | "flex-end" } {
+  if (key === "select") return { paddingLeft: 0, paddingRight: 0, justifyContent: "center" };
+  if (key === "ratingText") return { paddingLeft: 8, paddingRight: 12, justifyContent: "flex-end" };
+  if (key === "status") return { paddingLeft: 4, paddingRight: 4, justifyContent: "center" };
+  if (key === "title") return { paddingLeft: 8, paddingRight: 12, justifyContent: "flex-start" };
+  return { paddingLeft: 10, paddingRight: 10, justifyContent: "flex-start" };
+}
+
+export function renderLibraryHeaderContent(props: {
+  key: string;
+  title: string;
+  sortDir?: "ascending" | "descending" | null;
+  triState: () => CheckboxTriState;
+  onToggleAll: () => void;
+  nativeSortIndicator?: boolean;
+}) {
+  const pad = cellPadding(props.key);
+  const sortable = props.key === "title" || props.key === "ratingText";
+  const isEnd = props.key === "ratingText";
+
+  if (props.key === "select") {
+    return (
+      <View
+        style={{
+          flex: 1,
+          minWidth: 0,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <TriCheckbox state={props.triState()} onPress={props.onToggleAll} testID="library-select-all" />
+      </View>
+    );
+  }
+
+  const chevron =
+    !props.nativeSortIndicator && props.sortDir ? (
+      <Icon
+        name="chevronDown"
+        size={12}
+        tone="secondary-foreground"
+        style={{ transform: props.sortDir === "ascending" ? "rotate(180deg)" : "rotate(0deg)" }}
+      />
+    ) : null;
+
+  return (
+    <View
+      class={sortable ? "hover:bg-muted/60 transition-colors" : undefined}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: pad.justifyContent,
+        paddingLeft: pad.paddingLeft,
+        paddingRight: props.nativeSortIndicator && sortable ? Math.max(pad.paddingRight, 20) : pad.paddingRight,
+        gap: 4,
+      }}
+    >
+      {isEnd && chevron}
+      <Text
+        style={{ fontSize: 12, lineHeight: ROW_LINE, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
+        class={props.sortDir ? "text-foreground" : "text-muted-foreground"}
+      >
+        {props.title}
+      </Text>
+      {!isEnd && chevron}
+    </View>
+  );
+}

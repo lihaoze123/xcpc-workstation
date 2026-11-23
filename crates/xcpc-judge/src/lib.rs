@@ -12,7 +12,10 @@ pub mod runner;
 pub mod toolchain;
 
 pub use assets::{STANDARD_CHECKERS, TESTLIB_H, is_standard_checker, standard_checker_source};
-pub use build::{BuildOptions, ProgressCallback, build_package};
+pub use build::{
+    BatchBuildEvent, BatchBuildItemResult, BatchBuildItemStatus, BatchBuildReport, BuildOptions,
+    ProgressCallback, build_package, build_packages_batch,
+};
 pub use cache::{JudgeCache, default_cache_root};
 pub use error::{JudgeError, Result};
 pub use ops::{

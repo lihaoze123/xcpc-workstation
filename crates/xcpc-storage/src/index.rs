@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use xcpc_domain::{
-    ContestMeta, ContestStats, FuzzyHit, FuzzyMatchKind, ProblemSummary, RatingTier, SearchQuery,
-    check_id,
+    ContestMeta, ContestStats, FuzzyHit, FuzzyMatchKind, GroupFilter, GroupSummary, ProblemSummary,
+    RatingTier, SearchQuery, check_id, normalize_group_name,
 };
 
 use crate::{Error, Result, Workspace};
@@ -45,6 +45,7 @@ struct FrecencyEntry {
 pub struct WorkspaceIndex {
     problems: BTreeMap<String, IndexedProblem>,
     contests: BTreeMap<String, IndexedContest>,
+    declared_groups: Vec<String>,
     frecency: HashMap<(FuzzyMatchKind, String), FrecencyEntry>,
 }
 
@@ -54,7 +55,10 @@ impl WorkspaceIndex {
     /// Individual malformed `problem.toml` or `contest.toml` files are skipped so a
     /// syntax error in one file does not prevent indexing the rest of the workspace.
     pub fn scan(ws: &Workspace) -> Result<Self> {
-        let mut index = Self::default();
+        let mut index = Self {
+            declared_groups: ws.workspace_groups(),
+            ..Self::default()
+        };
         for id in ws.list_problems()? {
             if let Ok(entry) = load_indexed_problem(ws, &id) {
                 index.problems.insert(id, entry);
@@ -66,6 +70,11 @@ impl WorkspaceIndex {
             }
         }
         Ok(index)
+    }
+
+    /// Refreshes workspace-level metadata (such as declared groups from `workspace.toml`).
+    pub fn refresh_workspace_meta(&mut self, ws: &Workspace) {
+        self.declared_groups = ws.workspace_groups();
     }
 
     /// Incrementally refreshes one problem from disk (or removes it if deleted).
@@ -109,6 +118,10 @@ impl WorkspaceIndex {
         let trimmed = norm.trim_start_matches("./").trim_start_matches('/');
         let mut parts = trimmed.split('/');
         match (parts.next(), parts.next()) {
+            (Some("workspace.toml"), None) => {
+                self.declared_groups = ws.workspace_groups();
+                Ok(())
+            }
             (Some("problems"), Some(id)) if check_id(id).is_ok() => {
                 match self.refresh_problem(ws, id) {
                     Ok(()) | Err(Error::Invalid { .. }) => Ok(()),
@@ -146,6 +159,60 @@ impl WorkspaceIndex {
     /// Looks up one indexed contest by ID.
     pub fn contest(&self, id: &str) -> Option<&ContestMeta> {
         self.contests.get(id).map(|c| &c.meta)
+    }
+
+    /// Returns persistent group summaries (declared groups in `workspace.toml` order,
+    /// followed by undeclared groups from `problem.toml` in lexicographical order)
+    /// along with the count of ungrouped problems.
+    pub fn group_counts(&self) -> (Vec<GroupSummary>, usize) {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut ungrouped = 0usize;
+        for entry in self.problems.values() {
+            match &entry.summary.group {
+                Some(g) => *counts.entry(g.clone()).or_insert(0) += 1,
+                None => ungrouped += 1,
+            }
+        }
+        let mut summaries = Vec::with_capacity(self.declared_groups.len() + counts.len());
+        for name in &self.declared_groups {
+            let count = counts.remove(name).unwrap_or(0);
+            summaries.push(GroupSummary {
+                name: name.clone(),
+                count,
+                declared: true,
+            });
+        }
+        for (name, count) in counts {
+            summaries.push(GroupSummary {
+                name,
+                count,
+                declared: false,
+            });
+        }
+        (summaries, ungrouped)
+    }
+
+    /// Returns the sorted IDs of all non-archived contests that include `problem_id`.
+    pub fn problem_contest_ids(&self, problem_id: &str) -> Vec<String> {
+        self.contests
+            .values()
+            .filter(|c| !c.meta.archived && c.meta.problems.iter().any(|p| p.id == problem_id))
+            .map(|c| c.id.clone())
+            .collect()
+    }
+
+    /// Builds a `problem_id -> Vec<contest_id>` map across all non-archived contests.
+    pub fn problem_contest_map(&self) -> HashMap<String, Vec<String>> {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for c in self.contests.values() {
+            if c.meta.archived {
+                continue;
+            }
+            for item in &c.meta.problems {
+                map.entry(item.id.clone()).or_default().push(c.id.clone());
+            }
+        }
+        map
     }
 
     /// Structured filtering + normalized substring search across indexed problems.
@@ -198,6 +265,21 @@ impl WorkspaceIndex {
                     .any(|s| s.platform.to_lowercase() == *plat)
             {
                 continue;
+            }
+            if let Some(group_filter) = &query.group {
+                match group_filter {
+                    GroupFilter::Named(name) => {
+                        let wanted = name.trim();
+                        if summary.group.as_deref() != Some(wanted) {
+                            continue;
+                        }
+                    }
+                    GroupFilter::Ungrouped => {
+                        if summary.group.is_some() {
+                            continue;
+                        }
+                    }
+                }
             }
             if !text_tokens.is_empty()
                 && !text_tokens
@@ -375,8 +457,17 @@ fn load_indexed_problem(ws: &Workspace, id: &str) -> Result<IndexedProblem> {
         }
     };
 
+    let group = problem
+        .meta
+        .group
+        .as_deref()
+        .and_then(|g| normalize_group_name(g).ok());
+
     push_part(&problem.id);
     push_part(&problem.meta.title);
+    if let Some(group) = &group {
+        push_part(group);
+    }
     if let Some(author) = &problem.meta.author {
         push_part(author);
     }
@@ -400,6 +491,7 @@ fn load_indexed_problem(ws: &Workspace, id: &str) -> Result<IndexedProblem> {
     let summary = ProblemSummary {
         id: problem.id.clone(),
         title: problem.meta.title.clone(),
+        group,
         rating: problem.meta.rating,
         tags: problem.meta.tags,
         sources: problem.meta.sources,

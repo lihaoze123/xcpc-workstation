@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 23);
+    assert_eq!(tools.len(), 26);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -200,6 +200,9 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
     for write_tool in [
         "export_pdf",
         "add_template",
+        "manage_groups",
+        "batch_update_problems",
+        "batch_delete_problems",
         "write_problem",
         "duplicate_problem",
         "compose_contest",
@@ -1275,4 +1278,211 @@ fn polygon_import_and_oj_export_mcp_end_to_end() {
         assert!(archive.by_name("problem.yaml").is_ok());
         assert!(archive.by_name("testdata/config.yaml").is_ok());
     }
+}
+
+#[test]
+fn mcp_groups_search_batch_update_delete_and_read_only() {
+    let dir = setup_workspace();
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // 1. `manage_groups`: create, list, reorder, rename, delete.
+    let g1 = client.call_tool(
+        "manage_groups",
+        json!({ "action": "create", "name": "省赛候选" }),
+    );
+    assert_ne!(g1["isError"], true, "{g1}");
+    assert_eq!(g1["structuredContent"]["name"], "省赛候选");
+
+    let g2 = client.call_tool(
+        "manage_groups",
+        json!({ "action": "create", "name": "校赛备选" }),
+    );
+    assert_ne!(g2["isError"], true, "{g2}");
+
+    let reo = client.call_tool(
+        "manage_groups",
+        json!({ "action": "reorder", "order": ["校赛备选", "省赛候选"] }),
+    );
+    assert_ne!(reo["isError"], true, "{reo}");
+    assert_eq!(
+        reo["structuredContent"]["groups"],
+        json!(["校赛备选", "省赛候选"])
+    );
+
+    // 2. `batch_update_problems`: set group, tags, rating.
+    let upd = client.call_tool(
+        "batch_update_problems",
+        json!({
+            "ids": ["alpha"],
+            "group": "省赛候选",
+            "tags_add": ["dp"],
+            "tags_remove": ["math"],
+            "rating": 1700,
+        }),
+    );
+    assert_ne!(upd["isError"], true, "{upd}");
+    assert_eq!(upd["structuredContent"]["succeeded"], 1);
+
+    // 3. `search_problems`: group, ungrouped, and conflict error.
+    let sg = client.call_tool("search_problems", json!({ "group": "省赛候选" }));
+    assert_ne!(sg["isError"], true, "{sg}");
+    let sg_list = sg["structuredContent"]["problems"].as_array().unwrap();
+    assert_eq!(sg_list.len(), 1);
+    assert_eq!(sg_list[0]["id"], "alpha");
+
+    let su = client.call_tool("search_problems", json!({ "ungrouped": true }));
+    assert_ne!(su["isError"], true, "{su}");
+    let su_ids: Vec<&str> = su["structuredContent"]["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert!(!su_ids.contains(&"alpha"));
+    assert!(su_ids.contains(&"beta"));
+
+    let conflict = client.call_tool(
+        "search_problems",
+        json!({ "group": "省赛候选", "ungrouped": true }),
+    );
+    assert_eq!(err_code(&conflict), "invalid_arguments");
+
+    // Rename and delete group.
+    let ren = client.call_tool(
+        "manage_groups",
+        json!({ "action": "rename", "name": "省赛候选", "new_name": "省赛正选" }),
+    );
+    assert_ne!(ren["isError"], true, "{ren}");
+    assert_eq!(ren["structuredContent"]["updated_problems"], 1);
+
+    let del_g = client.call_tool(
+        "manage_groups",
+        json!({ "action": "delete", "name": "省赛正选" }),
+    );
+    assert_ne!(del_g["isError"], true, "{del_g}");
+    assert_eq!(del_g["structuredContent"]["ungrouped_problems"], 1);
+
+    // Clear rating with null.
+    let clr = client.call_tool(
+        "batch_update_problems",
+        json!({ "ids": ["alpha"], "rating": null }),
+    );
+    assert_ne!(clr["isError"], true, "{clr}");
+    assert_eq!(clr["structuredContent"]["succeeded"], 1);
+
+    // 4. `batch_delete_problems`: enforces `problem_referenced` guard for unfrozen contest.
+    let comp = client.call_tool(
+        "compose_contest",
+        json!({ "id": "c-guard", "problems": ["alpha"] }),
+    );
+    assert_ne!(comp["isError"], true, "{comp}");
+
+    let bdel = client.call_tool("batch_delete_problems", json!({ "ids": ["alpha", "beta"] }));
+    assert_ne!(bdel["isError"], true, "{bdel}");
+    assert_eq!(bdel["structuredContent"]["succeeded"], 1);
+    assert_eq!(bdel["structuredContent"]["skipped"], 1);
+    assert_eq!(
+        bdel["structuredContent"]["items"][0]["code"],
+        "problem_referenced"
+    );
+    assert_eq!(
+        bdel["structuredContent"]["items"][0]["referencing_contests"],
+        json!(["c-guard"])
+    );
+    assert!(dir.path().join("problems/alpha").is_dir());
+    assert!(!dir.path().join("problems/beta").exists());
+
+    // 5. Read-only mode: allows `manage_groups(list)` & `search_problems`, blocks mutations.
+    let mut ro = McpClient::spawn(dir.path(), true);
+    let ro_list = ro.call_tool("manage_groups", json!({ "action": "list" }));
+    assert_ne!(ro_list["isError"], true, "{ro_list}");
+
+    for (tool, args) in [
+        ("manage_groups", json!({ "action": "create", "name": "ro" })),
+        (
+            "manage_groups",
+            json!({ "action": "rename", "name": "校赛备选", "new_name": "x" }),
+        ),
+        (
+            "manage_groups",
+            json!({ "action": "delete", "name": "校赛备选" }),
+        ),
+        (
+            "manage_groups",
+            json!({ "action": "reorder", "order": ["校赛备选"] }),
+        ),
+        (
+            "batch_update_problems",
+            json!({ "ids": ["alpha"], "rating": 1000 }),
+        ),
+        ("batch_delete_problems", json!({ "ids": ["alpha"] })),
+        (
+            "export_oj_package",
+            json!({ "format": "domjudge", "target": "problems", "ids": ["alpha"] }),
+        ),
+    ] {
+        let res = ro.call_tool(tool, args);
+        assert_eq!(err_code(&res), "read_only", "tool={tool}");
+    }
+}
+
+#[test]
+fn mcp_import_polygon_group_and_batch_export_oj_packages() {
+    let dir = setup_workspace();
+    let external_dir = tempfile::tempdir().unwrap();
+    let poly_zip = external_dir.path().join("mcp-poly-batch.zip");
+    build_mcp_polygon_zip(&poly_zip, "mcp-poly-batch");
+
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // 1. `import_polygon` with `group` and `no_auto_group`.
+    let imp = client.call_tool(
+        "import_polygon",
+        json!({
+            "zip_path": poly_zip.to_str().unwrap(),
+            "id": "poly-b",
+            "group": "MCP分组",
+            "no_auto_group": true,
+        }),
+    );
+    assert_ne!(imp["isError"], true, "{imp}");
+    assert_eq!(imp["structuredContent"]["group"], "MCP分组");
+
+    // Verify `poly-b`.
+    let ver = client.call_tool("build_package", json!({ "id": "poly-b", "mode": "verify" }));
+    assert_ne!(ver["isError"], true, "{ver}");
+    assert_eq!(ver["structuredContent"]["verified"], true);
+
+    // 2. `export_oj_package` with `target: "problems"` confines output to `build/`.
+    for bad_out in ["../escape-dir", "problems/evil-dir", "/tmp/evil-dir"] {
+        let esc = client.call_tool(
+            "export_oj_package",
+            json!({
+                "format": "domjudge",
+                "target": "problems",
+                "ids": ["poly-b"],
+                "output": bad_out,
+            }),
+        );
+        assert_eq!(err_code(&esc), "path_escape", "output={bad_out}");
+    }
+
+    let be = client.call_tool(
+        "export_oj_package",
+        json!({
+            "format": "hydro",
+            "target": "problems",
+            "ids": ["poly-b", "alpha"],
+            "output": "build/mcp-batch-hydro",
+        }),
+    );
+    assert_ne!(be["isError"], true, "{be}");
+    assert_eq!(be["structuredContent"]["ok"], true);
+    assert_eq!(be["structuredContent"]["exported"], 1);
+    assert_eq!(be["structuredContent"]["skipped"], 1);
+    assert!(
+        dir.path()
+            .join("build/mcp-batch-hydro/poly-b.zip")
+            .is_file()
+    );
 }

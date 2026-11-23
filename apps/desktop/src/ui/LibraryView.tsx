@@ -1,8 +1,7 @@
-// Cmd+1: the problem library. Filters (keywords, tags, a rating tier, a platform) over a
-// virtualized table (40 pt rows: ID, title, rating, tags, source, editorial, code; no
-// training state) that fills its width, and on the right the selected problem as it
-// prints (the paper preview of its statement or editorial) or its `solutions/` read-only,
-// with its sources, referencing contests, and actions.
+// Cmd+1: the problem library. Collapsible persistent group sidebar on the left,
+// multi-dimensional filters & dynamic group-by folding over a virtualized table
+// (40 pt rows: select, title + inline ID, rating, tags, 3-slot status, source),
+// multi-select floating batch bar, and right-hand ProblemInspector / BatchInspector.
 
 import { batch, cleanup, Clipboard, computed, effect, keymap, signal, Text, View, type InputRef } from "nsh";
 import {
@@ -15,36 +14,58 @@ import {
   type DataTableSort,
 } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
-import type { PreviewRequest, ProblemSummaryJs } from "xcpc-workstation/native";
-import { Btn, Chevron, Chip, RatingBadge, Segmented, tip } from "./kit";
+import type { PreviewRequest } from "xcpc-workstation/native";
+import { Btn, Chevron, Chip, IconBtn, RatingBadge, Segmented, tip } from "./kit";
 import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DetailHeader, EmptyState, Spacer, Toolbar } from "./layout";
-import { TIER_RANGES, type TierName } from "./logic";
+import {
+  applyRowSelection,
+  computeLibraryColumns,
+  EMPTY_SELECTION,
+  groupProblems,
+  headerCheckboxState,
+  TIER_RANGES,
+  type LibraryGroupBy,
+  type SelectionState,
+  type TierName,
+} from "./logic";
 import { EASE_STANDARD, MONO, monoFont, ms } from "./theme";
 import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
+  batchTask,
   dialog,
-  goSpace,
   importPolygon,
   importingPolygon,
   info,
   jumpToContest,
+  libraryGroupBy,
+  librarySidebarOpen,
   openStudio,
   preview,
   refresh,
   revision,
-  selectedContest,
   selectedProblem,
+  setLibraryGroupBy,
+  setLibrarySidebarOpen,
+  startBatchBuildTask,
   workspaceVersion,
 } from "./store";
+import { GroupSidebar, type SidebarGroupSelection } from "./library/GroupSidebar";
+import {
+  cellPadding,
+  renderLibraryCellContent,
+  renderLibraryHeaderContent,
+  ROW_LINE,
+  type LibraryRow,
+} from "./library/cells";
+import { GroupedProblemList } from "./library/GroupedProblemList";
+import { BatchFloatingBar } from "./library/BatchFloatingBar";
+import { BatchInspector } from "./library/BatchInspector";
 
-type Row = ProblemSummaryJs & { tagsText: string; source: string; editorialMark: string; codeMark: string; ratingText: string };
-
-const FIXED = { id: 168, rating: 72, tags: 240, source: 150, mark: 52 };
-const LINE = 20; // one line height for every cell, so a monospaced ID and a title share a center
 const SEARCH_DEBOUNCE_MS = 120;
+const AUTO_COLLAPSE_WIDTH = 1040;
 
 function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[]; multi?: boolean; onSelect: (id: string) => void }) {
   return (
@@ -61,7 +82,7 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           }
           style={{
             height: 28,
-            maxWidth: 108,
+            maxWidth: 112,
             paddingLeft: 8,
             paddingRight: 6,
             borderRadius: 6,
@@ -75,7 +96,7 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           }}
         >
           <Text
-            style={{ fontSize: 13, lineHeight: LINE, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: 13, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={props.active ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.label}
@@ -93,8 +114,13 @@ export function LibraryView(props: { active: boolean }) {
   const tags = signal<string[]>([]);
   const tier = signal<TierName | undefined>(undefined);
   const platform = signal<string | undefined>(undefined);
+  const sidebarGroup = signal<SidebarGroupSelection>({ kind: "all" });
   const sort = signal<DataTableSort | null>(null);
-  const width = signal(0); // the table's
+  const selection = signal<SelectionState>(EMPTY_SELECTION);
+
+  const outerWidth = signal(1280);
+  const narrowSidebarOverride = signal<boolean | undefined>(undefined);
+  const width = signal(0); // table container width
   let table: DataTableRef | undefined;
   let search: InputRef | undefined;
   let searchTimer: number | undefined;
@@ -102,6 +128,27 @@ export function LibraryView(props: { active: boolean }) {
   cleanup(() => {
     clearTimeout(searchTimer);
     clearTimeout(widthTimer);
+  });
+
+  const isNarrowWindow = () => outerWidth() > 0 && outerWidth() < AUTO_COLLAPSE_WIDTH;
+  const effectiveSidebarOpen = () => {
+    if (isNarrowWindow()) return narrowSidebarOverride() ?? false;
+    return librarySidebarOpen();
+  };
+
+  const toggleSidebar = () => {
+    if (isNarrowWindow()) {
+      narrowSidebarOverride.set(!effectiveSidebarOpen());
+    } else {
+      setLibrarySidebarOpen(!librarySidebarOpen());
+    }
+  };
+
+  // Reset session narrow override when returning to wide window.
+  effect(() => {
+    if (!isNarrowWindow() && narrowSidebarOverride() !== undefined) {
+      narrowSidebarOverride.set(undefined);
+    }
   });
 
   const setSearch = (val: string) => {
@@ -114,7 +161,7 @@ export function LibraryView(props: { active: boolean }) {
     searchTimer = setTimeout(() => queryText.set(val), SEARCH_DEBOUNCE_MS);
   };
 
-  const clear = () => {
+  const clearFilters = () => {
     clearTimeout(searchTimer);
     batch(() => {
       inputText.set("");
@@ -122,14 +169,16 @@ export function LibraryView(props: { active: boolean }) {
       tags.set([]);
       tier.set(undefined);
       platform.set(undefined);
+      sidebarGroup.set({ kind: "all" });
     });
   };
 
-  // Clear stale filters & sort whenever the user switches workspaces.
+  // Clear stale filters, sort, and selection whenever the user switches workspaces.
   effect(() => {
     void workspaceVersion();
-    clear();
+    clearFilters();
     sort.set(null);
+    selection.set(EMPTY_SELECTION);
   });
 
   const readOnly = () => info().readOnly;
@@ -140,23 +189,33 @@ export function LibraryView(props: { active: boolean }) {
     return preview.workspaceFacets();
   });
 
-  const rows = computed<Row[]>(() => {
+  // If the selected named group was deleted externally, fall back to "all".
+  effect(() => {
+    const sel = sidebarGroup();
+    if (sel.kind === "named" && !facets().groups.some((g) => g.name === sel.name)) {
+      sidebarGroup.set({ kind: "all" });
+    }
+  });
+
+  const rows = computed<LibraryRow[]>(() => {
     void revision();
     const range = TIER_RANGES.find((r) => r.tier === tier());
+    const sg = sidebarGroup();
     const found = preview.searchProblems({
       text: queryText().trim() || null,
       tags: tags(),
       ratingMin: range ? range.min : null,
       ratingMax: range && range.max !== null ? range.max - 1 : null,
       platform: platform() ?? null,
+      group: sg.kind === "named" ? sg.name : null,
+      ungroupedOnly: sg.kind === "ungrouped",
     });
-    const list: Row[] = found.map((p) => ({
+    const list: LibraryRow[] = found.map((p) => ({
       ...p,
       ratingText: p.rating == null ? "" : String(p.rating),
       tagsText: p.tags.join(" "),
       source: p.sources.map((s) => `${s.platform} ${s.id}`).join("  "),
-      editorialMark: p.hasEditorial ? "1" : "",
-      codeMark: p.hasSolutions ? "1" : "",
+      status: `${p.packageStatus ?? ""}:${p.hasEditorial ? "e" : ""}:${p.hasSolutions ? "c" : ""}`,
     }));
     const s = sort();
     if (s) {
@@ -175,38 +234,70 @@ export function LibraryView(props: { active: boolean }) {
     return list;
   });
 
-  // The title takes what the other columns leave, so the rows reach the right edge; a
-  // narrow table drops the columns that matter least (marks, then source, then tags)
-  // rather than scroll sideways.
-  const columns = computed(() => {
-    const w = width();
-    const marks = w >= 760;
-    const source = w >= 660;
-    const tagsW = w >= 560 ? FIXED.tags : 0;
-    const used = FIXED.id + FIXED.rating + tagsW + (source ? FIXED.source : 0) + (marks ? 2 * FIXED.mark : 0);
-    return [
-      { key: "id", title: t("library.col.id"), width: FIXED.id, resizable: false, sortable: true },
-      { key: "title", title: t("library.col.title"), width: Math.max(140, w - used - 2), resizable: false, sortable: true },
-      { key: "ratingText", title: t("library.col.rating"), width: FIXED.rating, align: "end" as const, resizable: false, sortable: true },
-      ...(tagsW ? [{ key: "tagsText", title: t("library.col.tags"), width: tagsW, resizable: false }] : []),
-      ...(source ? [{ key: "source", title: t("library.col.source"), width: FIXED.source, resizable: false }] : []),
-      ...(marks
-        ? [
-            { key: "editorialMark", title: t("library.col.editorial"), width: FIXED.mark, align: "center" as const, resizable: false },
-            { key: "codeMark", title: t("library.col.code"), width: FIXED.mark, align: "center" as const, resizable: false },
-          ]
-        : []),
-    ];
+  const visibleIds = computed(() => rows().map((r) => r.id));
+
+  const sections = computed(() =>
+    groupProblems(
+      rows(),
+      libraryGroupBy(),
+      facets().groups.map((g) => g.name),
+      info().contests,
+    ),
+  );
+
+  // Ordered visible IDs (follows section order when grouped so Shift+Click range matches visual order).
+  const orderedVisibleIds = computed(() => {
+    if (libraryGroupBy() === "none") return visibleIds();
+    const out: string[] = [];
+    for (const sec of sections()) {
+      for (const r of sec.rows) out.push(r.id);
+    }
+    return out;
   });
 
-  const filtered = () => inputText().trim() !== "" || queryText().trim() !== "" || tags().length > 0 || tier() !== undefined || platform() !== undefined;
+  const colLayout = computed(() => computeLibraryColumns(width()));
+  const columns = computed(() => colLayout().columns);
+
+  const filtered = () =>
+    inputText().trim() !== "" ||
+    queryText().trim() !== "" ||
+    tags().length > 0 ||
+    tier() !== undefined ||
+    platform() !== undefined ||
+    sidebarGroup().kind !== "all";
+
   const visibleSelected = computed(() => {
     const id = selectedProblem();
     return id && rows().some((r) => r.id === id) ? id : undefined;
   });
+
   const selectedRow = computed(() => {
     const id = visibleSelected();
     return id ? rows().findIndex((r) => r.id === id) : -1;
+  });
+
+  const headerTriState = computed(() => headerCheckboxState(selection().selectedIds, orderedVisibleIds()));
+
+  const selectedProblemsList = computed(() => {
+    const sel = selection().selectedIds;
+    if (sel.size === 0) return [];
+    const byId = new Map(rows().map((r) => [r.id, r]));
+    const out: LibraryRow[] = [];
+    for (const id of sel) {
+      const r = byId.get(id);
+      if (r) out.push(r);
+    }
+    return out;
+  });
+
+  const selectedIdArray = () => [...selection().selectedIds];
+
+  // Prune multi-selection whenever visible rows change (prevents acting on hidden rows).
+  effect(() => {
+    const ids = orderedVisibleIds();
+    const cur = selection();
+    const next = applyRowSelection(cur, ids, { kind: "prune" });
+    if (next !== cur) queueMicrotask(() => selection.set(next));
   });
 
   let lastSelectedId: string | undefined = selectedProblem();
@@ -218,14 +309,14 @@ export function LibraryView(props: { active: boolean }) {
     if (list.length === 0) {
       if (id !== undefined) {
         if (selectionChanged && filtered() && info().problems.some((p) => p.id === id)) {
-          queueMicrotask(clear);
+          queueMicrotask(clearFilters);
           return;
         }
         queueMicrotask(() => selectedProblem.set(undefined));
       }
     } else if (id === undefined || !list.some((r) => r.id === id)) {
       if (selectionChanged && id !== undefined && filtered() && info().problems.some((p) => p.id === id)) {
-        queueMicrotask(clear);
+        queueMicrotask(clearFilters);
         return;
       }
       queueMicrotask(() => selectedProblem.set(list[0].id));
@@ -234,16 +325,35 @@ export function LibraryView(props: { active: boolean }) {
 
   effect(() => {
     const row = selectedRow();
-    if (row >= 0) table?.scrollToRow(row, false);
+    if (row >= 0 && libraryGroupBy() === "none") table?.scrollToRow(row, false);
   });
 
+  const applySel = (action: Parameters<typeof applyRowSelection>[2]) => {
+    const next = applyRowSelection(
+      { ...selection(), focusedId: selection().focusedId ?? selectedProblem() },
+      orderedVisibleIds(),
+      action,
+    );
+    batch(() => {
+      selection.set(next);
+      if (next.focusedId && next.focusedId !== selectedProblem()) {
+        selectedProblem.set(next.focusedId);
+      }
+    });
+  };
+
   function move(delta: number) {
-    const list = rows();
-    if (list.length === 0) return;
-    const cur = selectedRow();
-    const i = cur < 0 ? 0 : Math.min(list.length - 1, Math.max(0, cur + delta));
-    selectedProblem.set(list[i].id);
-    table?.scrollToRow(i, false);
+    const ids = orderedVisibleIds();
+    if (ids.length === 0) return;
+    const curId = selectedProblem();
+    const cur = curId ? ids.indexOf(curId) : -1;
+    const i = cur < 0 ? 0 : Math.min(ids.length - 1, Math.max(0, cur + delta));
+    const nextId = ids[i];
+    batch(() => {
+      selectedProblem.set(nextId);
+      selection.set({ selectedIds: new Set(), anchorId: nextId, focusedId: nextId });
+    });
+    if (libraryGroupBy() === "none") table?.scrollToRow(i, false);
   }
 
   function open() {
@@ -252,10 +362,111 @@ export function LibraryView(props: { active: boolean }) {
   }
 
   keymap.bind({ j: () => props.active && move(1), k: () => props.active && move(-1) }, { when: "notEditing" });
+  keymap.bind("mod+a", () => {
+    if (!props.active) return;
+    applySel({ kind: "selectAll" });
+  }, { when: "notEditing" });
+  keymap.bind("escape", () => {
+    if (!props.active) return;
+    if (selection().selectedIds.size > 0) {
+      applySel({ kind: "clear" });
+    } else if (inputText().length > 0) {
+      setSearch("");
+    }
+  }, { when: "notEditing" });
   keymap.bind("mod+n", () => props.active && !readOnly() && dialog.set({ kind: "newProblem" }));
   keymap.bind("mod+f", () => props.active && search?.focus());
 
-  const tagItems = (): MenuEntry[] => facets().tags.map((t) => ({ id: t, label: t, checked: tags().includes(t) }));
+  const moveIdsToGroup = (ids: string[], group: string | null) => {
+    if (ids.length === 0 || readOnly()) return;
+    const res = preview.batchSetGroup(ids, group);
+    if (res.ok || res.succeeded > 0) refresh();
+  };
+
+  const openContextMenuForRow = (row: LibraryRow, x: number, y: number, onClose?: () => void) => {
+    const ro = readOnly();
+    const sel = selection().selectedIds;
+    if (sel.has(row.id) && sel.size >= 2) {
+      const ids = [...sel];
+      const groupItems = [
+        ...facets().groups.map((g) => ({
+          label: g.name,
+          disabled: ro,
+          onSelect: () => moveIdsToGroup(ids, g.name),
+        })),
+        ...(facets().groups.length > 0 ? [{ type: "separator" as const }] : []),
+        { label: t("library.menu.ungroup"), disabled: ro, onSelect: () => moveIdsToGroup(ids, null) },
+        { label: t("library.sidebar.newGroup"), disabled: ro, onSelect: () => dialog.set({ kind: "newGroup" }) },
+      ];
+      void DesktopMenu.popup(
+        [
+          { label: t("library.batch.selectedCount", { count: ids.length }), disabled: true },
+          { type: "separator" },
+          { label: t("library.batch.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "batchAddToContest", problemIds: ids }) },
+          { label: t("library.batch.moveToGroup"), disabled: ro, submenu: groupItems },
+          { label: t("library.batch.editTags"), disabled: ro, onSelect: () => dialog.set({ kind: "batchTags", problemIds: ids }) },
+          { label: t("library.batch.setRating"), disabled: ro, onSelect: () => dialog.set({ kind: "batchRating", problemIds: ids }) },
+          { type: "separator" },
+          { label: t("library.batch.buildVerify"), disabled: ro, onSelect: () => { startBatchBuildTask(ids, "verify"); } },
+          { label: t("library.batch.buildDebug"), disabled: ro, onSelect: () => { startBatchBuildTask(ids, "debug"); } },
+          { label: t("library.batch.export"), disabled: ro, onSelect: () => dialog.set({ kind: "batchExport", problemIds: ids }) },
+          { type: "separator" },
+          { label: t("library.batch.delete"), disabled: ro, destructive: true, onSelect: () => dialog.set({ kind: "batchDelete", problemIds: ids }) },
+        ],
+        { x, y },
+      ).finally(() => onClose?.());
+      return;
+    }
+
+    selectedProblem.set(row.id);
+    const singleGroupSubmenu = [
+      ...facets().groups.map((g) => ({
+        label: g.name,
+        checked: row.group === g.name,
+        disabled: ro,
+        onSelect: () => moveIdsToGroup([row.id], g.name),
+      })),
+      ...(facets().groups.length > 0 ? [{ type: "separator" as const }] : []),
+      { label: t("library.menu.ungroup"), checked: !row.group, disabled: ro, onSelect: () => moveIdsToGroup([row.id], null) },
+      { label: t("library.sidebar.newGroup"), disabled: ro, onSelect: () => dialog.set({ kind: "newGroup" }) },
+    ];
+
+    void DesktopMenu.popup(
+      [
+        { label: ro ? t("common.view") : t("common.edit"), onSelect: () => openStudio({ target: "problem", id: row.id }) },
+        {
+          label: t("library.menu.copyMarkdownWithSamples"),
+          onSelect: () => {
+            try {
+              void Clipboard.writeText(preview.exportMarkdownWithSamples(row.id, null));
+            } catch {
+              // Ignore errors when problem files are unreadable.
+            }
+          },
+        },
+        { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
+        {
+          label: t("library.menu.createPackage"),
+          disabled: ro || preview.inspectPackage(row.id).hasPackage,
+          onSelect: () => {
+            const res = preview.initPackage(row.id);
+            if (res.ok) {
+              refresh();
+              openStudio({ target: "problem", id: row.id, initialTab: "build" });
+            }
+          },
+        },
+        { label: t("library.menu.moveToGroup"), disabled: ro, submenu: singleGroupSubmenu },
+        { label: t("library.menu.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
+        { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
+        { type: "separator" },
+        { label: t("library.menu.delete"), disabled: ro, destructive: true, onSelect: () => dialog.set({ kind: "deleteProblem", problemId: row.id }) },
+      ],
+      { x, y },
+    ).finally(() => onClose?.());
+  };
+
+  const tagItems = (): MenuEntry[] => facets().tags.map((tg) => ({ id: tg, label: tg, checked: tags().includes(tg) }));
   const tierItems = (): MenuEntry[] => [
     { id: "", label: t("library.filter.allRatings"), checked: tier() === undefined },
     ...TIER_RANGES.map((r) => ({ id: r.tier, label: r.label, checked: tier() === r.tier })),
@@ -268,349 +479,405 @@ export function LibraryView(props: { active: boolean }) {
         ]
       : [{ id: "__empty__", label: t("library.filter.noSources"), disabled: true }];
 
-  const cell = (key: string, row: number, value: string) => {
-    const r = rows()[row];
-    if (key === "ratingText") return value ? <RatingBadge rating={Number(value)} /> : null;
-    if (key === "tagsText") {
-      return (
-        <View style={{ flexDirection: "row", gap: 4, overflow: "hidden" }}>
-          <Each of={r?.tags ?? []} key={(t) => t}>
-            {(t) => <Chip label={t()} />}
-          </Each>
-        </View>
-      );
-    }
-    if (key === "editorialMark" || key === "codeMark") {
-      return value ? <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-primary" /> : null;
-    }
-    if (key === "title") {
-      const st = r?.packageStatus;
-      const badgeLabel =
-        st === "unverified"
-          ? t("library.package.unverified")
-          : st === "stale"
-            ? t("library.package.stale")
-            : st === "failed"
-              ? t("library.package.failed")
-              : undefined;
-      return (
-        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <Text
-            style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, lineHeight: LINE, flexShrink: 1 }}
-            class="text-foreground"
-          >
-            {value}
-          </Text>
-          {badgeLabel && (
-            <Text
-              style={{ fontSize: 11, flexShrink: 0 }}
-              class={st === "failed" ? "text-destructive" : "text-muted-foreground"}
-            >
-              {badgeLabel}
-            </Text>
-          )}
-        </View>
-      );
-    }
-    return (
-      <Text
-        style={{
-          numberOfLines: 1,
-          textOverflow: "ellipsis",
-          fontSize: key === "id" ? 12.5 : 13.5,
-          lineHeight: LINE,
-          fontFamily: key === "id" ? MONO : undefined,
-        }}
-        class={key === "id" ? "text-muted-foreground" : "text-secondary-foreground"}
-      >
-        {value}
-      </Text>
-    );
+  const groupByItems = (): MenuEntry[] => [
+    { id: "none", label: t("library.groupBy.none"), checked: libraryGroupBy() === "none" },
+    { id: "group", label: t("library.groupBy.group"), checked: libraryGroupBy() === "group" },
+    { id: "rating", label: t("library.groupBy.rating"), checked: libraryGroupBy() === "rating" },
+    { id: "platform", label: t("library.groupBy.platform"), checked: libraryGroupBy() === "platform" },
+    { id: "contest", label: t("library.groupBy.contest"), checked: libraryGroupBy() === "contest" },
+    { id: "package_status", label: t("library.groupBy.packageStatus"), checked: libraryGroupBy() === "package_status" },
+  ];
+
+  const groupByLabel = () => {
+    const mode = libraryGroupBy();
+    if (mode === "none") return t("library.groupBy.label");
+    if (mode === "group") return t("library.groupBy.group");
+    if (mode === "rating") return t("library.groupBy.rating");
+    if (mode === "platform") return t("library.groupBy.platform");
+    if (mode === "contest") return t("library.groupBy.contest");
+    return t("library.groupBy.packageStatus");
   };
 
+  const rowClasses = computed(() => {
+    const sel = selection().selectedIds;
+    if (sel.size === 0) return [];
+    return rows().map((r) => (sel.has(r.id) ? "bg-accent" : ""));
+  });
+
+  const showBatchInspector = () => selection().selectedIds.size >= 2 || batchTask() !== undefined;
+  const rightPanelVisible = () => showBatchInspector() || visibleSelected() !== undefined;
+
+  const emptyElement = () =>
+    filtered() ? (
+      <EmptyState
+        icon="searchX"
+        title={t("library.emptyFilteredTitle")}
+        hint={t("library.emptyFilteredHint")}
+        action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clearFilters} />}
+      />
+    ) : (
+      <EmptyState
+        icon="libraryBig"
+        title={t("library.emptyTitle")}
+        hint={readOnly() ? t("common.readOnlyWorkspaceHint") : t("library.emptyHint")}
+        action={
+          readOnly() ? undefined : (
+            <Btn
+              label={t("library.newProblem")}
+              icon="plus"
+              variant="primary"
+              onPress={() => dialog.set({ kind: "newProblem" })}
+              tooltip={tip(t("library.newProblem"), "mod+n")}
+            />
+          )
+        }
+      />
+    );
+
   return (
-    <View style={{ flex: 1 }} class="bg-background">
-      <ResizablePanelGroup handleClass="bg-border w-px group-hover:bg-primary/50 group-active:bg-primary transition-colors">
-        <ResizablePanel minSize={320}>
-          <View
-            style={{ flex: 1, minWidth: 0 }}
-            onLayout={(e) => {
-              const nextW = Math.round(e.bounds.size.width);
-              if (nextW <= 0) return;
-              if (width() === 0) {
-                width.set(nextW);
-                return;
-              }
-              if (Math.abs(nextW - width()) < 2) return;
-              // Debounce column width recomputation during continuous splitter drag so
-              // DataTable doesn't rebuild column metadata on every mouse-move pixel.
-              clearTimeout(widthTimer);
-              widthTimer = setTimeout(() => {
-                widthTimer = undefined;
-                width.set(nextW);
-              }, 80);
-            }}
-          >
-            <Toolbar>
+    <View
+      style={{ flex: 1, flexDirection: "row" }}
+      class="bg-background"
+      onLayout={(e) => {
+        const w = Math.round(e.bounds.size.width);
+        if (w > 0 && Math.abs(w - outerWidth()) >= 2) outerWidth.set(w);
+      }}
+    >
+      <If when={effectiveSidebarOpen()}>
+        <GroupSidebar
+          selection={sidebarGroup()}
+          onSelect={(sel) => sidebarGroup.set(sel)}
+          totalCount={facets().totalCount}
+          ungroupedCount={facets().ungroupedCount}
+          groups={facets().groups}
+          readOnly={readOnly()}
+          onNewGroup={() => dialog.set({ kind: "newGroup" })}
+          onRenameGroup={(name) => dialog.set({ kind: "renameGroup", name })}
+          onDeleteGroup={(name) => dialog.set({ kind: "deleteGroup", name })}
+        />
+      </If>
+
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <ResizablePanelGroup handleClass="bg-border w-px group-hover:bg-primary/50 group-active:bg-primary transition-colors">
+          <ResizablePanel minSize={320}>
+            <View
+              style={{ flex: 1, minWidth: 0, position: "relative" }}
+              onLayout={(e) => {
+                const nextW = Math.round(e.bounds.size.width);
+                if (nextW <= 0) return;
+                if (width() === 0) {
+                  width.set(nextW);
+                  return;
+                }
+                if (Math.abs(nextW - width()) < 2) return;
+                clearTimeout(widthTimer);
+                widthTimer = setTimeout(() => {
+                  widthTimer = undefined;
+                  width.set(nextW);
+                }, 80);
+              }}
+            >
+              <Toolbar>
+                <IconBtn
+                  testID="library-sidebar-toggle"
+                  icon="panelLeft"
+                  tone={effectiveSidebarOpen() ? "foreground" : "muted-foreground"}
+                  tooltip={tip(t("library.sidebar.toggle"))}
+                  onPress={toggleSidebar}
+                  style={{ flexShrink: 0 }}
+                />
+                <View
+                  style={{
+                    flexBasis: 200,
+                    flexShrink: 1,
+                    minWidth: 100,
+                    height: 28,
+                    borderRadius: 6,
+                    borderWidth: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingLeft: 8,
+                    paddingRight: 4,
+                    gap: 6,
+                  }}
+                  class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
+                  captureKeys={["up", "down", "escape"]}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown") move(1);
+                    else if (e.key === "ArrowUp") move(-1);
+                    else if (e.key === "Escape") {
+                      if (selection().selectedIds.size > 0) applySel({ kind: "clear" });
+                      else if (inputText().length > 0) setSearch("");
+                    }
+                  }}
+                >
+                  <Icon name="search" size={14} tone="muted-foreground" />
+                  <Input
+                    ref={(r) => (search = r)}
+                    testID="library-search"
+                    class="bg-transparent placeholder:text-muted-foreground"
+                    style={{ flex: 1, height: 26, fontSize: 13 }}
+                    value={inputText()}
+                    placeholder={t("library.searchPlaceholder")}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoFocus
+                    onChange={(e) => setSearch(e.value)}
+                  />
+                  <If when={inputText().length > 0}>
+                    <View
+                      testID="library-search-clear"
+                      onPress={() => {
+                        setSearch("");
+                        search?.focus();
+                      }}
+                      tooltip={tip(t("library.clearSearch"), "escape")}
+                      class="hover:bg-muted active:bg-accent"
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 4,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                        transitionProperty: "colors",
+                        transitionDuration: ms(120),
+                        transitionTimingFunction: EASE_STANDARD,
+                      }}
+                    >
+                      <Icon name="x" size={12} tone="muted-foreground" />
+                    </View>
+                  </If>
+                </View>
+                <FilterMenu
+                  label={tags().length === 0 ? t("library.filter.tags") : tags().length === 1 ? tags()[0] : t("library.filter.tagsCount", { count: tags().length })}
+                  active={tags().length > 0}
+                  multi
+                  entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: t("library.filter.noTags"), disabled: true }]}
+                  onSelect={(id) => id && id !== "__empty__" && tags.set(tags().includes(id) ? tags().filter((x) => x !== id) : [...tags(), id])}
+                />
+                <FilterMenu
+                  label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? t("library.filter.rating")}
+                  active={tier() !== undefined}
+                  entries={tierItems()}
+                  onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
+                />
+                <FilterMenu
+                  label={platform() ?? t("library.filter.source")}
+                  active={platform() !== undefined}
+                  entries={platformItems()}
+                  onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
+                />
+                <FilterMenu
+                  label={groupByLabel()}
+                  active={libraryGroupBy() !== "none"}
+                  entries={groupByItems()}
+                  onSelect={(id) => setLibraryGroupBy(id as LibraryGroupBy)}
+                />
+                <If when={filtered()}>
+                  <Btn label={width() >= 660 ? t("common.clear") : undefined} icon="filterX" variant="ghost" tooltip={tip(t("library.filter.clear"))} onPress={clearFilters} style={{ flexShrink: 0 }} />
+                </If>
+                <Spacer />
+                <If when={totalCount() > 0 && width() >= 540}>
+                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                    {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
+                  </Text>
+                </If>
+                <Btn
+                  testID="library-import-polygon"
+                  label={width() >= 820 ? t("packages.importPolygon") : undefined}
+                  icon="folderOpen"
+                  variant="outline"
+                  disabled={readOnly() || importingPolygon()}
+                  tooltip={tip(readOnly() ? t("packages.readOnlyCannotImport") : t("packages.importPolygonTooltip"))}
+                  onPress={() => void importPolygon()}
+                  style={{ flexShrink: 0 }}
+                />
+                <Btn
+                  label={width() >= 700 ? t("library.newProblem") : undefined}
+                  icon="plus"
+                  disabled={readOnly()}
+                  tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
+                  onPress={() => dialog.set({ kind: "newProblem" })}
+                  style={{ flexShrink: 0 }}
+                />
+              </Toolbar>
+
               <View
-                style={{
-                  flexBasis: 220,
-                  flexShrink: 1,
-                  minWidth: 110,
-                  height: 28,
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingLeft: 8,
-                  paddingRight: 4,
-                  gap: 6,
-                }}
-                class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
-                captureKeys={["up", "down", "escape"]}
+                style={{ flex: 1, minHeight: 0 }}
+                captureKeys={["up", "down", "enter"]}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown") move(1);
                   else if (e.key === "ArrowUp") move(-1);
-                  else if (e.key === "Escape" && inputText().length > 0) setSearch("");
+                  else if (e.key === "Enter") open();
                 }}
               >
-                <Icon name="search" size={14} tone="muted-foreground" />
-                <Input
-                  ref={(r) => (search = r)}
-                  testID="library-search"
-                  class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ flex: 1, height: 26, fontSize: 13 }}
-                  value={inputText()}
-                  placeholder={t("library.searchPlaceholder")}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoFocus
-                  onChange={(e) => setSearch(e.value)}
-                />
-                <If when={inputText().length > 0}>
-                  <View
-                    testID="library-search-clear"
-                    onPress={() => {
-                      setSearch("");
-                      search?.focus();
-                    }}
-                    tooltip={tip(t("library.clearSearch"), "escape")}
-                    class="hover:bg-muted active:bg-accent"
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 4,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
-                    }}
-                  >
-                    <Icon name="x" size={12} tone="muted-foreground" />
-                  </View>
+                <If
+                  when={libraryGroupBy() === "none"}
+                  else={
+                    <GroupedProblemList
+                      sections={sections()}
+                      columns={columns()}
+                      showInlineId={colLayout().showInlineId}
+                      maxTags={colLayout().maxTags}
+                      tagsWidth={colLayout().tagsWidth}
+                      sort={sort()}
+                      onSortChange={(s) => sort.set(s)}
+                      headerTriState={headerTriState()}
+                      onToggleAll={() => applySel({ kind: "toggleAll" })}
+                      selectedIds={selection().selectedIds}
+                      focusedId={visibleSelected()}
+                      onRowClick={(id, opts) => applySel({ kind: "click", id, ...opts })}
+                      onRowDoubleClick={(id) => openStudio({ target: "problem", id })}
+                      onToggleGroupSelect={(ids) => applySel({ kind: "toggleGroup", ids })}
+                      onRowContextMenu={(row, x, y) => openContextMenuForRow(row, x, y)}
+                      empty={emptyElement()}
+                    />
+                  }
+                >
+                  <If when={width() > 0}>
+                    <DataTable<LibraryRow>
+                      ref={(r) => (table = r)}
+                      testID="library-table"
+                      style={{ flex: 1 }}
+                      columns={columns()}
+                      data={rows()}
+                      rowClasses={rowClasses()}
+                      sort={sort()}
+                      onSortChange={(e) => sort.set(e.sort)}
+                      rowHeight={40}
+                      headerHeight={34}
+                      fontSize={13.5}
+                      columnSelectable={false}
+                      movableColumns={false}
+                      resizableColumns={false}
+                      selectOnModifierPress={false}
+                      selection={selection().selectedIds.size === 0 && selectedRow() >= 0 ? { row: selectedRow() } : null}
+                      onRowPress={(e) => {
+                        const row = rows()[e.row];
+                        if (!row) return;
+                        const isCheckbox = e.column === 0;
+                        const mod = e.control || e.platform;
+                        applySel({
+                          kind: "click",
+                          id: row.id,
+                          shift: e.shift,
+                          mod,
+                          checkbox: isCheckbox,
+                        });
+                      }}
+                      onDoublePress={(e) => {
+                        if (e.target.column === 0) return;
+                        const row = rows()[e.target.row ?? -1];
+                        if (row) openStudio({ target: "problem", id: row.id });
+                      }}
+                      onContextMenu={(e) => {
+                        const row = e.row != null ? rows()[e.row] : undefined;
+                        if (!row) return;
+                        openContextMenuForRow(row, e.x, e.y, () => table?.clearMenuTarget());
+                      }}
+                      renderCell={(c) => {
+                        const r = rows()[c.row];
+                        const pad = cellPadding(c.key);
+                        return (
+                          <View
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: pad.justifyContent,
+                              paddingLeft: pad.paddingLeft,
+                              paddingRight: pad.paddingRight,
+                              overflow: "hidden",
+                            }}
+                          >
+                            {renderLibraryCellContent(c.key, r, {
+                              selected: r ? selection().selectedIds.has(r.id) : false,
+                              showInlineId: colLayout().showInlineId,
+                              maxTags: colLayout().maxTags,
+                              tagsWidth: colLayout().tagsWidth,
+                            })}
+                          </View>
+                        );
+                      }}
+                      renderHeaderCell={(h) =>
+                        renderLibraryHeaderContent({
+                          key: h.key,
+                          title: h.title ?? "",
+                          sortDir: h.sort,
+                          triState: headerTriState,
+                          onToggleAll: () => applySel({ kind: "toggleAll" }),
+                          nativeSortIndicator: true,
+                        })
+                      }
+                      classes={{
+                        root: "bg-background",
+                        header: "bg-background border-b border-border",
+                        row: "bg-background",
+                        rowOdd: "bg-background",
+                        rowHover: "bg-muted",
+                        rowSelected: "bg-accent",
+                      }}
+                      empty={emptyElement()}
+                    />
+                  </If>
                 </If>
               </View>
-              <FilterMenu
-                label={tags().length === 0 ? t("library.filter.tags") : tags().length === 1 ? tags()[0] : t("library.filter.tagsCount", { count: tags().length })}
-                active={tags().length > 0}
-                multi
-                entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: t("library.filter.noTags"), disabled: true }]}
-                onSelect={(id) => id && id !== "__empty__" && tags.set(tags().includes(id) ? tags().filter((t) => t !== id) : [...tags(), id])}
-              />
-              <FilterMenu
-                label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? t("library.filter.rating")}
-                active={tier() !== undefined}
-                entries={tierItems()}
-                onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
-              />
-              <FilterMenu
-                label={platform() ?? t("library.filter.source")}
-                active={platform() !== undefined}
-                entries={platformItems()}
-                onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
-              />
-              <If when={filtered()}>
-                <Btn label={width() >= 580 ? t("common.clear") : undefined} icon="filterX" variant="ghost" tooltip={tip(t("library.filter.clear"))} onPress={clear} style={{ flexShrink: 0 }} />
+
+              <If when={selection().selectedIds.size >= 1}>
+                <BatchFloatingBar
+                  count={selection().selectedIds.size}
+                  tableWidth={width()}
+                  readOnly={readOnly()}
+                  groups={facets().groups}
+                  onAddToContest={() => dialog.set({ kind: "batchAddToContest", problemIds: selectedIdArray() })}
+                  onMoveToGroup={(g) => moveIdsToGroup(selectedIdArray(), g)}
+                  onNewGroupAndMove={() => dialog.set({ kind: "newGroup" })}
+                  onEditTags={() => dialog.set({ kind: "batchTags", problemIds: selectedIdArray() })}
+                  onSetRating={() => dialog.set({ kind: "batchRating", problemIds: selectedIdArray() })}
+                  onStartBuild={(mode) => {
+                    startBatchBuildTask(selectedIdArray(), mode);
+                  }}
+                  onExport={() => dialog.set({ kind: "batchExport", problemIds: selectedIdArray() })}
+                  onDelete={() => dialog.set({ kind: "batchDelete", problemIds: selectedIdArray() })}
+                  onClear={() => applySel({ kind: "clear" })}
+                />
               </If>
-              <Spacer />
-              <If when={totalCount() > 0 && width() >= 500}>
-                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
-                  {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
-                </Text>
-              </If>
-              <Btn
-                testID="library-import-polygon"
-                label={width() >= 780 ? t("packages.importPolygon") : undefined}
-                icon="folderOpen"
-                variant="outline"
-                disabled={readOnly() || importingPolygon()}
-                tooltip={tip(readOnly() ? t("packages.readOnlyCannotImport") : t("packages.importPolygonTooltip"))}
-                onPress={() => void importPolygon()}
-                style={{ flexShrink: 0 }}
-              />
-              <Btn
-                label={width() >= 660 ? t("library.newProblem") : undefined}
-                icon="plus"
-                disabled={readOnly()}
-                tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
-                onPress={() => dialog.set({ kind: "newProblem" })}
-                style={{ flexShrink: 0 }}
-              />
-            </Toolbar>
-            <View
-              style={{ flex: 1 }}
-              captureKeys={["up", "down", "enter"]}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowDown") move(1);
-                else if (e.key === "ArrowUp") move(-1);
-                else if (e.key === "Enter") open();
-              }}
-            >
-              <DataTable<Row>
-                ref={(r) => (table = r)}
-                testID="library-table"
-                style={{ flex: 1 }}
-                columns={columns()}
-                data={rows()}
-                sort={sort()}
-                onSortChange={(e) => sort.set(e.sort)}
-                rowHeight={40}
-                headerHeight={34}
-                fontSize={13.5}
-                columnSelectable={false}
-                movableColumns={false}
-                resizableColumns={false}
-                selection={selectedRow() >= 0 ? { row: selectedRow() } : null}
-                onSelectionChange={(e) => {
-                  const row = e.selection?.row;
-                  if (row != null && rows()[row]) selectedProblem.set(rows()[row].id);
-                }}
-                onDoublePress={(e) => {
-                  const row = rows()[e.target.row ?? -1];
-                  if (row) openStudio({ target: "problem", id: row.id });
-                }}
-                onContextMenu={(e) => {
-                  const row = e.row != null ? rows()[e.row] : undefined;
-                  if (!row) return;
-                  selectedProblem.set(row.id);
-                  const ro = readOnly();
-                  void DesktopMenu.popup(
-                    [
-                      { label: ro ? t("common.view") : t("common.edit"), onSelect: () => openStudio({ target: "problem", id: row.id }) },
-                      {
-                        label: t("library.menu.copyMarkdownWithSamples"),
-                        onSelect: () => {
-                          try {
-                            void Clipboard.writeText(preview.exportMarkdownWithSamples(row.id, null));
-                          } catch {
-                            // Ignore errors when problem files are unreadable.
-                          }
-                        },
-                      },
-                      { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
-                      {
-                        label: t("library.menu.createPackage"),
-                        disabled: ro || preview.inspectPackage(row.id).hasPackage,
-                        onSelect: () => {
-                          const res = preview.initPackage(row.id);
-                          if (res.ok) {
-                            refresh();
-                            openStudio({ target: "problem", id: row.id, initialTab: "build" });
-                          }
-                        },
-                      },
-                      { label: t("library.menu.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
-                      { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
-                      { type: "separator" },
-                      { label: t("library.menu.delete"), disabled: ro, destructive: true, onSelect: () => dialog.set({ kind: "deleteProblem", problemId: row.id }) },
-                    ],
-                    { x: e.x, y: e.y },
-                  ).finally(() => table?.clearMenuTarget());
-                }}
-                renderCell={(c) => (
-                  <View
-                    style={{
-                      flex: 1,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: c.key === "ratingText" ? "flex-end" : c.key.endsWith("Mark") ? "center" : "flex-start",
-                      paddingLeft: c.key === "id" ? 16 : 12,
-                      paddingRight: 12,
-                      overflow: "hidden",
-                    }}
-                  >
-                    {cell(c.key, c.row, c.text)}
-                  </View>
-                )}
-                renderHeaderCell={(h) => {
-                  const sortable = h.key === "id" || h.key === "title" || h.key === "ratingText";
-                  return (
-                    <View
-                      class={sortable ? "hover:bg-muted/60 transition-colors" : undefined}
-                      style={{
-                        flex: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: h.key === "ratingText" ? "flex-end" : h.key.endsWith("Mark") ? "center" : "flex-start",
-                        paddingLeft: h.key === "id" ? 16 : 12,
-                        paddingRight: 12,
-                        gap: 4,
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, lineHeight: LINE }} class={h.sort ? "text-foreground" : "text-muted-foreground"}>
-                        {h.title ?? ""}
-                      </Text>
-                      {h.sort && (
-                        <Icon
-                          name="chevronDown"
-                          size={12}
-                          tone="secondary-foreground"
-                          style={{ transform: h.sort === "ascending" ? "rotate(180deg)" : "rotate(0deg)" }}
-                        />
-                      )}
-                    </View>
-                  );
-                }}
-                classes={{
-                  root: "bg-background",
-                  header: "bg-background border-b border-border",
-                  row: "bg-background",
-                  rowOdd: "bg-background",
-                  rowHover: "bg-muted",
-                  rowSelected: "bg-accent",
-                }}
-                empty={
-                  filtered() ? (
-                    <EmptyState icon="searchX" title={t("library.emptyFilteredTitle")} hint={t("library.emptyFilteredHint")} action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clear} />} />
-                  ) : (
-                    <EmptyState
-                      icon="libraryBig"
-                      title={t("library.emptyTitle")}
-                      hint={readOnly() ? t("common.readOnlyWorkspaceHint") : t("library.emptyHint")}
-                      action={
-                        readOnly() ? undefined : (
-                          <Btn label={t("library.newProblem")} icon="plus" variant="primary" onPress={() => dialog.set({ kind: "newProblem" })} tooltip={tip(t("library.newProblem"), "mod+n")} />
-                        )
-                      }
-                    />
-                  )
-                }
-              />
             </View>
-          </View>
-        </ResizablePanel>
-        <ResizablePanel
-          size={380}
-          minSize={300}
-          maxSize={560}
-          fixed
-          visible={visibleSelected() !== undefined}
-        >
-          <If when={visibleSelected()}>{(id) => <ProblemInspector id={id()} active={props.active} />}</If>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          </ResizablePanel>
+
+          <ResizablePanel
+            size={380}
+            minSize={300}
+            maxSize={560}
+            fixed
+            visible={rightPanelVisible()}
+          >
+            <If
+              when={showBatchInspector()}
+              else={<If when={visibleSelected()}>{(id) => <ProblemInspector id={id()} active={props.active} groups={facets().groups} />}</If>}
+            >
+              <BatchInspector
+                selectedProblems={selectedProblemsList()}
+                groups={facets().groups}
+                readOnly={readOnly()}
+                onClearSelection={() => applySel({ kind: "clear" })}
+                onAddToContest={() => dialog.set({ kind: "batchAddToContest", problemIds: selectedIdArray() })}
+                onMoveToGroup={(g) => moveIdsToGroup(selectedIdArray(), g)}
+                onNewGroupAndMove={() => dialog.set({ kind: "newGroup" })}
+                onEditTags={() => dialog.set({ kind: "batchTags", problemIds: selectedIdArray() })}
+                onSetRating={() => dialog.set({ kind: "batchRating", problemIds: selectedIdArray() })}
+                onStartBuild={(mode) => {
+                  startBatchBuildTask(selectedIdArray(), mode);
+                }}
+                onExport={() => dialog.set({ kind: "batchExport", problemIds: selectedIdArray() })}
+                onDelete={() => dialog.set({ kind: "batchDelete", problemIds: selectedIdArray() })}
+              />
+            </If>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </View>
     </View>
   );
 }
@@ -618,7 +885,7 @@ export function LibraryView(props: { active: boolean }) {
 type Tab = "statements" | "editorial" | "code";
 
 /** The selected problem as it prints, with its sources, referencing contests, and actions. */
-function ProblemInspector(props: { id: string; active: boolean }) {
+function ProblemInspector(props: { id: string; active: boolean; groups: readonly { name: string; count: number }[] }) {
   const tab = signal<Tab>("statements");
   const solution = signal<string | undefined>(undefined);
   let canvas: CanvasController | undefined;
@@ -660,9 +927,9 @@ function ProblemInspector(props: { id: string; active: boolean }) {
   ]);
 
   const request = (): PreviewRequest | undefined => {
-    const t = tab();
-    if (t === "code") return undefined;
-    return { target: "problem", id: props.id, book: t, path: "", text: "" };
+    const cur = tab();
+    if (cur === "code") return undefined;
+    return { target: "problem", id: props.id, book: cur, path: "", text: "" };
   };
   const currentSolution = () => solution() ?? detail().solutions[0];
   const code = computed(() => {
@@ -670,11 +937,42 @@ function ProblemInspector(props: { id: string; active: boolean }) {
     return tab() === "code" && name ? preview.readSolution(props.id, name).text : "";
   });
 
-  const hasMeta = () => detail().tags.length > 0 || detail().sources.length > 0 || referencingContests().length > 0;
+  const hasMeta = () =>
+    !!detail().group || detail().tags.length > 0 || detail().sources.length > 0 || referencingContests().length > 0;
   const readOnly = () => info().readOnly;
 
   const jumpContest = (contestId: string) => {
     jumpToContest(contestId);
+  };
+
+  const moreEntries = (): MenuEntry[] => {
+    const ro = readOnly();
+    const curGroup = detail().group ?? null;
+    const groupEntries: MenuEntry[] = [
+      ...props.groups.map((g) => ({
+        id: `group:${g.name}`,
+        label: `${t("library.menu.moveToGroup")}: ${g.name}`,
+        icon: "folder" as const,
+        checked: curGroup === g.name,
+        disabled: ro,
+      })),
+      ...(curGroup
+        ? [{ id: "group:__clear__", label: t("library.menu.ungroup"), icon: "x" as const, disabled: ro }]
+        : []),
+    ];
+    return [
+      { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
+      ...(ro || preview.inspectPackage(props.id).hasPackage
+        ? []
+        : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
+      { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: ro },
+      { id: "add", label: t("library.menu.addToContest"), icon: "listPlus", disabled: ro },
+      ...(groupEntries.length > 0 ? [{ separator: true as const, id: "sep-grp" }, ...groupEntries] : []),
+      { separator: true, id: "sep-rev" },
+      { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
+      { separator: true, id: "sep-del" },
+      { id: "delete", label: t("library.menu.delete"), icon: "trash", destructive: true, disabled: ro },
+    ];
   };
 
   return (
@@ -686,8 +984,35 @@ function ProblemInspector(props: { id: string; active: boolean }) {
           second={
             hasMeta() ? (
               <>
-                <Each of={detail().tags} key={(t) => t}>
-                  {(t) => <Chip label={t()} />}
+                <If when={detail().group}>
+                  {(g) => (
+                    <View
+                      style={{
+                        height: 20,
+                        maxWidth: 160,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        paddingLeft: 6,
+                        paddingRight: 6,
+                        borderRadius: 5,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                      class="bg-muted"
+                    >
+                      <Icon name="folder" size={11} tone="muted-foreground" />
+                      <Text
+                        style={{ fontSize: 11.5, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        class="text-secondary-foreground"
+                      >
+                        {g()}
+                      </Text>
+                    </View>
+                  )}
+                </If>
+                <Each of={detail().tags} key={(tg) => tg}>
+                  {(tg) => <Chip label={tg()} />}
                 </Each>
                 <Each of={detail().sources} key={(s) => `${s.platform}:${s.id}`}>
                   {(s) => (
@@ -776,17 +1101,7 @@ function ProblemInspector(props: { id: string; active: boolean }) {
               />
               <AppMenu
                 align="end"
-                entries={[
-                  { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
-                  ...(readOnly() || preview.inspectPackage(props.id).hasPackage
-                    ? []
-                    : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
-                  { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: readOnly() },
-                  { id: "add", label: t("library.menu.addToContest"), icon: "listPlus", disabled: readOnly() },
-                  { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
-                  { separator: true, id: "sep" },
-                  { id: "delete", label: t("library.menu.delete"), icon: "trash", destructive: true, disabled: readOnly() },
-                ]}
+                entries={moreEntries()}
                 onSelect={(id) => {
                   if (id === "copyMd") {
                     try {
@@ -802,7 +1117,13 @@ function ProblemInspector(props: { id: string; active: boolean }) {
                     }
                   } else if (id === "duplicate") dialog.set({ kind: "duplicateProblem", problemId: props.id });
                   else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
-                  else if (id === "reveal") void preview.revealInFolder(`problems/${props.id}`);
+                  else if (id === "group:__clear__") {
+                    const res = preview.batchSetGroup([props.id], null);
+                    if (res.ok || res.succeeded > 0) refresh();
+                  } else if (id.startsWith("group:")) {
+                    const res = preview.batchSetGroup([props.id], id.slice(6));
+                    if (res.ok || res.succeeded > 0) refresh();
+                  } else if (id === "reveal") void preview.revealInFolder(`problems/${props.id}`);
                   else if (id === "delete") dialog.set({ kind: "deleteProblem", problemId: props.id });
                 }}
                 trigger={<MoreTrigger testID="problem-more" />}

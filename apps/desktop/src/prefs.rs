@@ -93,6 +93,7 @@ impl StoredPrefs {
         }
         next.language = normalize_language_pref(next.language.as_deref());
         next.cxx_override = normalize_cxx_override(next.cxx_override.as_deref());
+        next.library_group_by = normalize_library_group_by(next.library_group_by.as_deref());
         next.recent_workspaces = dedup_recent(next.recent_workspaces);
         self.app = next;
     }
@@ -191,6 +192,18 @@ fn normalize_cxx_override(raw: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn normalize_library_group_by(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim) {
+        Some("none") => Some("none".to_owned()),
+        Some("group") => Some("group".to_owned()),
+        Some("rating") => Some("rating".to_owned()),
+        Some("platform") => Some("platform".to_owned()),
+        Some("contest") => Some("contest".to_owned()),
+        Some("package_status") => Some("package_status".to_owned()),
+        _ => None,
+    }
+}
+
 fn dedup_recent(list: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(list.len().min(MAX_RECENT_WORKSPACES));
     for item in list {
@@ -254,6 +267,11 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
     }
     app.language = normalize_language_pref(obj.get("language").and_then(JsonValue::as_str));
     app.cxx_override = normalize_cxx_override(obj.get("cxxOverride").and_then(JsonValue::as_str));
+    if let Some(open) = obj.get("librarySidebarOpen").and_then(JsonValue::as_bool) {
+        app.library_sidebar_open = open;
+    }
+    app.library_group_by =
+        normalize_library_group_by(obj.get("libraryGroupBy").and_then(JsonValue::as_str));
 
     let mut frecency = HashMap::new();
     if let Some(frec_obj) = obj.get("frecency").and_then(JsonValue::as_object) {
@@ -318,6 +336,10 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     }
     if let Some(ref cxx) = prefs.app.cxx_override {
         root["cxxOverride"] = JsonValue::from(cxx.as_str());
+    }
+    root["librarySidebarOpen"] = JsonValue::from(prefs.app.library_sidebar_open);
+    if let Some(ref group_by) = prefs.app.library_group_by {
+        root["libraryGroupBy"] = JsonValue::from(group_by.as_str());
     }
     if let Some(ref window_state) = prefs.window_state {
         root["windowState"] = window_state.clone();

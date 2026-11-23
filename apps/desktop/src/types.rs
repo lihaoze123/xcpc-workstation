@@ -10,8 +10,9 @@ use nsh_core::element::{JsHost, JsIn, JsKind, JsOwned, JsValue, PropError, TsTyp
 use nsh_core::prelude::*;
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
-    ContestMetaPatch, DiffKind, Language, Limits, LimitsPatch, OverridePatch, Patch,
-    ProblemMetaPatch, RatingTier, Source, TemplateOptionValue, TemplateOptionsPatch,
+    BatchItemStatus, BatchReport, ContestMetaPatch, DiffKind, Language, Limits, LimitsPatch,
+    OverridePatch, Patch, ProblemMetaPatch, RatingTier, Source, TemplateOptionValue,
+    TemplateOptionsPatch,
 };
 
 // ---- Preview & diagnostics -------------------------------------------------------------
@@ -384,6 +385,10 @@ pub struct ProblemSearchQuery {
     pub rating_max: Option<u32>,
     #[prop(skip_none)]
     pub platform: Option<String>,
+    #[prop(skip_none)]
+    pub group: Option<String>,
+    #[prop(default)]
+    pub ungrouped_only: bool,
 }
 
 /// Indexed problem summary returned by `searchProblems` (without statement body).
@@ -391,6 +396,8 @@ pub struct ProblemSearchQuery {
 pub struct ProblemSummaryJs {
     pub id: String,
     pub title: String,
+    #[prop(skip_none)]
+    pub group: Option<String>,
     #[prop(skip_none)]
     pub rating: Option<u32>,
     pub tags: Vec<String>,
@@ -403,13 +410,28 @@ pub struct ProblemSummaryJs {
     /// or omitted for pure publishing problems without a package.
     #[prop(skip_none)]
     pub package_status: Option<String>,
+    /// Sorted IDs of non-archived contests that include this problem.
+    #[prop(default)]
+    pub contest_ids: Vec<String>,
 }
 
-/// Distinct tags and external platforms across the workspace problem library, sorted.
+/// Summary of one persistent problem group for the library sidebar.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct GroupSummaryJs {
+    pub name: String,
+    pub count: u32,
+    /// True when declared in `workspace.toml`; false when only referenced by `problem.toml`.
+    pub declared: bool,
+}
+
+/// Distinct tags, external platforms, and persistent group counts across the workspace problem library.
 #[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
 pub struct WorkspaceFacets {
     pub tags: Vec<String>,
     pub platforms: Vec<String>,
+    pub groups: Vec<GroupSummaryJs>,
+    pub ungrouped_count: u32,
+    pub total_count: u32,
 }
 
 /// One sample test case pair (`samples/01.in` & `samples/01.ans`).
@@ -427,6 +449,8 @@ pub struct SamplePairJs {
 pub struct ProblemDetailJs {
     pub id: String,
     pub title: String,
+    #[prop(skip_none)]
+    pub group: Option<String>,
     #[prop(skip_none)]
     pub rating: Option<u32>,
     pub tags: Vec<String>,
@@ -662,6 +686,12 @@ pub struct AppPrefsJs {
     /// Optional explicit C++ compiler path override for local Polygon builds.
     #[prop(skip_none)]
     pub cxx_override: Option<String>,
+    /// Whether the library left group sidebar is open (default `true`).
+    #[prop(default = true)]
+    pub library_sidebar_open: bool,
+    /// Library dynamic grouping mode (`"none" | "group" | "rating" | "platform" | "contest" | "package_status"`).
+    #[prop(skip_none)]
+    pub library_group_by: Option<String>,
 }
 
 impl Default for AppPrefsJs {
@@ -677,6 +707,8 @@ impl Default for AppPrefsJs {
             props_open: true,
             language: None,
             cxx_override: None,
+            library_sidebar_open: true,
+            library_group_by: None,
         }
     }
 }
@@ -719,6 +751,7 @@ impl ProblemMetaPatchJs {
             parse_namespaced_options_json(self.template_options_json.as_deref())?;
         Ok(ProblemMetaPatch {
             title: self.title,
+            group: Patch::Keep,
             rating: self.rating,
             tags: self.tags,
             author: self.author,
@@ -1575,6 +1608,291 @@ impl From<xcpc_judge::ToolchainStatus> for ToolchainStatusJs {
             env_override: s.env_override,
             install_guide: s.install_guide,
             error: None,
+        }
+    }
+}
+
+// ---- Phase 3B+: Batch mutations, delete & async batch task streaming -------------------
+
+/// Per-problem outcome in a synchronous batch mutation (`batchSetGroup`, `batchEditTags`,
+/// `batchSetRating`, `batchAddToContest`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchItemResultJs {
+    pub id: String,
+    /// `"ok"`, `"skipped"`, or `"failed"`.
+    pub status: String,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    #[prop(skip_none)]
+    pub message: Option<String>,
+}
+
+/// Aggregated result of a synchronous batch mutation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchMutationResultJs {
+    pub ok: bool,
+    pub total: u32,
+    pub succeeded: u32,
+    pub skipped: u32,
+    pub failed: u32,
+    pub items: Vec<BatchItemResultJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl BatchMutationResultJs {
+    pub(crate) fn from_report(report: BatchReport) -> Self {
+        let items = report
+            .items
+            .into_iter()
+            .map(|item| BatchItemResultJs {
+                id: item.id,
+                status: batch_item_status_str(item.status).to_owned(),
+                code: item.code,
+                message: item.message,
+            })
+            .collect();
+        Self {
+            ok: report.ok,
+            total: report.total as u32,
+            succeeded: report.succeeded as u32,
+            skipped: report.skipped as u32,
+            failed: report.failed as u32,
+            items,
+            error: None,
+            code: None,
+        }
+    }
+
+    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: Some(message.into()),
+            code: Some(code.into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
+        Self::err(err.code(), err.human_message())
+    }
+}
+
+/// Per-problem outcome in `batchDeleteProblems`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchDeleteItemJs {
+    pub id: String,
+    /// `"ok"`, `"skipped"`, or `"failed"`.
+    pub status: String,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    #[prop(skip_none)]
+    pub message: Option<String>,
+    #[prop(default)]
+    pub referencing_contests: Vec<String>,
+}
+
+/// Aggregated result of `batchDeleteProblems`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchDeleteResultJs {
+    pub ok: bool,
+    pub total: u32,
+    pub deleted: u32,
+    pub skipped: u32,
+    pub failed: u32,
+    pub items: Vec<BatchDeleteItemJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl BatchDeleteResultJs {
+    pub(crate) fn from_report(report: BatchReport) -> Self {
+        let items = report
+            .items
+            .into_iter()
+            .map(|item| BatchDeleteItemJs {
+                id: item.id,
+                status: batch_item_status_str(item.status).to_owned(),
+                code: item.code,
+                message: item.message,
+                referencing_contests: item.referencing_contests,
+            })
+            .collect();
+        Self {
+            ok: report.ok,
+            total: report.total as u32,
+            deleted: report.succeeded as u32,
+            skipped: report.skipped as u32,
+            failed: report.failed as u32,
+            items,
+            error: None,
+            code: None,
+        }
+    }
+
+    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: Some(message.into()),
+            code: Some(code.into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
+        Self::err(err.code(), err.human_message())
+    }
+}
+
+fn batch_item_status_str(status: BatchItemStatus) -> &'static str {
+    match status {
+        BatchItemStatus::Ok => "ok",
+        BatchItemStatus::Skipped => "skipped",
+        BatchItemStatus::Failed => "failed",
+    }
+}
+
+/// Request payload for `startBatchExport`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchExportRequestJs {
+    /// `"domjudge"`, `"hydro"`, or `"merged_pdf"`.
+    pub format: String,
+    pub problem_ids: Vec<String>,
+    /// Optional booklet title (used by `"merged_pdf"`).
+    #[prop(skip_none)]
+    pub title: Option<String>,
+    /// Optional language (`"chinese"` / `"zh"` or `"english"` / `"en"`).
+    #[prop(skip_none)]
+    pub language: Option<String>,
+    /// Optional book kind (`"statements"` or `"editorial"`, used by `"merged_pdf"`).
+    #[prop(skip_none)]
+    pub book: Option<String>,
+    /// Optional output path (workspace-relative for in-workspace export, or absolute path
+    /// for `"merged_pdf"` external save).
+    #[prop(skip_none)]
+    pub output_path: Option<String>,
+}
+
+/// Result of starting an async background batch task (`startBatchBuild` / `startBatchExport`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct BatchStartResultJs {
+    pub ok: bool,
+    /// Monotonic task ID to pass to `nextBatchEvent(taskId)`; `0` on failure.
+    pub task_id: u32,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl BatchStartResultJs {
+    pub(crate) fn ok(task_id: u32) -> Self {
+        Self {
+            ok: true,
+            task_id,
+            error: None,
+            code: None,
+        }
+    }
+
+    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            task_id: 0,
+            error: Some(message.into()),
+            code: Some(code.into()),
+        }
+    }
+}
+
+/// Per-problem progress/result entry in an async batch build or export task.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct BatchTaskItemJs {
+    pub problem_id: String,
+    /// `"pending"`, `"running"`, `"passed"`, `"exported"`, `"failed"`, `"skipped"`,
+    /// `"error"`, or `"cancelled"`.
+    pub status: String,
+    pub verified: bool,
+    pub elapsed_ms: f64,
+    #[prop(skip_none)]
+    pub phase: Option<String>,
+    #[prop(skip_none)]
+    pub detail: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    #[prop(skip_none)]
+    pub message: Option<String>,
+    #[prop(skip_none)]
+    pub output_path: Option<String>,
+}
+
+/// Snapshot of the active or most recently completed background batch task (`batchTaskStatus`).
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct BatchTaskSnapshotJs {
+    pub task_id: u32,
+    pub running: bool,
+    /// `"idle"`, `"build_verify"`, `"build_debug"`, `"export_domjudge"`, `"export_hydro"`,
+    /// or `"export_merged_pdf"`.
+    pub kind: String,
+    pub cancelled: bool,
+    pub total: u32,
+    pub completed: u32,
+    pub succeeded: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub cancelled_count: u32,
+    pub elapsed_ms: f64,
+    #[prop(skip_none)]
+    pub current_problem_id: Option<String>,
+    #[prop(skip_none)]
+    pub current_phase: Option<String>,
+    #[prop(skip_none)]
+    pub current_detail: Option<String>,
+    /// Output directory or PDF file path for `revealInFolder`.
+    #[prop(skip_none)]
+    pub output_path: Option<String>,
+    pub items: Vec<BatchTaskItemJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+/// Streaming event yielded by `nextBatchEvent(taskId)`.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct BatchTaskEventJs {
+    /// `"problem_started"`, `"problem_progress"`, `"problem_finished"`, `"cancelled"`,
+    /// `"all_finished"`, `"error"`, or `"closed"`.
+    pub kind: String,
+    pub task_id: u32,
+    #[prop(skip_none)]
+    pub problem_id: Option<String>,
+    pub index: u32,
+    pub total: u32,
+    #[prop(skip_none)]
+    pub phase: Option<String>,
+    #[prop(skip_none)]
+    pub detail: Option<String>,
+    #[prop(skip_none)]
+    pub item: Option<BatchTaskItemJs>,
+    pub snapshot: BatchTaskSnapshotJs,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+}
+
+impl BatchTaskEventJs {
+    pub(crate) fn closed(task_id: u32, snapshot: BatchTaskSnapshotJs) -> Self {
+        Self {
+            kind: "closed".to_owned(),
+            task_id,
+            snapshot,
+            ..Default::default()
         }
     }
 }

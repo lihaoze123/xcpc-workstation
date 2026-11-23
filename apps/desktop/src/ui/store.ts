@@ -8,11 +8,13 @@ import {
   Preview,
   type ActionResult,
   type AppPrefsJs,
+  type BatchExportRequestJs,
+  type BatchTaskSnapshotJs,
   type PackageWarningJs,
   type WorkspaceInfo,
 } from "xcpc-workstation/native";
-import type { Book, Space } from "./logic";
-import { clampRatio } from "./logic";
+import type { Book, LibraryGroupBy, Space } from "./logic";
+import { clampRatio, isLibraryGroupBy } from "./logic";
 import {
   languagePref,
   locale,
@@ -123,6 +125,28 @@ export function loadPrefs(): AppPrefsJs {
 
 export let splitRatio = clampRatio(prefs.splitRatio);
 export const splitRatioSignal = signal(splitRatio);
+
+/** Persisted library left group sidebar open preference (default true). */
+export const librarySidebarOpen = signal<boolean>(prefs.librarySidebarOpen ?? true);
+
+export function setLibrarySidebarOpen(open: boolean) {
+  librarySidebarOpen.set(open);
+  savePrefs({ librarySidebarOpen: open });
+}
+
+export function toggleLibrarySidebar() {
+  setLibrarySidebarOpen(!librarySidebarOpen());
+}
+
+/** Persisted library dynamic grouping mode (default "none"). */
+export const libraryGroupBy = signal<LibraryGroupBy>(
+  isLibraryGroupBy(prefs.libraryGroupBy) ? prefs.libraryGroupBy : "none",
+);
+
+export function setLibraryGroupBy(mode: LibraryGroupBy) {
+  libraryGroupBy.set(mode);
+  savePrefs({ libraryGroupBy: mode });
+}
 
 /** Flushes any pending debounced preferences write to disk immediately. */
 export function flushPrefs() {
@@ -244,6 +268,8 @@ function adopt(next: WorkspaceInfo, failContext: string) {
       unfreezeFor.set(undefined);
       dialog.set(undefined);
       paletteOpen.set(false);
+      batchTask.set(undefined);
+      batchStreamGeneration += 1;
       workspaceVersion.set(workspaceVersion() + 1);
     }
     info.set(next);
@@ -482,7 +508,7 @@ export type StudioActions = {
 
 export const studioActions = signal<StudioActions | undefined>(undefined);
 
-/** Requests the views answer: a new/duplicate problem, new contest, adding/picking problems, deleting one. */
+/** Requests the views answer: a new/duplicate problem, new contest, adding/picking problems, deleting one, groups, or batch ops. */
 export const dialog = signal<
   | { kind: "newProblem"; addTo?: string }
   | { kind: "duplicateProblem"; problemId: string }
@@ -490,8 +516,69 @@ export const dialog = signal<
   | { kind: "addToContest"; problemId: string }
   | { kind: "pickProblems"; contestId: string }
   | { kind: "deleteProblem"; problemId: string }
+  | { kind: "newGroup" }
+  | { kind: "renameGroup"; name: string }
+  | { kind: "deleteGroup"; name: string }
+  | { kind: "batchTags"; problemIds: string[] }
+  | { kind: "batchRating"; problemIds: string[] }
+  | { kind: "batchDelete"; problemIds: string[] }
+  | { kind: "batchAddToContest"; problemIds: string[] }
+  | { kind: "batchExport"; problemIds: string[] }
   | undefined
 >(undefined);
+
+// ── Global Background Batch Task Stream (§5.4 / §7.1) ────────────────────────
+
+/** Active or most recently completed background batch task snapshot (persists across space switches). */
+export const batchTask = signal<BatchTaskSnapshotJs | undefined>(undefined);
+let batchStreamGeneration = 0;
+
+function streamBatchTask(taskId: number) {
+  const gen = ++batchStreamGeneration;
+  batchTask.set(preview.batchTaskStatus());
+  void (async () => {
+    for (;;) {
+      const ev = await preview.nextBatchEvent(taskId);
+      if (gen !== batchStreamGeneration) return;
+      if (ev.kind === "closed") {
+        const snap = preview.batchTaskStatus();
+        if (snap.taskId === taskId) batchTask.set(snap);
+        return;
+      }
+      batchTask.set(ev.snapshot);
+      if (ev.kind === "all_finished" || ev.kind === "cancelled" || ev.kind === "error") {
+        refresh();
+        return;
+      }
+    }
+  })();
+}
+
+export function startBatchBuildTask(ids: string[], mode: "verify" | "debug"): UiError | undefined {
+  if (ids.length === 0) return undefined;
+  const res = preview.startBatchBuild(ids, mode);
+  if (!res.ok) return { code: res.code, error: res.error };
+  streamBatchTask(res.taskId);
+  return undefined;
+}
+
+export function startBatchExportTask(req: BatchExportRequestJs): UiError | undefined {
+  if (req.problemIds.length === 0) return undefined;
+  const res = preview.startBatchExport(req);
+  if (!res.ok) return { code: res.code, error: res.error };
+  streamBatchTask(res.taskId);
+  return undefined;
+}
+
+export function cancelBatchTask() {
+  preview.cancelBatchTask();
+}
+
+export function dismissBatchTask() {
+  const cur = batchTask();
+  if (cur?.running) return;
+  batchTask.set(undefined);
+}
 
 /** The row selected in each space, kept across space switches. */
 export const selectedProblem = signal<string | undefined>(undefined);

@@ -8,13 +8,13 @@
 //! deduplicated [`Report`]; [`locate_point`] maps preview coordinates back to Markdown;
 //! [`freeze_contest`] validates, builds PDFs and atomically archives a contest snapshot.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
 use xcpc_domain::{
-    ContestMeta, Language, Statement, TemplateFieldScope, TemplateFieldType, TemplateInfo,
-    TemplateOptionValue, TemplateOptionsMap, TextFile, check_id,
+    ContestItem, ContestMeta, Language, Statement, TemplateFieldScope, TemplateFieldType,
+    TemplateInfo, TemplateOptionValue, TemplateOptionsMap, TextFile, check_id, label_for_index,
 };
 use xcpc_engine::{Compiled, Engine};
 use xcpc_storage::{Error, SnapshotTemplateArchive, SnapshotTemplateMeta, Workspace};
@@ -365,6 +365,266 @@ pub struct FreezeOutcome {
     pub frozen: bool,
     pub report: Report,
     pub outputs: Vec<String>,
+}
+
+/// Options for compiling an ad-hoc merged PDF booklet from selected problems without
+/// creating any `contests/<id>/` directory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergedBookOptions {
+    /// Optional booklet title (shown on cover / running head and used for default filename).
+    pub title: Option<String>,
+    /// Optional statement/editorial language override (defaults to the first problem's default language).
+    pub language: Option<Language>,
+    /// Statements booklet or editorial booklet (defaults to [`Kind::Statements`]).
+    pub kind: Kind,
+    /// Optional template ID override (falls back to `ws.default_template()` -> `"olymp-classic"`).
+    pub template: Option<String>,
+    /// Optional cover toggle override (defaults to `entries.len() >= 2` for statements).
+    pub cover: Option<bool>,
+}
+
+/// Result of [`export_merged_pdf`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MergedPdfOutcome {
+    /// Workspace-relative path of the written PDF (empty when compilation failed).
+    pub path: String,
+    /// Resolved booklet title.
+    pub title: String,
+    /// Total pages of the exported PDF (`0` when compilation failed).
+    pub pages: usize,
+    /// Full compilation report including diagnostics and per-problem page spans.
+    pub report: Report,
+}
+
+fn dedup_problem_ids(problem_ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(problem_ids.len());
+    let mut out = Vec::with_capacity(problem_ids.len());
+    for id in problem_ids {
+        if seen.insert(id.clone()) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+fn resolve_merged_title(problem_count: usize, opts: &MergedBookOptions) -> String {
+    opts.title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("题集（{problem_count} 题）"))
+}
+
+/// Default workspace-relative output path for an ad-hoc merged PDF:
+/// `build/<sanitized_title>-试题册.pdf` / `build/<sanitized_title>-题解.pdf`,
+/// falling back to `build/题集-<N>题-试题册.pdf` / `build/题集-<N>题-题解.pdf`.
+pub fn default_merged_output(problem_count: usize, opts: &MergedBookOptions) -> String {
+    let base = opts
+        .title
+        .as_deref()
+        .map(sanitize_filename)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("题集-{problem_count}题"));
+    match opts.kind {
+        Kind::Statements => format!("build/{base}-试题册.pdf"),
+        Kind::Editorial => format!("build/{base}-题解.pdf"),
+    }
+}
+
+/// Builds a [`Document`] combining `problem_ids` into a single statements or editorial
+/// booklet without creating any `contests/<id>/` directory.
+///
+/// - Deduplicates `problem_ids` preserving caller order.
+/// - Labels problems `"A"..="Z"` when `len <= 26`, and `"1"..="N"` when `len > 26`.
+/// - Resolves template via `opts.template` -> `ws.default_template()` -> `"olymp-classic"`,
+///   inheriting workspace `[template-options]` and `templates/preamble.typ`.
+pub fn document_problems(
+    ws: &Workspace,
+    problem_ids: &[String],
+    opts: &MergedBookOptions,
+) -> Result<Document, Error> {
+    let unique_ids = dedup_problem_ids(problem_ids);
+    if unique_ids.is_empty() {
+        return Err(Error::Invalid {
+            path: "problems".into(),
+            message: "at least one problem ID is required".into(),
+        });
+    }
+
+    let mut problems = Vec::with_capacity(unique_ids.len());
+    for id in &unique_ids {
+        problems.push(ws.load_problem(id)?);
+    }
+
+    let language = opts
+        .language
+        .unwrap_or_else(|| problems[0].default_language());
+    let title = resolve_merged_title(problems.len(), opts);
+
+    let mut book = Book {
+        name: title,
+        location: None,
+        date: None,
+        author: None,
+        language,
+        show_metadata: true,
+        cover: opts.cover.unwrap_or(problems.len() >= 2),
+        blank_pages: false,
+        single: false,
+        template_name: "olymp-classic".into(),
+        template_import: None,
+        template_options: BTreeMap::new(),
+        preamble: ws.load_preamble(),
+    };
+
+    let tpl_name = opts
+        .template
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| ws.default_template())
+        .unwrap_or_else(|| "olymp-classic".into());
+
+    let missing_tpl_diag = if check_id(&tpl_name).is_ok() && ws.has_custom_template(&tpl_name) {
+        book.template_name = tpl_name.clone();
+        book.template_import = Some(format!("/templates/{tpl_name}.typ"));
+        let mut merged_opts = ws
+            .workspace_template_options()
+            .remove(&tpl_name)
+            .unwrap_or_default();
+        if let Some(cover) = opts.cover {
+            merged_opts.insert(
+                "cover".into(),
+                TemplateOptionValue::String(if cover { "on" } else { "off" }.into()),
+            );
+        }
+        book.template_options = merged_opts;
+        None
+    } else {
+        book.template_name = tpl_name.clone();
+        book.template_import = None;
+        Some(crate::Diagnostic {
+            error: true,
+            code: Some(MISSING_TEMPLATE.into()),
+            message: format!(
+                "未找到模板「{tpl_name}」（templates/{tpl_name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
+            ),
+            file: "workspace.toml".into(),
+            line: 1,
+            column: 1,
+        })
+    };
+
+    let use_letters = problems.len() <= 26;
+    let entries: Vec<Entry> = problems
+        .iter()
+        .enumerate()
+        .map(|(i, problem)| {
+            let label = if use_letters {
+                label_for_index(i).unwrap_or_else(|| (i + 1).to_string())
+            } else {
+                (i + 1).to_string()
+            };
+            Entry {
+                item: ContestItem {
+                    id: problem.id.clone(),
+                    label,
+                    ..Default::default()
+                },
+                problem,
+            }
+        })
+        .collect();
+
+    let mut doc = match opts.kind {
+        Kind::Statements => crate::statements(&book, &entries),
+        Kind::Editorial => crate::editorials(&book, &entries),
+    };
+    if let Some(d) = missing_tpl_diag {
+        doc.diagnostics.push(d);
+    }
+    Ok(doc)
+}
+
+/// Compiles `problem_ids` into an ad-hoc merged PDF in memory without writing to disk.
+///
+/// Useful for GUI save-file dialogs targeting arbitrary paths outside the workspace.
+/// Returns `(Some(pdf_bytes), report, resolved_title)` on success, or `(None, report, resolved_title)`
+/// when compilation or PDF generation produced errors.
+pub fn compile_merged_pdf_bytes(
+    ws: &Workspace,
+    engine: &mut Engine,
+    problem_ids: &[String],
+    opts: &MergedBookOptions,
+) -> Result<(Option<Vec<u8>>, Report, String), Error> {
+    let unique_ids = dedup_problem_ids(problem_ids);
+    let doc = document_problems(ws, &unique_ids, opts)?;
+    let title = resolve_merged_title(unique_ids.len(), opts);
+
+    engine.reset_files();
+    let (compiled, mut report) = compile(engine, &doc);
+    let Some(compiled) = compiled.filter(|_| report.ok) else {
+        report.ok = false;
+        return Ok((None, report, title));
+    };
+
+    match compiled.pdf() {
+        Ok(bytes) => Ok((Some(bytes), report, title)),
+        Err(errs) => {
+            report.ok = false;
+            merge_diagnostics(
+                &mut report.diagnostics,
+                errs.into_iter().map(from_engine_plain).collect(),
+            );
+            Ok((None, report, title))
+        }
+    }
+}
+
+/// Compiles `problem_ids` into a single merged PDF and writes it atomically into the
+/// workspace (at `output_rel`, or [`default_merged_output`] when `None`).
+///
+/// Enforces `ws.is_read_only()` and workspace path sandbox via [`Workspace::write`].
+/// Never creates any `contests/<id>/` directory.
+pub fn export_merged_pdf(
+    ws: &Workspace,
+    engine: &mut Engine,
+    problem_ids: &[String],
+    opts: &MergedBookOptions,
+    output_rel: Option<&Path>,
+) -> Result<MergedPdfOutcome, Error> {
+    if ws.is_read_only() {
+        return Err(Error::ReadOnly);
+    }
+
+    let unique_ids = dedup_problem_ids(problem_ids);
+    let rel_path = match output_rel {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => default_merged_output(unique_ids.len(), opts),
+    };
+    // Validate sandbox & writability upfront before spending time compiling Typst.
+    ws.check_writable(&rel_path)?;
+
+    let (pdf_bytes, report, title) = compile_merged_pdf_bytes(ws, engine, &unique_ids, opts)?;
+    let Some(bytes) = pdf_bytes else {
+        return Ok(MergedPdfOutcome {
+            path: String::new(),
+            title,
+            pages: 0,
+            report,
+        });
+    };
+
+    ws.write(&rel_path, &bytes)?;
+    let pages = report.pages.unwrap_or(0);
+    Ok(MergedPdfOutcome {
+        path: rel_path,
+        title,
+        pages,
+        report,
+    })
 }
 
 /// Typesets `doc` with `engine` (rooted at the workspace).

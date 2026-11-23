@@ -1,17 +1,18 @@
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tempfile::TempDir;
 use xcpc_judge::{
-    BuildMode, BuildOptions, CppStd, GateStatus, PackageFreshness, PackageSourceKind,
-    ProgressEvent, SourceLanguage, StressOptions, Verdict, add_generator_test, add_hand_test,
-    build_package, check_dirty_inputs, check_package_freshness, create_package_source,
-    delete_generator, delete_self_test, delete_solution, detect_toolchain, init_package,
-    inspect_package, inspect_test_case, normalize_dirty_inputs, parse_compiler_diagnostics,
-    parse_memory_limit_kib, parse_time_limit_ms, remove_test_rule, set_package_checker,
-    set_solution_config, stress_package, update_generator_test,
+    BatchBuildEvent, BatchBuildItemStatus, BatchBuildReport, BuildMode, BuildOptions, CppStd,
+    GateStatus, JudgeError, PackageFreshness, PackageSourceKind, ProgressEvent, SourceLanguage,
+    StressOptions, Verdict, add_generator_test, add_hand_test, build_package, build_packages_batch,
+    check_dirty_inputs, check_package_freshness, create_package_source, delete_generator,
+    delete_self_test, delete_solution, detect_toolchain, init_package, inspect_package,
+    inspect_test_case, normalize_dirty_inputs, parse_compiler_diagnostics, parse_memory_limit_kib,
+    parse_time_limit_ms, remove_test_rule, set_package_checker, set_solution_config,
+    stress_package, update_generator_test,
 };
 use xcpc_storage::{Workspace, init_workspace};
 
@@ -1386,4 +1387,241 @@ expect = "AC"
     let toml_after = ws.read_text("problems/del-pkg/problem.toml").unwrap();
     assert!(toml_after.contains("# Keep comment intact!"));
     assert!(toml_after.contains("custom_keep = 42"));
+}
+
+fn add_problem_to_workspace(ws: &Workspace, slug: &str) {
+    let toml = "title = \"A+B\"\n\n[limits]\ntime = \"1s\"\nmemory = \"256MB\"\n";
+    ws.write(&format!("problems/{slug}/problem.toml"), toml.as_bytes())
+        .unwrap();
+    ws.write(
+        &format!("problems/{slug}/statement.md"),
+        b"Compute $a + b$.\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn build_packages_batch_sequential_skip_dedup_and_events() {
+    let (_dir, ws) = setup_workspace_with_problem("pkg-a", "");
+    add_problem_to_workspace(&ws, "pub-only");
+    add_problem_to_workspace(&ws, "pkg-b");
+    init_package(&ws, "pkg-a").unwrap();
+    init_package(&ws, "pkg-b").unwrap();
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let opts = BuildOptions {
+        mode: BuildMode::Verify,
+        cache_dir: Some(cache_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    let events: Arc<Mutex<Vec<BatchBuildEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let events_cb = Arc::clone(&events);
+    let cb = move |ev: BatchBuildEvent| {
+        events_cb.lock().unwrap().push(ev);
+    };
+
+    // Pass duplicate "pkg-a" to verify order-preserving deduplication.
+    let slugs = vec![
+        "pkg-a".to_owned(),
+        "pub-only".to_owned(),
+        "pkg-a".to_owned(),
+        "pkg-b".to_owned(),
+    ];
+    let report = build_packages_batch(&ws, &slugs, &opts, None, Some(&cb)).unwrap();
+
+    assert!(report.ok, "unexpected batch report: {report:#?}");
+    assert!(!report.cancelled);
+    assert_eq!(report.total, 3);
+    assert_eq!(report.passed, 2);
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.cancelled_count, 0);
+    assert_eq!(report.items.len(), 3);
+
+    assert_eq!(report.items[0].problem_id, "pkg-a");
+    assert_eq!(report.items[0].status, BatchBuildItemStatus::Passed);
+    assert!(report.items[0].verified);
+
+    assert_eq!(report.items[1].problem_id, "pub-only");
+    assert_eq!(report.items[1].status, BatchBuildItemStatus::Skipped);
+    assert!(!report.items[1].verified);
+    assert_eq!(report.items[1].code.as_deref(), Some("not_a_package"));
+    assert!(
+        report.items[1]
+            .message
+            .as_deref()
+            .is_some_and(|m| !m.is_empty())
+    );
+
+    assert_eq!(report.items[2].problem_id, "pkg-b");
+    assert_eq!(report.items[2].status, BatchBuildItemStatus::Passed);
+    assert!(report.items[2].verified);
+
+    // Verify strict sequential event ordering.
+    let recorded = events.lock().unwrap();
+    let pos_a_start = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemStarted { problem_id, index: 0, total: 3 } if problem_id == "pkg-a"))
+        .expect("missing ProblemStarted for pkg-a");
+    let pos_a_prog = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemProgress { problem_id, index: 0, total: 3, .. } if problem_id == "pkg-a"))
+        .expect("missing ProblemProgress for pkg-a");
+    let pos_a_finish = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemFinished { item, index: 0, total: 3 } if item.problem_id == "pkg-a"))
+        .expect("missing ProblemFinished for pkg-a");
+    let pos_pub_finish = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemFinished { item, index: 1, total: 3 } if item.problem_id == "pub-only" && item.status == BatchBuildItemStatus::Skipped))
+        .expect("missing ProblemFinished for pub-only");
+    let pos_b_start = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemStarted { problem_id, index: 2, total: 3 } if problem_id == "pkg-b"))
+        .expect("missing ProblemStarted for pkg-b");
+    let pos_b_finish = recorded
+        .iter()
+        .position(|e| matches!(e, BatchBuildEvent::ProblemFinished { item, index: 2, total: 3 } if item.problem_id == "pkg-b"))
+        .expect("missing ProblemFinished for pkg-b");
+
+    assert!(pos_a_start < pos_a_prog && pos_a_prog < pos_a_finish);
+    assert!(pos_a_finish < pos_pub_finish && pos_pub_finish < pos_b_start);
+    assert!(pos_b_start < pos_b_finish);
+    assert!(matches!(
+        recorded.last(),
+        Some(BatchBuildEvent::AllFinished {
+            passed: 2,
+            failed: 0,
+            skipped: 1,
+            cancelled: 0,
+            total: 3,
+            ..
+        })
+    ));
+
+    // Verify serde JSON tagging & roundtrip.
+    let report_json = serde_json::to_string(&report).unwrap();
+    let roundtrip: BatchBuildReport = serde_json::from_str(&report_json).unwrap();
+    assert_eq!(roundtrip, report);
+
+    let first_ev_json = serde_json::to_value(&recorded[pos_a_start]).unwrap();
+    assert_eq!(first_ev_json["kind"], "problem_started");
+
+    // Missing problem maps to Error with `not_found`.
+    let missing_report =
+        build_packages_batch(&ws, &["does-not-exist".to_owned()], &opts, None, None).unwrap();
+    assert!(!missing_report.ok);
+    assert_eq!(missing_report.failed, 1);
+    assert_eq!(missing_report.items[0].status, BatchBuildItemStatus::Error);
+    assert_eq!(missing_report.items[0].code.as_deref(), Some("not_found"));
+}
+
+#[test]
+fn build_packages_batch_cancellation_and_read_only() {
+    let (dir, ws) = setup_workspace_with_problem("pkg-a", "");
+    add_problem_to_workspace(&ws, "pkg-b");
+    init_package(&ws, "pkg-a").unwrap();
+    init_package(&ws, "pkg-b").unwrap();
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let opts = BuildOptions {
+        mode: BuildMode::Debug,
+        cache_dir: Some(cache_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    // 1. Read-only workspace is rejected upfront.
+    let ro_ws = Workspace::open(dir.path(), true).unwrap();
+    let err = build_packages_batch(&ro_ws, &["pkg-a".to_owned()], &opts, None, None).unwrap_err();
+    assert!(matches!(
+        err,
+        JudgeError::Storage(xcpc_storage::Error::ReadOnly)
+    ));
+    assert_eq!(err.code(), "read_only");
+
+    // 2. Pre-cancelled flag marks all problems Cancelled without running them.
+    let pre_cancel = Arc::new(AtomicBool::new(true));
+    let pre_events: Arc<Mutex<Vec<BatchBuildEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let pre_events_cb = Arc::clone(&pre_events);
+    let pre_cb = move |ev: BatchBuildEvent| {
+        pre_events_cb.lock().unwrap().push(ev);
+    };
+    let slugs = vec!["pkg-a".to_owned(), "pkg-b".to_owned()];
+    let pre_report =
+        build_packages_batch(&ws, &slugs, &opts, Some(pre_cancel), Some(&pre_cb)).unwrap();
+    assert!(!pre_report.ok);
+    assert!(pre_report.cancelled);
+    assert_eq!(pre_report.total, 2);
+    assert_eq!(pre_report.passed, 0);
+    assert_eq!(pre_report.cancelled_count, 2);
+    assert!(
+        pre_report
+            .items
+            .iter()
+            .all(|i| i.status == BatchBuildItemStatus::Cancelled)
+    );
+    let pre_ev = pre_events.lock().unwrap();
+    assert_eq!(pre_ev.len(), 2);
+    assert!(matches!(
+        pre_ev[0],
+        BatchBuildEvent::Cancelled {
+            completed: 0,
+            total: 2
+        }
+    ));
+    assert!(matches!(
+        pre_ev[1],
+        BatchBuildEvent::AllFinished {
+            cancelled: 2,
+            total: 2,
+            ..
+        }
+    ));
+
+    // 3. Mid-batch cancellation after pkg-a finishes cancels pkg-b.
+    let mid_cancel = Arc::new(AtomicBool::new(false));
+    let mid_cancel_cb = Arc::clone(&mid_cancel);
+    let mid_events: Arc<Mutex<Vec<BatchBuildEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let mid_events_cb = Arc::clone(&mid_events);
+    let mid_cb = move |ev: BatchBuildEvent| {
+        if matches!(
+            &ev,
+            BatchBuildEvent::ProblemFinished { item, .. } if item.problem_id == "pkg-a"
+        ) {
+            mid_cancel_cb.store(true, Ordering::Relaxed);
+        }
+        mid_events_cb.lock().unwrap().push(ev);
+    };
+    let mid_report =
+        build_packages_batch(&ws, &slugs, &opts, Some(mid_cancel), Some(&mid_cb)).unwrap();
+    assert!(!mid_report.ok);
+    assert!(mid_report.cancelled);
+    assert_eq!(mid_report.total, 2);
+    assert_eq!(mid_report.passed, 1);
+    assert_eq!(mid_report.cancelled_count, 1);
+    assert_eq!(mid_report.items[0].problem_id, "pkg-a");
+    assert_eq!(mid_report.items[0].status, BatchBuildItemStatus::Passed);
+    assert_eq!(mid_report.items[1].problem_id, "pkg-b");
+    assert_eq!(mid_report.items[1].status, BatchBuildItemStatus::Cancelled);
+
+    let mid_ev = mid_events.lock().unwrap();
+    assert!(mid_ev.iter().any(|e| matches!(
+        e,
+        BatchBuildEvent::Cancelled {
+            completed: 1,
+            total: 2
+        }
+    )));
+    assert!(matches!(
+        mid_ev.last(),
+        Some(BatchBuildEvent::AllFinished {
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: 1,
+            total: 2,
+            ..
+        })
+    ));
 }

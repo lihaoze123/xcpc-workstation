@@ -6,8 +6,8 @@ use std::path::Path;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use xcpc_domain::{
-    ContestItem, ContestMeta, ExpectVerdict, Language, Limits, PackageConfig, ProblemMeta,
-    SolutionSpec, Source, TestSpec, check_id, label_for_index,
+    ContestItem, ContestMeta, ExpectVerdict, Language, Limits, MAX_GROUP_NAME_CHARS, PackageConfig,
+    ProblemMeta, SolutionSpec, Source, TestSpec, check_id, label_for_index, normalize_group_name,
 };
 use xcpc_judge::is_standard_checker;
 use xcpc_storage::Workspace;
@@ -60,6 +60,39 @@ pub fn import_polygon(
     }
 }
 
+/// Sanitizes a Polygon contest name into a valid persistent group name: strips control
+/// characters, collapses whitespace runs into a single ASCII space, trims ends, and
+/// truncates to [`MAX_GROUP_NAME_CHARS`] Unicode scalar values.
+fn sanitize_auto_group_name(raw: &str) -> Option<String> {
+    let mut collapsed = String::with_capacity(raw.len());
+    let mut last_was_space = false;
+    for ch in raw.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !last_was_space {
+                collapsed.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            collapsed.push(ch);
+            last_was_space = false;
+        }
+    }
+    let truncated: String = collapsed
+        .trim()
+        .chars()
+        .take(MAX_GROUP_NAME_CHARS)
+        .collect();
+    let trimmed = truncated.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        normalize_group_name(trimmed).ok()
+    }
+}
+
 fn import_polygon_single_problem(
     ws: &Workspace,
     zip: &SafeZipContents,
@@ -76,15 +109,32 @@ fn import_polygon_single_problem(
 
     ensure_problem_not_exists(ws, &slug)?;
 
+    let effective_group = match opts.group.as_deref() {
+        Some(g) => Some(normalize_group_name(g).map_err(xcpc_storage::Error::from)?),
+        None => None,
+    };
+
     let mut staged: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut warnings = Vec::new();
-    let summary = stage_polygon_problem(zip, &parsed, &slug, None, &mut staged, &mut warnings)?;
+    let summary = stage_polygon_problem(
+        zip,
+        &parsed,
+        &slug,
+        None,
+        effective_group.as_deref(),
+        &mut staged,
+        &mut warnings,
+    )?;
 
     commit_staged_files(ws, &staged)?;
+    if let Some(ref group) = effective_group {
+        ws.ensure_group_registered(group)?;
+    }
 
     Ok(PolygonImportResult {
         kind: PolygonImportKind::Problem,
         contest_id: None,
+        group: effective_group,
         problems: vec![summary],
         warnings,
     })
@@ -107,6 +157,14 @@ fn import_polygon_contest(
     let contest_name = pick_preferred_name(&parsed_contest.names)
         .or_else(|| parsed_contest.name_attr.clone())
         .unwrap_or_else(|| fallback_stem.to_owned());
+
+    let effective_group = if let Some(ref g) = opts.group {
+        Some(normalize_group_name(g).map_err(xcpc_storage::Error::from)?)
+    } else if !opts.no_auto_group {
+        sanitize_auto_group_name(&contest_name)
+    } else {
+        None
+    };
 
     let preferred_contest_slug = if contest_name.chars().any(|c| c.is_ascii_alphabetic()) {
         Some(contest_name.as_str())
@@ -172,6 +230,7 @@ fn import_polygon_contest(
             &sub_parsed,
             &slug,
             Some(label.clone()),
+            effective_group.as_deref(),
             &mut staged,
             &mut warnings,
         )?;
@@ -207,10 +266,14 @@ fn import_polygon_contest(
     );
 
     commit_staged_files(ws, &staged)?;
+    if let Some(ref group) = effective_group {
+        ws.ensure_group_registered(group)?;
+    }
 
     Ok(PolygonImportResult {
         kind: PolygonImportKind::Contest,
         contest_id: Some(contest_id),
+        group: effective_group,
         problems: summaries,
         warnings,
     })
@@ -265,6 +328,7 @@ fn stage_polygon_problem(
     xml: &PolygonProblemXml,
     slug: &str,
     label: Option<String>,
+    group: Option<&str>,
     staged: &mut BTreeMap<String, Vec<u8>>,
     warnings: &mut Vec<PackageWarning>,
 ) -> Result<ImportedProblemSummary> {
@@ -496,6 +560,7 @@ fn stage_polygon_problem(
     // 9. Build and serialize `problem.toml`.
     let meta = ProblemMeta {
         title: title.clone(),
+        group: group.map(str::to_owned),
         limits,
         sources,
         package: Some(PackageConfig {

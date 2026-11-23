@@ -10,9 +10,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Instant, SystemTime};
 
-use xcpc_convert::publish::{self, Kind, Target};
+use xcpc_convert::publish::{self, Kind, MergedBookOptions, Target};
 use xcpc_domain::{
-    ContestMetaPatch, FuzzyMatchKind, Language, Patch, Problem, RatingTier, SearchQuery, check_id,
+    BatchItemStatus, ContestMetaPatch, FuzzyMatchKind, GroupFilter, Language, Patch, Problem,
+    RatingTier, SearchQuery, check_id,
 };
 use xcpc_engine::{Compiled, Engine, FontOptions};
 use xcpc_storage::{
@@ -26,9 +27,11 @@ use crate::cache::{
 use crate::prefs::{StoredPrefs, mcp_config_snippet, now_epoch_secs};
 use crate::snapshot;
 use crate::types::{
-    ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, CleanUnusedAssetsResultJs,
-    ColdStartSnapshotJs, ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    ExportBookStatusJs, ExportOjResultJs, FreezeResultJs, FuzzyHitJs, MathPreviewJs,
+    ActionResult, AddedTestResultJs, AppPrefsJs, AssetReferenceJs, BatchDeleteResultJs,
+    BatchExportRequestJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
+    BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
+    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, ExportBookStatusJs,
+    ExportOjResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs, MathPreviewJs,
     NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
     PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PdfFreshnessJs,
     PolygonImportResultJs, PreviewDiagnostic, PreviewLocationJs, PreviewRequest, PreviewResult,
@@ -136,6 +139,34 @@ pub(crate) struct PackageBuildSlot {
     pub(crate) error: Option<String>,
 }
 
+/// Polling-free async batch task slot (`startBatchBuild` / `startBatchExport` + `nextBatchEvent`).
+pub(crate) struct BatchTaskSlot {
+    pub(crate) task_id: u32,
+    pub(crate) running: bool,
+    pub(crate) kind: String,
+    pub(crate) cancel_flag: Option<Arc<AtomicBool>>,
+    pub(crate) close_tx: Option<mpsc::Sender<BatchTaskEventJs>>,
+    pub(crate) event_rx: Option<Arc<Mutex<mpsc::Receiver<BatchTaskEventJs>>>>,
+    pub(crate) snapshot: BatchTaskSnapshotJs,
+}
+
+impl Default for BatchTaskSlot {
+    fn default() -> Self {
+        Self {
+            task_id: 0,
+            running: false,
+            kind: "idle".to_owned(),
+            cancel_flag: None,
+            close_tx: None,
+            event_rx: None,
+            snapshot: BatchTaskSnapshotJs {
+                kind: "idle".to_owned(),
+                ..Default::default()
+            },
+        }
+    }
+}
+
 pub(crate) struct State {
     pub(crate) id: u64,
     /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
@@ -150,6 +181,8 @@ pub(crate) struct State {
     pub(crate) math_engine: Mutex<Engine>,
     /// Background local Polygon package build slot.
     pub(crate) package_build: Arc<Mutex<PackageBuildSlot>>,
+    /// Polling-free async batch build / export task slot.
+    pub(crate) batch_task: Arc<Mutex<BatchTaskSlot>>,
     /// In-memory byte backup of the last `normalize_dirty_inputs` call for single-click undo.
     pub(crate) dirty_inputs_backup: Mutex<Option<(String, Vec<(String, Vec<u8>)>)>>,
 }
@@ -162,6 +195,7 @@ impl Drop for State {
             flag.store(true, Ordering::Relaxed);
             build.cancelled = true;
         }
+        self.stop_batch_task();
         if let Ok(mut core) = self.core.lock() {
             core.watch_session = None;
             drop(core.watcher.take());
@@ -227,6 +261,7 @@ impl State {
             }),
             math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
             package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
+            batch_task: Arc::new(Mutex::new(BatchTaskSlot::default())),
             dirty_inputs_backup: Mutex::new(None),
         };
 
@@ -286,6 +321,7 @@ impl State {
                     ..Default::default()
                 };
             }
+            self.stop_batch_task();
             let mut core = self.core.lock().unwrap();
             let new_session = new_session_rx.map(|rx| {
                 core.watch_seq = core.watch_seq.wrapping_add(1);
@@ -312,6 +348,34 @@ impl State {
         let mut core = self.core.lock().ok()?;
         core.watch_session = None;
         core.watcher.take()
+    }
+
+    /// Cancels any active background batch task and immediately resolves waiting
+    /// `next_batch_event` receivers with `"closed"`.
+    pub(crate) fn stop_batch_task(&self) {
+        let Ok(mut slot) = self.batch_task.lock() else {
+            return;
+        };
+        if let Some(ref flag) = slot.cancel_flag {
+            flag.store(true, Ordering::Relaxed);
+        }
+        let old_id = slot.task_id;
+        slot.running = false;
+        slot.snapshot.running = false;
+        slot.snapshot.cancelled = true;
+        slot.cancel_flag = None;
+        if let Some(tx) = slot.close_tx.take() {
+            let _ = tx.send(BatchTaskEventJs::closed(old_id, slot.snapshot.clone()));
+        }
+        slot.event_rx = None;
+        let next_id = slot.task_id.wrapping_add(1).max(1);
+        slot.task_id = next_id;
+        slot.kind = "idle".to_owned();
+        slot.snapshot = BatchTaskSnapshotJs {
+            task_id: next_id,
+            kind: "idle".to_owned(),
+            ..Default::default()
+        };
     }
 
     /// Invalidates the compiled preview cache without touching `compiler` or `core`.
@@ -945,23 +1009,39 @@ impl State {
     // ---- Problem library & editing -----------------------------------------------------
 
     pub(crate) fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
+        let group = if query.ungrouped_only {
+            Some(GroupFilter::Ungrouped)
+        } else {
+            query.group.and_then(|g| {
+                let trimmed = g.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(GroupFilter::Named(trimmed.to_owned()))
+                }
+            })
+        };
         let core_query = SearchQuery {
             text: query.text,
             tags: query.tags,
             rating_min: query.rating_min,
             rating_max: query.rating_max,
             platform: query.platform,
+            group,
         };
         let core = self.core.lock().unwrap();
         let ws = core.workspace.as_ref();
+        let contest_map = core.index.problem_contest_map();
         core.index
             .search_problems(&core_query)
             .into_iter()
             .map(|p| {
                 let package_status = ws.and_then(|w| package_status_opt(w, &p.id));
+                let contest_ids = contest_map.get(&p.id).cloned().unwrap_or_default();
                 ProblemSummaryJs {
                     id: p.id,
                     title: p.title,
+                    group: p.group,
                     rating: p.rating,
                     tags: p.tags,
                     sources: p.sources.iter().map(source_to_js).collect(),
@@ -969,6 +1049,7 @@ impl State {
                     has_solutions: p.has_solutions,
                     statement_path: p.statement_path,
                     package_status,
+                    contest_ids,
                 }
             })
             .collect()
@@ -978,7 +1059,9 @@ impl State {
         let mut tags = BTreeSet::new();
         let mut platforms = BTreeSet::new();
         let core = self.core.lock().unwrap();
-        for p in core.index.problems() {
+        let problems = core.index.problems();
+        let total_count = problems.len() as u32;
+        for p in problems {
             for t in &p.tags {
                 if !t.is_empty() {
                     tags.insert(t.clone());
@@ -990,9 +1073,21 @@ impl State {
                 }
             }
         }
+        let (raw_groups, ungrouped_count) = core.index.group_counts();
+        let groups = raw_groups
+            .into_iter()
+            .map(|g| GroupSummaryJs {
+                name: g.name,
+                count: g.count as u32,
+                declared: g.declared,
+            })
+            .collect();
         WorkspaceFacets {
             tags: tags.into_iter().collect(),
             platforms: platforms.into_iter().collect(),
+            groups,
+            ungrouped_count: ungrouped_count as u32,
+            total_count,
         }
     }
 
@@ -1088,6 +1183,7 @@ impl State {
         ProblemDetailJs {
             id: problem.id,
             title: problem.meta.title,
+            group: problem.meta.group,
             rating: problem.meta.rating,
             tags: problem.meta.tags,
             author: problem.meta.author,
@@ -1314,6 +1410,214 @@ impl State {
                 ActionResult::ok()
             }
             Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    // ---- Persistent problem groups & synchronous batch mutations -----------------------
+
+    pub(crate) fn create_group(&self, name: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.create_group(name) {
+            Ok(_) => {
+                let _ = self
+                    .core
+                    .lock()
+                    .unwrap()
+                    .index
+                    .refresh_path(&ws, WORKSPACE_FILE);
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn rename_group(&self, old_name: &str, new_name: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.rename_group(old_name, new_name) {
+            Ok(_) => {
+                if let Ok(idx) = WorkspaceIndex::scan(&ws) {
+                    self.core.lock().unwrap().index = idx;
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn delete_group(&self, name: &str) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.delete_group(name) {
+            Ok(_) => {
+                if let Ok(idx) = WorkspaceIndex::scan(&ws) {
+                    self.core.lock().unwrap().index = idx;
+                }
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn reorder_groups(&self, names: &[String]) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        match ws.reorder_groups(names) {
+            Ok(_) => {
+                let _ = self
+                    .core
+                    .lock()
+                    .unwrap()
+                    .index
+                    .refresh_path(&ws, WORKSPACE_FILE);
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn batch_set_group(
+        &self,
+        ids: &[String],
+        group: Option<&str>,
+    ) -> BatchMutationResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchMutationResultJs::err("no_workspace", "no workspace open");
+        };
+        match ws.batch_set_group(ids, group) {
+            Ok(report) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_path(&ws, WORKSPACE_FILE);
+                    for item in &report.items {
+                        if item.status == BatchItemStatus::Ok {
+                            let _ = core.index.refresh_problem(&ws, &item.id);
+                        }
+                    }
+                }
+                if report.succeeded > 0 || group.is_some() {
+                    self.invalidate_cache();
+                }
+                BatchMutationResultJs::from_report(report)
+            }
+            Err(e) => BatchMutationResultJs::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn batch_edit_tags(
+        &self,
+        ids: &[String],
+        add: &[String],
+        remove: &[String],
+    ) -> BatchMutationResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchMutationResultJs::err("no_workspace", "no workspace open");
+        };
+        match ws.batch_edit_tags(ids, add, remove) {
+            Ok(report) => {
+                if report.succeeded > 0 {
+                    {
+                        let mut core = self.core.lock().unwrap();
+                        for item in &report.items {
+                            if item.status == BatchItemStatus::Ok {
+                                let _ = core.index.refresh_problem(&ws, &item.id);
+                            }
+                        }
+                    }
+                    self.invalidate_cache();
+                }
+                BatchMutationResultJs::from_report(report)
+            }
+            Err(e) => BatchMutationResultJs::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn batch_set_rating(
+        &self,
+        ids: &[String],
+        rating: Option<u32>,
+    ) -> BatchMutationResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchMutationResultJs::err("no_workspace", "no workspace open");
+        };
+        match ws.batch_set_rating(ids, rating) {
+            Ok(report) => {
+                if report.succeeded > 0 {
+                    {
+                        let mut core = self.core.lock().unwrap();
+                        for item in &report.items {
+                            if item.status == BatchItemStatus::Ok {
+                                let _ = core.index.refresh_problem(&ws, &item.id);
+                            }
+                        }
+                    }
+                    self.invalidate_cache();
+                }
+                BatchMutationResultJs::from_report(report)
+            }
+            Err(e) => BatchMutationResultJs::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn batch_add_to_contest(
+        &self,
+        contest_id: &str,
+        problem_ids: &[String],
+    ) -> BatchMutationResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchMutationResultJs::err("no_workspace", "no workspace open");
+        };
+        match ws.batch_add_to_contest(contest_id, problem_ids) {
+            Ok(res) => {
+                if !res.added_ids.is_empty() {
+                    let rel = format!("contests/{contest_id}/contest.toml");
+                    let _ = self.core.lock().unwrap().index.refresh_path(&ws, &rel);
+                    self.invalidate_cache();
+                }
+                BatchMutationResultJs::from_report(res.report)
+            }
+            Err(e) => BatchMutationResultJs::from_storage_err(e),
+        }
+    }
+
+    pub(crate) fn batch_delete_problems(&self, ids: &[String]) -> BatchDeleteResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchDeleteResultJs::err("no_workspace", "no workspace open");
+        };
+        match ws.batch_delete_problems(ids) {
+            Ok(report) => {
+                if report.succeeded > 0 {
+                    {
+                        let mut core = self.core.lock().unwrap();
+                        for item in &report.items {
+                            if item.status == BatchItemStatus::Ok {
+                                let _ = core.index.refresh_problem(&ws, &item.id);
+                            }
+                        }
+                    }
+                    self.invalidate_cache();
+                }
+                BatchDeleteResultJs::from_report(report)
+            }
+            Err(e) => BatchDeleteResultJs::from_storage_err(e),
         }
     }
 
@@ -3828,6 +4132,921 @@ impl State {
                 ..Default::default()
             },
         }
+    }
+
+    // ---- Phase 3B+: Polling-free async batch task streaming ----------------------------
+
+    pub(crate) fn start_batch_build(
+        self: &Arc<Self>,
+        ids: Vec<String>,
+        mode: String,
+    ) -> BatchStartResultJs {
+        let unique_ids = dedup_ids_preserve_order(&ids);
+        if unique_ids.is_empty() {
+            return BatchStartResultJs::err("invalid_argument", "请至少选择一道题目。");
+        }
+        let (build_mode, kind) = if mode.eq_ignore_ascii_case("verify") {
+            (xcpc_judge::BuildMode::Verify, "build_verify")
+        } else if mode.eq_ignore_ascii_case("debug") {
+            (xcpc_judge::BuildMode::Debug, "build_debug")
+        } else {
+            return BatchStartResultJs::err(
+                "invalid_mode",
+                format!("不支持的构建模式：{mode}（期望 verify 或 debug）"),
+            );
+        };
+
+        let (ws, cxx_override) = {
+            let core = self.core.lock().unwrap();
+            (core.workspace.clone(), core.prefs.app.cxx_override.clone())
+        };
+        let Some(ws) = ws else {
+            return BatchStartResultJs::err("no_workspace", "没有打开的工作区。");
+        };
+        if ws.is_read_only() {
+            return BatchStartResultJs::err(
+                "read_only",
+                xcpc_storage::Error::ReadOnly.human_message(),
+            );
+        }
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<BatchTaskEventJs>();
+        let initial_items: Vec<BatchTaskItemJs> = unique_ids
+            .iter()
+            .map(|id| BatchTaskItemJs {
+                problem_id: id.clone(),
+                status: "pending".to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        let total = initial_items.len() as u32;
+
+        let my_task_id = {
+            let mut slot = self.batch_task.lock().unwrap();
+            if slot.running {
+                return BatchStartResultJs::err(
+                    "batch_task_in_progress",
+                    "已有批量任务正在运行，请等待完成或先取消。",
+                );
+            }
+            let next_id = slot.task_id.wrapping_add(1).max(1);
+            let snapshot = BatchTaskSnapshotJs {
+                task_id: next_id,
+                running: true,
+                kind: kind.to_owned(),
+                total,
+                items: initial_items,
+                ..Default::default()
+            };
+            *slot = BatchTaskSlot {
+                task_id: next_id,
+                running: true,
+                kind: kind.to_owned(),
+                cancel_flag: Some(cancel_flag.clone()),
+                close_tx: Some(tx.clone()),
+                event_rx: Some(Arc::new(Mutex::new(rx))),
+                snapshot,
+            };
+            next_id
+        };
+
+        let opts = xcpc_judge::BuildOptions {
+            mode: build_mode,
+            cxx_override: cxx_override.map(PathBuf::from),
+            ..Default::default()
+        };
+        let slot_arc = self.batch_task.clone();
+        let weak_state = Arc::downgrade(self);
+        let revision_arc = self.revision.clone();
+
+        let spawned = std::thread::Builder::new()
+            .name("xcpc-batch-build".into())
+            .spawn(move || {
+                let slot_cb = slot_arc.clone();
+                let tx_cb = tx.clone();
+                let progress_cb = move |ev: xcpc_judge::BatchBuildEvent| {
+                    let Ok(mut slot) = slot_cb.lock() else {
+                        return;
+                    };
+                    if slot.task_id != my_task_id {
+                        return;
+                    }
+                    match ev {
+                        xcpc_judge::BatchBuildEvent::ProblemStarted {
+                            problem_id,
+                            index,
+                            total,
+                        } => {
+                            if let Some(item) = slot
+                                .snapshot
+                                .items
+                                .iter_mut()
+                                .find(|x| x.problem_id == problem_id)
+                            {
+                                item.status = "running".to_owned();
+                                item.phase = None;
+                                item.detail = None;
+                            }
+                            slot.snapshot.current_problem_id = Some(problem_id.clone());
+                            slot.snapshot.current_phase = None;
+                            slot.snapshot.current_detail = None;
+                            let _ = tx_cb.send(BatchTaskEventJs {
+                                kind: "problem_started".to_owned(),
+                                task_id: my_task_id,
+                                problem_id: Some(problem_id),
+                                index: index as u32,
+                                total: total as u32,
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        xcpc_judge::BatchBuildEvent::ProblemProgress {
+                            problem_id,
+                            index,
+                            total,
+                            event,
+                        } => {
+                            let (phase, detail) = progress_event_phase_detail(&event);
+                            if let Some(item) = slot
+                                .snapshot
+                                .items
+                                .iter_mut()
+                                .find(|x| x.problem_id == problem_id)
+                            {
+                                item.phase = Some(phase.to_owned());
+                                item.detail = detail.clone();
+                            }
+                            slot.snapshot.current_problem_id = Some(problem_id.clone());
+                            slot.snapshot.current_phase = Some(phase.to_owned());
+                            slot.snapshot.current_detail = detail.clone();
+                            let _ = tx_cb.send(BatchTaskEventJs {
+                                kind: "problem_progress".to_owned(),
+                                task_id: my_task_id,
+                                problem_id: Some(problem_id),
+                                index: index as u32,
+                                total: total as u32,
+                                phase: Some(phase.to_owned()),
+                                detail,
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        xcpc_judge::BatchBuildEvent::ProblemFinished { item, index, total } => {
+                            let problem_id = item.problem_id.clone();
+                            let item_js = batch_build_item_to_js(item);
+                            match item_js.status.as_str() {
+                                "passed" => slot.snapshot.succeeded += 1,
+                                "skipped" => slot.snapshot.skipped += 1,
+                                "cancelled" => slot.snapshot.cancelled_count += 1,
+                                _ => slot.snapshot.failed += 1,
+                            }
+                            slot.snapshot.completed += 1;
+                            if let Some(existing) = slot
+                                .snapshot
+                                .items
+                                .iter_mut()
+                                .find(|x| x.problem_id == problem_id)
+                            {
+                                *existing = item_js.clone();
+                            } else {
+                                slot.snapshot.items.push(item_js.clone());
+                            }
+                            let _ = tx_cb.send(BatchTaskEventJs {
+                                kind: "problem_finished".to_owned(),
+                                task_id: my_task_id,
+                                problem_id: Some(problem_id),
+                                index: index as u32,
+                                total: total as u32,
+                                item: Some(item_js),
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        xcpc_judge::BatchBuildEvent::Cancelled { completed, total } => {
+                            slot.snapshot.cancelled = true;
+                            let _ = tx_cb.send(BatchTaskEventJs {
+                                kind: "cancelled".to_owned(),
+                                task_id: my_task_id,
+                                index: completed as u32,
+                                total: total as u32,
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        xcpc_judge::BatchBuildEvent::AllFinished {
+                            passed,
+                            failed,
+                            skipped,
+                            cancelled,
+                            total,
+                            elapsed_ms,
+                        } => {
+                            slot.snapshot.succeeded = passed as u32;
+                            slot.snapshot.failed = failed as u32;
+                            slot.snapshot.skipped = skipped as u32;
+                            slot.snapshot.cancelled_count = cancelled as u32;
+                            slot.snapshot.total = total as u32;
+                            slot.snapshot.completed = total as u32;
+                            slot.snapshot.elapsed_ms = elapsed_ms as f64;
+                            slot.snapshot.current_problem_id = None;
+                            slot.snapshot.current_phase = None;
+                            slot.snapshot.current_detail = None;
+                        }
+                    }
+                };
+
+                let result = xcpc_judge::build_packages_batch(
+                    &ws,
+                    &unique_ids,
+                    &opts,
+                    Some(cancel_flag.clone()),
+                    Some(&progress_cb),
+                );
+
+                // Refresh index before emitting the terminal event so UI reads are fresh.
+                if let Some(state) = weak_state.upgrade() {
+                    if let Ok(mut core) = state.core.lock() {
+                        for id in &unique_ids {
+                            let _ = core.index.refresh_problem(&ws, id);
+                        }
+                    }
+                    state.invalidate_cache();
+                } else {
+                    revision_arc.fetch_add(1, Ordering::AcqRel);
+                }
+
+                if let Ok(mut slot) = slot_arc.lock()
+                    && slot.task_id == my_task_id
+                {
+                    slot.running = false;
+                    slot.snapshot.running = false;
+                    slot.cancel_flag = None;
+                    slot.close_tx = None;
+                    slot.snapshot.current_problem_id = None;
+                    slot.snapshot.current_phase = None;
+                    slot.snapshot.current_detail = None;
+                    match result {
+                        Ok(report) => {
+                            slot.snapshot.cancelled = report.cancelled;
+                            slot.snapshot.total = report.total as u32;
+                            slot.snapshot.completed = report.total as u32;
+                            slot.snapshot.succeeded = report.passed as u32;
+                            slot.snapshot.failed = report.failed as u32;
+                            slot.snapshot.skipped = report.skipped as u32;
+                            slot.snapshot.cancelled_count = report.cancelled_count as u32;
+                            slot.snapshot.elapsed_ms = report.elapsed_ms as f64;
+                            slot.snapshot.items = report
+                                .items
+                                .into_iter()
+                                .map(batch_build_item_to_js)
+                                .collect();
+                            let _ = tx.send(BatchTaskEventJs {
+                                kind: "all_finished".to_owned(),
+                                task_id: my_task_id,
+                                index: slot.snapshot.completed,
+                                total: slot.snapshot.total,
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        Err(err) => {
+                            let code = err.code().to_owned();
+                            let message = err.human_message();
+                            slot.snapshot.code = Some(code.clone());
+                            slot.snapshot.error = Some(message.clone());
+                            let _ = tx.send(BatchTaskEventJs {
+                                kind: "error".to_owned(),
+                                task_id: my_task_id,
+                                total: slot.snapshot.total,
+                                snapshot: slot.snapshot.clone(),
+                                error: Some(message),
+                                code: Some(code),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+            });
+
+        if let Err(e) = spawned {
+            let mut slot = self.batch_task.lock().unwrap();
+            if slot.task_id == my_task_id {
+                slot.running = false;
+                slot.snapshot.running = false;
+                slot.cancel_flag = None;
+                slot.close_tx = None;
+                slot.event_rx = None;
+                slot.snapshot.error = Some(format!("spawn batch build thread failed: {e}"));
+                slot.snapshot.code = Some("io".to_owned());
+            }
+            return BatchStartResultJs::err("io", format!("spawn batch build thread failed: {e}"));
+        }
+
+        BatchStartResultJs::ok(my_task_id)
+    }
+
+    pub(crate) fn start_batch_export(
+        self: &Arc<Self>,
+        req: BatchExportRequestJs,
+    ) -> BatchStartResultJs {
+        let unique_ids = dedup_ids_preserve_order(&req.problem_ids);
+        if unique_ids.is_empty() {
+            return BatchStartResultJs::err("invalid_argument", "请至少选择一道题目。");
+        }
+
+        enum ExportMode {
+            Oj(xcpc_packages::OjFormat),
+            MergedPdf,
+        }
+
+        let (export_mode, kind) = if req.format.eq_ignore_ascii_case("merged_pdf") {
+            (ExportMode::MergedPdf, "export_merged_pdf")
+        } else if let Some(fmt) = xcpc_packages::OjFormat::parse(&req.format) {
+            let k = match fmt {
+                xcpc_packages::OjFormat::Domjudge => "export_domjudge",
+                xcpc_packages::OjFormat::Hydro => "export_hydro",
+            };
+            (ExportMode::Oj(fmt), k)
+        } else {
+            return BatchStartResultJs::err(
+                "invalid_format",
+                format!("不支持的批量导出格式：{}", req.format),
+            );
+        };
+
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return BatchStartResultJs::err("no_workspace", "没有打开的工作区。");
+        };
+        if ws.is_read_only() {
+            return BatchStartResultJs::err(
+                "read_only",
+                xcpc_storage::Error::ReadOnly.human_message(),
+            );
+        }
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<BatchTaskEventJs>();
+        let initial_items: Vec<BatchTaskItemJs> = unique_ids
+            .iter()
+            .map(|id| BatchTaskItemJs {
+                problem_id: id.clone(),
+                status: "pending".to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        let total = initial_items.len() as u32;
+
+        let my_task_id = {
+            let mut slot = self.batch_task.lock().unwrap();
+            if slot.running {
+                return BatchStartResultJs::err(
+                    "batch_task_in_progress",
+                    "已有批量任务正在运行，请等待完成或先取消。",
+                );
+            }
+            let next_id = slot.task_id.wrapping_add(1).max(1);
+            let snapshot = BatchTaskSnapshotJs {
+                task_id: next_id,
+                running: true,
+                kind: kind.to_owned(),
+                total,
+                items: initial_items,
+                ..Default::default()
+            };
+            *slot = BatchTaskSlot {
+                task_id: next_id,
+                running: true,
+                kind: kind.to_owned(),
+                cancel_flag: Some(cancel_flag.clone()),
+                close_tx: Some(tx.clone()),
+                event_rx: Some(Arc::new(Mutex::new(rx))),
+                snapshot,
+            };
+            next_id
+        };
+
+        let slot_arc = self.batch_task.clone();
+        let language = req.language.as_deref().and_then(Language::parse);
+        let book_kind = if req
+            .book
+            .as_deref()
+            .is_some_and(|b| b.eq_ignore_ascii_case("editorial"))
+        {
+            Kind::Editorial
+        } else {
+            Kind::Statements
+        };
+        let title = req.title;
+        let output_path_req = req.output_path.filter(|s| !s.trim().is_empty());
+
+        let spawned = std::thread::Builder::new()
+            .name("xcpc-batch-export".into())
+            .spawn(move || {
+                let started_at = Instant::now();
+                match export_mode {
+                    ExportMode::Oj(fmt) => {
+                        let out_path = output_path_req.map(PathBuf::from).unwrap_or_default();
+                        let opts = xcpc_packages::ExportOjOptions {
+                            format: fmt,
+                            output_path: out_path,
+                            force: false,
+                            language,
+                        };
+                        let slot_cb = slot_arc.clone();
+                        let tx_cb = tx.clone();
+                        let progress_cb = move |ev: xcpc_packages::BatchExportEvent| {
+                            let Ok(mut slot) = slot_cb.lock() else {
+                                return;
+                            };
+                            if slot.task_id != my_task_id {
+                                return;
+                            }
+                            match ev {
+                                xcpc_packages::BatchExportEvent::ProblemStarted {
+                                    problem_id,
+                                    index,
+                                    total,
+                                } => {
+                                    if let Some(item) = slot
+                                        .snapshot
+                                        .items
+                                        .iter_mut()
+                                        .find(|x| x.problem_id == problem_id)
+                                    {
+                                        item.status = "running".to_owned();
+                                    }
+                                    slot.snapshot.current_problem_id = Some(problem_id.clone());
+                                    slot.snapshot.current_phase = Some("exporting".to_owned());
+                                    slot.snapshot.current_detail = None;
+                                    let _ = tx_cb.send(BatchTaskEventJs {
+                                        kind: "problem_started".to_owned(),
+                                        task_id: my_task_id,
+                                        problem_id: Some(problem_id),
+                                        index: index as u32,
+                                        total: total as u32,
+                                        phase: Some("exporting".to_owned()),
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                xcpc_packages::BatchExportEvent::ProblemFinished {
+                                    item,
+                                    index,
+                                    total,
+                                } => {
+                                    let problem_id = item.problem_id.clone();
+                                    let item_js = batch_export_item_to_js(item);
+                                    match item_js.status.as_str() {
+                                        "exported" => slot.snapshot.succeeded += 1,
+                                        "skipped" => slot.snapshot.skipped += 1,
+                                        "cancelled" => slot.snapshot.cancelled_count += 1,
+                                        _ => slot.snapshot.failed += 1,
+                                    }
+                                    slot.snapshot.completed += 1;
+                                    if let Some(existing) = slot
+                                        .snapshot
+                                        .items
+                                        .iter_mut()
+                                        .find(|x| x.problem_id == problem_id)
+                                    {
+                                        *existing = item_js.clone();
+                                    } else {
+                                        slot.snapshot.items.push(item_js.clone());
+                                    }
+                                    let _ = tx_cb.send(BatchTaskEventJs {
+                                        kind: "problem_finished".to_owned(),
+                                        task_id: my_task_id,
+                                        problem_id: Some(problem_id),
+                                        index: index as u32,
+                                        total: total as u32,
+                                        item: Some(item_js),
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                xcpc_packages::BatchExportEvent::Cancelled { completed, total } => {
+                                    slot.snapshot.cancelled = true;
+                                    let _ = tx_cb.send(BatchTaskEventJs {
+                                        kind: "cancelled".to_owned(),
+                                        task_id: my_task_id,
+                                        index: completed as u32,
+                                        total: total as u32,
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                xcpc_packages::BatchExportEvent::AllFinished {
+                                    exported,
+                                    skipped,
+                                    failed,
+                                    cancelled,
+                                    total,
+                                    output_dir,
+                                } => {
+                                    slot.snapshot.succeeded = exported as u32;
+                                    slot.snapshot.skipped = skipped as u32;
+                                    slot.snapshot.failed = failed as u32;
+                                    slot.snapshot.cancelled_count = cancelled as u32;
+                                    slot.snapshot.total = total as u32;
+                                    slot.snapshot.completed = total as u32;
+                                    slot.snapshot.output_path = Some(output_dir);
+                                }
+                            }
+                        };
+
+                        let result = xcpc_packages::export_oj_packages_batch(
+                            &ws,
+                            &unique_ids,
+                            &opts,
+                            Some(cancel_flag.clone()),
+                            Some(&progress_cb),
+                        );
+
+                        if let Ok(mut slot) = slot_arc.lock()
+                            && slot.task_id == my_task_id
+                        {
+                            slot.running = false;
+                            slot.snapshot.running = false;
+                            slot.cancel_flag = None;
+                            slot.close_tx = None;
+                            slot.snapshot.current_problem_id = None;
+                            slot.snapshot.current_phase = None;
+                            slot.snapshot.current_detail = None;
+                            slot.snapshot.elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+                            match result {
+                                Ok(res) => {
+                                    slot.snapshot.cancelled = res.cancelled;
+                                    slot.snapshot.total = res.total as u32;
+                                    slot.snapshot.completed = res.total as u32;
+                                    slot.snapshot.succeeded = res.exported as u32;
+                                    slot.snapshot.skipped = res.skipped as u32;
+                                    slot.snapshot.failed = res.failed as u32;
+                                    slot.snapshot.cancelled_count = res.cancelled_count as u32;
+                                    slot.snapshot.output_path = Some(res.output_dir);
+                                    slot.snapshot.items = res
+                                        .items
+                                        .into_iter()
+                                        .map(batch_export_item_to_js)
+                                        .collect();
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "all_finished".to_owned(),
+                                        task_id: my_task_id,
+                                        index: slot.snapshot.completed,
+                                        total: slot.snapshot.total,
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                Err(err) => {
+                                    let code = err.code().to_owned();
+                                    let message = err.human_message();
+                                    slot.snapshot.code = Some(code.clone());
+                                    slot.snapshot.error = Some(message.clone());
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "error".to_owned(),
+                                        task_id: my_task_id,
+                                        total: slot.snapshot.total,
+                                        snapshot: slot.snapshot.clone(),
+                                        error: Some(message),
+                                        code: Some(code),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    ExportMode::MergedPdf => {
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            if let Ok(mut slot) = slot_arc.lock()
+                                && slot.task_id == my_task_id
+                            {
+                                slot.running = false;
+                                slot.snapshot.running = false;
+                                slot.snapshot.cancelled = true;
+                                slot.snapshot.cancelled_count = total;
+                                slot.snapshot.completed = total;
+                                slot.cancel_flag = None;
+                                slot.close_tx = None;
+                                for item in &mut slot.snapshot.items {
+                                    item.status = "cancelled".to_owned();
+                                }
+                                let _ = tx.send(BatchTaskEventJs {
+                                    kind: "cancelled".to_owned(),
+                                    task_id: my_task_id,
+                                    index: 0,
+                                    total,
+                                    snapshot: slot.snapshot.clone(),
+                                    ..Default::default()
+                                });
+                                let _ = tx.send(BatchTaskEventJs {
+                                    kind: "all_finished".to_owned(),
+                                    task_id: my_task_id,
+                                    index: total,
+                                    total,
+                                    snapshot: slot.snapshot.clone(),
+                                    ..Default::default()
+                                });
+                            }
+                            return;
+                        }
+
+                        if let Ok(mut slot) = slot_arc.lock()
+                            && slot.task_id == my_task_id
+                        {
+                            for item in &mut slot.snapshot.items {
+                                item.status = "running".to_owned();
+                            }
+                            slot.snapshot.current_phase = Some("compiling".to_owned());
+                            let first_id = unique_ids.first().cloned();
+                            slot.snapshot.current_problem_id = first_id.clone();
+                            let _ = tx.send(BatchTaskEventJs {
+                                kind: "problem_started".to_owned(),
+                                task_id: my_task_id,
+                                problem_id: first_id,
+                                index: 0,
+                                total,
+                                phase: Some("compiling".to_owned()),
+                                snapshot: slot.snapshot.clone(),
+                                ..Default::default()
+                            });
+                        }
+
+                        let opts = MergedBookOptions {
+                            title,
+                            language,
+                            kind: book_kind,
+                            template: None,
+                            cover: None,
+                        };
+                        let mut engine =
+                            Engine::new(&FontOptions::from_env(), Some(ws.root().to_path_buf()));
+
+                        let outcome: Result<(String, usize), (String, String)> =
+                            match output_path_req {
+                                Some(ref p) if Path::new(p).is_absolute() => {
+                                    match publish::compile_merged_pdf_bytes(
+                                        &ws,
+                                        &mut engine,
+                                        &unique_ids,
+                                        &opts,
+                                    ) {
+                                        Ok((Some(bytes), report, _)) => {
+                                            if cancel_flag.load(Ordering::Relaxed) {
+                                                Err((
+                                                    "cancelled".to_owned(),
+                                                    "任务已取消".to_owned(),
+                                                ))
+                                            } else {
+                                                let dest = Path::new(p);
+                                                if let Some(parent) = dest.parent() {
+                                                    let _ = std::fs::create_dir_all(parent);
+                                                }
+                                                match xcpc_storage::write_atomic(dest, &bytes) {
+                                                    Ok(()) => Ok((
+                                                        dest.display().to_string(),
+                                                        report.pages.unwrap_or(0),
+                                                    )),
+                                                    Err(e) => Err((
+                                                        "io".to_owned(),
+                                                        format!("写入 PDF 失败：{e}"),
+                                                    )),
+                                                }
+                                            }
+                                        }
+                                        Ok((None, report, _)) => Err((
+                                            "pdf_compile_failed".to_owned(),
+                                            first_error(&report)
+                                                .unwrap_or_else(|| "合并 PDF 编译失败".to_owned()),
+                                        )),
+                                        Err(e) => Err((e.code().to_owned(), e.human_message())),
+                                    }
+                                }
+                                other => {
+                                    let rel_opt = other.as_deref().map(Path::new);
+                                    match publish::export_merged_pdf(
+                                        &ws,
+                                        &mut engine,
+                                        &unique_ids,
+                                        &opts,
+                                        rel_opt,
+                                    ) {
+                                        Ok(res) if !res.path.is_empty() => Ok((
+                                            ws.root().join(&res.path).display().to_string(),
+                                            res.pages,
+                                        )),
+                                        Ok(res) => Err((
+                                            "pdf_compile_failed".to_owned(),
+                                            first_error(&res.report)
+                                                .unwrap_or_else(|| "合并 PDF 编译失败".to_owned()),
+                                        )),
+                                        Err(e) => Err((e.code().to_owned(), e.human_message())),
+                                    }
+                                }
+                            };
+
+                        let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+                        if let Ok(mut slot) = slot_arc.lock()
+                            && slot.task_id == my_task_id
+                        {
+                            slot.running = false;
+                            slot.snapshot.running = false;
+                            slot.cancel_flag = None;
+                            slot.close_tx = None;
+                            slot.snapshot.current_problem_id = None;
+                            slot.snapshot.current_phase = None;
+                            slot.snapshot.current_detail = None;
+                            slot.snapshot.elapsed_ms = elapsed_ms;
+                            match outcome {
+                                Ok((abs_path, _pages)) => {
+                                    slot.snapshot.output_path = Some(abs_path.clone());
+                                    slot.snapshot.succeeded = total;
+                                    slot.snapshot.completed = total;
+                                    for item in &mut slot.snapshot.items {
+                                        item.status = "exported".to_owned();
+                                        item.output_path = Some(abs_path.clone());
+                                    }
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "all_finished".to_owned(),
+                                        task_id: my_task_id,
+                                        index: total,
+                                        total,
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                Err((code, _message)) if code == "cancelled" => {
+                                    slot.snapshot.cancelled = true;
+                                    slot.snapshot.cancelled_count = total;
+                                    slot.snapshot.completed = total;
+                                    for item in &mut slot.snapshot.items {
+                                        item.status = "cancelled".to_owned();
+                                    }
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "cancelled".to_owned(),
+                                        task_id: my_task_id,
+                                        index: 0,
+                                        total,
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "all_finished".to_owned(),
+                                        task_id: my_task_id,
+                                        index: total,
+                                        total,
+                                        snapshot: slot.snapshot.clone(),
+                                        ..Default::default()
+                                    });
+                                }
+                                Err((code, message)) => {
+                                    slot.snapshot.failed = total;
+                                    slot.snapshot.completed = total;
+                                    slot.snapshot.code = Some(code.clone());
+                                    slot.snapshot.error = Some(message.clone());
+                                    for item in &mut slot.snapshot.items {
+                                        item.status = "failed".to_owned();
+                                        item.code = Some(code.clone());
+                                        item.message = Some(message.clone());
+                                    }
+                                    let _ = tx.send(BatchTaskEventJs {
+                                        kind: "error".to_owned(),
+                                        task_id: my_task_id,
+                                        total,
+                                        snapshot: slot.snapshot.clone(),
+                                        error: Some(message),
+                                        code: Some(code),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+        if let Err(e) = spawned {
+            let mut slot = self.batch_task.lock().unwrap();
+            if slot.task_id == my_task_id {
+                slot.running = false;
+                slot.snapshot.running = false;
+                slot.cancel_flag = None;
+                slot.close_tx = None;
+                slot.event_rx = None;
+                slot.snapshot.error = Some(format!("spawn batch export thread failed: {e}"));
+                slot.snapshot.code = Some("io".to_owned());
+            }
+            return BatchStartResultJs::err("io", format!("spawn batch export thread failed: {e}"));
+        }
+
+        BatchStartResultJs::ok(my_task_id)
+    }
+
+    pub(crate) fn cancel_batch_task(&self) -> ActionResult {
+        let mut slot = self.batch_task.lock().unwrap();
+        if let Some(ref flag) = slot.cancel_flag {
+            flag.store(true, Ordering::Relaxed);
+            slot.snapshot.cancelled = true;
+        }
+        ActionResult::ok()
+    }
+
+    pub(crate) fn batch_task_status(&self) -> BatchTaskSnapshotJs {
+        self.batch_task.lock().unwrap().snapshot.clone()
+    }
+
+    pub(crate) fn batch_event_receiver(
+        &self,
+        task_id: u32,
+    ) -> (
+        Option<Arc<Mutex<mpsc::Receiver<BatchTaskEventJs>>>>,
+        BatchTaskSnapshotJs,
+    ) {
+        let slot = self.batch_task.lock().unwrap();
+        if slot.task_id == task_id {
+            (slot.event_rx.clone(), slot.snapshot.clone())
+        } else {
+            (None, slot.snapshot.clone())
+        }
+    }
+}
+
+fn dedup_ids_preserve_order(ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+fn progress_event_phase_detail(ev: &xcpc_judge::ProgressEvent) -> (&'static str, Option<String>) {
+    match ev {
+        xcpc_judge::ProgressEvent::Compiling { target, .. } => ("compiling", Some(target.clone())),
+        xcpc_judge::ProgressEvent::SelfTesting { .. } => ("self_testing", None),
+        xcpc_judge::ProgressEvent::Generating { test_name, .. } => {
+            ("generating", Some(test_name.clone()))
+        }
+        xcpc_judge::ProgressEvent::Validating { test_name, .. } => {
+            ("validating", Some(test_name.clone()))
+        }
+        xcpc_judge::ProgressEvent::Running {
+            solution,
+            test_name,
+            verdict,
+            cpu_time_ms,
+            ..
+        } => (
+            "running",
+            Some(format!(
+                "{solution} {test_name} ({verdict} {cpu_time_ms}ms)"
+            )),
+        ),
+        xcpc_judge::ProgressEvent::Finished { .. } => ("finished", None),
+    }
+}
+
+fn batch_build_item_to_js(item: xcpc_judge::BatchBuildItemResult) -> BatchTaskItemJs {
+    let status = match item.status {
+        xcpc_judge::BatchBuildItemStatus::Passed => "passed",
+        xcpc_judge::BatchBuildItemStatus::Failed => "failed",
+        xcpc_judge::BatchBuildItemStatus::Skipped => "skipped",
+        xcpc_judge::BatchBuildItemStatus::Error => "error",
+        xcpc_judge::BatchBuildItemStatus::Cancelled => "cancelled",
+    };
+    BatchTaskItemJs {
+        problem_id: item.problem_id,
+        status: status.to_owned(),
+        verified: item.verified,
+        elapsed_ms: item.elapsed_ms as f64,
+        phase: None,
+        detail: None,
+        code: item.code,
+        message: item.message,
+        output_path: None,
+    }
+}
+
+fn batch_export_item_to_js(item: xcpc_packages::BatchExportItemResult) -> BatchTaskItemJs {
+    let status = match item.status {
+        xcpc_packages::BatchExportItemStatus::Exported => "exported",
+        xcpc_packages::BatchExportItemStatus::Skipped => "skipped",
+        xcpc_packages::BatchExportItemStatus::Failed => "failed",
+        xcpc_packages::BatchExportItemStatus::Cancelled => "cancelled",
+    };
+    BatchTaskItemJs {
+        problem_id: item.problem_id,
+        status: status.to_owned(),
+        verified: item.verified,
+        elapsed_ms: 0.0,
+        phase: None,
+        detail: None,
+        code: item.code,
+        message: item.message,
+        output_path: item.zip_path,
     }
 }
 

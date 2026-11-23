@@ -51,6 +51,13 @@ pub struct PolygonImportOptions {
     /// When `None`, derived from the archive's short name / XML metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_id: Option<String>,
+    /// Optional persistent group name to assign to imported problem(s).
+    /// Takes precedence over automatic contest-name grouping when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// When `true`, disables automatic grouping by contest name for Polygon contest imports.
+    #[serde(default)]
+    pub no_auto_group: bool,
     /// Maximum total uncompressed bytes allowed from the ZIP (default: 512 MiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_uncompressed_bytes: Option<u64>,
@@ -83,6 +90,8 @@ pub struct PolygonImportResult {
     pub kind: PolygonImportKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contest_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub problems: Vec<ImportedProblemSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<PackageWarning>,
@@ -155,6 +164,84 @@ pub struct ExportedArtifact {
 pub struct ExportOjResult {
     pub format: OjFormat,
     pub artifacts: Vec<ExportedArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<PackageWarning>,
+}
+
+/// Per-problem outcome status for [`crate::export_oj_packages_batch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchExportItemStatus {
+    Exported,
+    Skipped,
+    Failed,
+    Cancelled,
+}
+
+/// Per-problem result entry in [`BatchExportOjResult`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchExportItemResult {
+    pub problem_id: String,
+    pub status: BatchExportItemStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zip_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub sample_count: usize,
+    #[serde(default)]
+    pub secret_count: usize,
+    #[serde(default)]
+    pub verified: bool,
+    #[serde(default)]
+    pub forced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Streaming progress event emitted by [`crate::export_oj_packages_batch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchExportEvent {
+    ProblemStarted {
+        problem_id: String,
+        index: usize,
+        total: usize,
+    },
+    ProblemFinished {
+        item: BatchExportItemResult,
+        index: usize,
+        total: usize,
+    },
+    Cancelled {
+        completed: usize,
+        total: usize,
+    },
+    AllFinished {
+        exported: usize,
+        skipped: usize,
+        failed: usize,
+        cancelled: usize,
+        total: usize,
+        output_dir: String,
+    },
+}
+
+/// Aggregated result returned by [`crate::export_oj_packages_batch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchExportOjResult {
+    pub ok: bool,
+    pub format: OjFormat,
+    pub output_dir: String,
+    pub cancelled: bool,
+    pub total: usize,
+    pub exported: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub cancelled_count: usize,
+    pub items: Vec<BatchExportItemResult>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<PackageWarning>,
 }

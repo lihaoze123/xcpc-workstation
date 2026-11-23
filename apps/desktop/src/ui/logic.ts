@@ -4,8 +4,10 @@
 
 import type {
   ExportBookStatusJs,
+  FuzzyHitJs,
   PreviewDiagnostic,
   PreviewView,
+  ProblemSummaryJs,
   SamplePairJs,
 } from "xcpc-workstation/native";
 import { t } from "./i18n";
@@ -331,7 +333,16 @@ export interface ErrorCopy {
   rule: boolean;
 }
 
-const RULES = new Set(["contest_frozen", "contest_archived", "problem_referenced", "read_only", "already_frozen", "not_frozen"]);
+const RULES = new Set([
+  "contest_frozen",
+  "contest_archived",
+  "problem_referenced",
+  "read_only",
+  "already_frozen",
+  "not_frozen",
+  "cancelled",
+  "not_a_package",
+]);
 
 /** The words for a Core error `code` (the raw `error` stays for Copy Details). */
 export function errorCopy(code: string | null | undefined, raw?: string | null): ErrorCopy {
@@ -393,6 +404,14 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
       return { message: t("error.invalidFormat"), rule };
     case "unsupported":
       return { message: t("error.unsupported"), rule };
+    case "invalid_group_name":
+      return { message: t("error.invalidGroupName"), rule };
+    case "group_already_exists":
+      return { message: t("error.groupAlreadyExists"), rule };
+    case "cancelled":
+      return { message: t("error.cancelled"), rule: true };
+    case "not_a_package":
+      return { message: t("error.notAPackage"), rule: true };
     default:
       break;
   }
@@ -478,4 +497,544 @@ export function diffKind(kind: string): string {
     default:
       return kind;
   }
+}
+
+// ── Library Multi-Selection (§5.4) ───────────────────────────────────────────
+
+export interface SelectionState {
+  selectedIds: ReadonlySet<string>;
+  anchorId: string | undefined;
+  focusedId: string | undefined;
+}
+
+export const EMPTY_SELECTION: SelectionState = {
+  selectedIds: new Set<string>(),
+  anchorId: undefined,
+  focusedId: undefined,
+};
+
+export type RowSelectionAction =
+  | { kind: "click"; id: string; shift?: boolean; mod?: boolean; checkbox?: boolean }
+  | { kind: "selectAll" }
+  | { kind: "toggleAll" }
+  | { kind: "toggleGroup"; ids: readonly string[] }
+  | { kind: "clear" }
+  | { kind: "prune" };
+
+export type CheckboxTriState = "none" | "partial" | "all";
+
+/** Tri-state header/group checkbox state over `visibleIds`. */
+export function headerCheckboxState(
+  selectedIds: ReadonlySet<string>,
+  visibleIds: readonly string[],
+): CheckboxTriState {
+  if (visibleIds.length === 0) return "none";
+  let count = 0;
+  for (const id of visibleIds) {
+    if (selectedIds.has(id)) count += 1;
+  }
+  if (count === 0) return "none";
+  return count === visibleIds.length ? "all" : "partial";
+}
+
+/** Pure state machine for library multi-select (plain click, checkbox, Ctrl/Cmd, Shift range, Ctrl+A, Esc, prune). */
+export function applyRowSelection(
+  state: SelectionState,
+  visibleIds: readonly string[],
+  action: RowSelectionAction,
+): SelectionState {
+  switch (action.kind) {
+    case "clear":
+      return {
+        selectedIds: new Set<string>(),
+        anchorId: state.anchorId,
+        focusedId: state.focusedId,
+      };
+    case "selectAll":
+      return {
+        selectedIds: new Set<string>(visibleIds),
+        anchorId: state.anchorId ?? visibleIds[0],
+        focusedId: state.focusedId ?? visibleIds[0],
+      };
+    case "toggleAll": {
+      const tri = headerCheckboxState(state.selectedIds, visibleIds);
+      if (tri === "all") {
+        return { selectedIds: new Set<string>(), anchorId: state.anchorId, focusedId: state.focusedId };
+      }
+      return {
+        selectedIds: new Set<string>(visibleIds),
+        anchorId: state.anchorId ?? visibleIds[0],
+        focusedId: state.focusedId ?? visibleIds[0],
+      };
+    }
+    case "toggleGroup": {
+      const tri = headerCheckboxState(state.selectedIds, action.ids);
+      const next = new Set<string>(state.selectedIds);
+      if (tri === "all") {
+        for (const id of action.ids) next.delete(id);
+      } else {
+        for (const id of action.ids) next.add(id);
+      }
+      return {
+        selectedIds: next,
+        anchorId: state.anchorId ?? action.ids[0],
+        focusedId: state.focusedId ?? action.ids[0],
+      };
+    }
+    case "prune": {
+      const visibleSet = new Set<string>(visibleIds);
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of state.selectedIds) {
+        if (visibleSet.has(id)) next.add(id);
+        else changed = true;
+      }
+      const anchorId = state.anchorId && visibleSet.has(state.anchorId) ? state.anchorId : undefined;
+      if (!changed && anchorId === state.anchorId) return state;
+      return {
+        selectedIds: next,
+        anchorId,
+        focusedId: state.focusedId,
+      };
+    }
+    case "click": {
+      const { id, shift, mod, checkbox } = action;
+      if (shift) {
+        const anchor = state.anchorId ?? state.focusedId;
+        const aIdx = anchor ? visibleIds.indexOf(anchor) : -1;
+        const tIdx = visibleIds.indexOf(id);
+        if (aIdx >= 0 && tIdx >= 0) {
+          const lo = Math.min(aIdx, tIdx);
+          const hi = Math.max(aIdx, tIdx);
+          const next = mod ? new Set<string>(state.selectedIds) : new Set<string>();
+          for (let i = lo; i <= hi; i++) next.add(visibleIds[i]);
+          return {
+            selectedIds: next,
+            anchorId: anchor,
+            focusedId: id,
+          };
+        }
+        const next = new Set<string>(state.selectedIds);
+        next.add(id);
+        return { selectedIds: next, anchorId: id, focusedId: id };
+      }
+      if (checkbox) {
+        const next = new Set<string>(state.selectedIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return { selectedIds: next, anchorId: id, focusedId: id };
+      }
+      if (mod) {
+        const next = new Set<string>(state.selectedIds);
+        if (next.size === 0 && state.focusedId && state.focusedId !== id && visibleIds.includes(state.focusedId)) {
+          next.add(state.focusedId);
+          next.add(id);
+        } else if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+        return { selectedIds: next, anchorId: id, focusedId: id };
+      }
+      // Plain row body click: clear multi-selection and focus the clicked row.
+      return {
+        selectedIds: new Set<string>(),
+        anchorId: id,
+        focusedId: id,
+      };
+    }
+  }
+}
+
+// ── Library Dynamic Grouping (§5.3) ──────────────────────────────────────────
+
+export type LibraryGroupBy = "none" | "group" | "rating" | "platform" | "contest" | "package_status";
+
+export function isLibraryGroupBy(value: string | null | undefined): value is LibraryGroupBy {
+  return (
+    value === "none" ||
+    value === "group" ||
+    value === "rating" ||
+    value === "platform" ||
+    value === "contest" ||
+    value === "package_status"
+  );
+}
+
+export interface ProblemGroupSection<T> {
+  key: string;
+  label: string;
+  rows: T[];
+}
+
+export function groupProblems<
+  T extends Pick<ProblemSummaryJs, "id" | "group" | "rating" | "sources" | "packageStatus" | "contestIds">,
+>(
+  rows: readonly T[],
+  groupBy: LibraryGroupBy,
+  declaredGroups: readonly string[],
+  contests: readonly { id: string; name: string }[],
+): ProblemGroupSection<T>[] {
+  if (groupBy === "none" || rows.length === 0) return [];
+
+  if (groupBy === "group") {
+    const map = new Map<string, T[]>();
+    const ungrouped: T[] = [];
+    for (const r of rows) {
+      const g = r.group?.trim();
+      if (!g) ungrouped.push(r);
+      else {
+        const list = map.get(g);
+        if (list) list.push(r);
+        else map.set(g, [r]);
+      }
+    }
+    const out: ProblemGroupSection<T>[] = [];
+    const seen = new Set<string>();
+    for (const name of declaredGroups) {
+      seen.add(name);
+      const list = map.get(name);
+      if (list && list.length > 0) out.push({ key: `group:${name}`, label: name, rows: list });
+    }
+    const extra = [...map.keys()].filter((k) => !seen.has(k)).sort((a, b) => a.localeCompare(b));
+    for (const name of extra) {
+      const list = map.get(name)!;
+      out.push({ key: `group:${name}`, label: name, rows: list });
+    }
+    if (ungrouped.length > 0) {
+      out.push({ key: "group:__ungrouped__", label: t("library.groupBucket.ungrouped"), rows: ungrouped });
+    }
+    return out;
+  }
+
+  if (groupBy === "rating") {
+    const map = new Map<TierName, T[]>();
+    for (const r of rows) {
+      const tier = ratingTier(r.rating);
+      const list = map.get(tier);
+      if (list) list.push(r);
+      else map.set(tier, [r]);
+    }
+    const out: ProblemGroupSection<T>[] = [];
+    for (const range of TIER_RANGES) {
+      const list = map.get(range.tier);
+      if (list && list.length > 0) {
+        out.push({ key: `rating:${range.tier}`, label: range.label, rows: list });
+      }
+    }
+    const unrated = map.get("unrated");
+    if (unrated && unrated.length > 0) {
+      out.push({ key: "rating:unrated", label: t("library.groupBucket.unrated"), rows: unrated });
+    }
+    return out;
+  }
+
+  if (groupBy === "platform") {
+    const map = new Map<string, T[]>();
+    const none: T[] = [];
+    for (const r of rows) {
+      const p = r.sources[0]?.platform?.trim();
+      if (!p) none.push(r);
+      else {
+        const list = map.get(p);
+        if (list) list.push(r);
+        else map.set(p, [r]);
+      }
+    }
+    const out: ProblemGroupSection<T>[] = [...map.keys()]
+      .sort((a, b) => a.localeCompare(b))
+      .map((p) => ({ key: `platform:${p}`, label: p, rows: map.get(p)! }));
+    if (none.length > 0) {
+      out.push({ key: "platform:__none__", label: t("library.groupBucket.noPlatform"), rows: none });
+    }
+    return out;
+  }
+
+  if (groupBy === "contest") {
+    const byContest = new Map<string, T[]>();
+    const multi: T[] = [];
+    const none: T[] = [];
+    for (const r of rows) {
+      const cids = r.contestIds ?? [];
+      if (cids.length === 0) none.push(r);
+      else if (cids.length >= 2) multi.push(r);
+      else {
+        const cid = cids[0];
+        const list = byContest.get(cid);
+        if (list) list.push(r);
+        else byContest.set(cid, [r]);
+      }
+    }
+    const out: ProblemGroupSection<T>[] = [];
+    const seen = new Set<string>();
+    for (const c of contests) {
+      seen.add(c.id);
+      const list = byContest.get(c.id);
+      if (list && list.length > 0) {
+        out.push({ key: `contest:${c.id}`, label: c.name, rows: list });
+      }
+    }
+    const extra = [...byContest.keys()].filter((k) => !seen.has(k)).sort((a, b) => a.localeCompare(b));
+    for (const cid of extra) {
+      out.push({ key: `contest:${cid}`, label: cid, rows: byContest.get(cid)! });
+    }
+    if (multi.length > 0) {
+      out.push({ key: "contest:__multi__", label: t("library.groupBucket.multipleContests"), rows: multi });
+    }
+    if (none.length > 0) {
+      out.push({ key: "contest:__none__", label: t("library.groupBucket.noContest"), rows: none });
+    }
+    return out;
+  }
+
+  // package_status
+  const order: { key: string; label: string }[] = [
+    { key: "verified_fresh", label: t("build.status.verifiedFresh") },
+    { key: "stale", label: t("build.status.stale") },
+    { key: "failed", label: t("build.status.failed") },
+    { key: "unverified", label: t("build.status.unverified") },
+    { key: "none", label: t("library.groupBucket.noPackage") },
+  ];
+  const map = new Map<string, T[]>();
+  for (const r of rows) {
+    const st = r.packageStatus;
+    const key =
+      st === "verified_fresh" || st === "stale" || st === "failed" || st === "unverified" ? st : "none";
+    const list = map.get(key);
+    if (list) list.push(r);
+    else map.set(key, [r]);
+  }
+  const out: ProblemGroupSection<T>[] = [];
+  for (const bucket of order) {
+    const list = map.get(bucket.key);
+    if (list && list.length > 0) {
+      out.push({ key: `pkg:${bucket.key}`, label: bucket.label, rows: list });
+    }
+  }
+  return out;
+}
+
+// ── Library Column Width Budget (§5.2) ───────────────────────────────────────
+
+export type LibraryColumnKey = "select" | "title" | "ratingText" | "tagsText" | "status" | "source";
+
+export interface LibraryColumnSpec {
+  key: LibraryColumnKey;
+  title: string;
+  width: number;
+  align?: "start" | "center" | "end";
+  resizable: false;
+  sortable?: boolean;
+  selectable?: boolean;
+}
+
+export interface LibraryColumnsLayout {
+  columns: LibraryColumnSpec[];
+  titleWidth: number;
+  tagsWidth: number;
+  showInlineId: boolean;
+  maxTags: number;
+}
+
+export function computeLibraryColumns(width: number): LibraryColumnsLayout {
+  const selectW = 36;
+  const ratingW = 78;
+  const statusW = 76;
+  const tagsW = width >= 560 ? 176 : width >= 480 ? 124 : 0;
+  const sourceW = width >= 780 ? 132 : 0;
+  const used = selectW + ratingW + statusW + tagsW + sourceW;
+  const titleW = Math.max(136, width - used - 2);
+  // Keep fixed columns first (indices 0..3) and append optional responsive columns at the end
+  // so NSH DataTable's index-based header/cell recycling never shifts column indices on resize.
+  const columns: LibraryColumnSpec[] = [
+    { key: "select", title: "", width: selectW, align: "center", resizable: false, sortable: false, selectable: false },
+    { key: "title", title: t("library.col.title"), width: titleW, resizable: false, sortable: true },
+    { key: "ratingText", title: t("library.col.rating"), width: ratingW, align: "end", resizable: false, sortable: true },
+    { key: "status", title: t("library.col.status"), width: statusW, align: "center", resizable: false },
+    ...(tagsW > 0 ? [{ key: "tagsText" as const, title: t("library.col.tags"), width: tagsW, resizable: false as const }] : []),
+    ...(sourceW > 0 ? [{ key: "source" as const, title: t("library.col.source"), width: sourceW, resizable: false as const }] : []),
+  ];
+  return {
+    columns,
+    titleWidth: titleW,
+    tagsWidth: tagsW,
+    showInlineId: titleW >= 220,
+    maxTags: tagsW >= 176 ? 3 : 2,
+  };
+}
+
+// ── Batch Delete Pre-Check Partition (§5.4) ──────────────────────────────────
+
+export interface BatchDeleteBlockedItem {
+  id: string;
+  contests: { id: string; name: string }[];
+}
+
+export interface BatchDeletePartition {
+  deletable: string[];
+  blocked: BatchDeleteBlockedItem[];
+}
+
+/** Partitions selected problem IDs into deletable vs blocked by unfrozen contests (regardless of `archived`; frozen contests do NOT block). */
+export function partitionBatchDelete(
+  selectedIds: readonly string[],
+  contests: readonly { id: string; name: string; frozen: boolean; archived?: boolean; items: readonly { id: string }[] }[],
+): BatchDeletePartition {
+  const refs = new Map<string, { id: string; name: string }[]>();
+  for (const c of contests) {
+    if (c.frozen) continue;
+    for (const item of c.items) {
+      const list = refs.get(item.id);
+      if (list) {
+        if (!list.some((x) => x.id === c.id)) list.push({ id: c.id, name: c.name });
+      } else {
+        refs.set(item.id, [{ id: c.id, name: c.name }]);
+      }
+    }
+  }
+  const seen = new Set<string>();
+  const deletable: string[] = [];
+  const blocked: BatchDeleteBlockedItem[] = [];
+  for (const id of selectedIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const referencing = refs.get(id);
+    if (referencing && referencing.length > 0) {
+      blocked.push({ id, contests: referencing });
+    } else {
+      deletable.push(id);
+    }
+  }
+  return { deletable, blocked };
+}
+
+// ── Command Palette Ranking & Caps (§6) ──────────────────────────────────────
+
+export interface PaletteActionInput {
+  id: string;
+  label: string;
+  keywords?: readonly string[];
+  shortcut?: string | null;
+}
+
+export type PaletteGroupKind = "recent" | "currentContest" | "problem" | "contest" | "action";
+
+export interface PaletteResultItem {
+  id: string;
+  label: string;
+  groupKind: PaletteGroupKind;
+  groupLabel: string;
+  shortcut?: string | null;
+  hit?: FuzzyHitJs;
+}
+
+export interface PaletteBuildResult {
+  actionMode: boolean;
+  query: string;
+  items: PaletteResultItem[];
+}
+
+function scorePaletteAction(action: PaletteActionInput, needle: string): number {
+  if (!needle) return 1;
+  const label = action.label.toLowerCase();
+  const kws = (action.keywords ?? []).map((k) => k.toLowerCase());
+  if (label === needle || kws.some((k) => k === needle)) return 100;
+  if (label.startsWith(needle) || kws.some((k) => k.startsWith(needle))) return 70;
+  if (label.includes(needle)) return 40;
+  if (kws.some((k) => k.includes(needle))) return 20;
+  return 0;
+}
+
+function groupLabelFor(kind: PaletteGroupKind): string {
+  switch (kind) {
+    case "recent":
+      return t("palette.group.recent");
+    case "currentContest":
+      return t("palette.group.currentContest");
+    case "problem":
+      return t("palette.group.problem");
+    case "contest":
+      return t("palette.group.contest");
+    case "action":
+      return t("palette.group.action");
+  }
+}
+
+export function buildPaletteItems(
+  rawQuery: string,
+  jumps: readonly FuzzyHitJs[],
+  actions: readonly PaletteActionInput[],
+  activeContest: string | null | undefined,
+): PaletteBuildResult {
+  const trimmedStart = rawQuery.trimStart();
+  const actionMode = trimmedStart.startsWith(">");
+  const query = (actionMode ? trimmedStart.slice(1) : trimmedStart).trim();
+  const needle = query.toLowerCase();
+
+  const scoredActions = actions
+    .map((a, idx) => ({ a, idx, score: scorePaletteAction(a, needle) }))
+    .filter((x) => x.score > 0);
+  if (needle) {
+    scoredActions.sort((x, y) => y.score - x.score || x.idx - y.idx);
+  }
+  const actionItems: PaletteResultItem[] = scoredActions.map(({ a }) => ({
+    id: a.id,
+    label: a.label,
+    groupKind: "action",
+    groupLabel: groupLabelFor("action"),
+    shortcut: a.shortcut ?? null,
+  }));
+
+  if (actionMode) {
+    return { actionMode: true, query, items: actionItems };
+  }
+
+  const toJumpItem = (h: FuzzyHitJs, groupKind: PaletteGroupKind): PaletteResultItem => ({
+    id: `j:${h.visitKey}`,
+    label: h.title,
+    groupKind,
+    groupLabel: groupLabelFor(groupKind),
+    hit: h,
+  });
+
+  if (!query) {
+    if (activeContest) {
+      const contestItems = jumps
+        .filter((h) => h.kind === "contest_item")
+        .sort((a, b) => (a.label ?? "").localeCompare(b.label ?? ""))
+        .slice(0, 8)
+        .map((h) => toJumpItem(h, "currentContest"));
+      return { actionMode: false, query, items: [...contestItems, ...actionItems] };
+    }
+    const recentItems = jumps.slice(0, 5).map((h) => toJumpItem(h, "recent"));
+    return { actionMode: false, query, items: [...recentItems, ...actionItems] };
+  }
+
+  // Non-empty query: per-group caps (contest_item 6, problem 8, contest 4, actions uncapped).
+  const contestItems = jumps
+    .filter((h) => h.kind === "contest_item")
+    .slice(0, 6)
+    .map((h) => toJumpItem(h, "currentContest"));
+  const problemItems = jumps
+    .filter((h) => h.kind === "problem")
+    .slice(0, 8)
+    .map((h) => toJumpItem(h, "problem"));
+  const contestList = jumps
+    .filter((h) => h.kind === "contest")
+    .slice(0, 4)
+    .map((h) => toJumpItem(h, "contest"));
+
+  const jumpItems = [...contestItems, ...problemItems, ...contestList];
+  const bestActionScore = scoredActions[0]?.score ?? 0;
+  const hasExactObjectHit = jumpItems.some((item) => {
+    const h = item.hit;
+    return !!h && (h.id.toLowerCase() === needle || h.title.toLowerCase() === needle);
+  });
+
+  const promoteActions = bestActionScore >= 70 && !hasExactObjectHit;
+  return {
+    actionMode: false,
+    query,
+    items: promoteActions ? [...actionItems, ...jumpItems] : [...jumpItems, ...actionItems],
+  };
 }
