@@ -227,7 +227,33 @@
    - `search_problems` / `write_problem` 支持 `group` 字段筛选与写入；
    - 补齐 `xcpc group` 与批量元数据/删除/导出操作的 Core 语义接口、CLI 与 MCP 入口。
 
-**不做**：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、OS 强安全沙箱与判外部提交、Nix / Hull 互通、CPLib 专门支持、通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
+### Phase 3C：交互题、stdio 多轮通信题与 OI 子任务 / 部分分
+
+2026-11-24 讨论确认，详细规格见 [specs/phase-3c-interactive-communication-subtasks.md](./specs/phase-3c-interactive-communication-subtasks.md)。补齐竞赛出题核心高阶题型并打通本地构建、门禁、对拍、生态数据包与 GUI/MCP/Skill 全链路：
+
+1. **stdio 交互题（`interactor.cpp`）**：
+   - 对齐 Polygon 标准：默认由 `interactor.cpp` 直接判定；若显式配置 `[package].checker` 或存在 `checker.cpp`，则将 `interactor` 写出的 `tout` 再交给 `checker` 复判；
+   - 双管道代理录制截断交互日志（失败时展示 `→`/`←` 对话），区分 CPU `TLE` 与死锁 `ILE`（wall-clock 超限但 CPU 未满）；`stress` 对拍同步支持交互题；
+   - 交互题默认不把 `samples/*.in` 自动纳入评测（需测样例在 `[[test]]` 显式声明）；`--strict` / `verify` 仍强制 `validator` 自测，`interactor` 通过标程 + 错解验证（缺错解报 warning，不强制单独 `tests/interactor/` 目录）。
+2. **stdio 多轮通信题（`runs = N`）**：
+   - 对齐 Polygon `run-twice`（`<judging run-count="N">`），在 `[package]` 增加 `runs = N`（默认 `1`）；第 $k$ 轮 `tout` 作为第 $k+1$ 轮输入，支持「有 `interactor.cpp`」与「无 `interactor.cpp`（纯多轮串联 + `checker`）」两种形态，总 CPU 时间按各轮累计计入时限。
+3. **OI 子任务 / 部分分（`[[subtask]]`）**：
+   - 顶层 `[[subtask]]`（`id` / `score` / `depends` / `scoring`）+ 现有 `[[test]]` 新增可选单归属字段 `subtask = "<id>"`（数据复用靠 `depends`）；
+   - 支持 `min`（默认捆绑）、`sum`（按点均分）与 testlib `quitp` 部分分比例；`[solutions.<name>]` 支持 `score`（整数或 `[min, max]` 区间）与 `subtasks = { "<id>" = ExpectVerdict }`；
+   - 归属子任务的测试自动向 `validator` 传 `--group <id>`（向后兼容），自测支持可选 `tests/validator/{valid,invalid}/<subtask_id>/` 子目录；严格门禁对环依赖/悬空引用/空子任务/无归属非样例测试/标程未满分报 error，总分 ≠ 100 报 warning。
+4. **生态包、题面 Lint、GUI 与 MCP / Skill 联动**：
+   - Polygon 导入完整解析 `<interactor>`、`run-count` 与 `<groups>`/`<group>`；Hydro 导出原生支持 `interactive` 与 `subtasks` `config.yaml`；DOMjudge 导出原生支持 `custom interactive`（Kattis 适配），遇 OI 子任务平铺测试点并附 warning；
+   - 保持 `statement.md` 单一事实源（`xcpc-lint` 补充缺 `## 交互方式` / `## 子任务` 的非阻断 warning）；桌面端「构建」Tab 补齐交互日志、子任务分组折叠矩阵与配置控件；同步升级 `xcpc package init --interactive --runs --subtasks`、MCP 工具与 `skills/xcpc-problem-creator/`。
+
+### Phase 3D：整场验题与质量体检（Contest Readiness）
+
+2026-11-24 讨论确认，详细规格见 [specs/phase-3d-contest-readiness.md](./specs/phase-3d-contest-readiness.md)。将单题验收升维至整场比赛定稿前的质量巡检与外部验题协作：
+
+1. **Sanitizer（ASan / UBSan）UB 体检模式**：显式触发（`--sanitize` / MCP `mode: "sanitize"` / GUI 按钮），覆盖 `generator`、`validator`、`checker`、`interactor` 与所有预期 AC 解法；独立缓存零污染、自动放宽时限（如 `5× TL`），报告标出 UB / 越界诊断，不强制阻断 `--strict`。
+2. **验题人外部提交试跑（零污染）**：支持单题单文件、整场单目录（按题号或 slug 自动匹配）与多验题人二级目录；临时目录编译运行不改写工作区文件，支持导出 Markdown 验题报告，并对满意解法提供一键「收编进 `solutions/`」。
+3. **比赛级「验题体检」闭环**：比赛内新增「验题体检」视图 + `xcpc contest audit` CLI + `audit_contest` MCP 工具，聚合每题验收状态、标程耗时占比、AC/TLE 安全余量、数据体积与评测总耗时预警、错解覆盖、lint 与 Sanitizer 状态；支持一键验收过期题、整场 UB 体检、验题人目录试跑与导出整场 Markdown 报告。
+
+**不做**：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、Nix / Hull 互通、CPLib 专门支持、函数式 `grader.cpp` 通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
 
 ## Phase 4：训练与生态
 
@@ -236,7 +262,7 @@
 
 ## 待定（尚未排期）
 
-- stdio 交互题（`interactor.cpp`，双 OS pipe 并发运行与死锁超时判定）与 OI 子任务 / 部分分（自 Phase 3B 延后）。
+- **候选 Phase 3E：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，定位在 Phase 3D 验题试跑的自然延伸，待 3C / 3D 落地后评估是否排在 Phase 4 之前）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 三种赛制与内容哈希断点续测；引入 `code_sha256` + `judge_scope`（`none | pretest | full`）+ 可选 `honeypot` 三道防线与分层审计模型（`REJUDGED` / `SUSPECT` / `CHEATER`），产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
 - 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
 - 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。

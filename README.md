@@ -5,7 +5,7 @@
 <h1 align="center">XCPC Workstation</h1>
 
 <p align="center">
-  本地优先的 XCPC 工作站 —— 以开放目录题库为底座，覆盖个人题库与多人 Git 协同出题、活引用组卷与 PDF 出版，并持续演进至本地 Polygon 与训练复盘。
+  本地优先的 XCPC 工作站 —— 集开放目录题库、本地 Polygon 出题与严格验收、Polygon / DOMjudge / Hydro 数据包流转、活引用组卷与 Typst PDF 出版于一体，原生支持 AI Agent / MCP。
 </p>
 
 <p align="center">
@@ -20,28 +20,37 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/studio.png" width="100%" alt="XCPC Workstation 出版工作室：左侧大纲与难度分布、中间 Markdown/LaTeX 编辑器、右侧毫秒级 olymp-classic 实时预览" />
+  <img src="./docs/images/studio.png" width="100%" alt="XCPC Workstation 出版工作室：左侧大纲与难度分布、中间 Markdown/LaTeX/Typst 编辑器、右侧毫秒级 olymp-classic 实时预览" />
 </p>
 
 ---
 
 ## 核心特性
 
-- **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内嵌严格对齐 `olymp.sty` 中文版的 `olymp-classic` 模板与高度还原 CCF CSP/NOI 官方版式的 `cnoi-classic` 模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册。
-- **完整 Typst 生态与可编程排版**：原生支持 `@preview/*`（按需自动拉取并复用系统 Typst 缓存）与 `@local/*` 外部库，并内置 `cetz`（矢量绘图）、`pinit`（公式高亮与字段标注）与 `mannot`（公式下划线注解）等离线回退包；配合 `templates/preamble.typ` 自定义宏与 Typst 脚本编程能力，在 Markdown 题面中直接绘制图论/几何矢量图、标注递推公式或程序化生成表格。
-- **开放目录 + 活引用组卷与多人 Git 协同**：全部项目数据（含 `templates/preamble.typ` 与定稿快照）以纯文本 Markdown + TOML 存储在开放目录中，个人配置与 `.xcpc/` 本地缓存彻底隔离，既可维护个人题库也可独立建仓多人 Git 协同出题；比赛以活引用组织题目并仅覆写元数据，定稿后将源文件与两本 PDF 写入 `snapshot/` 永久只读复现。
-- **AI Agent / MCP 一等公民**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core。提供搜索、读写题面、组卷、编译诊断、页面渲染与导出 PDF 等完整 MCP 工具，支持 `--read-only` 只读守卫与外部修改无闪白实时同步。
-- **为出题人打磨的写作、定制与双语界面**：内置简体中文 / English 实时热切换与多语言声明式模板参数；提供 `/` 斜杠命令菜单（按出版语言自动适配片段）、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、在 `templates/*.typ` 扩展自定义模板，以及通过全局 `theme.toml` 自定义配色与编辑器字体。
+- **零 TeX 环境，毫秒级实时预览**：基于原生 [Typst](https://typst.app/) 引擎与分块增量光栅化，无需安装数 GB 的 TeX Live。内置对齐 `olymp.sty` 中文版的 `olymp-classic`、高度还原 CCF CSP/NOI 官方版式的 `cnoi-classic` 与 `minimal` 三套声明式模板，支持单题、带封面与试题列表的整本试题册、可选奇偶留白页、跨页样例表与 A4 题解册；并内置 `cetz`、`pinit`、`mannot` 等离线回退包与 `templates/preamble.typ` 自定义宏。
+- **本地 Polygon（传统题 / 交互题 / 多轮通信 / OI 子任务）**：基于本机原生 `g++` / `clang++` 与内置最新版 `testlib.h`，提供编译/生成/运行三级内容哈希缓存与轻量进程监控。完整支持：
+  - **传统题**：内置标准 Checker 家族（`wcmp`/`ncmp`/`fcmp`/`lcmp`/`rcmp4`/`rcmp6`/`rcmp9`/`yesno`/`nyesno`）与自定义 `checker.cpp`、`validator.cpp` 及自测、声明式 `[[test]]` 生成器与对拍（`stress`）；
+  - **stdio 交互题与多轮通信题（`runs = N`）**：双管道代理录制截断双向交互日志（`→` / `←`），精准区分 CPU `TLE` 与未 flush 死锁 `ILE`，支持交互器直判或 `checker` 二段复判以及多轮累计 CPU 计时；
+  - **OI 子任务与部分分（`[[subtask]]`）**：支持 `min`（捆绑）/ `sum`（按点均分）、DAG 前置依赖、`testlib.h` `quitp` 部分分比例、`validator --group <id>` 自动分组校验与部分分解得分断言；
+  - **双档门禁与「动静分离」**：开发态支持局部子集调试，`--strict` 严格验收强制通过自测、全量过检与标程时限余量检查；`xcpc check`、定稿与导出仅核对验收哈希，不暗中编译跑数。
+- **Polygon / DOMjudge / Hydro 生态数据包流转**：一键导入 Polygon 单题或整场比赛 ZIP（LaTeX 题面自动转 Markdown，完整导入 `interactor`、`run-count` 与 `groups` 子任务）；一键导出 DOMjudge 与 Hydro 最小集合 ZIP（自动剔除内部解法/生成器，内嵌 Typst 题面 PDF，支持交互题与 Hydro OI 子任务 `config.yaml`）。
+- **大规模题库组织、活引用组卷与多人 Git 协同**：全部项目数据以纯文本 Markdown + TOML 存储在开放目录中，个人配置与 `.xcpc/` 本地缓存彻底隔离；题库中心提供持久化分组侧栏、动态视图分组、多选与批量操作（加赛 / 归组 / 批量严格验收 / 批量导出）以及 `Ctrl+K` 分组配额与 `>` 动作检索；比赛以活引用组卷，定稿后将源文件、生效模板与两本 PDF 写入 `snapshot/` 永久只读复现。
+- **AI Agent / MCP 一等公民与官方出题 Skill**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core，完整开放题库检索、题面读写、组卷、题目包检查/构建/严格验收/对拍与导入导出工具（支持 `--read-only` 守卫与外部修改零闪白同步）；内置 [`skills/xcpc-problem-creator/`](./skills/xcpc-problem-creator/SKILL.md) 官方出题 Skill，可通过 `xcpc init --with-skills` 一键装入工作区。
+- **为出题人打磨的写作、定制与双语界面**：内置简体中文 / English 实时热切换与双语模板参数；提供 `/` 斜杠命令菜单、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、自定义 `templates/*.typ` 与全局 `theme.toml`。
 
 <p align="center">
-  <img src="./docs/images/library.png" width="100%" alt="XCPC Workstation 题库中心：多维筛选、难度着色、比赛引用与即时题面预览" />
+  <img src="./docs/images/build.png" width="100%" alt="XCPC Workstation 本地 Polygon 出题构建台：交互题与 OI 子任务折叠矩阵、ILE 死锁检测与双向着色交互日志" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/library.png" width="100%" alt="XCPC Workstation 题库中心：持久化分组侧栏、比赛视图分组、Polygon 导入、验收状态与即时题面预览" />
 </p>
 
 ---
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载最新 `v0.2.0-beta.4` 安装包（所有桌面包均附带 `xcpc` 命令行工具）：
+前往 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载最新版本安装包（所有桌面包均附带 `xcpc` 命令行工具）：
 
 | 平台 | 推荐安装包 | 说明 |
 |---|---|---|
@@ -61,21 +70,30 @@
 ### 桌面端
 
 1. 启动 **XCPC Workstation**。
-2. 首次打开可直接点击 **「打开示例」**，一键释放内置示例工作区并进入出版工作室体验；或点击 **「新建工作区」** 创建自己的题库。
-3. 使用 `Ctrl+K` 快速跳转题目/比赛与执行动作，使用 `Ctrl+/` 查看全部快捷键。
+2. 首次打开可直接点击 **「打开示例」**，一键释放内置示例工作区（含 4 个分组、12 道示例题、3 道 Typst 排版精品、4 套完整可严格验收的本地 Polygon 题目包与 2 场比赛），立即体验排版出版、本地出题构建台与整场数据包导出；或点击 **「新建工作区」** 创建自己的题库。
+3. 使用 `Ctrl+K` 快速跳转题目/比赛与执行动作（输入 `>` 仅搜动作），使用 `Ctrl+/` 查看全部快捷键。
 
 ### 命令行（CLI）
 
 ```bash
-# 初始化一个带内置示例的工作区
+# 初始化内置示例工作区（可加 --lang en 释放英文示例，或 --with-skills 安装官方出题 Skill）
 xcpc init --example ./my-xcpc
 
-# 构建整本试题册与题解册 PDF（输出至 my-xcpc/build/；也可用 oi-mock 体验 CNOI/OI 模板）
+# 构建整本试题册与题解册 PDF（输出至 my-xcpc/build/）
 xcpc -w ./my-xcpc build contest welcome-round
 xcpc -w ./my-xcpc build contest welcome-round --editorial
 
-# 编译与规范检查（适合 CI 或脚本集成）
-xcpc -w ./my-xcpc check contest welcome-round --json
+# 严格验收内置的 4 套本地 Polygon 示例题（传统题 / OI 部分分 / 交互+子任务 / 两轮通信）
+for p in interval-sum weighted-walk hidden-peak secret-relay; do
+  xcpc -w ./my-xcpc package build "$p" --strict
+done
+
+# 导出整场 oi-mock 为 Hydro / DOMjudge ZIP 数据包
+xcpc -w ./my-xcpc export hydro contest oi-mock
+xcpc -w ./my-xcpc export domjudge contest oi-mock
+
+# 导入外部 Polygon 单题或整场 ZIP
+xcpc -w ./my-xcpc import polygon ./contest-package.zip
 ```
 
 ---
@@ -95,7 +113,7 @@ xcpc -w ./my-xcpc check contest welcome-round --json
 }
 ```
 
-如需限制 Agent 仅作审题与诊断而不修改工作区，可在 `args` 中追加 `"--read-only"`。
+如需限制 Agent 仅作审题与诊断而不修改工作区，可在 `args` 中追加 `"--read-only"`。配合 `xcpc init --with-skills` 安装官方出题 Skill 后，Agent 可端到端完成出题、数据生成、严格验收与对拍。
 
 ---
 
@@ -109,10 +127,9 @@ xcpc -w ./my-xcpc check contest welcome-round --json
 
 ## 路线图与当前状态
 
-当前处于 **`v0.2.0-beta.4`（Public Beta）**：
-
 - **Phase 1–2.5（已完成）**：开放目录题库与多人 Git 协同工作区、活引用组卷 / 定稿 / 归档、`olymp-classic` / `cnoi-classic` / `minimal` 声明式模板引擎、出版工作室、简体中文 / English 国际化、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制、CLI 与 MCP 服务。
-- **Phase 3（规划中）**：本地 Polygon —— 基于 Wasmtime + fuel 计量的跨平台可复现题目包构建、数据生成与对拍、Polygon 导入。
+- **Phase 3A–3C（已完成）**：本地 Polygon 全链路（原生 `g++`/`clang++` + 内置 `testlib.h`、三级内容哈希缓存、严格验收门禁与对拍）、Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出、题库分组 / 多选批量操作与 `Ctrl+K` 优化、stdio 交互题 / 多轮通信题（`runs = N`）/ OI 子任务与 `quitp` 部分分，以及官方出题 Skill。
+- **Phase 3D（规划中）**：整场验题与质量体检（ASan / UBSan UB 体检模式、验题人外部提交零污染试跑、比赛级质量仪表盘与 Markdown 验题报告）。
 - **Phase 4（规划中）**：Codeforces / AtCoder / QOJ 训练同步、训练看板与待补队列。
 
 完整设计规格与阶段细节见 [`docs/`](./docs/README.md)（[产品规格](./docs/product.md)、[系统架构](./docs/architecture.md)、[题面版式](./docs/statement-style.md)、[设计系统](./docs/design-system.md)、[路线图](./docs/roadmap.md)）。
@@ -148,11 +165,11 @@ scripts/package.sh --target linux
 
 ## 社区与反馈
 
-- **QQ 用户交流群**：`1134941278`（欢迎反馈排版细节、模板定制与使用建议）
+- **QQ 用户交流群**：`1134941278`（欢迎反馈排版细节、本地出题体验、模板定制与使用建议）
 - **问题与建议**：欢迎提交 [GitHub Issue](https://github.com/lihaoze123/xcpc-workstation/issues)，反馈 Bug 时可在桌面端 **「设置 → 关于 → 复制诊断信息」** 一键附带环境信息。
 
 ## 致谢与许可证
 
-- 题面默认版式致谢 [`olymp.sty`](https://github.com/GassaFM/olymp.sty/)，预置 CNOI 模板灵感致谢 [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement)。
+- 题面默认版式致谢 [`olymp.sty`](https://github.com/GassaFM/olymp.sty/)，预置 CNOI 模板灵感致谢 [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement)，评测原语与标准校验器致谢 [`testlib.h`](https://github.com/MikeMirzayanov/testlib)。
 - 底层能力基于 [Typst](https://typst.app/)、[NSH](https://github.com/longbridge/nsh) 与 [MiTeX](https://github.com/mitex-rs/mitex)；内置离线回退包包含 [CeTZ](https://github.com/cetz-package/cetz)（LGPL-3.0）、[oxifmt](https://github.com/PgBiel/typst-oxifmt)、[Pinit](https://github.com/OrangeX4/typst-pinit)、[Mannot](https://github.com/y-nakagami/mannot) 与 [Tiptoe](https://github.com/Mc-Zen/tiptoe)。
 - 本项目采用 [Apache License 2.0](./LICENSE) 开源许可。

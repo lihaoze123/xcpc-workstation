@@ -5,7 +5,7 @@
 <h1 align="center">XCPC Workstation</h1>
 
 <p align="center">
-  A local-first XCPC workstation — built on an open-directory problem library for personal libraries, multi-author Git contest collaboration, live-reference contest assembly, and PDF publishing, evolving toward local Polygon and training review.
+  A local-first XCPC workstation — unifying an open-directory problem library, local Polygon package authoring & strict verification, Polygon / DOMjudge / Hydro package exchange, live-reference contest assembly, and Typst PDF publishing, with first-class AI Agent / MCP support.
 </p>
 
 <p align="center">
@@ -27,21 +27,30 @@
 
 ## Key Features
 
-- **Zero TeX Installation, Millisecond Live Preview**: Powered by a native [Typst](https://typst.app/) engine with incremental tile rasterization — no multi-gigabyte TeX Live required. Ships with `olymp-classic` (aligned with `olymp.sty`), `cnoi-classic` (CCF CSP/NOI style), and `minimal` presets, supporting single problems, full contest booklets with covers and problem lists, optional odd-page starts, multi-page sample tables, and A4 editorials.
-- **Full Typst Ecosystem & Programmable Typesetting**: Supports `@preview/*` (fetched on demand and sharing the system Typst cache) and `@local/*` packages, with bundled offline fallbacks for `cetz` (vector graphics), `pinit` (formula callouts), and `mannot` (formula annotations). Combine `templates/preamble.typ` macros with inline Typst blocks to draw graphs/geometry diagrams, annotate recurrences, or generate tables programmatically.
-- **Open Directory, Live-Reference Contests & Multi-Author Git Workflows**: All project data (including `templates/preamble.typ` and finalized snapshots) lives as plain Markdown + TOML files in an open directory, cleanly separated from personal preferences and local `.xcpc/` cache. Maintain a personal problem library or spin up a dedicated Git repository for a multi-author contest; contests live-reference problems with metadata overrides only, and finalizing writes sources plus both PDFs into a read-only `snapshot/`.
-- **AI Agent / MCP First-Class Support**: The desktop app, `xcpc` CLI, and `xcpc mcp` (stdio) share a single Rust Core. Exposes full MCP tools for search, statement editing, contest assembly, diagnostics, page rendering, and PDF export, with a `--read-only` guard and flicker-free live reload on external edits.
-- **Crafted Writing, Customization & Bilingual UI**: Instant hot-switching between English and Simplified Chinese (`Settings → Appearance`) plus bilingual declarative template schemas. Includes `/` slash commands (automatically adapting inserted snippets to the publishing language), inline floating math preview, side-by-side drag-and-drop sample management, asset gallery, Focus Mode, a practical Vim subset, customizable `templates/*.typ`, and global `theme.toml` styling.
+- **Zero TeX Installation, Millisecond Live Preview**: Powered by a native [Typst](https://typst.app/) engine with incremental tile rasterization — no multi-gigabyte TeX Live required. Ships with `olymp-classic` (aligned with `olymp.sty`), `cnoi-classic` (CCF CSP/NOI style), and `minimal` declarative presets, supporting single problems, full contest booklets with covers and problem lists, optional odd-page starts, multi-page sample tables, and A4 editorials, plus bundled offline `cetz`, `pinit`, and `mannot` packages and `templates/preamble.typ` macros.
+- **Local Polygon (Traditional / Interactive / Multi-Run Communication / OI Subtasks)**: Uses native `g++` / `clang++` with bundled `testlib.h`, 3-tier content-hash caching (compile / generate / run), and lightweight process monitoring:
+  - **Traditional**: Built-in standard checker family (`wcmp`/`ncmp`/`fcmp`/`lcmp`/`rcmp4`/`rcmp6`/`rcmp9`/`yesno`/`nyesno`) & custom `checker.cpp`, `validator.cpp` with self-tests, declarative `[[test]]` generators, and stress testing (`stress`);
+  - **stdio Interactive & Multi-Run Communication (`runs = N`)**: Dual-pipe proxy capturing bounded bidirectional transcripts (`→` / `←`), distinguishing CPU `TLE` from flush-deadlock `ILE`, supporting direct interactor verdicts or 2-stage `checker` judging and cumulative multi-run CPU limits;
+  - **OI Subtasks & Partial Scoring (`[[subtask]]`)**: `min` (bundled) and `sum` scoring, DAG `depends`, `testlib.h` `quitp` partial ratios, automatic `validator --group <id>` validation, and per-solution `score` / `subtasks` expectations;
+  - **Dual-Mode Gate & Static/Dynamic Separation**: Fast subset debugging in dev mode, strict `--strict` verification enforcing self-tests, full validation, and reference time margins; `xcpc check`, finalization, and export verify hashes without silently re-running test data.
+- **Polygon / DOMjudge / Hydro Package Exchange**: Import single-problem or full-contest Polygon ZIPs (converting LaTeX statements to Markdown and preserving `interactor`, `run-count`, and `groups` subtasks); export minimal DOMjudge and Hydro ZIP packages (stripping internal solutions/generators, embedding Typst-compiled PDFs, with native interactive and Hydro subtask `config.yaml` support).
+- **Scalable Problem Library, Live-Reference Contests & Multi-Author Git**: Plain Markdown + TOML files in an open directory cleanly separated from personal preferences and `.xcpc/` cache. Includes persistent group sidebar, dynamic view grouping, multi-select batch actions (add to contest, regroup, batch strict verify, batch export), and `Ctrl+K` with `>` action search; finalized contests archive sources, active templates, and both PDFs into a read-only `snapshot/`.
+- **AI Agent / MCP First-Class Support & Official Problem-Creator Skill**: Desktop app, `xcpc` CLI, and `xcpc mcp` (stdio) share a single Rust Core covering search, statement editing, contest assembly, package inspection/verification/stress testing, and OJ import/export (`--read-only` guard + flicker-free reload). Install the bundled [`skills/xcpc-problem-creator/`](./skills/xcpc-problem-creator/SKILL.md) skill into any workspace via `xcpc init --with-skills`.
+- **Crafted Writing, Customization & Bilingual UI**: Instant hot-switching between English and Simplified Chinese (`Settings → Appearance`), `/` slash commands, inline floating math preview, drag-and-drop sample editor, asset gallery, Focus Mode, practical Vim subset, customizable `templates/*.typ`, and global `theme.toml`.
 
 <p align="center">
-  <img src="./docs/images/library-en.png" width="100%" alt="XCPC Workstation Problem Library: multi-facet filtering, rating badges, contest references, and instant statement preview" />
+  <img src="./docs/images/build-en.png" width="100%" alt="XCPC Workstation Local Polygon Build Console: interactive and OI subtask matrix, ILE deadlock detection, and bidirectional colored interaction transcript" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/library-en.png" width="100%" alt="XCPC Workstation Problem Library: persistent group sidebar, contest grouping, Polygon import, verification status, and live statement preview" />
 </p>
 
 ---
 
 ## Download & Install
 
-Download the latest `v0.2.0-beta.4` packages from [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) (all desktop packages bundle the `xcpc` CLI):
+Download the latest release packages from [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) (all desktop packages bundle the `xcpc` CLI):
 
 | Platform | Recommended Package | Notes |
 |---|---|---|
@@ -61,21 +70,30 @@ Download the latest `v0.2.0-beta.4` packages from [GitHub Releases](https://gith
 ### Desktop App
 
 1. Launch **XCPC Workstation**.
-2. On first launch, click **Open Example** to unpack the built-in example workspace and explore Publishing Studio immediately, or click **New Workspace** to start your own library.
-3. Press `Ctrl+K` to jump to any problem, contest, or action (supports both English and Chinese/pinyin keywords), and `Ctrl+/` to view all keyboard shortcuts.
+2. On first launch, click **Open Example** to unpack the built-in example workspace (12 problems across 4 groups, 3 Typst typesetting showcases, 4 complete `--strict`-verifiable Local Polygon packages, and 2 contests), or click **New Workspace** to start your own library.
+3. Press `Ctrl+K` to jump to any problem, contest, or action (prefix with `>` to filter actions only), and `Ctrl+/` to view all keyboard shortcuts.
 
 ### Command Line (CLI)
 
 ```bash
-# Initialize a workspace with built-in example problems
-xcpc init --example ./my-xcpc
+# Initialize the built-in English example workspace (add --with-skills to install problem-creator skills)
+xcpc init --example --lang en ./my-xcpc
 
 # Build contest statement and editorial PDFs (outputs to my-xcpc/build/)
 xcpc -w ./my-xcpc build contest welcome-round
 xcpc -w ./my-xcpc build contest welcome-round --editorial
 
-# Compile and lint checks (CI / script friendly)
-xcpc -w ./my-xcpc check contest welcome-round --json
+# Strictly verify all 4 bundled Local Polygon packages (traditional / OI quitp / interactive+subtasks / 2-run)
+for p in interval-sum weighted-walk hidden-peak secret-relay; do
+  xcpc -w ./my-xcpc package build "$p" --strict
+done
+
+# Export the full contest to Hydro / DOMjudge ZIP packages
+xcpc -w ./my-xcpc export hydro contest minimal-round
+xcpc -w ./my-xcpc export domjudge contest minimal-round
+
+# Import an external Polygon problem or contest ZIP
+xcpc -w ./my-xcpc import polygon ./contest-package.zip
 ```
 
 ---
@@ -95,7 +113,7 @@ Add the following configuration to Claude Desktop, Cursor, Codex, or any stdio M
 }
 ```
 
-Append `"--read-only"` to `args` if you want to restrict the agent to review and diagnostics without modifying workspace files.
+Append `"--read-only"` to `args` if you want to restrict the agent to review and diagnostics without modifying workspace files. Combine with `xcpc init --with-skills` to guide agents through full problem authoring, data generation, strict verification, and stress testing.
 
 ---
 
@@ -109,10 +127,9 @@ To match the `olymp.sty` (`ctex` `fontset=founder`) Chinese typography reference
 
 ## Roadmap & Current Status
 
-Currently at **`v0.2.0-beta.4` (Public Beta)**:
-
 - **Phase 1–2.5 (Completed)**: Open-directory problem library & multi-author Git workspaces, live-reference contest assembly / finalization / archiving, declarative `olymp-classic` / `cnoi-classic` / `minimal` template engine, Publishing Studio, English / Simplified Chinese i18n, slash commands, asset gallery, floating math preview, Vim mode, CLI, and MCP server.
-- **Phase 3 (Planned)**: Local Polygon — reproducible cross-platform problem package building via Wasmtime + fuel metering, test data generation and stress testing, Polygon import.
+- **Phase 3A–3C (Completed)**: Local Polygon end-to-end (native `g++`/`clang++` + bundled `testlib.h`, 3-tier content-hash cache, strict verification gate & stress testing), Polygon ZIP import & DOMjudge / Hydro minimal ZIP export, library groups / multi-select batch operations & `Ctrl+K` improvements, stdio interactive / multi-run communication (`runs = N`) / OI subtasks & `quitp` partial scoring, plus official problem-creator skills.
+- **Phase 3D (Planned)**: Contest Readiness & Quality Audit (ASan/UBSan check mode, zero-pollution external tester trial runs, contest-wide quality dashboard & Markdown audit reports).
 - **Phase 4 (Planned)**: Codeforces / AtCoder / QOJ training sync, training dashboard, and upsolving queue.
 
 Full design specifications (in Chinese) live under [`docs/`](./docs/README.md) ([Product](./docs/product.md), [Architecture](./docs/architecture.md), [Statement Style](./docs/statement-style.md), [Design System](./docs/design-system.md), [Roadmap](./docs/roadmap.md)).
@@ -148,11 +165,11 @@ scripts/package.sh --target linux
 
 ## Community & Feedback
 
-- **QQ User Group**: `1134941278` (feedback on typesetting, custom templates, and feature ideas welcome)
+- **QQ User Group**: `1134941278` (feedback on typesetting, local Polygon workflows, custom templates, and feature ideas welcome)
 - **Issues & Feature Requests**: Open a [GitHub Issue](https://github.com/lihaoze123/xcpc-workstation/issues). When reporting a bug, use **Settings → About → Copy Diagnostics** in the desktop app to attach environment details.
 
 ## Acknowledgements & License
 
-- Default statement layout is inspired by [`olymp.sty`](https://github.com/GassaFM/olymp.sty/), and the CNOI preset draws inspiration from [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement).
+- Default statement layout is inspired by [`olymp.sty`](https://github.com/GassaFM/olymp.sty/), the CNOI preset draws inspiration from [`Wallbreaker5th/fuzzy-cnoi-statement`](https://github.com/Wallbreaker5th/fuzzy-cnoi-statement), and judging primitives & standard checkers are powered by [`testlib.h`](https://github.com/MikeMirzayanov/testlib).
 - Built with [Typst](https://typst.app/), [NSH](https://github.com/longbridge/nsh), and [MiTeX](https://github.com/mitex-rs/mitex); bundled offline fallback packages include [CeTZ](https://github.com/cetz-package/cetz) (LGPL-3.0), [oxifmt](https://github.com/PgBiel/typst-oxifmt), [Pinit](https://github.com/OrangeX4/typst-pinit), [Mannot](https://github.com/y-nakagami/mannot), and [Tiptoe](https://github.com/Mc-Zen/tiptoe).
 - Licensed under the [Apache License 2.0](./LICENSE).
