@@ -133,6 +133,26 @@ enum Command {
         #[command(subcommand)]
         action: PackageCommand,
     },
+    /// Import problems or contests from external archives (e.g. Polygon ZIP).
+    Import {
+        #[command(subcommand)]
+        action: ImportCommand,
+    },
+    /// Export verified problem(s) or contest(s) to OJ packages (DOMjudge or Hydro).
+    Export {
+        /// Target OJ format (`domjudge` or `hydro`).
+        format: ExportFormat,
+        /// Export a single `problem` or an entire `contest`.
+        kind: TargetKind,
+        /// Problem ID or contest ID.
+        id: String,
+        /// Output `.zip` path (for problem) or directory (for contest). Defaults under `build/`.
+        #[arg(long = "output", alias = "out", short = 'o')]
+        out: Option<PathBuf>,
+        /// Bypass strict verification check (built testdata is still required).
+        #[arg(long)]
+        force: bool,
+    },
     /// Inspect built-in and custom Typst templates and their declarative schemas.
     Template {
         #[command(subcommand)]
@@ -204,6 +224,35 @@ enum PackageCommand {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum ImportCommand {
+    /// Import a Polygon problem or contest ZIP archive into the workspace.
+    Polygon {
+        /// Path to the Polygon `.zip` archive.
+        zip: PathBuf,
+        /// Override target problem slug or contest ID.
+        #[arg(long)]
+        id: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ExportFormat {
+    #[value(alias = "dj")]
+    Domjudge,
+    #[value(alias = "hydrooj")]
+    Hydro,
+}
+
+impl ExportFormat {
+    fn into_oj_format(self) -> xcpc_packages::OjFormat {
+        match self {
+            ExportFormat::Domjudge => xcpc_packages::OjFormat::Domjudge,
+            ExportFormat::Hydro => xcpc_packages::OjFormat::Hydro,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -392,12 +441,13 @@ impl What {
     }
 }
 
-/// An error with a machine-readable code and optional Chinese human message.
+/// An error with a machine-readable code, exit code, and optional Chinese human message.
 #[derive(Debug)]
 struct Fatal {
     code: &'static str,
     message: String,
     human: Option<String>,
+    exit_code: u8,
 }
 
 impl From<xcpc_storage::Error> for Fatal {
@@ -406,6 +456,7 @@ impl From<xcpc_storage::Error> for Fatal {
             code: e.code(),
             message: e.to_string(),
             human: Some(e.human_message()),
+            exit_code: 2,
         }
     }
 }
@@ -416,6 +467,22 @@ impl From<xcpc_judge::JudgeError> for Fatal {
             code: e.code(),
             message: e.to_string(),
             human: Some(e.human_message()),
+            exit_code: 2,
+        }
+    }
+}
+
+impl From<xcpc_packages::PackageError> for Fatal {
+    fn from(e: xcpc_packages::PackageError) -> Self {
+        let exit_code = match &e {
+            xcpc_packages::PackageError::Storage(_) | xcpc_packages::PackageError::Io { .. } => 2,
+            _ => 1,
+        };
+        Fatal {
+            code: e.code(),
+            message: e.to_string(),
+            human: Some(e.human_message()),
+            exit_code,
         }
     }
 }
@@ -428,6 +495,7 @@ impl From<anyhow::Error> for Fatal {
                 code: "failed",
                 message: format!("{e:#}"),
                 human: None,
+                exit_code: 2,
             },
         }
     }
@@ -462,7 +530,7 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("error: {}", e.human.as_deref().unwrap_or(&e.message));
             }
-            ExitCode::from(2)
+            ExitCode::from(e.exit_code)
         }
     }
 }
@@ -527,6 +595,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                         "目标目录「{}」非空，请指定一个空目录来初始化示例工作区。",
                         target_dir.display()
                     )),
+                    exit_code: 2,
                 });
             }
             let ws = if *example {
@@ -810,7 +879,168 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         Command::Problem { action } => run_problem(cli, action),
         Command::Contest { action } => run_contest(cli, action),
         Command::Package { action } => run_package(cli, action),
+        Command::Import { action } => run_import(cli, action),
+        Command::Export {
+            format,
+            kind,
+            id,
+            out,
+            force,
+        } => run_export(cli, *format, *kind, id, out.as_ref(), *force),
         Command::Template { action } => run_template(cli, action),
+    }
+}
+
+fn run_import(cli: &Cli, action: &ImportCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    if ws.is_read_only() {
+        return Err(xcpc_storage::Error::ReadOnly.into());
+    }
+    match action {
+        ImportCommand::Polygon { zip, id } => {
+            let opts = xcpc_packages::PolygonImportOptions {
+                target_id: id.clone(),
+                ..Default::default()
+            };
+            let res = xcpc_packages::import_polygon(&ws, zip, &opts)?;
+            if cli.json {
+                let mut value = serde_json::to_value(&res).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_polygon_import_result(&res);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn run_export(
+    cli: &Cli,
+    format: ExportFormat,
+    kind: TargetKind,
+    id: &str,
+    out: Option<&PathBuf>,
+    force: bool,
+) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    if ws.is_read_only() {
+        return Err(xcpc_storage::Error::ReadOnly.into());
+    }
+    let oj_format = format.into_oj_format();
+    let target = match kind {
+        TargetKind::Problem => xcpc_packages::ExportTarget::Problem(id.to_owned()),
+        TargetKind::Contest => xcpc_packages::ExportTarget::Contest(id.to_owned()),
+    };
+    let output_path = match out {
+        Some(path) => path.clone(),
+        None => match kind {
+            TargetKind::Problem => ws
+                .root()
+                .join(format!("build/{id}-{}.zip", oj_format.as_str())),
+            TargetKind::Contest => ws.root().join(format!("build/{id}-{}", oj_format.as_str())),
+        },
+    };
+    let opts = xcpc_packages::ExportOjOptions {
+        format: oj_format,
+        output_path,
+        force,
+        language: None,
+    };
+    let res = xcpc_packages::export_oj_package(&ws, &target, &opts)?;
+    if cli.json {
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).expect("serializable")
+        );
+    } else {
+        print_export_oj_result(&res);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_polygon_import_result(res: &xcpc_packages::PolygonImportResult) {
+    match res.kind {
+        xcpc_packages::PolygonImportKind::Problem => {
+            if let Some(p) = res.problems.first() {
+                println!("已导入题目「{}」（{}）", p.id, p.title);
+                println!(
+                    "  样例 {} 组，测试点 {} 组，生成器 {} 个，解法 {} 个，校验器：{}",
+                    p.samples_count,
+                    p.tests_count,
+                    p.generators_count,
+                    p.solutions_count,
+                    p.checker
+                );
+            } else {
+                println!("已导入题目（共 0 道）");
+            }
+        }
+        xcpc_packages::PolygonImportKind::Contest => {
+            let cid = res.contest_id.as_deref().unwrap_or("-");
+            println!("已导入比赛「{cid}」（共 {} 道题）：", res.problems.len());
+            for p in &res.problems {
+                let label = p.label.as_deref().unwrap_or("-");
+                println!(
+                    "  {label}\t{}\t{}（样例 {}，测试点 {}）",
+                    p.id, p.title, p.samples_count, p.tests_count
+                );
+            }
+        }
+    }
+    print_package_warnings(&res.warnings);
+}
+
+fn print_export_oj_result(res: &xcpc_packages::ExportOjResult) {
+    let format_label = match res.format {
+        xcpc_packages::OjFormat::Domjudge => "DOMjudge",
+        xcpc_packages::OjFormat::Hydro => "Hydro",
+    };
+    println!(
+        "已导出 {format_label} 题目包（共 {} 个）：",
+        res.artifacts.len()
+    );
+    for a in &res.artifacts {
+        let forced = if a.forced { " [强制导出]" } else { "" };
+        if let Some(ref label) = a.label {
+            println!(
+                "  {label}\t{} -> {}（样例 {}，测试点 {}，{}）{forced}",
+                a.problem_id,
+                a.zip_path,
+                a.sample_count,
+                a.secret_count,
+                format_bytes(a.size_bytes),
+            );
+        } else {
+            println!(
+                "  {} -> {}（样例 {}，测试点 {}，{}）{forced}",
+                a.problem_id,
+                a.zip_path,
+                a.sample_count,
+                a.secret_count,
+                format_bytes(a.size_bytes),
+            );
+        }
+    }
+    print_package_warnings(&res.warnings);
+}
+
+fn print_package_warnings(warnings: &[xcpc_packages::PackageWarning]) {
+    if warnings.is_empty() {
+        return;
+    }
+    println!("警告（{} 条）：", warnings.len());
+    for w in warnings {
+        if let Some(ref path) = w.path {
+            println!("  [{}] {}（{path}）", w.code, w.message);
+        } else {
+            println!("  [{}] {}", w.code, w.message);
+        }
     }
 }
 
@@ -1483,6 +1713,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                         human: Some(format!(
                             "重新编辑已取消：输入的确认标识与比赛「{id}」不一致。请重新执行并输入正确的比赛 ID。"
                         )),
+                        exit_code: 2,
                     });
                 }
             }

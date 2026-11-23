@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 23);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -211,6 +211,8 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "init_package",
         "build_package",
         "stress_package",
+        "import_polygon",
+        "export_oj_package",
     ] {
         assert_eq!(
             read_only_map.get(write_tool),
@@ -825,6 +827,18 @@ fn read_only_mode_allows_all_read_tools_and_blocks_all_five_write_tools() {
         json!({ "id": "alpha", "gen": "gen_random", "args": "-n 5 {i}" }),
     );
     assert_eq!(err_code(&w12), "read_only");
+
+    let w13 = client.call_tool(
+        "import_polygon",
+        json!({ "zip_path": "/tmp/nonexistent.zip" }),
+    );
+    assert_eq!(err_code(&w13), "read_only");
+
+    let w14 = client.call_tool(
+        "export_oj_package",
+        json!({ "format": "domjudge", "target": "problem", "id": "alpha" }),
+    );
+    assert_eq!(err_code(&w14), "read_only");
 }
 
 #[test]
@@ -1058,4 +1072,207 @@ fn package_mcp_tools_inspect_init_build_stress_end_to_end() {
         "tests/stress-1.in"
     );
     assert!(dir.path().join("problems/sum/tests/stress-1.in").is_file());
+}
+
+fn build_mcp_polygon_zip(zip_path: &Path, short_name: &str) {
+    let file = fs::File::create(zip_path).unwrap();
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let problem_xml = format!(
+        r#"<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<problem short-name="{short_name}" revision="1">
+  <names>
+    <name language="english" value="MCP Polygon Sum"/>
+  </names>
+  <judging cpu-name="Intel" cpu-speed="3600" input-file="" output-file="">
+    <testset name="tests">
+      <time-limit>1000</time-limit>
+      <memory-limit>268435456</memory-limit>
+      <test-count>2</test-count>
+      <input-path-pattern>tests/%02d</input-path-pattern>
+      <answer-path-pattern>tests/%02d.a</answer-path-pattern>
+      <tests>
+        <test method="manual" sample="true"/>
+        <test method="manual"/>
+      </tests>
+    </testset>
+  </judging>
+  <files>
+    <executables/>
+  </files>
+  <assets>
+    <checker name="std::ncmp.cpp" type="testlib"/>
+    <validators>
+      <validator>
+        <source path="files/validator.cpp" type="cpp.g++17"/>
+        <testset>
+          <tests>
+            <test verdict="valid"/>
+            <test verdict="invalid"/>
+          </tests>
+        </testset>
+      </validator>
+    </validators>
+    <solutions>
+      <solution tag="main">
+        <source path="solutions/std.cpp" type="cpp.g++17"/>
+      </solution>
+    </solutions>
+  </assets>
+</problem>
+"#
+    );
+
+    let entries: &[(&str, &str)] = &[
+        ("problem.xml", &problem_xml),
+        ("statement-sections/english/name.tex", "MCP Polygon Sum\n"),
+        (
+            "statement-sections/english/legend.tex",
+            "Compute $a + b$.\n",
+        ),
+        (
+            "statement-sections/english/input.tex",
+            "Two integers $a$ and $b$.\n",
+        ),
+        ("statement-sections/english/output.tex", "Print $a + b$.\n"),
+        ("tests/01", "4 5\n"),
+        ("tests/01.a", "9\n"),
+        ("tests/02", "100 200\n"),
+        ("tests/02.a", "300\n"),
+        ("files/tests/validator-tests/01", "4 5\n"),
+        ("files/tests/validator-tests/02", "-4 5\n"),
+        (
+            "files/validator.cpp",
+            r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerValidation(argc, argv);
+    inf.readInt(0, 1000000000, "a");
+    inf.readSpace();
+    inf.readInt(0, 1000000000, "b");
+    inf.readEoln();
+    inf.readEof();
+    return 0;
+}
+"#,
+        ),
+        (
+            "solutions/std.cpp",
+            r#"#include <iostream>
+int main() {
+    long long a, b;
+    if (std::cin >> a >> b) std::cout << (a + b) << '\n';
+    return 0;
+}
+"#,
+        ),
+    ];
+
+    for (name, content) in entries {
+        zw.start_file(*name, opts).unwrap();
+        zw.write_all(content.as_bytes()).unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+#[test]
+fn polygon_import_and_oj_export_mcp_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    xcpc_storage::init_workspace(dir.path()).unwrap();
+
+    let external_dir = tempfile::tempdir().unwrap();
+    let poly_zip = external_dir.path().join("mcp-poly.zip");
+    build_mcp_polygon_zip(&poly_zip, "mcp-poly");
+
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // 1. Non-.zip paths are rejected BEFORE opening (security boundary §7.3).
+    for bad in [
+        "/etc/passwd",
+        "not-a-zip.txt",
+        "/tmp/fake.tar.gz",
+        "dir.zip/",
+    ] {
+        let res = client.call_tool("import_polygon", json!({ "zip_path": bad }));
+        assert_eq!(err_code(&res), "invalid_arguments", "path={bad}");
+    }
+
+    // 2. Valid local absolute `.zip` import with optional `id` override succeeds.
+    let imp = client.call_tool(
+        "import_polygon",
+        json!({ "zip_path": poly_zip.to_str().unwrap(), "id": "poly-a" }),
+    );
+    assert_ne!(imp["isError"], true, "{imp}");
+    assert_eq!(imp["structuredContent"]["ok"], true);
+    assert_eq!(imp["structuredContent"]["kind"], "problem");
+    assert_eq!(imp["structuredContent"]["problems"][0]["id"], "poly-a");
+
+    // 3. Slug conflict is rejected with `target_exists`.
+    let conflict = client.call_tool(
+        "import_polygon",
+        json!({ "zip_path": poly_zip.to_str().unwrap(), "id": "poly-a" }),
+    );
+    assert_eq!(err_code(&conflict), "target_exists");
+
+    // 4. `export_oj_package` before strict verify is rejected with `not_verified`.
+    let unverified = client.call_tool(
+        "export_oj_package",
+        json!({ "format": "domjudge", "target": "problem", "id": "poly-a" }),
+    );
+    assert_eq!(err_code(&unverified), "not_verified");
+
+    // 5. Path escape in `export_oj_package` is rejected with `path_escape`.
+    for bad_out in ["../escape.zip", "/tmp/escape.zip"] {
+        let esc = client.call_tool(
+            "export_oj_package",
+            json!({
+                "format": "domjudge",
+                "target": "problem",
+                "id": "poly-a",
+                "output": bad_out,
+            }),
+        );
+        assert_eq!(err_code(&esc), "path_escape", "output={bad_out}");
+    }
+
+    // 6. Strict verify via `build_package`, then export both DOMjudge and Hydro packages.
+    let ver = client.call_tool("build_package", json!({ "id": "poly-a", "mode": "verify" }));
+    assert_ne!(ver["isError"], true, "{ver}");
+    assert_eq!(ver["structuredContent"]["verified"], true);
+
+    let dj = client.call_tool(
+        "export_oj_package",
+        json!({ "format": "domjudge", "target": "problem", "id": "poly-a" }),
+    );
+    assert_ne!(dj["isError"], true, "{dj}");
+    assert_eq!(dj["structuredContent"]["ok"], true);
+    assert_eq!(dj["structuredContent"]["format"], "domjudge");
+    let dj_path = dj["structuredContent"]["artifacts"][0]["zip_path"]
+        .as_str()
+        .unwrap();
+    assert!(Path::new(dj_path).is_file());
+    assert!(dir.path().join("build/poly-a-domjudge.zip").is_file());
+
+    let hydro = client.call_tool(
+        "export_oj_package",
+        json!({
+            "format": "hydro",
+            "target": "problem",
+            "id": "poly-a",
+            "output": "build/custom-hydro.zip",
+        }),
+    );
+    assert_ne!(hydro["isError"], true, "{hydro}");
+    assert_eq!(hydro["structuredContent"]["ok"], true);
+    assert_eq!(hydro["structuredContent"]["format"], "hydro");
+    assert!(dir.path().join("build/custom-hydro.zip").is_file());
+    {
+        let mut archive = zip::ZipArchive::new(
+            fs::File::open(dir.path().join("build/custom-hydro.zip")).unwrap(),
+        )
+        .unwrap();
+        assert!(archive.by_name("problem.yaml").is_ok());
+        assert!(archive.by_name("testdata/config.yaml").is_ok());
+    }
 }

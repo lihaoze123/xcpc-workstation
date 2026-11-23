@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use base64::Engine as _;
@@ -156,6 +157,8 @@ impl Server {
             "init_package" => self.tool_init_package(obj),
             "build_package" => self.tool_build_package(obj),
             "stress_package" => self.tool_stress_package(obj),
+            "import_polygon" => self.tool_import_polygon(obj),
+            "export_oj_package" => self.tool_export_oj_package(obj),
             _ => Err(None),
         }
     }
@@ -824,6 +827,117 @@ impl Server {
         value["ok"] = json!(true);
         Ok(structured(value))
     }
+
+    fn tool_import_polygon(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(args, &["zip_path", "id"], "import_polygon")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let zip_path = req_str(args, "zip_path").map_err(|m| fail("invalid_arguments", m))?;
+        let target_id = opt_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+
+        // Security boundary (docs/architecture.md §7.3): strictly require a `.zip` extension
+        // before opening any external file; all writes remain confined to the workspace.
+        let raw_path = Path::new(&zip_path);
+        let is_zip = !zip_path.ends_with('/')
+            && !zip_path.ends_with('\\')
+            && raw_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+        if !is_zip {
+            return Err(fail(
+                "invalid_arguments",
+                format!("`zip_path` must point to a .zip file (got {zip_path:?})"),
+            ));
+        }
+
+        let resolved_zip: PathBuf = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            self.ws
+                .resolve(&zip_path)
+                .map_err(|e| fail(e.code(), e.to_string()))?
+        };
+
+        let opts = xcpc_packages::PolygonImportOptions {
+            target_id,
+            ..Default::default()
+        };
+        let res = xcpc_packages::import_polygon(&self.ws, &resolved_zip, &opts)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_export_oj_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &["format", "target", "id", "output", "force"],
+            "export_oj_package",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let format_raw = req_str(args, "format").map_err(|m| fail("invalid_arguments", m))?;
+        let format = xcpc_packages::OjFormat::parse(&format_raw).ok_or_else(|| {
+            fail(
+                "invalid_arguments",
+                format!("unknown format {format_raw:?}: expected \"domjudge\" or \"hydro\""),
+            )
+        })?;
+        let target_raw = req_str(args, "target").map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let target = match target_raw.as_str() {
+            "problem" => xcpc_packages::ExportTarget::Problem(id.clone()),
+            "contest" => xcpc_packages::ExportTarget::Contest(id.clone()),
+            other => {
+                return Err(fail(
+                    "invalid_arguments",
+                    format!("unknown target {other:?}: expected \"problem\" or \"contest\""),
+                ));
+            }
+        };
+        let force = match args.get("force") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(fail("invalid_arguments", "`force` must be a boolean")),
+        };
+        let output_rel = match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
+            Some(rel) => rel,
+            None => match &target {
+                xcpc_packages::ExportTarget::Problem(slug) => {
+                    format!("build/{slug}-{}.zip", format.as_str())
+                }
+                xcpc_packages::ExportTarget::Contest(cid) => {
+                    format!("build/{cid}-{}", format.as_str())
+                }
+            },
+        };
+        self.ws
+            .check_writable(&output_rel)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let output_path = self
+            .ws
+            .resolve(&output_rel)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+
+        let opts = xcpc_packages::ExportOjOptions {
+            format,
+            output_path,
+            force,
+            language: None,
+        };
+        let res = xcpc_packages::export_oj_package(&self.ws, &target, &opts)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
 }
 
 fn is_known_tool(name: &str) -> bool {
@@ -850,6 +964,8 @@ fn is_known_tool(name: &str) -> bool {
             | "init_package"
             | "build_package"
             | "stress_package"
+            | "import_polygon"
+            | "export_oj_package"
     )
 }
 
@@ -1458,6 +1574,44 @@ fn package_tools() -> Value {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
         },
+        {
+            "name": "import_polygon",
+            "title": "Import Polygon ZIP archive",
+            "description": "Import a Polygon problem or contest `.zip` archive into the workspace. Auto-detects single problem \
+                (`problem.xml`) vs contest (`contest.xml`), converts statements/samples/generators/validator/checker/solutions, \
+                enforces Zip Slip and decompression limits, and refuses overwriting existing slugs. Accepts any local absolute or \
+                workspace-relative `.zip` path (non-`.zip` paths are rejected before opening); all writes stay inside the workspace.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "zip_path": { "type": "string", "description": "Local absolute or workspace-relative path to a Polygon `.zip` archive." },
+                    "id": { "type": "string", "description": "Optional target problem slug or contest ID override." },
+                },
+                "required": ["zip_path"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
+        {
+            "name": "export_oj_package",
+            "title": "Export OJ package (DOMjudge / Hydro)",
+            "description": "Export a strictly verified problem or contest to minimal-set DOMjudge or Hydro ZIP package(s) inside the workspace. \
+                Never compiles or executes C++ code; requires prior `build_package` with mode=\"verify\" unless `force` is true \
+                (which still requires built testdata under `build/problems/<slug>/tests/`).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "enum": ["domjudge", "hydro"], "description": "Target OJ package format." },
+                    "target": { "type": "string", "enum": ["problem", "contest"], "description": "Whether to export a single problem or an entire contest." },
+                    "id": { "type": "string", "description": "Problem ID or contest ID." },
+                    "output": { "type": "string", "description": "Optional workspace-relative output path (`.zip` for problem, directory for contest; defaults under `build/`)." },
+                    "force": { "type": "boolean", "description": "Bypass strict verification check (default false; built testdata is still required)." },
+                },
+                "required": ["format", "target", "id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
     ])
 }
 
@@ -1526,6 +1680,8 @@ mod tests {
                 "init_package",
                 "build_package",
                 "stress_package",
+                "import_polygon",
+                "export_oj_package",
             ]
         );
         assert!(

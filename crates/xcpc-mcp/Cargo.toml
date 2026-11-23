@@ -15,6 +15,7 @@ xcpc-storage.workspace = true
 xcpc-convert.workspace = true
 xcpc-engine.workspace = true
 xcpc-judge.workspace = true
+xcpc-packages.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -23,3 +24,4 @@ base64.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }

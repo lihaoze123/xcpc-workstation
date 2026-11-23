@@ -1175,3 +1175,272 @@ fn package_cli_init_build_strict_and_stress_end_to_end() {
             .is_file()
     );
 }
+
+fn build_sample_polygon_zip(zip_path: &Path, short_name: &str) {
+    let file = fs::File::create(zip_path).unwrap();
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let problem_xml = format!(
+        r#"<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<problem short-name="{short_name}" revision="1">
+  <names>
+    <name language="english" value="Polygon Sum"/>
+  </names>
+  <judging cpu-name="Intel" cpu-speed="3600" input-file="" output-file="">
+    <testset name="tests">
+      <time-limit>1000</time-limit>
+      <memory-limit>268435456</memory-limit>
+      <test-count>2</test-count>
+      <input-path-pattern>tests/%02d</input-path-pattern>
+      <answer-path-pattern>tests/%02d.a</answer-path-pattern>
+      <tests>
+        <test method="manual" sample="true"/>
+        <test method="manual"/>
+      </tests>
+    </testset>
+  </judging>
+  <files>
+    <executables/>
+  </files>
+  <assets>
+    <checker name="std::ncmp.cpp" type="testlib"/>
+    <validators>
+      <validator>
+        <source path="files/validator.cpp" type="cpp.g++17"/>
+        <testset>
+          <tests>
+            <test verdict="valid"/>
+            <test verdict="invalid"/>
+          </tests>
+        </testset>
+      </validator>
+    </validators>
+    <solutions>
+      <solution tag="main">
+        <source path="solutions/std.cpp" type="cpp.g++17"/>
+      </solution>
+    </solutions>
+  </assets>
+</problem>
+"#
+    );
+
+    let entries: &[(&str, &str)] = &[
+        ("problem.xml", &problem_xml),
+        ("statement-sections/english/name.tex", "Polygon Sum\n"),
+        (
+            "statement-sections/english/legend.tex",
+            "Compute $a + b$.\n",
+        ),
+        (
+            "statement-sections/english/input.tex",
+            "Two integers $a$ and $b$ ($0 \\le a, b \\le 10^9$).\n",
+        ),
+        ("statement-sections/english/output.tex", "Print $a + b$.\n"),
+        ("tests/01", "1 2\n"),
+        ("tests/01.a", "3\n"),
+        ("tests/02", "10 20\n"),
+        ("tests/02.a", "30\n"),
+        ("files/tests/validator-tests/01", "1 2\n"),
+        ("files/tests/validator-tests/02", "-1 2\n"),
+        (
+            "files/validator.cpp",
+            r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerValidation(argc, argv);
+    inf.readInt(0, 1000000000, "a");
+    inf.readSpace();
+    inf.readInt(0, 1000000000, "b");
+    inf.readEoln();
+    inf.readEof();
+    return 0;
+}
+"#,
+        ),
+        (
+            "solutions/std.cpp",
+            r#"#include <iostream>
+int main() {
+    long long a, b;
+    if (std::cin >> a >> b) std::cout << (a + b) << '\n';
+    return 0;
+}
+"#,
+        ),
+    ];
+
+    for (name, content) in entries {
+        zw.start_file(*name, opts).unwrap();
+        zw.write_all(content.as_bytes()).unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+#[test]
+fn cli_import_polygon_and_export_oj_packages() {
+    let dir = tempfile::tempdir().unwrap();
+    xcpc_storage::init_workspace(dir.path()).unwrap();
+
+    let external_dir = tempfile::tempdir().unwrap();
+    let poly_zip = external_dir.path().join("poly-sum.zip");
+    build_sample_polygon_zip(&poly_zip, "poly-sum");
+
+    // 1. Read-only workspace rejects `import polygon` with exit code 2.
+    let ro_import = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "import",
+            "polygon",
+            poly_zip.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(ro_import.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_import)["error"]["code"], "read_only");
+
+    // 2. Valid `import polygon --json` succeeds (exit 0) and returns PolygonImportResult.
+    let imp_json = run_xcpc(
+        Some(dir.path()),
+        &["--json", "import", "polygon", poly_zip.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(
+        imp_json.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&imp_json.stderr)
+    );
+    let ij = parse_json_stdout(&imp_json);
+    assert_eq!(ij["ok"], true);
+    assert_eq!(ij["kind"], "problem");
+    assert_eq!(ij["problems"][0]["id"], "poly-sum");
+    assert_eq!(ij["problems"][0]["samples_count"], 1);
+    assert!(dir.path().join("problems/poly-sum/problem.toml").is_file());
+
+    // 3. Slug conflict returns exit code 1 (`target_exists`).
+    let dup = run_xcpc(
+        Some(dir.path()),
+        &["--json", "import", "polygon", poly_zip.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(dup.status.code(), Some(1));
+    assert_eq!(parse_json_stdout(&dup)["error"]["code"], "target_exists");
+
+    // 4. Human output with `--id` override succeeds (exit 0) with concise Chinese summary.
+    let imp_human = run_xcpc(
+        Some(dir.path()),
+        &[
+            "import",
+            "polygon",
+            poly_zip.to_str().unwrap(),
+            "--id",
+            "poly-sum-2",
+        ],
+        None,
+    );
+    assert_eq!(imp_human.status.code(), Some(0));
+    let human_out = String::from_utf8_lossy(&imp_human.stdout);
+    assert!(
+        human_out.contains("已导入题目「poly-sum-2」"),
+        "{human_out}"
+    );
+
+    // 5. `export domjudge` before strict verify fails with exit code 1 (`not_verified`).
+    let unverified = run_xcpc(
+        Some(dir.path()),
+        &["--json", "export", "domjudge", "problem", "poly-sum"],
+        None,
+    );
+    assert_eq!(unverified.status.code(), Some(1));
+    assert_eq!(
+        parse_json_stdout(&unverified)["error"]["code"],
+        "not_verified"
+    );
+
+    // 6. Strict verify the imported problem, then export both DOMjudge and Hydro packages.
+    let verify = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "poly-sum", "--strict"],
+        None,
+    );
+    assert_eq!(
+        verify.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    assert_eq!(parse_json_stdout(&verify)["verified"], true);
+
+    let dj_out = run_xcpc(
+        Some(dir.path()),
+        &["--json", "export", "domjudge", "problem", "poly-sum"],
+        None,
+    );
+    assert_eq!(
+        dj_out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&dj_out.stderr)
+    );
+    let dj_json = parse_json_stdout(&dj_out);
+    assert_eq!(dj_json["ok"], true);
+    assert_eq!(dj_json["format"], "domjudge");
+    let dj_zip_path = dj_json["artifacts"][0]["zip_path"].as_str().unwrap();
+    assert!(Path::new(dj_zip_path).is_file());
+    {
+        let mut archive = zip::ZipArchive::new(fs::File::open(dj_zip_path).unwrap()).unwrap();
+        assert!(archive.by_name("domjudge-problem.ini").is_ok());
+        assert!(archive.by_name("problem.yaml").is_ok());
+    }
+
+    let hydro_custom = external_dir.path().join("poly-sum-hydro.zip");
+    let hydro_out = run_xcpc(
+        Some(dir.path()),
+        &[
+            "export",
+            "hydro",
+            "problem",
+            "poly-sum",
+            "-o",
+            hydro_custom.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        hydro_out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&hydro_out.stderr)
+    );
+    let hydro_stdout = String::from_utf8_lossy(&hydro_out.stdout);
+    assert!(
+        hydro_stdout.contains("已导出 Hydro 题目包"),
+        "{hydro_stdout}"
+    );
+    assert!(hydro_custom.is_file());
+    {
+        let mut archive = zip::ZipArchive::new(fs::File::open(&hydro_custom).unwrap()).unwrap();
+        assert!(archive.by_name("problem.yaml").is_ok());
+        assert!(archive.by_name("testdata/config.yaml").is_ok());
+    }
+
+    // 7. Read-only workspace rejects `export` with exit code 2.
+    let ro_export = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "export",
+            "domjudge",
+            "problem",
+            "poly-sum",
+        ],
+        None,
+    );
+    assert_eq!(ro_export.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_export)["error"]["code"], "read_only");
+}
