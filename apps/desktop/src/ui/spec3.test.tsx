@@ -8,6 +8,7 @@ import {
   validId,
 } from "./logic";
 import { nextEnabledIndex } from "./PickProblemsModal";
+import { languagePref } from "./i18n";
 
 describe("Duplicate problem ID suggestion", () => {
   test("appends -copy and increments -copy-2, -copy-3 on collision", () => {
@@ -117,8 +118,19 @@ describe("Contest archive partitioning and filtering", () => {
   });
 
   test("errorCopy maps contest_archived as a rule refusal", () => {
-    const copy = errorCopy("contest_archived");
-    expect(copy.rule).toBe(true);
-    expect(copy.message).toContain("归档");
+    const prev = languagePref();
+    try {
+      languagePref.set("zh-CN");
+      const zhCopy = errorCopy("contest_archived");
+      expect(zhCopy.rule).toBe(true);
+      expect(zhCopy.message).toContain("归档");
+
+      languagePref.set("en");
+      const enCopy = errorCopy("contest_archived");
+      expect(enCopy.rule).toBe(true);
+      expect(enCopy.message.toLowerCase()).toContain("archived");
+    } finally {
+      languagePref.set(prev);
+    }
   });
 });

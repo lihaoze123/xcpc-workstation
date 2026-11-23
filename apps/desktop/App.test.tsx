@@ -1,6 +1,7 @@
 // `nsh test` runs this file in a headless runner it builds with the crate.
 import { expect, test } from "nsh/test";
 import { Preview, type PreviewRequest, type PreviewView } from "xcpc-workstation/native";
+import { languagePref } from "./src/ui/i18n";
 import { extractMathAtCaret, toggleHeadingLine, togglePrefixLine } from "./src/ui/studio/MarkdownEditor";
 import { INITIAL_VIM_STATE, stepVim } from "./src/ui/studio/vim";
 import {
@@ -359,13 +360,19 @@ test("the export button reveals only a fresh PDF of the current book", () => {
 });
 
 test("the window title names what is open", () => {
-  expect(windowTitle({ workspace: false, space: "problems" })).toBe("XCPC Workstation");
-  expect(windowTitle({ workspace: true, space: "contests" })).toBe("比赛");
-  expect(windowTitle({ workspace: true, workspaceName: "icpc-2026", space: "contests" })).toBe("比赛 — icpc-2026");
-  expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum", label: "A", contestName: "春季训练赛" } })).toBe(
-    "A. Two Sum — 春季训练赛",
-  );
-  expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum" } })).toBe("Two Sum");
+  const prev = languagePref();
+  languagePref.set("zh-CN");
+  try {
+    expect(windowTitle({ workspace: false, space: "problems" })).toBe("XCPC Workstation");
+    expect(windowTitle({ workspace: true, space: "contests" })).toBe("比赛");
+    expect(windowTitle({ workspace: true, workspaceName: "icpc-2026", space: "contests" })).toBe("比赛 — icpc-2026");
+    expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum", label: "A", contestName: "春季训练赛" } })).toBe(
+      "A. Two Sum — 春季训练赛",
+    );
+    expect(windowTitle({ workspace: true, space: "problems", studio: { problemTitle: "Two Sum" } })).toBe("Two Sum");
+  } finally {
+    languagePref.set(prev);
+  }
 });
 
 test("path helpers handle POSIX, macOS, and Windows paths", () => {
@@ -389,14 +396,20 @@ test("an external change lands as one minimal edit", () => {
 });
 
 test("rule refusals read as facts, errors hide codes, IDs validate", () => {
-  expect(errorCopy("contest_frozen").rule).toBe(true);
-  expect(errorCopy("problem_referenced").next !== undefined).toBe(true);
-  expect(errorCopy("io").rule).toBe(false);
-  expect(/[a-z_]{4,}/.test(errorCopy("io").message)).toBe(false);
-  expect(errorCopy(undefined, "x already exists").message).toBe("同名 ID 已存在");
-  expect(validId("two-sum")).toBe(true);
-  expect(validId("Two")).toBe(false);
-  expect(validId("-a")).toBe(false);
+  const prev = languagePref();
+  languagePref.set("zh-CN");
+  try {
+    expect(errorCopy("contest_frozen").rule).toBe(true);
+    expect(errorCopy("problem_referenced").next !== undefined).toBe(true);
+    expect(errorCopy("io").rule).toBe(false);
+    expect(/[a-z_]{4,}/.test(errorCopy("io").message)).toBe(false);
+    expect(errorCopy(undefined, "x already exists").message).toBe("同名 ID 已存在");
+    expect(validId("two-sum")).toBe(true);
+    expect(validId("Two")).toBe(false);
+    expect(validId("-a")).toBe(false);
+  } finally {
+    languagePref.set(prev);
+  }
 });
 
 test("the split ratio is kept within its range", () => {
