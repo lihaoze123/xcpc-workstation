@@ -149,14 +149,10 @@ impl Book {
         }
     }
 
-    /// One problem on its own, as the reference template's standalone problem: a
-    /// running head of "题面预览" (Chinese) and no cover.
+    /// One problem on its own: empty running head and no cover.
     pub fn single(language: Language) -> Self {
         Self {
-            name: match language {
-                Language::Chinese => "题面预览".into(),
-                Language::English => String::new(),
-            },
+            name: String::new(),
             location: None,
             date: None,
             author: None,
@@ -423,11 +419,15 @@ fn pdf_metadata(
         } else {
             meta.title.trim()
         };
-        let label = entry.item.label.trim();
-        let head_title = if label.is_empty() {
+        let head_title = if book.single {
             base_title.to_owned()
         } else {
-            format!("{label}. {base_title}")
+            let label = entry.item.label.trim();
+            if label.is_empty() {
+                base_title.to_owned()
+            } else {
+                format!("{label}. {base_title}")
+            }
         };
         let title = if editorial {
             match book.language {

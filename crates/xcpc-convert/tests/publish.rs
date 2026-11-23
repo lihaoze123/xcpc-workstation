@@ -1190,9 +1190,10 @@ fn pdf_metadata_sets_title_author_creator_and_preserves_producer() {
     assert!(p_report.ok, "{:#?}", p_report.diagnostics);
     let p_pdf = p_compiled.unwrap().pdf().unwrap();
     let p_text = String::from_utf8_lossy(&p_pdf);
+    assert!(p_text.contains("灯笼小径"), "missing problem title in PDF");
     assert!(
-        p_text.contains("A. 灯笼小径"),
-        "missing problem title in PDF"
+        !p_text.contains("A. 灯笼小径"),
+        "single problem PDF title should not include label prefix"
     );
     assert!(p_text.contains("chumeng"), "missing problem author in PDF");
 }

@@ -911,8 +911,9 @@
         } else {
           let p-opts = p.at("options", default: (:))
           let show-meta = p-opts.at("show-metadata", default: book-show-meta) != false
+          let lbl = if single { none } else { p.at("label", default: none) }
           problem(
-            label: p.at("label", default: none),
+            label: lbl,
             title: p.at("title", default: ""),
             input: p.at("input", default: none),
             output: p.at("output", default: none),

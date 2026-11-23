@@ -76,14 +76,17 @@
     pagebreak()
   }
 
+  let single = doc.at("single", default: false)
   for (idx, p) in doc.problems.enumerate() {
     if idx > 0 { pagebreak(weak: true) }
+    let lbl = if single { none } else { p.at("label", default: none) }
     if editorial {
-      [#metadata((label: p.label, title: p.title)) <xcpc-tutorial>]
+      [#metadata((label: lbl, title: p.title)) <xcpc-tutorial>]
     } else {
-      [#metadata((label: p.label, title: p.title)) <xcpc-problem>]
+      [#metadata((label: lbl, title: p.title)) <xcpc-problem>]
     }
-    block(sticky: true, below: 0.6em, text(size: 16pt, weight: "bold")[#p.label. #p.title])
+    let head = if lbl == none or lbl == "" { [#p.title] } else { [#lbl. #p.title] }
+    block(sticky: true, below: 0.6em, text(size: 16pt, weight: "bold", head))
     p.body
   }
 }

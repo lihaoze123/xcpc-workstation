@@ -288,7 +288,8 @@
   let sample-layout = options.at("sample-layout", default: "two-column")
   sample-layout-state.update(sample-layout)
   [#metadata((label: label, title: title)) <xcpc-problem>]
-  block(sticky: true, below: 3mm, context text(font: with-cjk("Latin Modern Sans", cjk-hei-state.get()), weight: "bold", size: sizes.LARGE)[#word("problem") #label. #title])
+  let head = if label == none or label == "" { [#title] } else { [#word("problem") #label. #title] }
+  block(sticky: true, below: 3mm, context text(font: with-cjk("Latin Modern Sans", cjk-hei-state.get()), weight: "bold", size: sizes.LARGE, head))
   if show-metadata {
     // No file name: standard input and output, which the reference sets as file names.
     let file(name, key) = mono(if name == none { word(key) } else { name })
@@ -637,8 +638,9 @@
         } else {
           let p-opts = p.at("options", default: (:))
           let show-meta = p-opts.at("show-metadata", default: book-show-meta) != false
+          let lbl = if single { none } else { p.at("label", default: none) }
           problem(
-            label: p.at("label", default: none),
+            label: lbl,
             title: p.at("title", default: none),
             input: p.at("input", default: none),
             output: p.at("output", default: none),
