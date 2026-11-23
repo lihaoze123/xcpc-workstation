@@ -4,7 +4,7 @@
 //! executes C++ code. It checks the latest strict verification report from `xcpc-judge`
 //! and packages pre-built testdata from `build/problems/<slug>/tests/`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,11 +13,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use xcpc_convert::publish;
 use xcpc_convert::{Book, Entry};
-use xcpc_domain::{ContestItem, Language, Problem, ProblemMeta};
+use xcpc_domain::{ContestItem, Language, Problem, ProblemMeta, SubtaskScoring, SubtaskSpec};
 use xcpc_engine::{Engine, FontOptions};
 use xcpc_judge::{
     CheckerSpec, PackageFreshness, RunLimits, TESTLIB_H, build_dir_for, check_package_freshness,
-    load_latest_report, load_verified_report, resolve_checker_spec, standard_checker_source,
+    find_interactor_source, has_explicit_checker, load_latest_report, load_verified_report,
+    resolve_checker_spec, standard_checker_source,
 };
 use xcpc_storage::Workspace;
 
@@ -442,6 +443,7 @@ fn export_batch_single_item(
 
 struct PreparedTest {
     is_sample: bool,
+    subtask: Option<String>,
     input_bytes: Vec<u8>,
     answer_bytes: Vec<u8>,
 }
@@ -454,6 +456,8 @@ struct PreparedExport {
     language: Language,
     prob_dir: PathBuf,
     checker_spec: CheckerSpec,
+    interactor_path: Option<PathBuf>,
+    subtasks: Vec<SubtaskSpec>,
     limits: RunLimits,
     tests: Vec<PreparedTest>,
     verified: bool,
@@ -530,6 +534,11 @@ fn prepare_export_item(
         });
     }
 
+    let interactor_path = find_interactor_source(&prob_dir).map(|(p, _, _)| p);
+    let explicit_checker = has_explicit_checker(&prob_dir, &effective_meta);
+    let runs = effective_meta.run_count();
+    let subtasks = effective_meta.subtask.clone();
+
     let tests_dir = build_dir_for(ws, slug).join("tests");
     let mut tests = Vec::with_capacity(report.tests.len());
     for t in &report.tests {
@@ -539,15 +548,74 @@ fn prepare_export_item(
             slug: slug.clone(),
             detail: format!("missing built input {}", in_path.display()),
         })?;
-        let answer_bytes = fs::read(&ans_path).map_err(|_| PackageError::MissingTestdata {
-            slug: slug.clone(),
-            detail: format!("missing built answer {}", ans_path.display()),
-        })?;
+        let answer_bytes = if interactor_path.is_some() {
+            fs::read(&ans_path).unwrap_or_default()
+        } else {
+            fs::read(&ans_path).map_err(|_| PackageError::MissingTestdata {
+                slug: slug.clone(),
+                detail: format!("missing built answer {}", ans_path.display()),
+            })?
+        };
         tests.push(PreparedTest {
             is_sample: t.is_sample,
+            subtask: t.subtask.clone(),
             input_bytes,
             answer_bytes,
         });
+    }
+
+    // Platform-specific structured warnings for Phase 3C features.
+    match opts.format {
+        OjFormat::Domjudge => {
+            if interactor_path.is_some() && explicit_checker {
+                warnings.push(PackageWarning::with_path(
+                    "domjudge_interactive_checker_ignored",
+                    format!(
+                        "DOMjudge `custom interactive` only runs interactor.cpp; standalone checker for `{slug}` was not packaged"
+                    ),
+                    problem.dir.clone(),
+                ));
+            }
+            if runs > 1 {
+                warnings.push(PackageWarning::with_path(
+                    "domjudge_multi_run_unsupported",
+                    format!(
+                        "DOMjudge does not natively support multi-run communication (runs={runs}) for `{slug}`; exported package may require manual adaptation"
+                    ),
+                    problem.dir.clone(),
+                ));
+            }
+            if !subtasks.is_empty() {
+                warnings.push(PackageWarning::with_path(
+                    "domjudge_subtasks_flattened",
+                    format!(
+                        "DOMjudge uses ICPC-style judging and does not support OI subtasks ({} subtasks declared in `{slug}`); all secret tests were flattened into data/secret/",
+                        subtasks.len()
+                    ),
+                    problem.dir.clone(),
+                ));
+            }
+        }
+        OjFormat::Hydro => {
+            if interactor_path.is_some() && explicit_checker {
+                warnings.push(PackageWarning::with_path(
+                    "hydro_interactive_checker_ignored",
+                    format!(
+                        "Hydro `type: interactive` only runs interactor.cpp; standalone checker for `{slug}` was not packaged"
+                    ),
+                    problem.dir.clone(),
+                ));
+            }
+            if runs > 1 {
+                warnings.push(PackageWarning::with_path(
+                    "hydro_multi_run_unsupported",
+                    format!(
+                        "Hydro OJ does not natively support Polygon multi-run communication (runs={runs}) for `{slug}`; exported package may require manual adaptation"
+                    ),
+                    problem.dir.clone(),
+                ));
+            }
+        }
     }
 
     let checker_spec = resolve_checker_spec(&prob_dir, &effective_meta)?;
@@ -565,6 +633,8 @@ fn prepare_export_item(
         language,
         prob_dir,
         checker_spec,
+        interactor_path,
+        subtasks,
         limits,
         tests,
         verified,
@@ -624,7 +694,34 @@ RC=$?
 rm -f \"$TEAM_OUT\"
 if [ \"$RC\" -eq 0 ]; then
   exit 42
-elif [ \"$RC\" -eq 1 ] || [ \"$RC\" -eq 2 ]; then
+elif [ \"$RC\" -eq 1 ] || [ \"$RC\" -eq 2 ] || [ \"$RC\" -eq 4 ] || [ \"$RC\" -eq 8 ]; then
+  exit 43
+else
+  exit \"$RC\"
+fi
+";
+
+const DOMJUDGE_INTERACTOR_BUILD_SH: &str = "\
+#!/bin/sh
+set -e
+DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"
+g++ -O2 -std=c++20 \"$DIR/interactor.cpp\" -o \"$DIR/interactor_bin\"
+";
+
+const DOMJUDGE_INTERACTOR_RUN_SH: &str = "\
+#!/bin/sh
+DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"
+TEST_IN=\"$1\"
+TEST_ANS=\"$2\"
+FEEDBACK_DIR=\"$3\"
+TEAM_OUT=\"$FEEDBACK_DIR/team_out.tmp\"
+set +e
+\"$DIR/interactor_bin\" \"$TEST_IN\" \"$TEAM_OUT\" 2> \"$FEEDBACK_DIR/judgemessage.txt\"
+RC=$?
+rm -f \"$TEAM_OUT\"
+if [ \"$RC\" -eq 0 ]; then
+  exit 42
+elif [ \"$RC\" -eq 1 ] || [ \"$RC\" -eq 2 ] || [ \"$RC\" -eq 4 ] || [ \"$RC\" -eq 8 ]; then
   exit 43
 else
   exit \"$RC\"
@@ -650,7 +747,11 @@ fn write_domjudge_zip(
 
     // 2. `problem.yaml`
     let memory_mib = prep.limits.memory_limit_kib.div_ceil(1024).max(1);
-    let (validation, validator_flags) = domjudge_validation_config(&prep.checker_spec);
+    let (validation, validator_flags) = if prep.interactor_path.is_some() {
+        ("custom interactive", None)
+    } else {
+        domjudge_validation_config(&prep.checker_spec)
+    };
     let mut yaml = String::new();
     yaml.push_str(&format!(
         "name: {}\nlimits:\n  memory: {memory_mib}\nvalidation: {validation}\n",
@@ -696,8 +797,25 @@ fn write_domjudge_zip(
         }
     }
 
-    // 5. `output_validators/checker/` (ONLY when `validation: custom`)
-    if let CheckerSpec::Custom { ref path, .. } = prep.checker_spec {
+    // 5. `output_validators/` (interactive interactor OR custom checker)
+    if let Some(ref inter_path) = prep.interactor_path {
+        let inter_bytes = fs::read(inter_path)
+            .map_err(|e| io_err(format!("read interactor {}", inter_path.display()), e))?;
+        let testlib_bytes = read_effective_testlib(ws, &prep.prob_dir);
+
+        zip.add_file("output_validators/interactor/interactor.cpp", &inter_bytes)?;
+        zip.add_file("output_validators/interactor/testlib.h", &testlib_bytes)?;
+        zip.add_file_with_mode(
+            "output_validators/interactor/build",
+            DOMJUDGE_INTERACTOR_BUILD_SH.as_bytes(),
+            0o755,
+        )?;
+        zip.add_file_with_mode(
+            "output_validators/interactor/run",
+            DOMJUDGE_INTERACTOR_RUN_SH.as_bytes(),
+            0o755,
+        )?;
+    } else if let CheckerSpec::Custom { ref path, .. } = prep.checker_spec {
         let checker_bytes = fs::read(path)
             .map_err(|e| io_err(format!("read custom checker {}", path.display()), e))?;
         let testlib_bytes = read_effective_testlib(ws, &prep.prob_dir);
@@ -858,34 +976,86 @@ fn write_hydro_zip(
     let stmt_md = "@[pdf](file://problem.pdf?noDisposition=1)\n";
     zip.add_file(stmt_filename, stmt_md.as_bytes())?;
 
-    // 3. `testdata/config.yaml` and optional `testdata/checker.cpp` (NEVER bundle `testlib.h`)
+    // 3. `testdata/config.yaml` and optional `testdata/interactor.cpp` or `testdata/checker.cpp`
     let memory_mib = prep.limits.memory_limit_kib.div_ceil(1024).max(1);
-    let mut cfg = format!(
-        "type: default\ntime: {}ms\nmemory: {memory_mib}m\n",
-        prep.limits.time_limit_ms
-    );
-
-    match &prep.checker_spec {
-        CheckerSpec::Builtin(name) if matches!(name.as_str(), "wcmp" | "ncmp" | "lcmp") => {
-            cfg.push_str("checker_type: default\n");
-        }
-        CheckerSpec::Builtin(name) => {
-            cfg.push_str("checker_type: testlib\nchecker: checker.cpp\n");
-            let src = standard_checker_source(name)
-                .ok_or_else(|| PackageError::Unsupported(format!("unknown checker {name:?}")))?;
-            zip.add_file("testdata/checker.cpp", src.as_bytes())?;
-        }
-        CheckerSpec::Custom { path, .. } => {
-            cfg.push_str("checker_type: testlib\nchecker: checker.cpp\n");
-            let bytes = fs::read(path)
-                .map_err(|e| io_err(format!("read custom checker {}", path.display()), e))?;
-            zip.add_file("testdata/checker.cpp", &bytes)?;
+    let mut cfg = String::new();
+    if let Some(ref inter_path) = prep.interactor_path {
+        cfg.push_str(&format!(
+            "type: interactive\ntime: {}ms\nmemory: {memory_mib}m\ninteractor: interactor.cpp\n",
+            prep.limits.time_limit_ms
+        ));
+        let inter_bytes = fs::read(inter_path)
+            .map_err(|e| io_err(format!("read interactor {}", inter_path.display()), e))?;
+        let testlib_bytes = read_effective_testlib(ws, &prep.prob_dir);
+        zip.add_file("testdata/interactor.cpp", &inter_bytes)?;
+        zip.add_file("testdata/testlib.h", &testlib_bytes)?;
+    } else {
+        cfg.push_str(&format!(
+            "type: default\ntime: {}ms\nmemory: {memory_mib}m\n",
+            prep.limits.time_limit_ms
+        ));
+        match &prep.checker_spec {
+            CheckerSpec::Builtin(name) if matches!(name.as_str(), "wcmp" | "ncmp" | "lcmp") => {
+                cfg.push_str("checker_type: default\n");
+            }
+            CheckerSpec::Builtin(name) => {
+                cfg.push_str("checker_type: testlib\nchecker: checker.cpp\n");
+                let src = standard_checker_source(name).ok_or_else(|| {
+                    PackageError::Unsupported(format!("unknown checker {name:?}"))
+                })?;
+                zip.add_file("testdata/checker.cpp", src.as_bytes())?;
+            }
+            CheckerSpec::Custom { path, .. } => {
+                cfg.push_str("checker_type: testlib\nchecker: checker.cpp\n");
+                let bytes = fs::read(path)
+                    .map_err(|e| io_err(format!("read custom checker {}", path.display()), e))?;
+                zip.add_file("testdata/checker.cpp", &bytes)?;
+            }
         }
     }
+
+    let width = prep.tests.len().to_string().len().max(2);
+    if !prep.subtasks.is_empty() {
+        let id_to_idx: HashMap<&str, usize> = prep
+            .subtasks
+            .iter()
+            .enumerate()
+            .map(|(i, st)| (st.id.as_str(), i + 1))
+            .collect();
+        cfg.push_str("subtasks:\n");
+        for st in &prep.subtasks {
+            let scoring_str = match st.scoring {
+                SubtaskScoring::Min => "min",
+                SubtaskScoring::Sum => "sum",
+            };
+            cfg.push_str(&format!("  - score: {}\n", st.score));
+            cfg.push_str(&format!("    type: {scoring_str}\n"));
+            let dep_indices: Vec<usize> = st
+                .depends
+                .iter()
+                .filter_map(|d| id_to_idx.get(d.as_str()).copied())
+                .collect();
+            if !dep_indices.is_empty() {
+                cfg.push_str("    if:\n");
+                for dep_idx in dep_indices {
+                    cfg.push_str(&format!("      - {dep_idx}\n"));
+                }
+            }
+            cfg.push_str("    cases:\n");
+            for (i, t) in prep.tests.iter().enumerate() {
+                if t.subtask.as_deref() == Some(st.id.as_str()) {
+                    let idx = i + 1;
+                    cfg.push_str(&format!(
+                        "      - input: {idx:0width$}.in\n        output: {idx:0width$}.out\n"
+                    ));
+                }
+            }
+        }
+    }
+
     zip.add_file("testdata/config.yaml", cfg.as_bytes())?;
 
     // 4. `testdata/01.in`, `testdata/01.out`, ... (all built tests: samples + secret)
-    let width = prep.tests.len().to_string().len().max(2);
     for (i, t) in prep.tests.iter().enumerate() {
         let idx = i + 1;
         zip.add_file(&format!("testdata/{idx:0width$}.in"), &t.input_bytes)?;

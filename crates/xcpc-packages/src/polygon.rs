@@ -7,7 +7,8 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use xcpc_domain::{
     ContestItem, ContestMeta, ExpectVerdict, Language, Limits, MAX_GROUP_NAME_CHARS, PackageConfig,
-    ProblemMeta, SolutionSpec, Source, TestSpec, check_id, label_for_index, normalize_group_name,
+    ProblemMeta, SolutionSpec, Source, SubtaskScoring, SubtaskSpec, TestSpec, check_id,
+    label_for_index, normalize_group_name,
 };
 use xcpc_judge::is_standard_checker;
 use xcpc_storage::Workspace;
@@ -396,17 +397,14 @@ fn stage_polygon_problem(
         }
     }
 
-    // 4. Samples and `[[test]]` specs.
-    if xml.has_groups {
-        warnings.push(PackageWarning::with_path(
-            "subtasks_preserved",
-            "Polygon <groups>/subtasks metadata is not supported in Phase 3B; all tests were imported as a flat testset",
-            format!("{prob_dir}/problem.toml"),
-        ));
-    }
-
+    // 4. Samples, `[[subtask]]`, and `[[test]]` specs.
     let mut samples_count = 0usize;
     let mut test_specs: Vec<TestSpec> = Vec::new();
+    let mut non_sample_group_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut non_sample_group_points: BTreeMap<String, f64> = BTreeMap::new();
+    let mut sample_only_groups: HashSet<String> = HashSet::new();
+    let has_defined_groups = !xml.groups.is_empty();
+
     for (idx0, test) in xml.tests.iter().enumerate() {
         let idx = idx0 + 1;
         let in_zip = format_printf_pattern(&xml.input_pattern, idx);
@@ -421,7 +419,22 @@ fn stage_polygon_problem(
             if let Some(ans_bytes) = zip.get_bytes(&ans_zip) {
                 staged.insert(format!("{prob_dir}/samples/{stem}.ans"), ans_bytes.to_vec());
             }
+            if let Some(ref g) = test.group {
+                sample_only_groups.insert(g.clone());
+            }
             continue;
+        }
+
+        let test_subtask = if has_defined_groups {
+            test.group.clone()
+        } else {
+            None
+        };
+        if let Some(ref g) = test_subtask {
+            *non_sample_group_counts.entry(g.clone()).or_insert(0) += 1;
+            if let Some(pts) = test.points {
+                *non_sample_group_points.entry(g.clone()).or_insert(0.0) += pts;
+            }
         }
 
         // Non-sample test: prefer declarative `[[test]] gen = ...` when C++ generator exists & no `from-file`.
@@ -441,6 +454,7 @@ fn stage_polygon_problem(
             test_specs.push(TestSpec {
                 generator: Some(gen_name.clone()),
                 args,
+                subtask: test_subtask.clone(),
                 ..Default::default()
             });
             used_generator = true;
@@ -452,6 +466,7 @@ fn stage_polygon_problem(
                 staged.insert(format!("{prob_dir}/{rel_file}"), in_bytes.to_vec());
                 test_specs.push(TestSpec {
                     file: Some(rel_file.clone()),
+                    subtask: test_subtask,
                     ..Default::default()
                 });
                 if test.from_file.is_some() {
@@ -480,6 +495,52 @@ fn stage_polygon_problem(
         }
     }
 
+    // Build `[[subtask]]` specs from `<groups>`, dropping sample-only 0-point groups that have
+    // no non-sample tests (standard Polygon convention for group "0" samples).
+    let dropped_sample_groups: HashSet<String> = xml
+        .groups
+        .iter()
+        .filter(|g| {
+            let non_sample_cnt = non_sample_group_counts.get(&g.name).copied().unwrap_or(0);
+            let pts = g.points.unwrap_or(0.0);
+            non_sample_cnt == 0 && pts == 0.0 && sample_only_groups.contains(&g.name)
+        })
+        .map(|g| g.name.clone())
+        .collect();
+
+    let subtask_specs: Vec<SubtaskSpec> = xml
+        .groups
+        .iter()
+        .filter(|g| !dropped_sample_groups.contains(&g.name))
+        .map(|g| {
+            let raw_points = g
+                .points
+                .or_else(|| non_sample_group_points.get(&g.name).copied())
+                .unwrap_or(0.0);
+            let score = if raw_points.is_finite() && raw_points > 0.0 {
+                raw_points.round() as u32
+            } else {
+                0
+            };
+            let scoring = match g.points_policy.as_deref() {
+                Some("each-test") => SubtaskScoring::Sum,
+                _ => SubtaskScoring::Min,
+            };
+            let depends = g
+                .dependencies
+                .iter()
+                .filter(|d| !dropped_sample_groups.contains(d.as_str()))
+                .cloned()
+                .collect();
+            SubtaskSpec {
+                id: g.name.clone(),
+                score,
+                depends,
+                scoring,
+            }
+        })
+        .collect();
+
     // Fallback: if no samples were marked in problem.xml, look for `statement-sections/<lang>/example.NN`.
     if samples_count == 0 {
         samples_count = stage_statement_section_examples(zip, &prob_dir, staged);
@@ -491,21 +552,8 @@ fn stage_polygon_problem(
     // 6. Validator + validator self-tests.
     let has_validator = stage_validator(zip, xml, &prob_dir, staged, warnings);
 
-    // 7. Interactor (unsupported in 3B: preserve file + warning, do not abort).
-    if let Some(ref interactor) = xml.interactor {
-        let fname = file_name_of(&interactor.path);
-        let dest = format!("{prob_dir}/{fname}");
-        if let Some(bytes) = zip.get_bytes(&interactor.path) {
-            staged.insert(dest.clone(), bytes.to_vec());
-        }
-        warnings.push(PackageWarning::with_path(
-            "interactive_not_supported",
-            format!(
-                "interactive problem (<interactor> `{fname}`) is not supported for execution in Phase 3B; file preserved"
-            ),
-            dest,
-        ));
-    }
+    // 7. Interactor (`<assets><interactor>` -> `interactor.cpp`).
+    let has_interactor = stage_interactor(zip, xml, &prob_dir, staged, warnings);
 
     // 8. Solutions (`<assets><solutions>`).
     let mut solutions_map: BTreeMap<String, SolutionSpec> = BTreeMap::new();
@@ -553,19 +601,28 @@ fn stage_polygon_problem(
                 main: main_flag,
                 expect: Some(expect),
                 tags: None,
+                score: None,
+                subtasks: BTreeMap::new(),
             },
         );
     }
 
     // 9. Build and serialize `problem.toml`.
+    let package_checker = if has_interactor && xml.checker.is_none() {
+        None
+    } else {
+        Some(checker_name.clone())
+    };
     let meta = ProblemMeta {
         title: title.clone(),
         group: group.map(str::to_owned),
         limits,
         sources,
         package: Some(PackageConfig {
-            checker: Some(checker_name.clone()),
+            checker: package_checker,
+            runs: xml.run_count,
         }),
+        subtask: subtask_specs.clone(),
         test: test_specs.clone(),
         solutions: solutions_map,
         ..Default::default()
@@ -585,6 +642,9 @@ fn stage_polygon_problem(
         generators_count,
         solutions_count,
         has_validator,
+        has_interactor,
+        runs: xml.run_count,
+        subtasks_count: subtask_specs.len(),
         checker: checker_name,
         assets_count: asset_names.len(),
     })
@@ -951,6 +1011,47 @@ fn stage_validator(
     true
 }
 
+fn stage_interactor(
+    zip: &SafeZipContents,
+    xml: &PolygonProblemXml,
+    prob_dir: &str,
+    staged: &mut BTreeMap<String, Vec<u8>>,
+    warnings: &mut Vec<PackageWarning>,
+) -> bool {
+    let Some(ref interactor) = xml.interactor else {
+        return false;
+    };
+    let Some(bytes) = zip.get_bytes(&interactor.path) else {
+        warnings.push(PackageWarning::with_path(
+            "missing_interactor_source",
+            format!(
+                "interactor source `{}` referenced in problem.xml was not found in archive",
+                interactor.path
+            ),
+            format!("{prob_dir}/interactor.cpp"),
+        ));
+        return false;
+    };
+
+    if !is_cpp_source(&interactor.source_type, &interactor.path) {
+        let fname = file_name_of(&interactor.path);
+        let dest = format!("{prob_dir}/{fname}");
+        staged.insert(dest.clone(), bytes.to_vec());
+        warnings.push(PackageWarning::with_path(
+            "non_cpp_program",
+            format!(
+                "non-C++ interactor `{fname}` (type={:?}) was preserved but cannot be executed by xcpc-judge",
+                interactor.source_type
+            ),
+            dest,
+        ));
+        return false;
+    }
+
+    staged.insert(format!("{prob_dir}/interactor.cpp"), bytes.to_vec());
+    true
+}
+
 fn commit_staged_files(ws: &Workspace, staged: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     // Pre-validate every single destination path before writing anything.
     for rel in staged.keys() {
@@ -1160,17 +1261,26 @@ struct PolygonProblemXml {
     statements: Vec<PolygonStatementRef>,
     input_file: Option<String>,
     output_file: Option<String>,
+    run_count: Option<u32>,
     time_limit_ms: Option<u64>,
     memory_limit_bytes: Option<u64>,
     input_pattern: String,
     answer_pattern: String,
-    has_groups: bool,
+    groups: Vec<PolygonGroup>,
     tests: Vec<PolygonTestEntry>,
     executables: Vec<PolygonSourceFile>,
     checker: Option<PolygonChecker>,
     validators: Vec<PolygonValidator>,
     solutions: Vec<PolygonSolution>,
     interactor: Option<PolygonSourceFile>,
+}
+
+#[derive(Debug)]
+struct PolygonGroup {
+    name: String,
+    points: Option<f64>,
+    points_policy: Option<String>,
+    dependencies: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -1185,6 +1295,8 @@ struct PolygonTestEntry {
     cmd: Option<String>,
     sample: bool,
     from_file: Option<String>,
+    group: Option<String>,
+    points: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -1440,6 +1552,9 @@ fn handle_problem_open_tag(
         "judging" => {
             out.input_file = attr_str(e, b"input-file");
             out.output_file = attr_str(e, b"output-file");
+            out.run_count = attr_str(e, b"run-count")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .filter(|&n| n > 1);
         }
         "testset" if parent == Some("judging") => {
             let name = attr_str(e, b"name").unwrap_or_default();
@@ -1447,28 +1562,50 @@ fn handle_problem_open_tag(
                 if name == "tests" && *saw_primary_testset {
                     // Reset if an earlier non-"tests" testset was parsed first.
                     out.tests.clear();
-                    out.has_groups = false;
+                    out.groups.clear();
                 }
                 *in_primary_testset = true;
                 *saw_primary_testset = true;
             }
         }
-        "groups" if *in_primary_testset => {
-            out.has_groups = true;
+        "group" if *in_primary_testset && parent == Some("groups") => {
+            if let Some(name) = attr_str(e, b"name").filter(|s| !s.trim().is_empty()) {
+                let points = attr_str(e, b"points").and_then(|v| v.trim().parse::<f64>().ok());
+                let points_policy = attr_str(e, b"points-policy");
+                out.groups.push(PolygonGroup {
+                    name: name.trim().to_owned(),
+                    points,
+                    points_policy,
+                    dependencies: Vec::new(),
+                });
+            }
+        }
+        "dependency" if *in_primary_testset && parent == Some("dependencies") => {
+            if let Some(last_group) = out.groups.last_mut()
+                && let Some(dep) = attr_str(e, b"group").filter(|s| !s.trim().is_empty())
+            {
+                let dep = dep.trim().to_owned();
+                if !last_group.dependencies.contains(&dep) {
+                    last_group.dependencies.push(dep);
+                }
+            }
         }
         "test" if *in_primary_testset && parent == Some("tests") => {
             let method = attr_str(e, b"method").unwrap_or_else(|| "manual".to_owned());
             let cmd = attr_str(e, b"cmd");
             let sample = attr_str(e, b"sample").is_some_and(|v| v == "true");
             let from_file = attr_str(e, b"from-file");
-            if attr_str(e, b"group").is_some() {
-                out.has_groups = true;
-            }
+            let group = attr_str(e, b"group")
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty());
+            let points = attr_str(e, b"points").and_then(|v| v.trim().parse::<f64>().ok());
             out.tests.push(PolygonTestEntry {
                 method,
                 cmd,
                 sample,
                 from_file,
+                group,
+                points,
             });
         }
         "source" if parent == Some("executable") => {

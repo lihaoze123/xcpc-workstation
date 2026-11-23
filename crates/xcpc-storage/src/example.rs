@@ -18,6 +18,7 @@ use std::path::Path;
 use xcpc_domain::Language;
 
 use crate::example_en::EXAMPLE_FILES_EN;
+use crate::example_packages::SHARED_PACKAGE_FILES;
 use crate::{Result, Workspace, init_workspace_with_template};
 
 /// Static files seeded into an example workspace (relative to workspace root).
@@ -67,6 +68,7 @@ const EXAMPLE_FILES: &[(&str, &str)] = &[
         r#"title = "循环冗余校验"
 rating = 1400
 tags = ["implementation", "bitmask", "crc", "typst"]
+group = "出版精选"
 
 [limits]
 time = "1s"
@@ -544,6 +546,7 @@ int main() {
         r#"title = "树上信标"
 rating = 1900
 tags = ["trees", "dp", "heavy-light", "graph"]
+group = "出版精选"
 
 [limits]
 time = "1s"
@@ -793,6 +796,7 @@ int main() {
         r#"title = "Typst 排版与绘图能力展示"
 rating = 2400
 tags = ["typst", "cetz", "pinit", "showcase"]
+group = "出版精选"
 
 [limits]
 time = "1s"
@@ -1072,7 +1076,474 @@ int main() {
 "##,
     ),
     // =========================================================================
-    // Contests: XCPC (`olymp-classic`) & CNOI (`cnoi-classic`)
+    // Local Polygon Packages (4 full --strict-passing packages)
+    // =========================================================================
+    (
+        "problems/interval-sum/problem.toml",
+        r#"title = "区间求和"
+rating = 900
+tags = ["prefix-sum", "implementation"]
+group = "本地出题包"
+author = "XCPC 命题组"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "interval-sum"
+
+[package]
+checker = "ncmp"
+
+[[test]]
+gen = "gen_random"
+args = ["--n", "10", "--q", "10", "--seed", "{i}"]
+repeat = 2
+tag = "small"
+
+[[test]]
+gen = "gen_random"
+args = ["--n", "50000", "--q", "50000", "--seed", "{i}"]
+repeat = 2
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_fenwick]
+expect = "AC"
+
+[solutions.brute]
+expect = ["AC", "TLE"]
+tags = ["small"]
+
+[solutions.wa_int32]
+expect = "WA"
+"#,
+    ),
+    (
+        "problems/interval-sum/statement.md",
+        r##"给定一个长度为 $n$ 的整数数组 $a_1, a_2, \dots, a_n$，以及 $q$ 次询问。每次询问给出区间 $[l, r]$，请你计算 $\sum_{i=l}^{r} a_i$。
+
+## 输入格式
+
+第一行包含两个整数 $n, q$（$1 \le n, q \le 10^5$）。
+
+第二行包含 $n$ 个整数 $a_1, a_2, \dots, a_n$（$-10^9 \le a_i \le 10^9$）。
+
+接下来 $q$ 行，每行包含两个整数 $l, r$（$1 \le l \le r \le n$）。
+
+## 输出格式
+
+输出 $q$ 行，每行一个整数表示对应区间的和。
+"##,
+    ),
+    (
+        "problems/interval-sum/editorial.md",
+        r##"预处理 64 位前缀和 $S_i = \sum_{j=1}^{i} a_j$，每次询问 $O(1)$ 输出 $S_r - S_{l-1}$。注意答案可能超过 32 位有符号整数范围。
+"##,
+    ),
+    (
+        "problems/hidden-peak/problem.toml",
+        r#"title = "隐藏的山峰"
+rating = 1500
+tags = ["interactive", "binary-search", "subtasks"]
+group = "本地出题包"
+author = "XCPC 命题组"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "hidden-peak"
+
+[package]
+
+[[subtask]]
+id = "1"
+score = 30
+scoring = "min"
+
+[[subtask]]
+id = "2"
+score = 70
+depends = ["1"]
+scoring = "min"
+
+[[test]]
+gen = "gen_peak"
+args = ["--n", "12", "--peak", "7", "--seed", "{i}"]
+repeat = 2
+subtask = "1"
+tag = "small"
+
+[[test]]
+gen = "gen_peak"
+args = ["--n", "100000", "--seed", "{i}"]
+repeat = 3
+subtask = "2"
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_ternary]
+expect = "AC"
+
+[solutions.brute_linear]
+score = 30
+subtasks = { "1" = "AC", "2" = "WA" }
+
+[solutions.deadlock_no_flush]
+expect = "ILE"
+"#,
+    ),
+    (
+        "problems/hidden-peak/statement.md",
+        r##"这是一道**交互题**。
+
+评测机隐藏了一个长度为 $n$（$3 \le n \le 10^5$）的**严格单峰数组** $a_1, a_2, \dots, a_n$，存在唯一峰顶 $p$（$2 \le p \le n - 1$）满足 $a_1 < \dots < a_p > \dots > a_n$。你需要通过询问找出 $p$。
+
+## 交互方式
+
+首先从标准输入读入两个整数 $n, Q$。之后可执行：
+
+- `? i`（$1 \le i \le n$）：询问 $a_i$，交互器返回一个整数。
+- `! p`（$1 \le p \le n$）：提交峰顶下标并退出程序。
+
+每次输出后务必刷新缓冲区（如 `std::endl`），否则会触发 `ILE`。
+
+## 子任务
+
+- **子任务 1（30 分）**：$3 \le n \le 20$，$Q = 20$。
+- **子任务 2（70 分）**：$3 \le n \le 10^5$，$Q = 40$，依赖子任务 1。
+"##,
+    ),
+    (
+        "problems/hidden-peak/editorial.md",
+        r##"对下标区间 $[l, r]$ 二分，每次询问 $a_{\text{mid}}$ 与 $a_{\text{mid}+1}$：若 $a_{\text{mid}} < a_{\text{mid}+1}$ 则令 $l = \text{mid} + 1$，否则令 $r = \text{mid}$。总询问次数不超过 $2\lceil \log_2 n \rceil \le 34$。
+"##,
+    ),
+    (
+        "problems/secret-relay/problem.toml",
+        r#"title = "双轮密信中继"
+rating = 1800
+tags = ["interactive", "communication", "bitmasks"]
+group = "本地出题包"
+author = "XCPC 命题组"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "secret-relay"
+
+[package]
+runs = 2
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "8", "--flip", "0", "--seed", "1"]
+tag = "clean"
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "16", "--seed", "{i}"]
+repeat = 2
+tag = "small"
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "64", "--seed", "{i}"]
+repeat = 2
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_hamming]
+expect = "AC"
+
+[solutions.wa_raw]
+expect = "WA"
+
+[solutions.ile_hang]
+expect = "ILE"
+"#,
+    ),
+    (
+        "problems/secret-relay/statement.md",
+        r##"这是一道**两轮通信题**（`runs = 2`）。你的程序会被独立运行两次：
+
+1. **第 1 轮（编码端）**：收到长度为 $n$（$1 \le n \le 64$）的 01 串 $s$，输出长度不超过 $n + 8$ 的编码 01 串 $c$。
+2. 中继信道对 $c$ 进行至多 **1 位翻转**，得到受损串 $c'$。
+3. **第 2 轮（解码端）**：程序重新启动，收到 $n$ 与 $c'$，还原并输出原串 $s$。
+
+## 交互方式
+
+每轮第一行为阶段标识 `encode` 或 `decode`，第二行为 `n` 与对应 01 串；输出一行结果并刷新缓冲区后退出。两轮 CPU 时间累计计入时限。
+"##,
+    ),
+    (
+        "problems/secret-relay/editorial.md",
+        r##"使用标准汉明码：在 1-based 的 $2^0, 2^1, \dots$ 位置放置校验位，其余位置顺序填入原串 $s$。第 2 轮计算各校验组异或和即得翻转位的 1-based 下标（为 0 则无错），纠错后提取数据位即可。
+"##,
+    ),
+    (
+        "problems/weighted-walk/problem.toml",
+        r#"title = "带权阶梯漫步"
+rating = 1700
+tags = ["math", "subtasks", "partial-score"]
+group = "本地出题包"
+author = "XCPC 命题组"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "weighted-walk"
+
+[package]
+checker = "checker.cpp"
+
+[[subtask]]
+id = "1"
+score = 30
+scoring = "min"
+
+[[subtask]]
+id = "2"
+score = 70
+depends = ["1"]
+scoring = "min"
+
+[[test]]
+gen = "gen_n"
+args = ["--lo", "1", "--hi", "10", "--seed", "{i}"]
+repeat = 2
+subtask = "1"
+tag = "small"
+
+[[test]]
+gen = "gen_n"
+args = ["--lo", "100", "--hi", "100000", "--seed", "{i}"]
+repeat = 2
+subtask = "2"
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_loop]
+expect = "AC"
+
+[solutions.brute]
+score = 30
+subtasks = { "1" = "AC", "2" = "WA" }
+
+[solutions.approx_half]
+score = [60, 70]
+"#,
+    ),
+    (
+        "problems/weighted-walk/statement.md",
+        r##"给定正整数 $n$（$1 \le n \le 10^5$），求 $\sum_{i=1}^{n} i$。本题配有自定义 `checker.cpp`：若输出与最优答案相差恰好为 $1$，则通过 `quitp(0.5)` 获得该测试点 $50\%$ 的部分分。
+
+## 输入格式
+
+一行一个正整数 $n$。
+
+## 输出格式
+
+一行一个整数表示答案。
+
+## 子任务
+
+- **子任务 1（30 分）**：$1 \le n \le 10$。
+- **子任务 2（70 分）**：$1 \le n \le 10^5$，依赖子任务 1。
+"##,
+    ),
+    (
+        "problems/weighted-walk/editorial.md",
+        r##"直接使用等差数列求和公式 $\frac{n(n+1)}{2}$（注意使用 64 位整数）。`approx_half` 演示了在子任务 2 上触发 `quitp(0.5)` 从而获得 $30 + 70 \times 0.5 = 65$ 分的效果。
+"##,
+    ),
+    // =========================================================================
+    // Library Showcase Problems (5 lightweight bank problems across 2 groups)
+    // =========================================================================
+    (
+        "problems/bipartite-coloring/problem.toml",
+        r#"title = "二分图染色"
+rating = 1300
+tags = ["graphs", "bfs", "bipartite"]
+group = "省赛候选"
+
+[limits]
+time = "1s"
+memory = "256MB"
+
+[[source]]
+platform = "codeforces"
+id = "1144F"
+"#,
+    ),
+    (
+        "problems/bipartite-coloring/statement.md",
+        r##"给定一张包含 $n$ 个点、$m$ 条边的无向简单图，判断它是否为二分图；若是，输出一组合法的 $1/2$ 染色方案。
+
+## 输入格式
+
+第一行两个整数 $n, m$（$1 \le n, m \le 2 \times 10^5$）。接下来 $m$ 行每行两个整数 $u, v$ 表示一条无向边。
+
+## 输出格式
+
+若不是二分图输出 `NO`；否则第一行输出 `YES`，第二行输出 $n$ 个整数（$1$ 或 $2$）。
+"##,
+    ),
+    (
+        "problems/bipartite-coloring/editorial.md",
+        r##"对每个连通分量运行一次 BFS/DFS 交替染色，若发现同色邻接点则无解，时间复杂度 $O(n + m)$。
+"##,
+    ),
+    (
+        "problems/flow-network-cut/problem.toml",
+        r#"title = "网络最小割"
+rating = 2200
+tags = ["flows", "graphs", "min-cut"]
+group = "省赛候选"
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[[source]]
+platform = "atcoder"
+id = "abc326_g"
+"#,
+    ),
+    (
+        "problems/flow-network-cut/statement.md",
+        r##"给定一张有向网络，包含 $n$ 个点（源点 $1$、汇点 $n$）与 $m$ 条带非负容量的有向边，求从 $1$ 到 $n$ 的最小割容量。
+
+## 输入格式
+
+第一行两个整数 $n, m$（$2 \le n \le 200$，$1 \le m \le 5000$）。接下来 $m$ 行每行三个整数 $u, v, c$。
+
+## 输出格式
+
+输出一个整数表示最小割容量。
+"##,
+    ),
+    (
+        "problems/flow-network-cut/editorial.md",
+        r##"由最大流最小割定理，直接运行 Dinic 算法求最大流即可，时间复杂度 $O(n^2 m)$。
+"##,
+    ),
+    (
+        "problems/suffix-automaton-lcp/problem.toml",
+        r#"title = "后缀自动机最长公共前缀"
+rating = 2500
+tags = ["strings", "sam", "data-structures"]
+group = "省赛候选"
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[[source]]
+platform = "qoj"
+id = "8412"
+"#,
+    ),
+    (
+        "problems/suffix-automaton-lcp/statement.md",
+        r##"给定一个仅含小写英文字母的字符串 $S$（$|S| \le 2 \times 10^5$）与 $q$ 次询问，每次给出两个起始位置 $i, j$，求后缀 $S[i\dots]$ 与 $S[j\dots]$ 的最长公共前缀长度。
+
+## 输入格式
+
+第一行字符串 $S$，第二行整数 $q$，接下来 $q$ 行每行两个整数 $i, j$。
+
+## 输出格式
+
+输出 $q$ 行，每行一个整数表示对应 LCP 长度。
+"##,
+    ),
+    (
+        "problems/suffix-automaton-lcp/editorial.md",
+        r##"对反串建后缀自动机（SAM），两个原串后缀的 LCP 等价于反串前缀在 parent tree 上 LCA 的 `len` 值。
+"##,
+    ),
+    (
+        "problems/bracket-balance/problem.toml",
+        r#"title = "括号匹配修复"
+rating = 1100
+tags = ["greedy", "stacks"]
+group = "待整理"
+
+[limits]
+time = "1s"
+memory = "256MB"
+
+[[source]]
+platform = "codeforces"
+id = "1214C"
+"#,
+    ),
+    (
+        "problems/bracket-balance/statement.md",
+        r##"给定一个长度为 $n$（$n$ 为偶数）的括号串，每次操作可以翻转任意一个位置的括号方向，求使其变为合法括号序列的最少操作次数。
+
+## 输入格式
+
+第一行一个偶数 $n$（$2 \le n \le 2 \times 10^5$），第二行一个长度为 $n$ 的括号串。
+
+## 输出格式
+
+输出一个整数表示最少翻转次数。
+"##,
+    ),
+    (
+        "problems/sliding-window-median/problem.toml",
+        r#"title = "滑动窗口中位数"
+tags = ["data-structures", "two-pointers"]
+group = "待整理"
+
+[limits]
+time = "1s"
+memory = "256MB"
+"#,
+    ),
+    (
+        "problems/sliding-window-median/statement.md",
+        r##"给定长度为 $n$ 的整数序列 $a$ 与窗口大小 $k$（$k$ 为奇数），依次输出每个长度为 $k$ 的连续子数组的中位数。
+
+## 输入格式
+
+第一行两个整数 $n, k$（$1 \le k \le n \le 2 \times 10^5$），第二行 $n$ 个整数 $a_1, \dots, a_n$。
+
+## 输出格式
+
+输出 $n - k + 1$ 个整数，以空格分隔。
+"##,
+    ),
+    // =========================================================================
+    // Contests: XCPC (`olymp-classic`) & CNOI (`cnoi-classic`, all 4 packaged)
     // =========================================================================
     (
         "contests/welcome-round/contest.toml",
@@ -1098,45 +1569,63 @@ id = "typst-showcase"
     (
         "contests/oi-mock/contest.toml",
         r#"name = "2026 CCF 非专业级软件能力认证（示例）"
-location = "CSP-S 模拟第二轮认证 提高级"
-date = "2026 年 11 月 22 日 14:30 ~ 18:30"
+location = "CSP-S 模拟第二轮认证 · 完整可导出数据包"
+date = "2026 年 11 月 24 日 14:30 ~ 18:30"
 language = "chinese"
 template = "cnoi-classic"
 cover = true
 
 [[problem]]
 label = "A"
-id = "crc-check"
+id = "interval-sum"
 [problem.limits]
-time = "1.0 秒"
-memory = "512 MiB"
-input = "crc.in"
-output = "crc.out"
+time = "1s"
+memory = "256MB"
+input = "sum.in"
+output = "sum.out"
 
 [[problem]]
 label = "B"
-id = "tree-beacon"
+id = "weighted-walk"
 [problem.limits]
-time = "1.0 秒"
-memory = "512 MiB"
-input = "beacon.in"
-output = "beacon.out"
+time = "1s"
+memory = "256MB"
+input = "walk.in"
+output = "walk.out"
 
 [[problem]]
 label = "C"
-id = "typst-showcase"
+id = "hidden-peak"
 [problem.limits]
-time = "2.0 秒"
-memory = "512 MiB"
-input = "showcase.in"
-output = "showcase.out"
+time = "1s"
+memory = "256MB"
+input = "标准输入"
+output = "标准输出"
+
+[[problem]]
+label = "D"
+id = "secret-relay"
+[problem.limits]
+time = "1s"
+memory = "256MB"
+input = "标准输入"
+output = "标准输出"
 "#,
     ),
 ];
 
+const EXAMPLE_GROUPS_ZH: &[&str] = &["出版精选", "本地出题包", "省赛候选", "待整理"];
+const EXAMPLE_GROUPS_EN: &[&str] = &[
+    "Publishing Showcase",
+    "Local Polygon",
+    "Regional Candidates",
+    "Inbox",
+];
+
 /// Initializes an XCPC workspace at `dir` and populates it with the embedded Chinese example
-/// contests (`welcome-round` in `olymp-classic`, `oi-mock` in `cnoi-classic`),
-/// `templates/preamble.typ`, and three problems (`crc-check`, `tree-beacon`, `typst-showcase`).
+/// workspace (12 problems across 4 groups, including 3 Typst showcases, 4 full `--strict`-passing
+/// Polygon packages covering traditional / interactive+subtasks / 2-run communication / OI quitp,
+/// 5 library showcase problems, and 2 contests: `welcome-round` and `oi-mock`).
 ///
 /// Existing files are left untouched so re-running is safe and idempotent.
 pub fn init_example_workspace(dir: impl AsRef<Path>) -> Result<Workspace> {
@@ -1155,10 +1644,10 @@ pub fn init_example_workspace_with_template(
 /// Initializes the built-in example workspace at `dir` in `language` (`Language::Chinese` or
 /// `Language::English`), with an optional default `template` written to `workspace.toml`.
 ///
-/// - `Language::Chinese`: materializes `olymp-classic` + `cnoi-classic` and seeds Chinese
-///   problems & contests (`welcome-round`, `oi-mock`).
-/// - `Language::English`: materializes `olymp-classic` + `minimal` and seeds English
-///   problems (`statement.en.md`) & contests (`welcome-round`, `minimal-round`).
+/// - `Language::Chinese`: materializes `olymp-classic` + `cnoi-classic` and seeds 12 Chinese
+///   problems, 4 groups, and 2 contests (`welcome-round`, `oi-mock`).
+/// - `Language::English`: materializes `olymp-classic` + `minimal` and seeds 12 English
+///   problems (`statement.en.md`), 4 groups, and 2 contests (`welcome-round`, `minimal-round`).
 ///
 /// Existing files are left untouched so re-running is safe and idempotent.
 pub fn init_example_workspace_with_options(
@@ -1167,10 +1656,23 @@ pub fn init_example_workspace_with_options(
     language: Language,
 ) -> Result<Workspace> {
     let ws = init_workspace_with_template(dir, template)?;
-    let (presets, files): (&[&str], &[(&str, &str)]) = match language {
-        Language::Chinese => (&["olymp-classic", "cnoi-classic"], EXAMPLE_FILES),
-        Language::English => (&["olymp-classic", "minimal"], EXAMPLE_FILES_EN),
+    let (presets, files, groups): (&[&str], &[(&str, &str)], &[&str]) = match language {
+        Language::Chinese => (
+            &["olymp-classic", "cnoi-classic"],
+            EXAMPLE_FILES,
+            EXAMPLE_GROUPS_ZH,
+        ),
+        Language::English => (
+            &["olymp-classic", "minimal"],
+            EXAMPLE_FILES_EN,
+            EXAMPLE_GROUPS_EN,
+        ),
     };
+    if ws.workspace_groups().is_empty() {
+        for &g in groups {
+            let _ = ws.ensure_group_registered(g);
+        }
+    }
     for &preset_id in presets {
         let rel = format!("templates/{preset_id}.typ");
         let abs = ws.resolve(&rel)?;
@@ -1180,7 +1682,7 @@ pub fn init_example_workspace_with_options(
             ws.write(&rel, src.as_bytes())?;
         }
     }
-    for &(rel, content) in files {
+    for &(rel, content) in files.iter().chain(SHARED_PACKAGE_FILES.iter()) {
         let abs = ws.resolve(rel)?;
         if fs::symlink_metadata(&abs).is_err() {
             ws.write(rel, content.as_bytes())?;

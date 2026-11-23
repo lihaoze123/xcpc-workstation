@@ -1210,7 +1210,24 @@ fn init_example_workspace_seeds_files_and_is_idempotent() {
     let ws = init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["crc-check", "tree-beacon", "typst-showcase"]
+        vec![
+            "bipartite-coloring",
+            "bracket-balance",
+            "crc-check",
+            "flow-network-cut",
+            "hidden-peak",
+            "interval-sum",
+            "secret-relay",
+            "sliding-window-median",
+            "suffix-automaton-lcp",
+            "tree-beacon",
+            "typst-showcase",
+            "weighted-walk",
+        ]
+    );
+    assert_eq!(
+        ws.workspace_groups(),
+        vec!["出版精选", "本地出题包", "省赛候选", "待整理"]
     );
     assert_eq!(
         ws.list_contests().unwrap(),

@@ -30,6 +30,7 @@ pub mod assets;
 pub mod edit;
 pub mod example;
 mod example_en;
+mod example_packages;
 pub mod index;
 pub mod watcher;
 

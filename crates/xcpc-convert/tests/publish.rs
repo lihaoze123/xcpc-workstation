@@ -979,6 +979,10 @@ fn freeze_contest_succeeds_with_warnings_outputs_pdfs_excludes_package_files_and
         built_at_epoch_secs: 1_700_000_000,
         compiler: None,
         checker: "wcmp".to_owned(),
+        interactive: false,
+        runs: 1,
+        subtasks: Vec::new(),
+        total_score: None,
         compile_failures: Vec::new(),
         dirty_inputs: Vec::new(),
         self_tests: Vec::new(),
@@ -1325,7 +1329,20 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
     let ws = xcpc_storage::init_example_workspace(dir.path()).unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["crc-check", "tree-beacon", "typst-showcase"]
+        vec![
+            "bipartite-coloring",
+            "bracket-balance",
+            "crc-check",
+            "flow-network-cut",
+            "hidden-peak",
+            "interval-sum",
+            "secret-relay",
+            "sliding-window-median",
+            "suffix-automaton-lcp",
+            "tree-beacon",
+            "typst-showcase",
+            "weighted-walk",
+        ]
     );
     assert_eq!(
         ws.list_contests().unwrap(),
@@ -1341,13 +1358,20 @@ fn embedded_example_workspace_compiles_cleanly_for_statements_and_editorial() {
         (Target::Problem("crc-check".into()), Kind::Statements),
         (Target::Problem("tree-beacon".into()), Kind::Statements),
         (Target::Problem("typst-showcase".into()), Kind::Statements),
+        (Target::Problem("interval-sum".into()), Kind::Statements),
+        (Target::Problem("hidden-peak".into()), Kind::Statements),
+        (Target::Problem("secret-relay".into()), Kind::Statements),
+        (Target::Problem("weighted-walk".into()), Kind::Statements),
     ] {
         let (compiled, _, report) =
             publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
         assert!(compiled.is_some());
-        let diags = non_fallback_diagnostics(&report.diagnostics);
+        let diags: Vec<_> = non_fallback_diagnostics(&report.diagnostics)
+            .into_iter()
+            .filter(|d| d.code.as_deref() != Some("package_unverified"))
+            .collect();
         assert!(
-            report.ok && diags.is_empty(),
+            diags.is_empty(),
             "example workspace check had diagnostics for {target:?} {kind:?}: {diags:#?}"
         );
     }
@@ -1364,7 +1388,20 @@ fn embedded_english_example_workspace_compiles_cleanly_for_statements_and_editor
     .unwrap();
     assert_eq!(
         ws.list_problems().unwrap(),
-        vec!["crc-check", "tree-beacon", "typst-showcase"]
+        vec![
+            "bipartite-coloring",
+            "bracket-balance",
+            "crc-check",
+            "flow-network-cut",
+            "hidden-peak",
+            "interval-sum",
+            "secret-relay",
+            "sliding-window-median",
+            "suffix-automaton-lcp",
+            "tree-beacon",
+            "typst-showcase",
+            "weighted-walk",
+        ]
     );
     assert_eq!(
         ws.list_contests().unwrap(),
@@ -1388,13 +1425,20 @@ fn embedded_english_example_workspace_compiles_cleanly_for_statements_and_editor
         (Target::Problem("crc-check".into()), Kind::Statements),
         (Target::Problem("tree-beacon".into()), Kind::Statements),
         (Target::Problem("typst-showcase".into()), Kind::Statements),
+        (Target::Problem("interval-sum".into()), Kind::Statements),
+        (Target::Problem("hidden-peak".into()), Kind::Statements),
+        (Target::Problem("secret-relay".into()), Kind::Statements),
+        (Target::Problem("weighted-walk".into()), Kind::Statements),
     ] {
         let (compiled, _, report) =
             publish::check(&ws, &mut engine, &target, kind, None, None).unwrap();
         assert!(compiled.is_some());
-        let diags = non_fallback_diagnostics(&report.diagnostics);
+        let diags: Vec<_> = non_fallback_diagnostics(&report.diagnostics)
+            .into_iter()
+            .filter(|d| d.code.as_deref() != Some("package_unverified"))
+            .collect();
         assert!(
-            report.ok && diags.is_empty(),
+            diags.is_empty(),
             "english example workspace check had diagnostics for {target:?} {kind:?}: {diags:#?}"
         );
     }

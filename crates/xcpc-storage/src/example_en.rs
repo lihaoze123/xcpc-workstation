@@ -50,6 +50,7 @@ pub(crate) const EXAMPLE_FILES_EN: &[(&str, &str)] = &[
         r#"title = "Cyclic Redundancy Check"
 rating = 1400
 tags = ["implementation", "bitmask", "crc", "typst"]
+group = "Publishing Showcase"
 
 [limits]
 time = "1s"
@@ -527,6 +528,7 @@ int main() {
         r#"title = "Tree Beacons"
 rating = 1900
 tags = ["trees", "dp", "heavy-light", "graph"]
+group = "Publishing Showcase"
 
 [limits]
 time = "1s"
@@ -775,6 +777,7 @@ int main() {
         r#"title = "Typst Typesetting & Graphics Showcase"
 rating = 2400
 tags = ["typst", "cetz", "pinit", "showcase"]
+group = "Publishing Showcase"
 
 [limits]
 time = "1s"
@@ -1054,7 +1057,474 @@ int main() {
 "##,
     ),
     // =========================================================================
-    // Contests: XCPC (`olymp-classic`) & Minimal (`minimal`)
+    // Local Polygon Packages (4 full --strict-passing packages)
+    // =========================================================================
+    (
+        "problems/interval-sum/problem.toml",
+        r#"title = "Range Sum Queries"
+rating = 900
+tags = ["prefix-sum", "implementation"]
+group = "Local Polygon"
+author = "XCPC Problem Committee"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "interval-sum"
+
+[package]
+checker = "ncmp"
+
+[[test]]
+gen = "gen_random"
+args = ["--n", "10", "--q", "10", "--seed", "{i}"]
+repeat = 2
+tag = "small"
+
+[[test]]
+gen = "gen_random"
+args = ["--n", "50000", "--q", "50000", "--seed", "{i}"]
+repeat = 2
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_fenwick]
+expect = "AC"
+
+[solutions.brute]
+expect = ["AC", "TLE"]
+tags = ["small"]
+
+[solutions.wa_int32]
+expect = "WA"
+"#,
+    ),
+    (
+        "problems/interval-sum/statement.en.md",
+        r##"Given an integer array $a_1, a_2, \dots, a_n$ and $q$ queries, each specifying an interval $[l, r]$, compute $\sum_{i=l}^{r} a_i$.
+
+## Input
+
+The first line contains two integers $n$ and $q$ ($1 \le n, q \le 10^5$).
+
+The second line contains $n$ integers $a_1, a_2, \dots, a_n$ ($-10^9 \le a_i \le 10^9$).
+
+Each of the next $q$ lines contains two integers $l$ and $r$ ($1 \le l \le r \le n$).
+
+## Output
+
+Output $q$ lines, each containing the sum over the corresponding interval.
+"##,
+    ),
+    (
+        "problems/interval-sum/editorial.md",
+        r##"Precompute 64-bit prefix sums $S_i = \sum_{j=1}^{i} a_j$ and answer each query in $O(1)$ as $S_r - S_{l-1}$. Beware 32-bit integer overflow.
+"##,
+    ),
+    (
+        "problems/hidden-peak/problem.toml",
+        r#"title = "Hidden Mountain Peak"
+rating = 1500
+tags = ["interactive", "binary-search", "subtasks"]
+group = "Local Polygon"
+author = "XCPC Problem Committee"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "hidden-peak"
+
+[package]
+
+[[subtask]]
+id = "1"
+score = 30
+scoring = "min"
+
+[[subtask]]
+id = "2"
+score = 70
+depends = ["1"]
+scoring = "min"
+
+[[test]]
+gen = "gen_peak"
+args = ["--n", "12", "--peak", "7", "--seed", "{i}"]
+repeat = 2
+subtask = "1"
+tag = "small"
+
+[[test]]
+gen = "gen_peak"
+args = ["--n", "100000", "--seed", "{i}"]
+repeat = 3
+subtask = "2"
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_ternary]
+expect = "AC"
+
+[solutions.brute_linear]
+score = 30
+subtasks = { "1" = "AC", "2" = "WA" }
+
+[solutions.deadlock_no_flush]
+expect = "ILE"
+"#,
+    ),
+    (
+        "problems/hidden-peak/statement.en.md",
+        r##"This is an **interactive problem**.
+
+The judge hides a strictly unimodal array $a_1, a_2, \dots, a_n$ ($3 \le n \le 10^5$) with a unique peak index $p$ ($2 \le p \le n - 1$) such that $a_1 < \dots < a_p > \dots > a_n$. Find $p$ within $Q$ queries.
+
+## Interaction
+
+Read two integers $n$ and $Q$ from standard input. Then issue:
+
+- `? i` ($1 \le i \le n$): query $a_i$; the interactor replies with a single integer.
+- `! p` ($1 \le p \le n$): report the peak index and terminate.
+
+Flush output after every line (e.g., `std::endl`), otherwise your program may receive `ILE`.
+
+## Subtasks
+
+- **Subtask 1 (30 points)**: $3 \le n \le 20$, $Q = 20$.
+- **Subtask 2 (70 points)**: $3 \le n \le 10^5$, $Q = 40$, depends on Subtask 1.
+"##,
+    ),
+    (
+        "problems/hidden-peak/editorial.md",
+        r##"Binary search on $[l, r]$ by comparing $a_{\text{mid}}$ and $a_{\text{mid}+1}$: if $a_{\text{mid}} < a_{\text{mid}+1}$ set $l = \text{mid} + 1$, else set $r = \text{mid}$. Uses at most $2\lceil \log_2 n \rceil \le 34$ queries.
+"##,
+    ),
+    (
+        "problems/secret-relay/problem.toml",
+        r#"title = "Two-Pass Secret Relay"
+rating = 1800
+tags = ["interactive", "communication", "bitmasks"]
+group = "Local Polygon"
+author = "XCPC Problem Committee"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "secret-relay"
+
+[package]
+runs = 2
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "8", "--flip", "0", "--seed", "1"]
+tag = "clean"
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "16", "--seed", "{i}"]
+repeat = 2
+tag = "small"
+
+[[test]]
+gen = "gen_msg"
+args = ["--n", "64", "--seed", "{i}"]
+repeat = 2
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_hamming]
+expect = "AC"
+
+[solutions.wa_raw]
+expect = "WA"
+
+[solutions.ile_hang]
+expect = "ILE"
+"#,
+    ),
+    (
+        "problems/secret-relay/statement.en.md",
+        r##"This is a **two-pass communication problem** (`runs = 2`). Your program is executed twice independently:
+
+1. **Pass 1 (Encoder)**: given a binary string $s$ of length $n$ ($1 \le n \le 64$), output an encoded binary string $c$ of length at most $n + 8$.
+2. The relay channel flips at most **1 bit** of $c$, producing $c'$.
+3. **Pass 2 (Decoder)**: started fresh with no memory from Pass 1, receive $n$ and $c'$ and recover $s$.
+
+## Interaction
+
+Each pass starts with a phase tag (`encode` or `decode`) on the first line and `n` plus the binary string on the second line. Output a single binary string, flush, and exit. Total CPU time is summed across both passes.
+"##,
+    ),
+    (
+        "problems/secret-relay/editorial.md",
+        r##"Use a standard Hamming code: place parity bits at 1-based powers of two and fill remaining slots with $s$. In Pass 2, XORing each parity group yields the 1-based flipped index (or 0 if intact).
+"##,
+    ),
+    (
+        "problems/weighted-walk/problem.toml",
+        r#"title = "Weighted Staircase Walk"
+rating = 1700
+tags = ["math", "subtasks", "partial-score"]
+group = "Local Polygon"
+author = "XCPC Problem Committee"
+
+[limits]
+time = "1s"
+memory = "256MB"
+input = ""
+output = ""
+
+[[source]]
+platform = "polygon"
+id = "weighted-walk"
+
+[package]
+checker = "checker.cpp"
+
+[[subtask]]
+id = "1"
+score = 30
+scoring = "min"
+
+[[subtask]]
+id = "2"
+score = 70
+depends = ["1"]
+scoring = "min"
+
+[[test]]
+gen = "gen_n"
+args = ["--lo", "1", "--hi", "10", "--seed", "{i}"]
+repeat = 2
+subtask = "1"
+tag = "small"
+
+[[test]]
+gen = "gen_n"
+args = ["--lo", "100", "--hi", "100000", "--seed", "{i}"]
+repeat = 2
+subtask = "2"
+tag = "large"
+
+[solutions.std]
+main = true
+
+[solutions.alt_loop]
+expect = "AC"
+
+[solutions.brute]
+score = 30
+subtasks = { "1" = "AC", "2" = "WA" }
+
+[solutions.approx_half]
+score = [60, 70]
+"#,
+    ),
+    (
+        "problems/weighted-walk/statement.en.md",
+        r##"Given a positive integer $n$ ($1 \le n \le 10^5$), compute $\sum_{i=1}^{n} i$. This problem includes a custom `checker.cpp` that awards $50\%$ partial credit via `quitp(0.5)` if your answer differs from the optimal value by exactly $1$.
+
+## Input
+
+A single positive integer $n$.
+
+## Output
+
+A single integer.
+
+## Subtasks
+
+- **Subtask 1 (30 points)**: $1 \le n \le 10$.
+- **Subtask 2 (70 points)**: $1 \le n \le 10^5$, depends on Subtask 1.
+"##,
+    ),
+    (
+        "problems/weighted-walk/editorial.md",
+        r##"Evaluate $\frac{n(n+1)}{2}$ in 64-bit arithmetic. Solution `approx_half` intentionally returns $\text{ans} - 1$ on Subtask 2 to demonstrate `quitp(0.5)` scoring $30 + 70 \times 0.5 = 65$.
+"##,
+    ),
+    // =========================================================================
+    // Library Showcase Problems (5 lightweight bank problems across 2 groups)
+    // =========================================================================
+    (
+        "problems/bipartite-coloring/problem.toml",
+        r#"title = "Bipartite Coloring"
+rating = 1300
+tags = ["graphs", "bfs", "bipartite"]
+group = "Regional Candidates"
+
+[limits]
+time = "1s"
+memory = "256MB"
+
+[[source]]
+platform = "codeforces"
+id = "1144F"
+"#,
+    ),
+    (
+        "problems/bipartite-coloring/statement.en.md",
+        r##"Given a simple undirected graph with $n$ vertices and $m$ edges, determine whether it is bipartite; if so, output any valid $1/2$ vertex coloring.
+
+## Input
+
+The first line contains $n$ and $m$ ($1 \le n, m \le 2 \times 10^5$), followed by $m$ edges $u, v$.
+
+## Output
+
+Print `NO` if not bipartite; otherwise print `YES` and $n$ colors in $\{1, 2\}$.
+"##,
+    ),
+    (
+        "problems/bipartite-coloring/editorial.md",
+        r##"Run BFS/DFS 2-coloring on each connected component in $O(n + m)$ time.
+"##,
+    ),
+    (
+        "problems/flow-network-cut/problem.toml",
+        r#"title = "Minimum Network Cut"
+rating = 2200
+tags = ["flows", "graphs", "min-cut"]
+group = "Regional Candidates"
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[[source]]
+platform = "atcoder"
+id = "abc326_g"
+"#,
+    ),
+    (
+        "problems/flow-network-cut/statement.en.md",
+        r##"Given a directed capacitated network with $n$ vertices (source $1$, sink $n$) and $m$ edges, find the minimum $1$–$n$ cut capacity.
+
+## Input
+
+The first line contains $n$ and $m$ ($2 \le n \le 200$, $1 \le m \le 5000$), followed by $m$ triples $u, v, c$.
+
+## Output
+
+Output a single integer, the minimum cut capacity.
+"##,
+    ),
+    (
+        "problems/flow-network-cut/editorial.md",
+        r##"By the max-flow min-cut theorem, compute maximum flow using Dinic's algorithm in $O(n^2 m)$.
+"##,
+    ),
+    (
+        "problems/suffix-automaton-lcp/problem.toml",
+        r#"title = "Suffix Automaton LCP"
+rating = 2500
+tags = ["strings", "sam", "data-structures"]
+group = "Regional Candidates"
+
+[limits]
+time = "2s"
+memory = "512MB"
+
+[[source]]
+platform = "qoj"
+id = "8412"
+"#,
+    ),
+    (
+        "problems/suffix-automaton-lcp/statement.en.md",
+        r##"Given a lowercase string $S$ ($|S| \le 2 \times 10^5$) and $q$ queries $(i, j)$, compute the longest common prefix length of suffixes $S[i\dots]$ and $S[j\dots]$.
+
+## Input
+
+First line $S$, second line $q$, followed by $q$ pairs $(i, j)$.
+
+## Output
+
+Output $q$ lines with the LCP lengths.
+"##,
+    ),
+    (
+        "problems/suffix-automaton-lcp/editorial.md",
+        r##"Build a Suffix Automaton on the reversed string; the LCP of two suffixes equals the `len` of their LCA in the parent tree.
+"##,
+    ),
+    (
+        "problems/bracket-balance/problem.toml",
+        r#"title = "Bracket Balance Repair"
+rating = 1100
+tags = ["greedy", "stacks"]
+group = "Inbox"
+
+[limits]
+time = "1s"
+memory = "256MB"
+
+[[source]]
+platform = "codeforces"
+id = "1214C"
+"#,
+    ),
+    (
+        "problems/bracket-balance/statement.en.md",
+        r##"Given an even-length bracket string of length $n$, compute the minimum number of single-character flips needed to make it a regular bracket sequence.
+
+## Input
+
+First line an even integer $n$ ($2 \le n \le 2 \times 10^5$), second line the bracket string.
+
+## Output
+
+A single integer, the minimum number of flips.
+"##,
+    ),
+    (
+        "problems/sliding-window-median/problem.toml",
+        r#"title = "Sliding Window Median"
+tags = ["data-structures", "two-pointers"]
+group = "Inbox"
+
+[limits]
+time = "1s"
+memory = "256MB"
+"#,
+    ),
+    (
+        "problems/sliding-window-median/statement.en.md",
+        r##"Given an array $a$ of length $n$ and an odd window size $k$, output the median of every contiguous subarray of length $k$.
+
+## Input
+
+First line $n$ and $k$ ($1 \le k \le n \le 2 \times 10^5$), second line $n$ integers.
+
+## Output
+
+Output $n - k + 1$ space-separated medians.
+"##,
+    ),
+    // =========================================================================
+    // Contests: XCPC (`olymp-classic`) & Minimal (`minimal`, all 4 packaged)
     // =========================================================================
     (
         "contests/welcome-round/contest.toml",
@@ -1079,8 +1549,8 @@ id = "typst-showcase"
     ),
     (
         "contests/minimal-round/contest.toml",
-        r#"name = "XCPC Workstation Minimal Sample"
-location = "Minimal Template Showcase"
+        r#"name = "Local Polygon Exportable Round"
+location = "Minimal Template · Ready for DOMjudge / Hydro Export"
 date = "November 2026"
 language = "english"
 template = "minimal"
@@ -1088,15 +1558,19 @@ cover = true
 
 [[problem]]
 label = "A"
-id = "crc-check"
+id = "interval-sum"
 
 [[problem]]
 label = "B"
-id = "tree-beacon"
+id = "weighted-walk"
 
 [[problem]]
 label = "C"
-id = "typst-showcase"
+id = "hidden-peak"
+
+[[problem]]
+label = "D"
+id = "secret-relay"
 "#,
     ),
 ];

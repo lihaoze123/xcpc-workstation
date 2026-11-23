@@ -233,12 +233,15 @@ fn polygon_single_problem_import_full() {
     assert_eq!(p.assets_count, 1);
 
     // Check structured warnings emitted for unsupported/fallback features.
+    // Phase 3C supports <groups> and <interactor>, so those Phase 3B placeholder warnings are gone.
     let warn_codes: Vec<&str> = res.warnings.iter().map(|w| w.code.as_str()).collect();
-    assert!(warn_codes.contains(&"subtasks_preserved"));
-    assert!(warn_codes.contains(&"interactive_not_supported"));
+    assert!(!warn_codes.contains(&"subtasks_preserved"));
+    assert!(!warn_codes.contains(&"interactive_not_supported"));
     assert!(warn_codes.contains(&"non_cpp_program"));
     assert!(warn_codes.contains(&"fallback_static_test"));
     assert!(warn_codes.contains(&"latex_fallback_typst"));
+    assert!(p.has_interactor);
+    assert_eq!(p.subtasks_count, 1);
 
     // Verify loaded problem metadata & files in workspace.
     let loaded = ws.load_problem("a-plus-b").unwrap();
@@ -437,6 +440,8 @@ fn seed_verifiable_problem(ws: &Workspace, slug: &str, custom_checker: bool) {
             main: Some(true),
             expect: Some(ExpectVerdict::Single("AC".to_owned())),
             tags: None,
+            score: None,
+            subtasks: BTreeMap::new(),
         },
     );
     solutions.insert(
@@ -445,6 +450,8 @@ fn seed_verifiable_problem(ws: &Workspace, slug: &str, custom_checker: bool) {
             main: None,
             expect: Some(ExpectVerdict::Single("WA".to_owned())),
             tags: None,
+            score: None,
+            subtasks: BTreeMap::new(),
         },
     );
 
@@ -458,6 +465,7 @@ fn seed_verifiable_problem(ws: &Workspace, slug: &str, custom_checker: bool) {
         },
         package: Some(PackageConfig {
             checker: Some(checker_name.to_owned()),
+            runs: None,
         }),
         test: vec![TestSpec {
             file: Some("tests/01.in".into()),
@@ -1293,4 +1301,347 @@ fn batch_export_oj_mixed_gates_cancellation_and_readonly() {
     let ro_err = export_oj_packages_batch(&ro_ws, &["pkg-verified".to_owned()], &opts, None, None)
         .unwrap_err();
     assert_eq!(ro_err.code(), "read_only");
+}
+
+#[test]
+fn polygon_import_interactive_multirun_and_subtasks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = init_workspace(tmp.path().join("ws").as_path()).unwrap();
+    let zip_path = tmp.path().join("poly-3c.zip");
+
+    let problem_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<problem short-name="guess-num" url="https://polygon.codeforces.com/p/guess-num">
+  <names>
+    <name language="chinese" value="猜数交互"/>
+  </names>
+  <judging input-file="" output-file="" run-count="2">
+    <testset name="tests">
+      <time-limit>1000</time-limit>
+      <memory-limit>268435456</memory-limit>
+      <test-count>4</test-count>
+      <input-path-pattern>tests/%02d</input-path-pattern>
+      <answer-path-pattern>tests/%02d.a</answer-path-pattern>
+      <tests>
+        <test method="manual" sample="true" group="0"/>
+        <test method="generated" cmd="gen_small 1" group="1"/>
+        <test method="generated" cmd="gen_full 1" group="2"/>
+        <test method="manual" group="2"/>
+      </tests>
+      <groups>
+        <group name="0" feedback-policy="complete" points-policy="complete-group" points="0"/>
+        <group name="1" feedback-policy="icpc" points-policy="complete-group" points="30"/>
+        <group name="2" feedback-policy="points" points-policy="each-test" points="70">
+          <dependencies>
+            <dependency group="0"/>
+            <dependency group="1"/>
+          </dependencies>
+        </group>
+      </groups>
+    </testset>
+  </judging>
+  <files>
+    <executables>
+      <executable><source path="files/gen_small.cpp" type="cpp.g++20"/></executable>
+      <executable><source path="files/gen_full.cpp" type="cpp.g++20"/></executable>
+    </executables>
+  </files>
+  <assets>
+    <interactor>
+      <source path="files/my_interactor.cpp" type="cpp.g++20"/>
+    </interactor>
+    <solutions>
+      <solution tag="main"><source path="solutions/std.cpp" type="cpp.g++20"/></solution>
+    </solutions>
+  </assets>
+</problem>"#;
+
+    let files: Vec<(&str, &[u8])> = vec![
+        ("problem.xml", problem_xml.as_bytes()),
+        (
+            "statement-sections/chinese/legend.tex",
+            b"Guess the hidden number.",
+        ),
+        (
+            "statement-sections/chinese/interaction.tex",
+            b"Print your guess and flush.",
+        ),
+        ("tests/01", b"5\n"),
+        ("tests/01.a", b"5\n"),
+        ("tests/04", b"42\n"),
+        ("files/gen_small.cpp", b"int main(){}\n"),
+        ("files/gen_full.cpp", b"int main(){}\n"),
+        ("files/my_interactor.cpp", b"// cpp interactor\n"),
+        ("solutions/std.cpp", b"int main(){}\n"),
+    ];
+    create_zip(&zip_path, &files);
+
+    let res = import_polygon(&ws, &zip_path, &PolygonImportOptions::default()).unwrap();
+    assert_eq!(res.problems.len(), 1);
+    let p = &res.problems[0];
+    assert_eq!(p.id, "guess-num");
+    assert!(p.has_interactor);
+    assert_eq!(p.runs, Some(2));
+    assert_eq!(p.subtasks_count, 2);
+
+    let warn_codes: Vec<&str> = res.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert!(!warn_codes.contains(&"subtasks_preserved"));
+    assert!(!warn_codes.contains(&"interactive_not_supported"));
+
+    // Interactor is normalized to `interactor.cpp`.
+    assert!(
+        ws.resolve("problems/guess-num/interactor.cpp")
+            .unwrap()
+            .is_file()
+    );
+
+    let loaded = ws.load_problem("guess-num").unwrap();
+    assert_eq!(loaded.meta.run_count(), 2);
+    assert_eq!(loaded.meta.package.as_ref().unwrap().checker, None);
+    assert_eq!(loaded.meta.subtask.len(), 2);
+    assert_eq!(loaded.meta.subtask[0].id, "1");
+    assert_eq!(loaded.meta.subtask[0].score, 30);
+    assert_eq!(
+        loaded.meta.subtask[0].scoring,
+        xcpc_domain::SubtaskScoring::Min
+    );
+    assert!(loaded.meta.subtask[0].depends.is_empty());
+
+    assert_eq!(loaded.meta.subtask[1].id, "2");
+    assert_eq!(loaded.meta.subtask[1].score, 70);
+    assert_eq!(
+        loaded.meta.subtask[1].scoring,
+        xcpc_domain::SubtaskScoring::Sum
+    );
+    // Dropped sample-only group "0" should be pruned from depends; "1" remains.
+    assert_eq!(loaded.meta.subtask[1].depends, vec!["1".to_owned()]);
+
+    assert_eq!(loaded.meta.test.len(), 3);
+    assert_eq!(loaded.meta.test[0].subtask.as_deref(), Some("1"));
+    assert_eq!(loaded.meta.test[1].subtask.as_deref(), Some("2"));
+    assert_eq!(loaded.meta.test[2].subtask.as_deref(), Some("2"));
+}
+
+#[test]
+fn export_hydro_and_domjudge_interactive_subtasks_and_runs_warnings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = init_workspace(tmp.path().join("ws").as_path()).unwrap();
+    let slug = "inter-oi";
+
+    // Build an interactive + multi-run (runs=2) + OI subtasks problem.
+    let mut solutions = BTreeMap::new();
+    solutions.insert(
+        "std".to_owned(),
+        SolutionSpec {
+            main: Some(true),
+            expect: Some(ExpectVerdict::Single("AC".to_owned())),
+            tags: None,
+            score: None,
+            subtasks: BTreeMap::new(),
+        },
+    );
+    let meta = ProblemMeta {
+        title: "Interactive Subtasks".to_owned(),
+        limits: Limits {
+            time: Some("1s".into()),
+            memory: Some("256MB".into()),
+            ..Default::default()
+        },
+        package: Some(PackageConfig {
+            checker: None,
+            runs: Some(2),
+        }),
+        subtask: vec![
+            xcpc_domain::SubtaskSpec {
+                id: "1".to_owned(),
+                score: 30,
+                depends: vec![],
+                scoring: xcpc_domain::SubtaskScoring::Min,
+            },
+            xcpc_domain::SubtaskSpec {
+                id: "2".to_owned(),
+                score: 70,
+                depends: vec!["1".to_owned()],
+                scoring: xcpc_domain::SubtaskScoring::Sum,
+            },
+        ],
+        test: vec![
+            TestSpec {
+                file: Some("tests/01.in".into()),
+                subtask: Some("1".into()),
+                ..Default::default()
+            },
+            TestSpec {
+                file: Some("tests/02.in".into()),
+                subtask: Some("2".into()),
+                ..Default::default()
+            },
+        ],
+        solutions,
+        ..Default::default()
+    };
+    ws.save_problem_meta(slug, &meta).unwrap();
+    ws.write(
+        &format!("problems/{slug}/statement.zh.md"),
+        "交互题测试。\n\n## 交互方式\n\n读入一个数并输出它。\n\n## 子任务\n\n子任务 1 30 分，子任务 2 70 分。\n"
+            .as_bytes(),
+    )
+    .unwrap();
+    ws.write(&format!("problems/{slug}/tests/01.in"), b"7\n")
+        .unwrap();
+    ws.write(&format!("problems/{slug}/tests/02.in"), b"42\n")
+        .unwrap();
+    ws.write(
+        &format!("problems/{slug}/validator.cpp"),
+        br#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerValidation(argc, argv);
+    inf.readInt(1, 100, "x");
+    inf.readEoln();
+    inf.readEof();
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    ws.write(
+        &format!("problems/{slug}/tests/validator/valid/01.in"),
+        b"5\n",
+    )
+    .unwrap();
+    ws.write(
+        &format!("problems/{slug}/tests/validator/invalid/01.in"),
+        b"999\n",
+    )
+    .unwrap();
+    ws.write(
+        &format!("problems/{slug}/interactor.cpp"),
+        br#"#include "testlib.h"
+#include <iostream>
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int x = inf.readInt();
+    std::cout << x << std::endl;
+    int y = ouf.readInt();
+    if (y != x) quitf(_wa, "expected %d, got %d", x, y);
+    tout << x << "\n";
+    quitf(_ok, "ok");
+}
+"#,
+    )
+    .unwrap();
+    ws.write(
+        &format!("problems/{slug}/solutions/std.cpp"),
+        br#"#include <iostream>
+int main() {
+    int x;
+    if (std::cin >> x) std::cout << x << std::endl;
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+
+    let build_res = xcpc_judge::build_package(
+        &ws,
+        slug,
+        &BuildOptions {
+            mode: BuildMode::Verify,
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(build_res.verified, "gates={:?}", build_res.gates);
+
+    // 1. Hydro export: interactive + subtasks + runs warning (no checker warning).
+    let hydro_zip = tmp.path().join("inter-oi-hydro.zip");
+    let hydro_res = export_oj_package(
+        &ws,
+        &ExportTarget::Problem(slug.to_owned()),
+        &ExportOjOptions {
+            format: OjFormat::Hydro,
+            output_path: hydro_zip.clone(),
+            force: false,
+            language: None,
+        },
+    )
+    .unwrap();
+    let hydro_warns: Vec<&str> = hydro_res.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert!(
+        hydro_warns.contains(&"hydro_multi_run_unsupported"),
+        "{hydro_warns:?}"
+    );
+    assert!(!hydro_warns.contains(&"hydro_interactive_checker_ignored"));
+
+    let hydro_entries = read_zip_entries(&hydro_zip);
+    assert!(hydro_entries.contains_key("testdata/interactor.cpp"));
+    assert!(hydro_entries.contains_key("testdata/testlib.h"));
+    let cfg = String::from_utf8(hydro_entries["testdata/config.yaml"].0.clone()).unwrap();
+    assert!(cfg.contains("type: interactive\n"), "{cfg}");
+    assert!(cfg.contains("interactor: interactor.cpp\n"), "{cfg}");
+    assert!(cfg.contains("subtasks:\n"), "{cfg}");
+    assert!(cfg.contains("  - score: 30\n    type: min\n"), "{cfg}");
+    assert!(
+        cfg.contains("  - score: 70\n    type: sum\n    if:\n      - 1\n"),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("input: 01.in\n        output: 01.out\n"),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("input: 02.in\n        output: 02.out\n"),
+        "{cfg}"
+    );
+
+    // 2. DOMjudge export: also add a standalone checker.cpp to verify explicit checker warning.
+    ws.write(
+        &format!("problems/{slug}/checker.cpp"),
+        b"// dummy standalone checker\n",
+    )
+    .unwrap();
+    let dj_zip = tmp.path().join("inter-oi-dj.zip");
+    let dj_res = export_oj_package(
+        &ws,
+        &ExportTarget::Problem(slug.to_owned()),
+        &ExportOjOptions {
+            format: OjFormat::Domjudge,
+            output_path: dj_zip.clone(),
+            force: true,
+            language: None,
+        },
+    )
+    .unwrap();
+    let dj_warns: Vec<&str> = dj_res.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert!(
+        dj_warns.contains(&"domjudge_interactive_checker_ignored"),
+        "{dj_warns:?}"
+    );
+    assert!(
+        dj_warns.contains(&"domjudge_multi_run_unsupported"),
+        "{dj_warns:?}"
+    );
+    assert!(
+        dj_warns.contains(&"domjudge_subtasks_flattened"),
+        "{dj_warns:?}"
+    );
+
+    let dj_entries = read_zip_entries(&dj_zip);
+    let prob_yaml = String::from_utf8(dj_entries["problem.yaml"].0.clone()).unwrap();
+    assert!(
+        prob_yaml.contains("validation: custom interactive\n"),
+        "{prob_yaml}"
+    );
+    assert!(dj_entries.contains_key("output_validators/interactor/interactor.cpp"));
+    assert!(dj_entries.contains_key("output_validators/interactor/testlib.h"));
+    assert!(dj_entries.contains_key("output_validators/interactor/build"));
+    let run_sh =
+        String::from_utf8(dj_entries["output_validators/interactor/run"].0.clone()).unwrap();
+    assert!(run_sh.contains("exit 42"), "{run_sh}");
+    assert!(run_sh.contains("exit 43"), "{run_sh}");
+    assert!(run_sh.contains("-eq 4"), "{run_sh}");
+    assert!(run_sh.contains("-eq 8"), "{run_sh}");
+    assert!(dj_entries.contains_key("data/secret/01.in"));
+    assert!(dj_entries.contains_key("data/secret/02.in"));
 }

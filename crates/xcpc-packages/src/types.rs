@@ -80,6 +80,12 @@ pub struct ImportedProblemSummary {
     pub generators_count: usize,
     pub solutions_count: usize,
     pub has_validator: bool,
+    #[serde(default)]
+    pub has_interactor: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u32>,
+    #[serde(default)]
+    pub subtasks_count: usize,
     pub checker: String,
     pub assets_count: usize,
 }
