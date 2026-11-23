@@ -833,3 +833,98 @@ export function countTestsInRule(
   if (!expandedTests || ruleIndex == null) return 0;
   return expandedTests.filter((t) => t.rule_index === ruleIndex).length;
 }
+
+export interface LogicalTestGroup {
+  id: string;
+  kind: "samples" | "rule";
+  ruleIndex: number | null;
+  label: string;
+  tests: TestSummaryData[];
+  hasValidatorFail: boolean;
+}
+
+/**
+ * Groups expanded test cases into clean logical tree entries:
+ * - One `samples` group (if any sample exists)
+ * - One `rule` group per `[[test]]` rule (single hand test shows its name; multi-test batch shows `<stem> ×<count>`)
+ */
+export function groupTestRows(
+  expandedTests: readonly ExpandedTestData[] | undefined,
+  testRows: readonly TestSummaryData[],
+): LogicalTestGroup[] {
+  const rowByIdx = new Map<number, TestSummaryData>();
+  for (const r of testRows) rowByIdx.set(r.index, r);
+
+  const samples: TestSummaryData[] = [];
+  const byRule = new Map<number, { tests: TestSummaryData[]; genCmd?: string | null }>();
+  const ruleOrder: number[] = [];
+
+  if (expandedTests && expandedTests.length > 0) {
+    for (const et of expandedTests) {
+      const row = rowByIdx.get(et.index) ?? {
+        index: et.index,
+        name: et.name,
+        tag: et.tag ?? null,
+        is_sample: et.is_sample,
+        size_bytes: 0,
+        gen_cmd: et.gen_cmd ?? null,
+        validator_ok: null,
+        validator_message: null,
+      };
+      if (et.is_sample || et.rule_index == null) {
+        samples.push(row);
+      } else {
+        let bucket = byRule.get(et.rule_index);
+        if (!bucket) {
+          bucket = { tests: [], genCmd: et.gen_cmd ?? row.gen_cmd };
+          byRule.set(et.rule_index, bucket);
+          ruleOrder.push(et.rule_index);
+        }
+        bucket.tests.push(row);
+      }
+    }
+  } else {
+    for (const row of testRows) {
+      if (row.is_sample) samples.push(row);
+      else {
+        const fakeIdx = row.index;
+        byRule.set(fakeIdx, { tests: [row], genCmd: row.gen_cmd });
+        ruleOrder.push(fakeIdx);
+      }
+    }
+  }
+
+  const out: LogicalTestGroup[] = [];
+  if (samples.length > 0) {
+    out.push({
+      id: "samples",
+      kind: "samples",
+      ruleIndex: null,
+      label: `samples`,
+      tests: samples,
+      hasValidatorFail: samples.some((t) => t.validator_ok === false),
+    });
+  }
+  for (const rIdx of ruleOrder) {
+    const bucket = byRule.get(rIdx)!;
+    const first = bucket.tests[0];
+    let label = first?.name ?? `rule-${rIdx + 1}`;
+    if (bucket.tests.length > 1) {
+      const genStem = bucket.genCmd?.trim().split(/\s+/)[0];
+      const base =
+        genStem && genStem.length > 0
+          ? genStem
+          : label.replace(/-\d+$/, "");
+      label = `${base} ×${bucket.tests.length}`;
+    }
+    out.push({
+      id: `rule:${rIdx}`,
+      kind: "rule",
+      ruleIndex: rIdx,
+      label,
+      tests: bucket.tests,
+      hasValidatorFail: bucket.tests.some((t) => t.validator_ok === false),
+    });
+  }
+  return out;
+}

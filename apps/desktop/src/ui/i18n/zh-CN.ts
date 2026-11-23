@@ -843,6 +843,8 @@ export const zhCN = {
   "build.tree.solutions": "解法",
   "build.tree.generators": "生成器",
   "build.tree.tests": "测试数据",
+  "build.tree.samples": "样例",
+  "build.tree.selfTests": "自测",
   "build.tree.missing": "缺失",
   "build.role.main": "标程",
   "build.role.alt": "正解",

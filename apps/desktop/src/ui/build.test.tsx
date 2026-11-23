@@ -12,6 +12,7 @@ import {
   formatMemoryKib,
   formatSolutionConclusion,
   formatStdTimeRatio,
+  groupTestRows,
   hasInvalidCxxOverride,
   humanizeCheckText,
   isCellVerdictAnomaly,
@@ -569,5 +570,30 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     );
     expect(checklist.show).toBe(true);
     expect(checklist.steps.length).toBe(4);
+
+    // Logical test grouping: samples + single hand test + multi-test generator batch.
+    const groups = groupTestRows(
+      [
+        { index: 1, name: "sample-01", is_sample: true, rule_index: null },
+        { index: 2, name: "sample-02", is_sample: true, rule_index: null },
+        { index: 3, name: "hand-01", is_sample: false, rule_index: 0 },
+        { index: 4, name: "gen_random-1", is_sample: false, gen_cmd: "gen_random -n 100 1", rule_index: 1 },
+        { index: 5, name: "gen_random-2", is_sample: false, gen_cmd: "gen_random -n 100 2", rule_index: 1 },
+        { index: 6, name: "gen_random-3", is_sample: false, gen_cmd: "gen_random -n 100 3", rule_index: 1 },
+      ],
+      [
+        { index: 1, name: "sample-01", is_sample: true, size_bytes: 10, validator_ok: true },
+        { index: 2, name: "sample-02", is_sample: true, size_bytes: 12, validator_ok: false },
+        { index: 3, name: "hand-01", is_sample: false, size_bytes: 8, validator_ok: true },
+        { index: 4, name: "gen_random-1", is_sample: false, size_bytes: 20, validator_ok: true },
+        { index: 5, name: "gen_random-2", is_sample: false, size_bytes: 22, validator_ok: true },
+        { index: 6, name: "gen_random-3", is_sample: false, size_bytes: 24, validator_ok: true },
+      ],
+    );
+    expect(groups.map((g) => ({ id: g.id, label: g.label, count: g.tests.length, fail: g.hasValidatorFail }))).toEqual([
+      { id: "samples", label: "samples", count: 2, fail: true },
+      { id: "rule:0", label: "hand-01", count: 1, fail: false },
+      { id: "rule:1", label: "gen_random ×3", count: 3, fail: false },
+    ]);
   });
 });

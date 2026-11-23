@@ -845,6 +845,8 @@ export const en: Record<MessageKey, string> = {
   "build.tree.solutions": "Solutions",
   "build.tree.generators": "Generators",
   "build.tree.tests": "Test Data",
+  "build.tree.samples": "Samples",
+  "build.tree.selfTests": "Self-tests",
   "build.tree.missing": "Missing",
   "build.role.main": "Main",
   "build.role.alt": "Correct",

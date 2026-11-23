@@ -1,9 +1,10 @@
-// Local Polygon Authoring Console (Phase 3B redesigned architecture):
-// - Parallel `出题` mode with Left Object Tree (~228pt) + Right Content Area
+// Local Polygon Authoring Console (Phase 3B "less is more" architecture):
+// - Zero stacked toolbars: Authoring controls live directly in StudioView's TitleBar trailing slot
+// - Decluttered Left Object Tree (~228pt) with logical test groups (Samples / Rules / Self-tests)
 // - P0-2 Single State Model: structure from live disk `inspection`, verdicts merge `liveCells` + `report.matrix`
-// - Zero-jitter live runs: reserved 2px progress slot, in-place Verify/Cancel swap, live cell streaming
+// - Zero-jitter live runs: reserved 2px progress hairline at top of right pane, in-place Verify/Cancel swap
 // - P1-7 Right-overlay 3-column diagnostic drawer (never squeezes the table)
-// - P0-3 Write safety: explicit target relative path, SHA-256 conflict check, exact batch delete count, undoable dirty fix
+// - Quiet footer below Results Table for Safety Margin metrics & Only-Anomalies toggle
 
 import { cleanup, colorScheme, computed, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import type {
@@ -24,14 +25,13 @@ import {
   BUILTIN_CHECKERS,
   canInlineEditTest,
   cellVisualStyle,
-  computeOnboardingChecklist,
   countTestsInRule,
   EXPECT_PRESETS,
   formatAcVsTleMargin,
   formatBytesCompact,
-  formatMemoryKib,
   formatSolutionConclusion,
   formatStdTimeRatio,
+  groupTestRows,
   humanizeCheckText,
   isCellVerdictAnomaly,
   isMissingCompilerError,
@@ -55,18 +55,138 @@ import { AddGeneratorBatchModal, ConfirmDeleteRuleModal, CreateSourceModal } fro
 
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
+  statusPill(): { label: string; bg: string; fg: string; expanded: boolean };
+  toggleChecks(): void;
+  showFilter(): boolean;
+  filterCount(): number;
+  toggleFilter(): void;
+  running(): boolean;
+  startRun(mode: "debug" | "verify"): void;
+  cancelRun(): void;
+}
+
+/** Authoring actions rendered directly in StudioView's TitleBar trailing slot (zero stacked toolbars). */
+export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController; readOnly: boolean }) {
+  const pill = () => props.ctrl.statusPill();
+  const running = () => props.ctrl.running();
+  const filterCount = () => props.ctrl.filterCount();
+
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      {/* Single Status Pill (clickable to expand/collapse checks) */}
+      <View
+        testID="build-single-status-pill"
+        onPress={() => props.ctrl.toggleChecks()}
+        style={{
+          height: 24,
+          paddingLeft: 9,
+          paddingRight: 7,
+          borderRadius: 6,
+          backgroundColor: pill().bg,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 4,
+          flexShrink: 0,
+        }}
+      >
+        <Text style={{ fontSize: 12, fontWeight: 500, color: pill().fg, fontVariant: ["tabular-nums"] }}>
+          {pill().label}
+        </Text>
+        <Icon name={pill().expanded ? "chevronDown" : "chevronRight"} size={12} tone="secondary-foreground" />
+      </View>
+
+      {/* Filter toggle (when on Results view) */}
+      <If when={props.ctrl.showFilter()}>
+        <Btn
+          testID="build-filter-toggle"
+          label={
+            filterCount() > 0
+              ? t("build.filter.activeCount", { count: filterCount() })
+              : t("build.filter.button")
+          }
+          icon="list"
+          variant={filterCount() > 0 ? "outline" : "ghost"}
+          onPress={() => props.ctrl.toggleFilter()}
+        />
+      </If>
+
+      {/* Fixed-width primary CTA slot: Verify <-> outline Cancel in-place (zero horizontal shift) */}
+      <View style={{ width: 132, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
+        <If
+          when={!running()}
+          else={
+            <Btn
+              testID="build-cancel-btn"
+              label={t("common.cancel")}
+              icon="x"
+              variant="outline"
+              onPress={() => props.ctrl.cancelRun()}
+              style={{ width: 132 }}
+            />
+          }
+        >
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Btn
+              testID="build-verify-btn"
+              label={
+                filterCount() > 0
+                  ? t("build.action.verifySelected", { count: filterCount() })
+                  : t("build.action.verify")
+              }
+              icon="play"
+              variant="primary"
+              disabled={props.readOnly}
+              tooltip={tip(t("build.action.verify"), "mod+b")}
+              onPress={() => props.ctrl.startRun("verify")}
+              style={{
+                width: 106,
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
+            />
+            <AppMenu
+              align="end"
+              minWidth={176}
+              entries={[{ id: "debug", label: t("build.action.quickRun"), icon: "play" }]}
+              onSelect={(id) => {
+                if (id === "debug") props.ctrl.startRun("debug");
+              }}
+              trigger={
+                <View
+                  testID="build-verify-menu-trigger"
+                  class="bg-primary hover:bg-sidebar-primary"
+                  style={{
+                    width: 26,
+                    height: 28,
+                    borderTopRightRadius: 6,
+                    borderBottomRightRadius: 6,
+                    borderLeftWidth: 1,
+                    borderLeftColor: "rgba(255,255,255,0.18)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: props.readOnly ? 0.5 : 1,
+                  }}
+                >
+                  <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                </View>
+              }
+            />
+          </View>
+        </If>
+      </View>
+    </View>
+  );
 }
 
 type TreeSelection =
   | { kind: "results" }
-  | { kind: "test"; testIndex: number }
-  | { kind: "selfTest"; relPath: string }
+  | { kind: "testGroup"; groupId: string; testIndex: number }
+  | { kind: "selfTests"; relPath?: string }
   | { kind: "validator" }
   | { kind: "checker" }
   | { kind: "generator"; file: string }
   | { kind: "solution"; name: string };
 
-type TestFilterMode = "all" | "anomaly" | "self_tests";
 type TestPaneTab = "input" | "sample_ans" | "std_out";
 
 const COL_TEST_W = 200;
@@ -79,17 +199,15 @@ export function BuildConsole(props: {
   onInitPackage?: () => void;
   onRefreshPackage: () => void;
   onCollapseInspector?: () => void;
-  controller?: (c: BuildConsoleController) => void;
+  controller?: (c: BuildConsoleController | undefined) => void;
 }) {
   const isZh = () => locale() === "zh-CN";
 
   // ── Core live state (P0-2 Single State Model) ──────────────────────────────
   const selection = signal<TreeSelection>({ kind: "results" });
-  const testFilter = signal<TestFilterMode>("all");
   const onlyAnomalyRows = signal(false);
   const checksExpanded = signal(false);
   const passedChecksExpanded = signal(false);
-  const onboardingCollapsed = signal(false);
   const filterOpen = signal(false);
   const filterSolutions = signal<string[]>([]);
   const filterTests = signal<string[]>([]);
@@ -146,7 +264,6 @@ export function BuildConsole(props: {
           p.startsWith(`build/problems/${slug}/`),
       );
     if (relevant) {
-      // Clear local finishedReport override so live disk `inspection.last_report` wins immediately.
       finishedReport.set(undefined);
       fileRefreshKey.set(untracked(fileRefreshKey) + 1);
       props.onRefreshPackage();
@@ -168,7 +285,6 @@ export function BuildConsole(props: {
   const hasPackage = computed(() => Boolean(props.inspectionResult?.hasPackage || inspection()?.has_package));
   const freshness = computed(() => props.inspectionResult?.freshnessStatus ?? inspection()?.freshness?.status);
 
-  // Active report: prefer finishedReport only if it matches the current problem & package hash; else disk last_report
   const activeReport = computed<BuildReportData | undefined>(() => {
     const fin = finishedReport();
     const disk = inspection()?.last_report ?? undefined;
@@ -231,10 +347,8 @@ export function BuildConsole(props: {
   cleanup(stopPolling);
 
   // ── P0-2 Single State Model derivations ────────────────────────────────────
-  // Columns ALWAYS come from live disk `inspection`
   const solutionSpecs = computed(() => resolveSolutionHeaderSpecs(inspection(), activeReport()));
 
-  // Rows ALWAYS come from live disk `inspection.expanded_tests` (enriched with report validator/size metadata)
   const testRows = computed<TestSummaryData[]>(() => {
     const reportTests = new Map<number, TestSummaryData>();
     for (const rt of activeReport()?.tests ?? []) {
@@ -259,7 +373,13 @@ export function BuildConsole(props: {
     return activeReport()?.tests ?? [];
   });
 
-  // Live merged cell map (P1-8 + P0-2 subset preservation)
+  // Logical test groups for the Left Object Tree (Samples / Rules / Self-tests)
+  const testGroups = computed(() => groupTestRows(inspection()?.expanded_tests, testRows()));
+  const selfTestFiles = computed(() => inspection()?.files?.self_test_files ?? []);
+  const hasSelfTestFailure = computed(() =>
+    (activeReport()?.self_tests ?? []).some((s) => !s.passed),
+  );
+
   const matrixLookup = computed(() =>
     mergeLiveMatrixCells(activeReport()?.matrix, isRunningThis() ? liveCells() : undefined),
   );
@@ -288,8 +408,6 @@ export function BuildConsole(props: {
     ),
   );
 
-  const onboarding = computed(() => computeOnboardingChecklist(inspection(), activeReport()));
-
   const anomalousRowIndices = computed(() => {
     const set = new Set<number>();
     const cols = solutionSpecs();
@@ -308,15 +426,6 @@ export function BuildConsole(props: {
     return rows.filter((r) => anom.has(r.index));
   });
 
-  const displayedTreeTests = computed(() => {
-    const rows = testRows();
-    if (testFilter() === "anomaly") {
-      const anom = anomalousRowIndices();
-      return rows.filter((r) => anom.has(r.index));
-    }
-    return rows;
-  });
-
   const selectedCellData = computed(() => {
     const sel = selectedCell();
     if (!sel) return undefined;
@@ -330,14 +439,13 @@ export function BuildConsole(props: {
     void props.inspectionResult;
     void fileRefreshKey();
     untracked(() => {
-      if (sel.kind !== "test") {
+      if (sel.kind !== "testGroup") {
         testPreview.set(undefined);
         testEditing.set(false);
         return;
       }
       const p = preview.inspectTestCase(slug, String(sel.testIndex), 40, 20);
       testPreview.set(p);
-      // Keep pane tab valid for the selected test
       const curTab = testPaneTab();
       if (curTab === "sample_ans" && (!p.ansAvailable || p.ansSource !== "manual_sample")) {
         testPaneTab.set("input");
@@ -348,6 +456,14 @@ export function BuildConsole(props: {
   });
 
   // ── Actions ────────────────────────────────────────────────────────────────
+
+  function selectTestByIndex(testIndex: number, startEditing = false) {
+    const grp = testGroups().find((g) => g.tests.some((t) => t.index === testIndex));
+    const groupId = grp?.id ?? "samples";
+    testPaneTab.set("input");
+    testEditing.set(startEditing);
+    selection.set({ kind: "testGroup", groupId, testIndex });
+  }
 
   function startRun(mode: "debug" | "verify") {
     if (props.readOnly || isRunningThis()) return;
@@ -374,11 +490,69 @@ export function BuildConsole(props: {
   }
 
   function triggerPrimaryRun() {
-    if (!hasPackage()) return;
-    if (isRunningThis()) return;
+    if (!hasPackage() || isRunningThis()) return;
     startRun("verify");
   }
-  props.controller?.({ triggerPrimaryRun });
+
+  const activeFilterCount = computed(() => filterTests().length + filterSolutions().length);
+  const progressRatio = computed(() => {
+    if (!isRunningThis()) return 0;
+    const tot = buildStatus().total;
+    if (tot <= 0) return 0.18;
+    return Math.max(0.06, Math.min(1, buildStatus().completed / tot));
+  });
+
+  const statusPillStyle = computed(() => {
+    const st = singleStatus();
+    const dark = colorScheme() === "dark";
+    if (st.kind === "ready") {
+      return {
+        label: t("build.status.ready"),
+        bg: dark ? "rgba(34, 197, 94, 0.12)" : "rgba(22, 163, 74, 0.08)",
+        fg: dark ? "#4ade80" : "#15803d",
+        expanded: checksExpanded(),
+      };
+    }
+    if (st.kind === "issues") {
+      return {
+        label: t("build.status.issues", { count: st.issueCount }),
+        bg: dark ? "rgba(239, 68, 68, 0.14)" : "rgba(220, 38, 38, 0.08)",
+        fg: dark ? "#f87171" : "#b91c1c",
+        expanded: checksExpanded(),
+      };
+    }
+    if (st.kind === "needs_reverify") {
+      return {
+        label: t("build.status.needsReverify"),
+        bg: dark ? "rgba(245, 158, 11, 0.14)" : "rgba(217, 119, 6, 0.09)",
+        fg: dark ? "#fbbf24" : "#b45309",
+        expanded: checksExpanded(),
+      };
+    }
+    return {
+      label: t("build.status.unverified"),
+      bg: dark ? "rgba(255, 255, 255, 0.06)" : "rgba(24, 24, 27, 0.05)",
+      fg: dark ? "#a1a1aa" : "#52525b",
+      expanded: checksExpanded(),
+    };
+  });
+
+  // Expose live controller for StudioView's TitleBar trailing slot
+  props.controller?.({
+    triggerPrimaryRun,
+    statusPill: () => statusPillStyle(),
+    toggleChecks: () => {
+      if (selection().kind !== "results") selection.set({ kind: "results" });
+      checksExpanded.set(!checksExpanded());
+    },
+    showFilter: () => selection().kind === "results",
+    filterCount: () => activeFilterCount(),
+    toggleFilter: () => filterOpen.set(!filterOpen()),
+    running: () => isRunningThis(),
+    startRun,
+    cancelRun,
+  });
+  cleanup(() => props.controller?.(undefined));
 
   function openExternal(relPath: string) {
     void preview.openPackageFile(props.problemId, relPath).then((res) => {
@@ -405,8 +579,7 @@ export function BuildConsole(props: {
       return;
     }
     if (relPath.startsWith("tests/validator/") || relPath.startsWith("tests/checker/")) {
-      testFilter.set("self_tests");
-      selection.set({ kind: "selfTest", relPath });
+      selection.set({ kind: "selfTests", relPath });
       return;
     }
     openExternal(relPath);
@@ -422,7 +595,6 @@ export function BuildConsole(props: {
     }
     finishedReport.set(undefined);
     props.onRefreshPackage();
-    // Read fresh inspection to locate the newly added test index accurately
     const freshRaw = preview.inspectPackage(props.problemId).inspectionJson;
     let targetIndex: number | undefined;
     if (freshRaw) {
@@ -434,13 +606,10 @@ export function BuildConsole(props: {
         // fallback below
       }
     }
-    if (targetIndex == null) {
-      targetIndex = testRows().length + 1;
-    }
-    testFilter.set("all");
+    if (targetIndex == null) targetIndex = testRows().length + 1;
     testPaneTab.set("input");
-    selection.set({ kind: "test", testIndex: targetIndex });
     testEditing.set(true);
+    selection.set({ kind: "testGroup", groupId: `rule:${res.ruleIndex}`, testIndex: targetIndex });
   }
 
   function handleAddSelfTest(kind: "validator_self_test_valid" | "validator_self_test_invalid") {
@@ -457,8 +626,7 @@ export function BuildConsole(props: {
       return;
     }
     props.onRefreshPackage();
-    testFilter.set("self_tests");
-    selection.set({ kind: "selfTest", relPath: res.relPath });
+    selection.set({ kind: "selfTests", relPath: res.relPath });
   }
 
   function handleNormalizeDirty() {
@@ -528,46 +696,6 @@ export function BuildConsole(props: {
     props.onRefreshPackage();
   }
 
-  // ── Empty state for pure publishing problems (P0-1, §9.1-5) ────────────────
-  const activeFilterCount = computed(() => filterTests().length + filterSolutions().length);
-  const progressRatio = computed(() => {
-    if (!isRunningThis()) return 0;
-    const tot = buildStatus().total;
-    if (tot <= 0) return 0.18;
-    return Math.max(0.06, Math.min(1, buildStatus().completed / tot));
-  });
-
-  const statusPillStyle = computed(() => {
-    const st = singleStatus();
-    const dark = colorScheme() === "dark";
-    if (st.kind === "ready") {
-      return {
-        label: t("build.status.ready"),
-        bg: dark ? "rgba(34, 197, 94, 0.12)" : "rgba(22, 163, 74, 0.08)",
-        fg: dark ? "#4ade80" : "#15803d",
-      };
-    }
-    if (st.kind === "issues") {
-      return {
-        label: t("build.status.issues", { count: st.issueCount }),
-        bg: dark ? "rgba(239, 68, 68, 0.14)" : "rgba(220, 38, 38, 0.08)",
-        fg: dark ? "#f87171" : "#b91c1c",
-      };
-    }
-    if (st.kind === "needs_reverify") {
-      return {
-        label: t("build.status.needsReverify"),
-        bg: dark ? "rgba(245, 158, 11, 0.14)" : "rgba(217, 119, 6, 0.09)",
-        fg: dark ? "#fbbf24" : "#b45309",
-      };
-    }
-    return {
-      label: t("build.status.unverified"),
-      bg: dark ? "rgba(255, 255, 255, 0.06)" : "rgba(24, 24, 27, 0.05)",
-      fg: dark ? "#a1a1aa" : "#52525b",
-    };
-  });
-
   return (
     <View style={{ flex: 1, minHeight: 0 }} class="bg-card" testID="build-console">
       <If
@@ -592,163 +720,7 @@ export function BuildConsole(props: {
           />
         }
       >
-        {/* ── Authoring Top Bar (44pt + reserved 2px progress hairline) ───────── */}
-        <View style={{ position: "relative", borderBottomWidth: 1 }} class="border-border bg-background/40">
-          <View
-            style={{
-              height: 44,
-              paddingLeft: 14,
-              paddingRight: 14,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-          >
-            {/* Left: Single Status Pill + Live run detail */}
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-              <View
-                testID="build-single-status-pill"
-                onPress={() => {
-                  if (selection().kind !== "results") selection.set({ kind: "results" });
-                  checksExpanded.set(!checksExpanded());
-                }}
-                style={{
-                  height: 24,
-                  paddingLeft: 9,
-                  paddingRight: 8,
-                  borderRadius: 6,
-                  backgroundColor: statusPillStyle().bg,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 5,
-                  flexShrink: 0,
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: 500, color: statusPillStyle().fg, fontVariant: ["tabular-nums"] }}>
-                  {statusPillStyle().label}
-                </Text>
-                <Icon
-                  name={checksExpanded() ? "chevronDown" : "chevronRight"}
-                  size={12}
-                  tone="secondary-foreground"
-                />
-              </View>
-
-              <If when={isRunningThis()}>
-                <Text
-                  style={{ fontSize: 12, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"], flex: 1 }}
-                  class="text-secondary-foreground"
-                >
-                  {buildStatus().detail || t("build.running.preparing")}
-                </Text>
-              </If>
-            </View>
-
-            {/* Right: Filter + Fixed-width Verify / Cancel slot (zero horizontal shift!) */}
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-              <If when={selection().kind === "results"}>
-                <Btn
-                  testID="build-filter-toggle"
-                  label={
-                    activeFilterCount() > 0
-                      ? t("build.filter.activeCount", { count: activeFilterCount() })
-                      : t("build.filter.button")
-                  }
-                  icon="list"
-                  variant={activeFilterCount() > 0 ? "outline" : "ghost"}
-                  onPress={() => filterOpen.set(!filterOpen())}
-                />
-              </If>
-
-              {/* Fixed-width primary CTA slot: Verify <-> outline Cancel in-place */}
-              <View style={{ width: 132, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
-                <If
-                  when={!isRunningThis()}
-                  else={
-                    <Btn
-                      testID="build-cancel-btn"
-                      label={t("common.cancel")}
-                      icon="x"
-                      variant="outline"
-                      onPress={cancelRun}
-                      style={{ width: 132 }}
-                    />
-                  }
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Btn
-                      testID="build-verify-btn"
-                      label={
-                        activeFilterCount() > 0
-                          ? t("build.action.verifySelected", { count: activeFilterCount() })
-                          : t("build.action.verify")
-                      }
-                      icon="play"
-                      variant="primary"
-                      disabled={props.readOnly}
-                      tooltip={tip(t("build.action.verify"), "mod+b")}
-                      onPress={() => startRun("verify")}
-                      style={{
-                        width: 106,
-                        borderTopRightRadius: 0,
-                        borderBottomRightRadius: 0,
-                      }}
-                    />
-                    <AppMenu
-                      align="end"
-                      minWidth={176}
-                      entries={[
-                        {
-                          id: "debug",
-                          label: t("build.action.quickRun"),
-                          icon: "play",
-                        },
-                      ]}
-                      onSelect={(id) => {
-                        if (id === "debug") startRun("debug");
-                      }}
-                      trigger={
-                        <View
-                          testID="build-verify-menu-trigger"
-                          class="bg-primary hover:bg-sidebar-primary"
-                          style={{
-                            width: 26,
-                            height: 28,
-                            borderTopRightRadius: 6,
-                            borderBottomRightRadius: 6,
-                            borderLeftWidth: 1,
-                            borderLeftColor: "rgba(255,255,255,0.18)",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            opacity: props.readOnly ? 0.5 : 1,
-                          }}
-                        >
-                          <Icon name="chevronDown" size={13} tone="primary-foreground" />
-                        </View>
-                      }
-                    />
-                  </View>
-                </If>
-              </View>
-            </View>
-          </View>
-
-          {/* Reserved 2px hairline progress slot (zero layout jump during runs!) */}
-          <View style={{ height: 2, width: "100%", overflow: "hidden" }}>
-            <If when={isRunningThis()}>
-              <View
-                style={{
-                  height: 2,
-                  width: `${Math.round(progressRatio() * 100)}%`,
-                }}
-                class="bg-primary"
-              />
-            </If>
-          </View>
-        </View>
-
-        {/* Global error notice */}
+        {/* Global error notice (when present) */}
         <If when={notice()}>
           <View
             style={{
@@ -779,9 +751,9 @@ export function BuildConsole(props: {
           </View>
         </If>
 
-        {/* ── Main Split: Left Object Tree (~228pt) + Right Content Area ──────── */}
+        {/* ── Main Split: Left Object Tree (~228pt) + Right Content Area (directly under TitleBar) ── */}
         <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
-          {/* Left Object Tree */}
+          {/* Decluttered Left Object Tree */}
           <Scroll
             testID="authoring-object-tree"
             style={{
@@ -798,17 +770,12 @@ export function BuildConsole(props: {
             }}
             class="border-border bg-background/30"
           >
-            {/* 1. Results overview */}
+            {/* 1. Results overview (no redundant count badge) */}
             <TreeRow
               testID="tree-item-results"
               icon="table"
               label={t("build.tree.results")}
               active={selection().kind === "results"}
-              badge={
-                anomalousRowIndices().size > 0
-                  ? { text: String(anomalousRowIndices().size), tone: "danger" }
-                  : undefined
-              }
               onPress={() => selection.set({ kind: "results" })}
             />
 
@@ -819,7 +786,7 @@ export function BuildConsole(props: {
                 testID="tree-item-validator"
                 icon="shieldCheck"
                 label={t("build.tree.validator")}
-                sub={inspection()?.files?.validator ? "validator.cpp" : t("build.tree.missing")}
+                sub={!inspection()?.files?.validator ? t("build.tree.missing") : undefined}
                 active={selection().kind === "validator"}
                 onPress={() => selection.set({ kind: "validator" })}
               />
@@ -833,7 +800,7 @@ export function BuildConsole(props: {
               />
             </View>
 
-            {/* 3. Solutions */}
+            {/* 3. Solutions (crown icon identifies main solution without redundant 标程 pill) */}
             <View style={{ gap: 2 }}>
               <TreeSectionHeader
                 label={t("build.tree.solutions")}
@@ -861,7 +828,7 @@ export function BuildConsole(props: {
                       label={spec().name}
                       sub={
                         role() === "main"
-                          ? t("build.role.main")
+                          ? undefined
                           : role() === "alt"
                             ? t("build.role.alt")
                             : spec().expected.join("/")
@@ -905,8 +872,8 @@ export function BuildConsole(props: {
               </Each>
             </View>
 
-            {/* 5. Test Data */}
-            <View style={{ gap: 4 }}>
+            {/* 5. Test Data — logically grouped: Samples / Rules (Batches) / Self-tests */}
+            <View style={{ gap: 2 }}>
               <TreeSectionHeader
                 label={`${t("build.tree.tests")} (${testRows().length})`}
                 action={
@@ -947,163 +914,57 @@ export function BuildConsole(props: {
                 }
               />
 
-              {/* Compact filter chips inside Tests section */}
-              <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4, paddingRight: 4 }}>
-                {(["all", "anomaly", "self_tests"] as const).map((m) => (
-                  <View
-                    onPress={() => testFilter.set(m)}
-                    class={testFilter() === m ? "bg-muted text-foreground" : "hover:bg-muted/60"}
-                    style={{
-                      height: 22,
-                      paddingLeft: 7,
-                      paddingRight: 7,
-                      borderRadius: 5,
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text
-                      style={{ fontSize: 11, fontWeight: 500 }}
-                      class={testFilter() === m ? "text-foreground" : "text-secondary-foreground"}
-                    >
-                      {m === "all"
-                        ? t("build.tests.filterAll")
-                        : m === "anomaly"
-                          ? t("build.tests.filterAnomaly")
-                          : t("build.tests.filterSelfTests")}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              <If
-                when={testFilter() !== "self_tests"}
-                else={
-                  <View style={{ gap: 2 }}>
-                    <Each of={inspection()?.files?.self_test_files ?? []} key={(p) => p}>
-                      {(rel) => {
-                        const res = () => matchSelfTestResult(rel(), activeReport()?.self_tests);
-                        const label = () => rel().split("/").slice(-2).join("/");
-                        return (
-                          <TreeRow
-                            icon="shieldCheck"
-                            label={label()}
-                            active={
-                              selection().kind === "selfTest" &&
-                              (selection() as { kind: "selfTest"; relPath: string }).relPath === rel()
-                            }
-                            statusDot={res() ? (res()!.passed ? "ok" : "fail") : undefined}
-                            onPress={() => selection.set({ kind: "selfTest", relPath: rel() })}
-                          />
-                        );
+              <Each of={testGroups()} key={(g) => g.id}>
+                {(grp) => {
+                  const isActive = () =>
+                    selection().kind === "testGroup" &&
+                    (selection() as { kind: "testGroup"; groupId: string }).groupId === grp().id;
+                  const displayLabel = () =>
+                    grp().kind === "samples"
+                      ? `${t("build.tree.samples")} (${grp().tests.length})`
+                      : grp().label;
+                  return (
+                    <TreeRow
+                      testID={`tree-item-group-${grp().id}`}
+                      icon={grp().kind === "samples" ? "fileText" : grp().tests.length > 1 ? "sparkles" : "database"}
+                      label={displayLabel()}
+                      active={isActive()}
+                      statusDot={grp().hasValidatorFail ? "fail" : undefined}
+                      onPress={() => {
+                        const firstIdx = grp().tests[0]?.index ?? 1;
+                        testEditing.set(false);
+                        testPaneTab.set("input");
+                        selection.set({ kind: "testGroup", groupId: grp().id, testIndex: firstIdx });
                       }}
-                    </Each>
-                  </View>
-                }
-              >
-                <View style={{ gap: 1 }}>
-                  <Each of={displayedTreeTests()} key={(row) => String(row.index)}>
-                    {(row) => {
-                      const isAnom = () => anomalousRowIndices().has(row().index);
-                      const isValFail = () => row().validator_ok === false;
-                      return (
-                        <TreeRow
-                          testID={`tree-item-test-${row().index}`}
-                          icon={row().is_sample ? "fileText" : "database"}
-                          label={`#${String(row().index).padStart(2, "0")} ${row().name}`}
-                          active={
-                            selection().kind === "test" &&
-                            (selection() as { kind: "test"; testIndex: number }).testIndex === row().index
-                          }
-                          statusDot={isValFail() || isAnom() ? "fail" : row().validator_ok ? "ok" : undefined}
-                          onPress={() => {
-                            testEditing.set(false);
-                            selection.set({ kind: "test", testIndex: row().index });
-                          }}
-                        />
-                      );
-                    }}
-                  </Each>
-                </View>
-              </If>
+                    />
+                  );
+                }}
+              </Each>
+
+              {/* Self-tests logical group */}
+              <TreeRow
+                testID="tree-item-self-tests"
+                icon="shieldCheck"
+                label={`${t("build.tree.selfTests")} (${selfTestFiles().length})`}
+                active={selection().kind === "selfTests"}
+                statusDot={hasSelfTestFailure() ? "fail" : undefined}
+                onPress={() => selection.set({ kind: "selfTests", relPath: selfTestFiles()[0] })}
+              />
             </View>
           </Scroll>
 
           {/* ── Right Content Area ──────────────────────────────────────────── */}
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
-            {/* A. Results Overview */}
+            {/* Reserved 2px hairline progress bar at very top of right pane (zero layout jump) */}
+            <View style={{ height: 2, width: "100%", overflow: "hidden" }}>
+              <If when={isRunningThis()}>
+                <View style={{ height: 2, width: `${Math.round(progressRatio() * 100)}%` }} class="bg-primary" />
+              </If>
+            </View>
+
+            {/* A. Results Overview — starts immediately at top of right pane */}
             <If when={selection().kind === "results"}>
               <View style={{ flex: 1, minHeight: 0 }}>
-                {/* 4-step Onboarding Checklist (collapsible, auto-hidden when all 4 pass & verified) */}
-                <If when={onboarding().show}>
-                  <View
-                    testID="onboarding-checklist"
-                    style={{
-                      paddingLeft: 16,
-                      paddingRight: 16,
-                      paddingTop: 10,
-                      paddingBottom: 10,
-                      borderBottomWidth: 1,
-                      gap: 8,
-                    }}
-                    class="border-border bg-background/30"
-                  >
-                    <View
-                      onPress={() => onboardingCollapsed.set(!onboardingCollapsed())}
-                      style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
-                    >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Icon
-                          name={onboardingCollapsed() ? "chevronRight" : "chevronDown"}
-                          size={13}
-                          tone="secondary-foreground"
-                        />
-                        <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-foreground">
-                          {t("build.onboarding.title")}
-                        </Text>
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                          {`${onboarding().steps.filter((s) => s.done).length}/${onboarding().steps.length}`}
-                        </Text>
-                      </View>
-                    </View>
-                    <If when={!onboardingCollapsed()}>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, paddingLeft: 18 }}>
-                        <Each of={onboarding().steps} key={(s) => s.id}>
-                          {(step) => (
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                              <Icon
-                                name={step().done ? "check" : "minus"}
-                                size={13}
-                                tone={step().done ? "primary" : "muted-foreground"}
-                              />
-                              <Text
-                                style={{ fontSize: 12 }}
-                                class={step().done ? "text-secondary-foreground" : "text-foreground"}
-                              >
-                                {t(`build.onboarding.step.${step().id}` as Parameters<typeof t>[0])}
-                              </Text>
-                              <If when={!step().done}>
-                                <Text
-                                  onPress={() => {
-                                    const id = step().id;
-                                    if (id === "validator") selection.set({ kind: "validator" });
-                                    else if (id === "std" && step().targetFile) openFileInTree(step().targetFile!);
-                                    else if (id === "tests") addGenModalOpen.set(true);
-                                    else if (id === "wrong") createModalKind.set("solution");
-                                  }}
-                                  style={{ fontSize: 12, fontWeight: 500 }}
-                                  class="text-primary"
-                                >
-                                  {t("build.onboarding.open")}
-                                </Text>
-                              </If>
-                            </View>
-                          )}
-                        </Each>
-                      </View>
-                    </If>
-                  </View>
-                </If>
-
                 {/* Expandable Borderless Check List (Failed -> Suggestions -> Passed collapsed to 1 row) */}
                 <If when={checksExpanded() && gates().length > 0}>
                   <View
@@ -1158,7 +1019,7 @@ export function BuildConsole(props: {
                                   variant="ghost"
                                   onPress={() => {
                                     const a = act();
-                                    if (a.kind === "view_test") selection.set({ kind: "test", testIndex: a.testIndex });
+                                    if (a.kind === "view_test") selectTestByIndex(a.testIndex);
                                     else if (a.kind === "select_cell") selectedCell.set({ testIndex: a.testIndex, solution: a.solution });
                                     else if (a.kind === "open_file") openFileInTree(a.relPath);
                                   }}
@@ -1361,68 +1222,7 @@ export function BuildConsole(props: {
                   </View>
                 </If>
 
-                {/* Inline compact metrics + Only Anomalies toggle */}
-                <View
-                  style={{
-                    height: 36,
-                    paddingLeft: 16,
-                    paddingRight: 16,
-                    borderBottomWidth: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                  }}
-                  class="border-border"
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
-                    <If when={activeReport()?.safety_margin}>
-                      {(m) => (
-                        <>
-                          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                            {`${t("build.margin.maxInput")} ${formatBytesCompact(m().max_input_bytes)}`}
-                          </Text>
-                          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                            {`${t("build.margin.stdSlowest")} ${formatStdTimeRatio(m())}`}
-                          </Text>
-                          <If when={formatAcVsTleMargin(m())}>
-                            {(gap) => (
-                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                                {`${t("build.margin.acVsTle")} ${gap()}`}
-                              </Text>
-                            )}
-                          </If>
-                        </>
-                      )}
-                    </If>
-                  </View>
-
-                  <View
-                    testID="only-anomaly-toggle"
-                    onPress={() => onlyAnomalyRows.set(!onlyAnomalyRows())}
-                    class={onlyAnomalyRows() ? "bg-muted border border-border" : "hover:bg-muted/60"}
-                    style={{
-                      height: 24,
-                      paddingLeft: 8,
-                      paddingRight: 8,
-                      borderRadius: 5,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 5,
-                    }}
-                  >
-                    <Icon
-                      name="triangleAlert"
-                      size={12}
-                      tone={anomalousRowIndices().size > 0 ? "chart-4" : "muted-foreground"}
-                    />
-                    <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
-                      {`${t("build.filter.onlyAnomaly")} (${anomalousRowIndices().size})`}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Borderless Full-Bleed Results Table (sticky header + summary row over scrollable rows) */}
+                {/* Borderless Full-Bleed Results Table (starts directly at top!) */}
                 <Scroll horizontal style={{ flex: 1, minHeight: 0 }} contentStyle={{ flexGrow: 1 }}>
                   <View style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * COL_SOL_W + 24 }}>
                     {/* Sticky Header Row */}
@@ -1462,7 +1262,7 @@ export function BuildConsole(props: {
                       </Each>
                     </View>
 
-                    {/* Sticky Summary Conclusion Row (human conclusions: 符合预期 / WA ×1 / 未运行) */}
+                    {/* Sticky Summary Conclusion Row */}
                     <View
                       style={{
                         height: 30,
@@ -1526,9 +1326,9 @@ export function BuildConsole(props: {
                             }}
                             class="border-border/60 hover:bg-muted/30"
                           >
-                            {/* Test case label cell */}
+                            {/* Test case label cell -> jumps directly to that test in right pane */}
                             <View
-                              onPress={() => selection.set({ kind: "test", testIndex: row().index })}
+                              onPress={() => selectTestByIndex(row().index)}
                               style={{
                                 width: COL_TEST_W,
                                 flexShrink: 0,
@@ -1655,6 +1455,85 @@ export function BuildConsole(props: {
                   </View>
                 </Scroll>
 
+                {/* Quiet Footer Bar: Safety Margin metrics + Live progress detail + Only Anomalies toggle */}
+                <If when={Boolean(activeReport()?.safety_margin) || anomalousRowIndices().size > 0 || isRunningThis()}>
+                  <View
+                    testID="results-quiet-footer"
+                    style={{
+                      height: 32,
+                      paddingLeft: 16,
+                      paddingRight: 14,
+                      borderTopWidth: 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                    }}
+                    class="border-border bg-background/30"
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 14, flex: 1, minWidth: 0 }}>
+                      <If
+                        when={!isRunningThis()}
+                        else={
+                          <Text
+                            style={{ fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
+                            class="text-secondary-foreground"
+                          >
+                            {buildStatus().detail || t("build.running.preparing")}
+                          </Text>
+                        }
+                      >
+                        <If when={activeReport()?.safety_margin}>
+                          {(m) => (
+                            <>
+                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                {`${t("build.margin.maxInput")} ${formatBytesCompact(m().max_input_bytes)}`}
+                              </Text>
+                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                {`${t("build.margin.stdSlowest")} ${formatStdTimeRatio(m())}`}
+                              </Text>
+                              <If when={formatAcVsTleMargin(m())}>
+                                {(gap) => (
+                                  <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                    {`${t("build.margin.acVsTle")} ${gap()}`}
+                                  </Text>
+                                )}
+                              </If>
+                            </>
+                          )}
+                        </If>
+                      </If>
+                    </View>
+
+                    <If when={anomalousRowIndices().size > 0 || onlyAnomalyRows()}>
+                      <View
+                        testID="only-anomaly-toggle"
+                        onPress={() => onlyAnomalyRows.set(!onlyAnomalyRows())}
+                        class={onlyAnomalyRows() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
+                        style={{
+                          height: 22,
+                          paddingLeft: 7,
+                          paddingRight: 7,
+                          borderRadius: 5,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 5,
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Icon
+                          name="triangleAlert"
+                          size={11.5}
+                          tone={anomalousRowIndices().size > 0 ? "chart-4" : "muted-foreground"}
+                        />
+                        <Text style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                          {`${t("build.filter.onlyAnomaly")} (${anomalousRowIndices().size})`}
+                        </Text>
+                      </View>
+                    </If>
+                  </View>
+                </If>
+
                 {/* P1-7 Right-Overlay 3-Column Diagnostic Drawer (absolute, NEVER squeezes table!) */}
                 <If when={selectedCellData()}>
                   {(cell) => {
@@ -1679,7 +1558,7 @@ export function BuildConsole(props: {
                         }}
                         onOpenTest={(idx) => {
                           selectedCell.set(undefined);
-                          selection.set({ kind: "test", testIndex: idx });
+                          selectTestByIndex(idx);
                         }}
                       />
                     );
@@ -1688,15 +1567,19 @@ export function BuildConsole(props: {
               </View>
             </If>
 
-            {/* B. Test Case Detail View (Fix A-1, A-6, A-7, P0-3) */}
-            <If when={selection().kind === "test"}>
+            {/* B. Logical Test Group Detail View (Samples / Batch / Hand test) */}
+            <If when={selection().kind === "testGroup"}>
               {(() => {
-                const activeIdx = () =>
-                  selection().kind === "test" ? (selection() as { kind: "test"; testIndex: number }).testIndex : 0;
+                const curSel = () =>
+                  selection().kind === "testGroup"
+                    ? (selection() as { kind: "testGroup"; groupId: string; testIndex: number })
+                    : undefined;
+                const activeGroup = () => testGroups().find((g) => g.id === curSel()?.groupId);
+                const activeIdx = () => curSel()?.testIndex ?? activeGroup()?.tests[0]?.index ?? 1;
                 const row = () => testRows().find((r) => r.index === activeIdx());
                 const prev = () => testPreview();
                 const fileRel = () => prev()?.fileRel ?? null;
-                const ruleIdx = () => prev()?.ruleIndex ?? null;
+                const ruleIdx = () => activeGroup()?.ruleIndex ?? prev()?.ruleIndex ?? null;
                 const editable = () => !props.readOnly && canInlineEditTest(prev());
                 const paneItems = () => {
                   const p = prev();
@@ -1784,7 +1667,7 @@ export function BuildConsole(props: {
                             onPress={() => testEditing.set(!testEditing())}
                           />
                         </If>
-                        <If when={!props.readOnly && !row()?.is_sample && ruleIdx() != null}>
+                        <If when={!props.readOnly && activeGroup()?.kind !== "samples" && ruleIdx() != null}>
                           <IconBtn
                             testID="test-delete-rule-btn"
                             icon="trash"
@@ -1795,6 +1678,62 @@ export function BuildConsole(props: {
                         </If>
                       </View>
                     </View>
+
+                    {/* Compact batch member selector strip when group has > 1 test case */}
+                    <If when={(activeGroup()?.tests.length ?? 0) > 1}>
+                      <Scroll
+                        horizontal
+                        style={{ maxHeight: 38, borderBottomWidth: 1 }}
+                        contentStyle={{
+                          paddingLeft: 16,
+                          paddingRight: 16,
+                          paddingTop: 6,
+                          paddingBottom: 6,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                        class="border-border bg-background/30"
+                      >
+                        <Each of={activeGroup()?.tests ?? []} key={(item) => String(item.index)}>
+                          {(item) => {
+                            const selected = () => item().index === activeIdx();
+                            return (
+                              <View
+                                onPress={() => {
+                                  testEditing.set(false);
+                                  selection.set({
+                                    kind: "testGroup",
+                                    groupId: activeGroup()!.id,
+                                    testIndex: item().index,
+                                  });
+                                }}
+                                class={selected() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
+                                style={{
+                                  height: 24,
+                                  paddingLeft: 8,
+                                  paddingRight: 8,
+                                  borderRadius: 5,
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                              >
+                                <Text
+                                  style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                                  class={selected() ? "text-foreground" : "text-secondary-foreground"}
+                                >
+                                  {`#${String(item().index).padStart(2, "0")}`}
+                                </Text>
+                                <If when={item().validator_ok === false}>
+                                  <Icon name="triangleAlert" size={11} tone="destructive" />
+                                </If>
+                              </View>
+                            );
+                          }}
+                        </Each>
+                      </Scroll>
+                    </If>
 
                     {/* Validator failure callout */}
                     <If when={row()?.validator_ok === false}>
@@ -1832,12 +1771,11 @@ export function BuildConsole(props: {
                       </View>
                     </If>
 
-                    {/* Body: Either InlineFileEditor (Fix A-1: strictly bound to `fileRel()`) or Bounded Preview (Fix A-6) */}
+                    {/* Body: Either InlineFileEditor (Fix A-1) or Bounded Preview (Fix A-6) */}
                     <If
                       when={testEditing() && !!fileRel() && testPaneTab() === "input"}
                       else={
                         <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 16, gap: 12 }}>
-                          {/* Top metadata + Fix A-6 truncation banner at TOP */}
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                             <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                               {activeContent().linesExact != null
@@ -1910,7 +1848,100 @@ export function BuildConsole(props: {
               })()}
             </If>
 
-            {/* C. Validator Detail View */}
+            {/* C. Self-Tests Logical Group View */}
+            <If when={selection().kind === "selfTests"}>
+              {(() => {
+                const activeRel = () => {
+                  const sel = selection();
+                  if (sel.kind !== "selfTests") return undefined;
+                  return sel.relPath ?? selfTestFiles()[0];
+                };
+                return (
+                  <View style={{ flex: 1, minHeight: 0 }}>
+                    <If
+                      when={selfTestFiles().length > 0}
+                      else={
+                        <EmptyState
+                          icon="shieldCheck"
+                          title={t("build.tests.selfTestsEmpty")}
+                          hint={t("build.programs.validatorHint")}
+                        />
+                      }
+                    >
+                      {/* Compact self-test selector pills */}
+                      <Scroll
+                        horizontal
+                        style={{ maxHeight: 40, borderBottomWidth: 1 }}
+                        contentStyle={{
+                          paddingLeft: 16,
+                          paddingRight: 16,
+                          paddingTop: 7,
+                          paddingBottom: 7,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                        class="border-border bg-background/30"
+                      >
+                        <Each of={selfTestFiles()} key={(p) => p}>
+                          {(rel) => {
+                            const selected = () => activeRel() === rel();
+                            const res = () => matchSelfTestResult(rel(), activeReport()?.self_tests);
+                            const shortName = () => rel().split("/").slice(-2).join("/");
+                            return (
+                              <View
+                                onPress={() => selection.set({ kind: "selfTests", relPath: rel() })}
+                                class={selected() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
+                                style={{
+                                  height: 24,
+                                  paddingLeft: 8,
+                                  paddingRight: 8,
+                                  borderRadius: 5,
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  gap: 5,
+                                }}
+                              >
+                                <Text
+                                  style={{ fontSize: 12, fontWeight: 500 }}
+                                  class={selected() ? "text-foreground" : "text-secondary-foreground"}
+                                >
+                                  {shortName()}
+                                </Text>
+                                <If when={res()?.passed === false}>
+                                  <Icon name="triangleAlert" size={11} tone="destructive" />
+                                </If>
+                                <If when={res()?.passed === true}>
+                                  <Icon name="check" size={11} tone="muted-foreground" />
+                                </If>
+                              </View>
+                            );
+                          }}
+                        </Each>
+                      </Scroll>
+
+                      <If when={activeRel()}>
+                        {(rel) => (
+                          <InlineFileEditor
+                            problemId={props.problemId}
+                            relPath={rel()}
+                            readOnly={props.readOnly}
+                            refreshKey={fileRefreshKey()}
+                            onSaved={() => {
+                              finishedReport.set(undefined);
+                              props.onRefreshPackage();
+                            }}
+                            onOpenExternal={openExternal}
+                          />
+                        )}
+                      </If>
+                    </If>
+                  </View>
+                );
+              })()}
+            </If>
+
+            {/* D. Validator Detail View */}
             <If when={selection().kind === "validator"}>
               <View style={{ flex: 1, minHeight: 0 }}>
                 <View
@@ -1959,7 +1990,7 @@ export function BuildConsole(props: {
               </View>
             </If>
 
-            {/* D. Checker Detail View */}
+            {/* E. Checker Detail View */}
             <If when={selection().kind === "checker"}>
               <View style={{ flex: 1, minHeight: 0 }}>
                 <View
@@ -2050,7 +2081,7 @@ export function BuildConsole(props: {
               </View>
             </If>
 
-            {/* E. Generator Detail View */}
+            {/* F. Generator Detail View */}
             <If when={selection().kind === "generator"}>
               {(() => {
                 const file = () =>
@@ -2090,7 +2121,7 @@ export function BuildConsole(props: {
               })()}
             </If>
 
-            {/* F. Solution Detail View */}
+            {/* G. Solution Detail View */}
             <If when={selection().kind === "solution"}>
               {(() => {
                 const solName = () =>
@@ -2196,29 +2227,6 @@ export function BuildConsole(props: {
                 );
               })()}
             </If>
-
-            {/* G. Self-Test File Detail View */}
-            <If when={selection().kind === "selfTest"}>
-              {(() => {
-                const rel = () =>
-                  selection().kind === "selfTest" ? (selection() as { kind: "selfTest"; relPath: string }).relPath : "";
-                return (
-                  <View style={{ flex: 1, minHeight: 0 }}>
-                    <InlineFileEditor
-                      problemId={props.problemId}
-                      relPath={rel()}
-                      readOnly={props.readOnly}
-                      refreshKey={fileRefreshKey()}
-                      onSaved={() => {
-                        finishedReport.set(undefined);
-                        props.onRefreshPackage();
-                      }}
-                      onOpenExternal={openExternal}
-                    />
-                  </View>
-                );
-              })()}
-            </If>
           </View>
         </View>
 
@@ -2282,7 +2290,6 @@ function TreeRow(props: {
   label: string;
   sub?: string;
   active: boolean;
-  badge?: { text: string; tone: "danger" | "neutral" };
   statusDot?: "ok" | "fail";
   onPress: () => void;
   testID?: string;
@@ -2330,29 +2337,6 @@ function TreeRow(props: {
       </If>
       <If when={props.statusDot === "ok"}>
         <Icon name="check" size={12} tone="muted-foreground" />
-      </If>
-      <If when={props.badge}>
-        {(b) => (
-          <View
-            style={{
-              height: 17,
-              minWidth: 17,
-              paddingLeft: 5,
-              paddingRight: 5,
-              borderRadius: 4,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            class={b().tone === "danger" ? "bg-destructive/15" : "bg-muted"}
-          >
-            <Text
-              style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }}
-              class={b().tone === "danger" ? "text-destructive" : "text-secondary-foreground"}
-            >
-              {b().text}
-            </Text>
-          </View>
-        )}
       </If>
     </View>
   );

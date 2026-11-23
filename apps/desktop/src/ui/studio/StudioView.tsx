@@ -52,7 +52,7 @@ import { panelTransition } from "../motion";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
-import { BuildConsole, type BuildConsoleController } from "./BuildConsole";
+import { AuthoringTitleBarControls, BuildConsole, type BuildConsoleController } from "./BuildConsole";
 import { problemSlugFromDiagnosticFile, shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
@@ -192,7 +192,7 @@ export function StudioView(props: { active: boolean }) {
   const freeze = createFreeze();
   let canvas: CanvasController | undefined;
   let editorActions: MarkdownEditorActions | undefined;
-  let buildConsole: BuildConsoleController | undefined;
+  const buildConsole = signal<BuildConsoleController | undefined>(undefined);
 
   const contest = computed(() => {
     void revision();
@@ -842,7 +842,7 @@ export function StudioView(props: { active: boolean }) {
         if (target()?.target === "problem") setStudioMode("authoring");
       }),
       "mod+b": on(() => {
-        if (isAuthoring()) buildConsole?.triggerPrimaryRun();
+        if (isAuthoring()) buildConsole()?.triggerPrimaryRun();
       }),
       "mod+i": on(toggleInspector),
       "mod+s": on(save),
@@ -1025,6 +1025,9 @@ export function StudioView(props: { active: boolean }) {
                 onExport={(b) => void exportBook(b)}
                 onReveal={(b) => void reveal(b)}
               />
+            </If>
+            <If when={isAuthoring() && hasPackage() ? buildConsole() : undefined}>
+              {(ctrl) => <AuthoringTitleBarControls ctrl={ctrl()} readOnly={info().readOnly} />}
             </If>
             <IconBtn
               icon="panelRight"
@@ -1311,7 +1314,7 @@ export function StudioView(props: { active: boolean }) {
                       problemId={id()}
                       readOnly={info().readOnly}
                       inspectionResult={packageInspection()}
-                      controller={(c) => (buildConsole = c)}
+                      controller={(c) => buildConsole.set(c)}
                       onInitPackage={initPackageScaffold}
                       onCollapseInspector={() => {
                         if (inspectorOpen()) {
