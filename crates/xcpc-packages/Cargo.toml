@@ -1,0 +1,23 @@
+[package]
+name = "xcpc-packages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+xcpc-convert.workspace = true
+xcpc-domain.workspace = true
+xcpc-engine.workspace = true
+xcpc-judge.workspace = true
+xcpc-storage.workspace = true
+
+quick-xml = "0.38"
+serde.workspace = true
+serde_json.workspace = true
+shlex = "2"
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tylax = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
