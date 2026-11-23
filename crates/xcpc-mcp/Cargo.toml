@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 xcpc-domain.workspace = true
 xcpc-storage.workspace = true
+xcpc-lint.workspace = true
 xcpc-convert.workspace = true
 xcpc-engine.workspace = true
 xcpc-judge.workspace = true

@@ -168,7 +168,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 26);
+    assert_eq!(tools.len(), 28);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -190,6 +190,8 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "get_contest",
         "inspect_package",
         "inspect_test_case",
+        "audit_contest",
+        "run_external_solution",
     ] {
         assert_eq!(
             read_only_map.get(read_tool),
@@ -969,6 +971,10 @@ fn seed_verified_report(ws_root: &std::path::Path, slug: &str) {
         built_at_epoch_secs: 1_700_000_000,
         compiler: None,
         checker: "wcmp".to_owned(),
+        interactive: false,
+        runs: 1,
+        subtasks: Vec::new(),
+        total_score: None,
         compile_failures: Vec::new(),
         dirty_inputs: Vec::new(),
         self_tests: Vec::new(),
@@ -1485,4 +1491,245 @@ fn mcp_import_polygon_group_and_batch_export_oj_packages() {
             .join("build/mcp-batch-hydro/poly-b.zip")
             .is_file()
     );
+}
+
+#[test]
+fn mcp_package_phase_3c_interactive_subtasks_and_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("guess", "Guess").unwrap();
+
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // 1. init_package with interactive + runs + subtasks.
+    let init = client.call_tool(
+        "init_package",
+        json!({
+            "id": "guess",
+            "interactive": true,
+            "runs": 2,
+            "subtasks": true,
+        }),
+    );
+    assert_ne!(init["isError"], true, "{init}");
+    assert_eq!(init["structuredContent"]["ok"], true);
+    assert!(dir.path().join("problems/guess/interactor.cpp").is_file());
+
+    // 2. inspect_package exposes interactive, runs, subtasks, total_score, files.interactor.
+    let insp = client.call_tool("inspect_package", json!({ "id": "guess" }));
+    assert_ne!(insp["isError"], true, "{insp}");
+    let sc = &insp["structuredContent"];
+    assert_eq!(sc["interactive"], true);
+    assert_eq!(sc["runs"], 2);
+    assert_eq!(sc["total_score"], 100);
+    assert!(sc["subtasks"].as_array().unwrap().len() >= 2);
+    assert_eq!(sc["files"]["interactor"], "interactor.cpp");
+
+    // 3. Single-run interactive + subtasks package for build_package & stress_package transcript checks.
+    ws.create_problem("inter-mcp", "Inter MCP").unwrap();
+    let init2 = client.call_tool(
+        "init_package",
+        json!({
+            "id": "inter-mcp",
+            "interactive": true,
+            "subtasks": true,
+        }),
+    );
+    assert_ne!(init2["isError"], true, "{init2}");
+
+    fs::write(
+        dir.path().join("problems/inter-mcp/solutions/wa.cpp"),
+        "#include <iostream>\nint main(){ int x; if (std::cin >> x) std::cout << -1 << std::endl; return 0; }\n",
+    )
+    .unwrap();
+    let mut meta = ws.load_problem("inter-mcp").unwrap().meta;
+    meta.solutions.insert(
+        "wa".to_owned(),
+        xcpc_domain::SolutionSpec {
+            main: None,
+            expect: Some(xcpc_domain::ExpectVerdict::Single("WA".to_owned())),
+            tags: None,
+            score: Some(xcpc_domain::ScoreExpect::Exact(0)),
+            subtasks: std::collections::BTreeMap::new(),
+        },
+    );
+    ws.save_problem_meta("inter-mcp", &meta).unwrap();
+
+    let built = client.call_tool(
+        "build_package",
+        json!({ "id": "inter-mcp", "mode": "debug" }),
+    );
+    assert_ne!(built["isError"], true, "{built}");
+    let bsc = &built["structuredContent"];
+    assert_eq!(bsc["interactive"], true);
+    assert_eq!(bsc["runs"], 1);
+    assert_eq!(bsc["total_score"], 100);
+    assert!(!bsc["subtasks"].as_array().unwrap().is_empty());
+    let sols = bsc["solutions"].as_array().unwrap();
+    let std_sol = sols.iter().find(|s| s["name"] == "std").unwrap();
+    assert_eq!(std_sol["total_score"], 100.0);
+    let wa_cell = bsc["matrix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["solution"] == "wa")
+        .unwrap();
+    assert!(wa_cell["transcript"].is_object(), "{wa_cell}");
+
+    let stress = client.call_tool(
+        "stress_package",
+        json!({
+            "id": "inter-mcp",
+            "gen": "gen_random",
+            "args": "{i}",
+            "solutions": ["wa"],
+            "max_iter": 5,
+        }),
+    );
+    assert_ne!(stress["isError"], true, "{stress}");
+    let ssc = &stress["structuredContent"];
+    assert_eq!(ssc["found_counterexample"], true);
+    assert!(ssc["transcript"].is_object(), "{ssc}");
+}
+
+#[test]
+fn mcp_phase_3d_sanitize_audit_and_external_solution() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("sum", "Sum").unwrap();
+    ws.create_problem("pub-only", "Pub Only").unwrap();
+
+    let mut client = McpClient::spawn(dir.path(), false);
+
+    // Scaffold `sum`, compose contest `c-3d`, and verify `sum`.
+    let init = client.call_tool("init_package", json!({ "id": "sum" }));
+    assert_ne!(init["isError"], true, "{init}");
+
+    let comp = client.call_tool(
+        "compose_contest",
+        json!({ "id": "c-3d", "problems": ["sum", "pub-only"] }),
+    );
+    assert_ne!(comp["isError"], true, "{comp}");
+
+    let ver = client.call_tool("build_package", json!({ "id": "sum", "mode": "verify" }));
+    assert_ne!(ver["isError"], true, "{ver}");
+    assert_eq!(ver["structuredContent"]["verified"], true);
+    let report_before = fs::read(dir.path().join("build/problems/sum/report.json")).unwrap();
+
+    // 1. `build_package(mode: "sanitize")` runs isolated ASan/UBSan check without touching report.json.
+    let san = client.call_tool("build_package", json!({ "id": "sum", "mode": "sanitize" }));
+    let san_sc = &san["structuredContent"];
+    let san_status = san_sc["status"].as_str().unwrap();
+    assert!(
+        matches!(san_status, "passed" | "unsupported"),
+        "unexpected sanitizer result: {san}"
+    );
+    if san_status == "passed" {
+        assert_ne!(san["isError"], true, "{san}");
+        assert_eq!(san_sc["ok"], true);
+    }
+    assert!(
+        dir.path()
+            .join("build/problems/sum/sanitizer-report.json")
+            .is_file()
+    );
+    assert_eq!(
+        report_before,
+        fs::read(dir.path().join("build/problems/sum/report.json")).unwrap()
+    );
+
+    // 2. `audit_contest` (allowed under --read-only, includes xcpc-lint counts).
+    let mut ro = McpClient::spawn(dir.path(), true);
+    let audit = ro.call_tool("audit_contest", json!({ "id": "c-3d" }));
+    assert_ne!(audit["isError"], true, "{audit}");
+    let asc = &audit["structuredContent"];
+    assert_eq!(asc["ok"], true);
+    assert_eq!(asc["contest_id"], "c-3d");
+    let rows = asc["problems"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["verification_status"], "fresh");
+    if san_status == "passed" {
+        assert_eq!(rows[0]["sanitizer_status"], "passed_fresh");
+    }
+    assert_eq!(rows[1]["verification_status"], "statement_only");
+    assert!(
+        rows[1]["lint_warning_count"].as_u64().unwrap() >= 1,
+        "expected xcpc-lint warning: {rows:?}"
+    );
+
+    // Read-only refuses `build_package(mode: "sanitize")`.
+    let ro_san = ro.call_tool("build_package", json!({ "id": "sum", "mode": "sanitize" }));
+    assert_eq!(err_code(&ro_san), "read_only");
+
+    // 3. `run_external_solution` under --read-only (problem single/multi + contest dir + security checks).
+    let ext = tempfile::tempdir().unwrap();
+    fs::create_dir_all(ext.path().join("alice")).unwrap();
+    fs::create_dir_all(ext.path().join("bob")).unwrap();
+    let ac_cpp = ext.path().join("alice/A.cpp");
+    let wa_cpp = ext.path().join("bob/sum.cpp");
+    fs::write(
+        &ac_cpp,
+        "#include <iostream>\nint main(){ long long a, b; if (std::cin >> a >> b) std::cout << (a + b) << '\\n'; return 0; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &wa_cpp,
+        "#include <iostream>\nint main(){ long long a, b; if (std::cin >> a >> b) std::cout << (a + b + 1) << '\\n'; return 0; }\n",
+    )
+    .unwrap();
+
+    // Problem target with `paths`.
+    let ext_prob = ro.call_tool(
+        "run_external_solution",
+        json!({
+            "target": "problem",
+            "id": "sum",
+            "paths": [ac_cpp.to_str().unwrap(), wa_cpp.to_str().unwrap()],
+        }),
+    );
+    assert_ne!(ext_prob["isError"], true, "{ext_prob}");
+    let epsc = &ext_prob["structuredContent"];
+    assert_eq!(epsc["ok"], true);
+    let p_subs = epsc["submissions"].as_array().unwrap();
+    assert_eq!(p_subs.len(), 2);
+    assert_eq!(p_subs[0]["verdict"], "AC");
+    assert_eq!(p_subs[1]["verdict"], "WA");
+
+    // Contest target with directory.
+    let ext_contest = ro.call_tool(
+        "run_external_solution",
+        json!({
+            "target": "contest",
+            "id": "c-3d",
+            "path": ext.path().to_str().unwrap(),
+        }),
+    );
+    assert_ne!(ext_contest["isError"], true, "{ext_contest}");
+    let ecsc = &ext_contest["structuredContent"];
+    assert_eq!(ecsc["ok"], true);
+    assert_eq!(ecsc["mode"], "multi_tester");
+    assert_eq!(ecsc["submissions"].as_array().unwrap().len(), 2);
+
+    // Read-only refuses `auto_build: true`.
+    let ro_ab = ro.call_tool(
+        "run_external_solution",
+        json!({
+            "target": "problem",
+            "id": "sum",
+            "path": ac_cpp.to_str().unwrap(),
+            "auto_build": true,
+        }),
+    );
+    assert_eq!(err_code(&ro_ab), "read_only");
+
+    // Reject non-C/C++ source paths.
+    let bad_ext = ro.call_tool(
+        "run_external_solution",
+        json!({
+            "target": "problem",
+            "id": "sum",
+            "path": "/etc/passwd",
+        }),
+    );
+    assert_eq!(err_code(&bad_ext), "invalid_arguments");
 }

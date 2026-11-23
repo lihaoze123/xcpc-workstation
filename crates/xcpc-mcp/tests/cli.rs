@@ -928,6 +928,10 @@ fn seed_verified_report(ws_root: &std::path::Path, slug: &str) {
         built_at_epoch_secs: 1_700_000_000,
         compiler: None,
         checker: "wcmp".to_owned(),
+        interactive: false,
+        runs: 1,
+        subtasks: Vec::new(),
+        total_score: None,
         compile_failures: Vec::new(),
         dirty_inputs: Vec::new(),
         self_tests: Vec::new(),
@@ -1816,4 +1820,443 @@ fn cli_batch_build_packages_export_problems_import_group_and_merged_pdf() {
     );
     assert_eq!(ro_merged.status.code(), Some(2));
     assert_eq!(parse_json_stdout(&ro_merged)["error"]["code"], "read_only");
+}
+
+#[test]
+fn cli_package_phase_3c_init_inspect_build_and_stress() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("guess", "Guess").unwrap();
+
+    // 1. `xcpc package init guess --interactive --runs 2 --subtasks --json`
+    let init = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "package",
+            "init",
+            "guess",
+            "--interactive",
+            "--runs",
+            "2",
+            "--subtasks",
+        ],
+        None,
+    );
+    assert_eq!(
+        init.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let init_json = parse_json_stdout(&init);
+    assert_eq!(init_json["ok"], true);
+    assert!(dir.path().join("problems/guess/interactor.cpp").is_file());
+
+    // 2. `xcpc package inspect guess --json` (also works under --read-only)
+    let insp = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "--json", "package", "inspect", "guess"],
+        None,
+    );
+    assert_eq!(
+        insp.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&insp.stderr)
+    );
+    let insp_json = parse_json_stdout(&insp);
+    assert_eq!(insp_json["interactive"], true);
+    assert_eq!(insp_json["runs"], 2);
+    assert!(insp_json["subtasks"].as_array().unwrap().len() >= 2);
+    assert_eq!(insp_json["total_score"], 100);
+    assert_eq!(insp_json["files"]["interactor"], "interactor.cpp");
+
+    // Human-readable inspect output surfaces interactive/runs/subtasks.
+    let insp_human = run_xcpc(Some(dir.path()), &["package", "inspect", "guess"], None);
+    assert_eq!(insp_human.status.code(), Some(0));
+    let human_stdout = String::from_utf8_lossy(&insp_human.stdout);
+    assert!(human_stdout.contains("交互题"), "{human_stdout}");
+    assert!(human_stdout.contains("多轮 ×2"), "{human_stdout}");
+    assert!(human_stdout.contains("子任务"), "{human_stdout}");
+
+    // 3. Build & stress an interactive single-run problem with a buggy solution to verify transcript & scores.
+    ws.create_problem("echo-int", "Echo Interactive").unwrap();
+    let init2 = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "package",
+            "init",
+            "echo-int",
+            "--interactive",
+            "--subtasks",
+        ],
+        None,
+    );
+    assert_eq!(init2.status.code(), Some(0));
+
+    // Add a wrong solution that always prints -1.
+    fs::write(
+        dir.path().join("problems/echo-int/solutions/wa.cpp"),
+        "#include <iostream>\nint main(){ int x; if (std::cin >> x) std::cout << -1 << std::endl; return 0; }\n",
+    )
+    .unwrap();
+    let mut meta = ws.load_problem("echo-int").unwrap().meta;
+    meta.solutions.insert(
+        "wa".to_owned(),
+        xcpc_domain::SolutionSpec {
+            main: None,
+            expect: Some(xcpc_domain::ExpectVerdict::Single("WA".to_owned())),
+            tags: None,
+            score: Some(xcpc_domain::ScoreExpect::Exact(0)),
+            subtasks: std::collections::BTreeMap::new(),
+        },
+    );
+    ws.save_problem_meta("echo-int", &meta).unwrap();
+
+    let build = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "echo-int"],
+        None,
+    );
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let build_json = parse_json_stdout(&build);
+    assert_eq!(build_json["interactive"], true);
+    assert_eq!(build_json["runs"], 1);
+    assert_eq!(build_json["total_score"], 100);
+    assert!(!build_json["subtasks"].as_array().unwrap().is_empty());
+    let sols = build_json["solutions"].as_array().unwrap();
+    let std_sol = sols.iter().find(|s| s["name"] == "std").unwrap();
+    assert_eq!(std_sol["total_score"], 100.0);
+    let wa_sol = sols.iter().find(|s| s["name"] == "wa").unwrap();
+    assert_eq!(wa_sol["total_score"], 0.0);
+    let wa_cell = build_json["matrix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["solution"] == "wa")
+        .unwrap();
+    assert!(wa_cell["transcript"].is_object(), "{wa_cell}");
+
+    // Stress interactive problem -> finds counterexample with transcript.
+    let stress = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "package",
+            "stress",
+            "echo-int",
+            "--gen",
+            "gen_random",
+            "--args",
+            "{i}",
+            "--solutions",
+            "wa",
+            "--max-iter",
+            "5",
+        ],
+        None,
+    );
+    assert_eq!(
+        stress.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&stress.stderr)
+    );
+    let stress_json = parse_json_stdout(&stress);
+    assert_eq!(stress_json["found_counterexample"], true);
+    assert!(stress_json["transcript"].is_object(), "{stress_json}");
+}
+
+#[test]
+fn cli_phase_3d_sanitize_audit_external_and_adopt() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("sum", "Sum").unwrap();
+    ws.create_problem("pub-only", "Pub Only").unwrap();
+
+    // Initialize package for `sum` and compose contest `round-3d`.
+    let init = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "init", "sum"],
+        None,
+    );
+    assert_eq!(init.status.code(), Some(0));
+
+    let compose = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json", "contest", "compose", "round-3d", "sum", "pub-only",
+        ],
+        None,
+    );
+    assert_eq!(compose.status.code(), Some(0));
+
+    // Strict verify `sum`.
+    let ver = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "sum", "--strict"],
+        None,
+    );
+    assert_eq!(
+        ver.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&ver.stdout),
+        String::from_utf8_lossy(&ver.stderr)
+    );
+    assert_eq!(parse_json_stdout(&ver)["verified"], true);
+    let report_before = fs::read(dir.path().join("build/problems/sum/report.json")).unwrap();
+
+    // 1. `package build sum --sanitize --json` (and conflict / read-only checks).
+    let conflict = run_xcpc(
+        Some(dir.path()),
+        &["package", "build", "sum", "--strict", "--sanitize"],
+        None,
+    );
+    assert_eq!(conflict.status.code(), Some(2));
+
+    let ro_san = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "package",
+            "build",
+            "sum",
+            "--sanitize",
+        ],
+        None,
+    );
+    assert_eq!(ro_san.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_san)["error"]["code"], "read_only");
+
+    let san = run_xcpc(
+        Some(dir.path()),
+        &["--json", "package", "build", "sum", "--sanitize"],
+        None,
+    );
+    let san_json = parse_json_stdout(&san);
+    let san_status = san_json["status"].as_str().unwrap();
+    assert!(
+        matches!(san_status, "passed" | "unsupported"),
+        "unexpected sanitizer status: {san_json}"
+    );
+    if san_status == "passed" {
+        assert_eq!(san.status.code(), Some(0));
+        assert_eq!(san_json["ok"], true);
+    }
+    assert!(
+        dir.path()
+            .join("build/problems/sum/sanitizer-report.json")
+            .is_file()
+    );
+    // Must not overwrite normal report.json.
+    let report_after = fs::read(dir.path().join("build/problems/sum/report.json")).unwrap();
+    assert_eq!(report_before, report_after);
+
+    let san_human = run_xcpc(
+        Some(dir.path()),
+        &["package", "build", "sum", "--sanitize"],
+        None,
+    );
+    let san_stdout = String::from_utf8_lossy(&san_human.stdout);
+    assert!(san_stdout.contains("UB 体检"), "{san_stdout}");
+
+    // 2. `contest audit round-3d` (read-only, JSON + Markdown + human).
+    let ext_dir = tempfile::tempdir().unwrap();
+    let audit_md = ext_dir.path().join("audit.md");
+    let audit = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "contest",
+            "audit",
+            "round-3d",
+            "--markdown",
+            audit_md.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        audit.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let audit_json = parse_json_stdout(&audit);
+    assert_eq!(audit_json["ok"], true);
+    assert_eq!(audit_json["contest_id"], "round-3d");
+    let rows = audit_json["problems"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["verification_status"], "fresh");
+    if san_status == "passed" {
+        assert_eq!(rows[0]["sanitizer_status"], "passed_fresh");
+    }
+    assert_eq!(rows[1]["verification_status"], "statement_only");
+    assert!(
+        rows[1]["lint_warning_count"].as_u64().unwrap() >= 1,
+        "expected xcpc-lint warning for pub-only: {rows:?}"
+    );
+    assert!(audit_md.is_file());
+    let audit_md_text = fs::read_to_string(&audit_md).unwrap();
+    assert!(audit_md_text.contains("sum"), "{audit_md_text}");
+
+    let audit_human = run_xcpc(
+        Some(dir.path()),
+        &["--read-only", "contest", "audit", "round-3d"],
+        None,
+    );
+    assert_eq!(audit_human.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&audit_human.stdout).contains("验题体检"));
+
+    // 3. External trial run (multi-tester contest + single problem) & adopt.
+    let testers_dir = ext_dir.path().join("testers");
+    fs::create_dir_all(testers_dir.join("alice")).unwrap();
+    fs::create_dir_all(testers_dir.join("bob")).unwrap();
+    let ac_cpp = testers_dir.join("alice/A.cpp");
+    let wa_cpp = testers_dir.join("bob/sum.cpp");
+    let unmatched_cpp = testers_dir.join("bob/unknown.cpp");
+    fs::write(
+        &ac_cpp,
+        "#include <iostream>\nint main(){ long long a, b; if (std::cin >> a >> b) std::cout << (a + b) << '\\n'; return 0; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &wa_cpp,
+        "#include <iostream>\nint main(){ long long a, b; if (std::cin >> a >> b) std::cout << (a + b + 1) << '\\n'; return 0; }\n",
+    )
+    .unwrap();
+    fs::write(&unmatched_cpp, "int main(){ return 0; }\n").unwrap();
+
+    let ext_md = ext_dir.path().join("external.md");
+    let cv = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "contest",
+            "verify-external",
+            "round-3d",
+            testers_dir.to_str().unwrap(),
+            "--markdown",
+            ext_md.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        cv.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&cv.stdout),
+        String::from_utf8_lossy(&cv.stderr)
+    );
+    let cv_json = parse_json_stdout(&cv);
+    assert_eq!(cv_json["ok"], true);
+    assert_eq!(cv_json["mode"], "multi_tester");
+    let subs = cv_json["submissions"].as_array().unwrap();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(cv_json["unmatched"].as_array().unwrap().len(), 1);
+    let alice_sub = subs.iter().find(|s| s["tester"] == "alice").unwrap();
+    assert_eq!(alice_sub["verdict"], "AC");
+    let bob_sub = subs.iter().find(|s| s["tester"] == "bob").unwrap();
+    assert_eq!(bob_sub["verdict"], "WA");
+    assert!(ext_md.is_file());
+    // Zero workspace pollution: solutions/ still only has std.cpp.
+    assert!(!dir.path().join("problems/sum/solutions/A.cpp").exists());
+
+    // Read-only rejects `--auto-build`.
+    let ro_ab = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "contest",
+            "verify-external",
+            "round-3d",
+            testers_dir.to_str().unwrap(),
+            "--auto-build",
+        ],
+        None,
+    );
+    assert_eq!(ro_ab.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_ab)["error"]["code"], "read_only");
+
+    // Single-problem external trial run.
+    let pv = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "package",
+            "verify-external",
+            "sum",
+            ac_cpp.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(pv.status.code(), Some(0));
+    let pv_json = parse_json_stdout(&pv);
+    assert_eq!(pv_json["ok"], true);
+    assert_eq!(pv_json["submissions"][0]["verdict"], "AC");
+
+    // Adopt external solution into solutions/ and problem.toml.
+    let ro_adopt = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--read-only",
+            "--json",
+            "package",
+            "adopt",
+            "sum",
+            ac_cpp.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(ro_adopt.status.code(), Some(2));
+    assert_eq!(parse_json_stdout(&ro_adopt)["error"]["code"], "read_only");
+
+    let adopt = run_xcpc(
+        Some(dir.path()),
+        &[
+            "--json",
+            "package",
+            "adopt",
+            "sum",
+            ac_cpp.to_str().unwrap(),
+            "--name",
+            "alice_ac",
+            "--expect",
+            "AC",
+        ],
+        None,
+    );
+    assert_eq!(
+        adopt.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&adopt.stderr)
+    );
+    let adopt_json = parse_json_stdout(&adopt);
+    assert_eq!(adopt_json["ok"], true);
+    assert_eq!(adopt_json["solution_name"], "alice_ac");
+    assert_eq!(
+        adopt_json["dest_rel"],
+        "problems/sum/solutions/alice_ac.cpp"
+    );
+    assert_eq!(adopt_json["updated_problem_toml"], true);
+    assert!(
+        dir.path()
+            .join("problems/sum/solutions/alice_ac.cpp")
+            .is_file()
+    );
+    let toml_text = fs::read_to_string(dir.path().join("problems/sum/problem.toml")).unwrap();
+    assert!(toml_text.contains("[solutions.alice_ac]"), "{toml_text}");
 }

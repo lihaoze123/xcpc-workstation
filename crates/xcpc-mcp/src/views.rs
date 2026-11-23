@@ -1,12 +1,16 @@
 //! Shared read-only view models over Core (`xcpc-storage`, `xcpc-convert`, `xcpc-domain`)
 //! used by both `xcpc show` (CLI) and `get_problem` / `get_contest` (MCP).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{ContestStats, Language, Limits, ProblemMeta, Sample, SampleInventory};
 use xcpc_engine::Engine;
+use xcpc_judge::{
+    AuditLintFinding, AuditOptions, ContestAuditReport, JudgeError, ProblemLintSummary,
+};
+use xcpc_lint::{LintOptions, Severity as LintSeverity, code as lint_code};
 use xcpc_storage::{Error, Workspace, WorkspaceIndex, content_hash};
 
 /// One statement file (`statement.md`, `statement.zh.md`, `statement.en.md`) with its SHA-256 digest.
@@ -287,4 +291,56 @@ pub fn contest_detail(
         problems,
         stats,
     })
+}
+
+/// Runs read-only contest readiness audit with full `xcpc-lint` statement/editorial/image/sample
+/// findings populated in `AuditOptions::lint_by_problem`.
+pub fn audit_contest_with_lint(
+    ws: &Workspace,
+    contest_id: &str,
+) -> Result<ContestAuditReport, JudgeError> {
+    let contest = ws.load_contest(contest_id)?;
+    let lint_opts = LintOptions {
+        language: Some(contest.meta.language),
+        check_editorial: true,
+        unsaved: None,
+    };
+
+    let mut lint_by_problem: BTreeMap<String, ProblemLintSummary> = BTreeMap::new();
+    for item in &contest.meta.problems {
+        if lint_by_problem.contains_key(&item.id) {
+            continue;
+        }
+        if let Ok(findings) = xcpc_lint::lint_problem(ws, &item.id, &lint_opts) {
+            let mut summary = ProblemLintSummary::default();
+            for f in findings {
+                // Package freshness/status is audited directly by `audit_contest` with richer context.
+                if matches!(
+                    f.code.as_str(),
+                    lint_code::PACKAGE_UNVERIFIED
+                        | lint_code::PACKAGE_STALE
+                        | lint_code::PACKAGE_FAILED
+                ) {
+                    continue;
+                }
+                match f.severity {
+                    LintSeverity::Error => summary.error_count += 1,
+                    LintSeverity::Warning => summary.warning_count += 1,
+                }
+                summary.findings.push(AuditLintFinding {
+                    severity: f.severity.as_str().to_owned(),
+                    code: f.code,
+                    message: f.message,
+                    file: f.file,
+                });
+            }
+            lint_by_problem.insert(item.id.clone(), summary);
+        }
+    }
+
+    let opts = AuditOptions {
+        lint_by_problem,
+        ..Default::default()
+    };
+    xcpc_judge::audit_contest(ws, contest_id, &opts)
 }

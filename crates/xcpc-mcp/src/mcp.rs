@@ -160,6 +160,8 @@ impl Server {
             "init_package" => self.tool_init_package(obj),
             "build_package" => self.tool_build_package(obj),
             "stress_package" => self.tool_stress_package(obj),
+            "audit_contest" => self.tool_audit_contest(obj),
+            "run_external_solution" => self.tool_run_external_solution(obj),
             "import_polygon" => self.tool_import_polygon(obj),
             "export_oj_package" => self.tool_export_oj_package(obj),
             _ => Err(None),
@@ -884,11 +886,27 @@ impl Server {
         if self.ws.is_read_only() {
             return Err(fail("read_only", "the workspace is open read-only"));
         }
-        reject_unknown_keys(args, &["id"], "init_package")
-            .map_err(|m| fail("invalid_arguments", m))?;
+        reject_unknown_keys(
+            args,
+            &["id", "interactive", "runs", "subtasks"],
+            "init_package",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
         let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
-        let res =
-            xcpc_judge::init_package(&self.ws, &id).map_err(|e| fail(e.code(), e.to_string()))?;
+        let interactive = opt_bool(args, "interactive")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
+        let runs = opt_u32(args, "runs").map_err(|m| fail("invalid_arguments", m))?;
+        let subtasks = opt_bool(args, "subtasks")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
+        let opts = xcpc_judge::InitPackageOptions {
+            interactive,
+            runs,
+            subtasks,
+        };
+        let res = xcpc_judge::init_package_with_options(&self.ws, &id, &opts)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
         let mut value = serde_json::to_value(&res).expect("serializable");
         value["ok"] = json!(true);
         Ok(structured(value))
@@ -905,24 +923,39 @@ impl Server {
         )
         .map_err(|m| fail("invalid_arguments", m))?;
         let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
-        let mode = match opt_str(args, "mode")
-            .map_err(|m| fail("invalid_arguments", m))?
-            .as_deref()
-        {
-            None | Some("debug") => xcpc_judge::BuildMode::Debug,
-            Some("verify") => xcpc_judge::BuildMode::Verify,
-            Some(other) => {
-                return Err(fail(
-                    "invalid_arguments",
-                    format!("unknown mode {other:?}: expected \"debug\" or \"verify\""),
-                ));
-            }
-        };
+        let mode_raw = opt_str(args, "mode").map_err(|m| fail("invalid_arguments", m))?;
         let tests = opt_str_vec(args, "tests").map_err(|m| fail("invalid_arguments", m))?;
         let solutions = opt_str_vec(args, "solutions").map_err(|m| fail("invalid_arguments", m))?;
         let jobs = opt_u32(args, "jobs")
             .map_err(|m| fail("invalid_arguments", m))?
             .map(|n| n.max(1) as usize);
+
+        if mode_raw.as_deref() == Some("sanitize") {
+            let opts = xcpc_judge::SanitizeOptions {
+                tests,
+                solutions,
+                jobs,
+                ..Default::default()
+            };
+            let report = xcpc_judge::sanitize_package(&self.ws, &id, &opts, None, None)
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+            return Ok(structured(
+                serde_json::to_value(&report).expect("serializable"),
+            ));
+        }
+
+        let mode = match mode_raw.as_deref() {
+            None | Some("debug") => xcpc_judge::BuildMode::Debug,
+            Some("verify") => xcpc_judge::BuildMode::Verify,
+            Some(other) => {
+                return Err(fail(
+                    "invalid_arguments",
+                    format!(
+                        "unknown mode {other:?}: expected \"debug\", \"verify\", or \"sanitize\""
+                    ),
+                ));
+            }
+        };
 
         let opts = xcpc_judge::BuildOptions {
             mode,
@@ -937,6 +970,143 @@ impl Server {
         Ok(structured(
             serde_json::to_value(&report).expect("serializable"),
         ))
+    }
+
+    fn tool_audit_contest(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(args, &["id"], "audit_contest")
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let report = views::audit_contest_with_lint(&self.ws, &id)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+        let mut value = serde_json::to_value(&report).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_run_external_solution(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["target", "id", "path", "paths", "auto_build", "jobs"],
+            "run_external_solution",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let target = req_str(args, "target").map_err(|m| fail("invalid_arguments", m))?;
+        let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let auto_build = opt_bool(args, "auto_build")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
+        if auto_build && self.ws.is_read_only() {
+            return Err(fail(
+                "read_only",
+                "cannot auto-build problem packages when the workspace is open read-only",
+            ));
+        }
+        let jobs = opt_u32(args, "jobs")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .map(|n| n.max(1) as usize);
+        let opts = xcpc_judge::ExternalRunOptions {
+            auto_build,
+            jobs,
+            ..Default::default()
+        };
+
+        let single_path = opt_str(args, "path").map_err(|m| fail("invalid_arguments", m))?;
+        let has_paths = args.get("paths").is_some_and(|v| !v.is_null());
+
+        match target.as_str() {
+            "problem" => {
+                if single_path.is_some() && has_paths {
+                    return Err(fail(
+                        "invalid_arguments",
+                        "specify only one of `path` or `paths`",
+                    ));
+                }
+                let raw_paths: Vec<String> = if let Some(p) = single_path {
+                    vec![p]
+                } else if has_paths {
+                    let v = req_str_vec(args, "paths").map_err(|m| fail("invalid_arguments", m))?;
+                    if v.is_empty() {
+                        return Err(fail("invalid_arguments", "`paths` must not be empty"));
+                    }
+                    v
+                } else {
+                    return Err(fail(
+                        "invalid_arguments",
+                        "specify `path` or `paths` when `target` is \"problem\"",
+                    ));
+                };
+
+                let mut resolved_files = Vec::with_capacity(raw_paths.len());
+                for p in &raw_paths {
+                    let raw = Path::new(p);
+                    if !is_supported_source_path(p) {
+                        return Err(fail(
+                            "invalid_arguments",
+                            format!(
+                                "unsupported external source file (expected C/C++ source): {p:?}"
+                            ),
+                        ));
+                    }
+                    let resolved: PathBuf = if raw.is_absolute() {
+                        raw.to_path_buf()
+                    } else {
+                        self.ws
+                            .resolve(p)
+                            .map_err(|e| fail(e.code(), e.to_string()))?
+                    };
+                    resolved_files.push(resolved);
+                }
+
+                let report = xcpc_judge::run_external_solutions_for_problem(
+                    &self.ws,
+                    &id,
+                    &resolved_files,
+                    &opts,
+                    None,
+                )
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                value["ok"] = json!(true);
+                Ok(structured(value))
+            }
+            "contest" => {
+                if has_paths {
+                    return Err(fail(
+                        "invalid_arguments",
+                        "use `path` (a directory) when `target` is \"contest\"",
+                    ));
+                }
+                let dir_str = single_path.ok_or_else(|| {
+                    fail(
+                        "invalid_arguments",
+                        "`path` (directory) is required when `target` is \"contest\"",
+                    )
+                })?;
+                let raw = Path::new(&dir_str);
+                let resolved_dir: PathBuf = if raw.is_absolute() {
+                    raw.to_path_buf()
+                } else {
+                    self.ws
+                        .resolve(&dir_str)
+                        .map_err(|e| fail(e.code(), e.to_string()))?
+                };
+                let report = xcpc_judge::run_external_solutions_for_contest(
+                    &self.ws,
+                    &id,
+                    &resolved_dir,
+                    &opts,
+                    None,
+                )
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                value["ok"] = json!(true);
+                Ok(structured(value))
+            }
+            other => Err(fail(
+                "invalid_arguments",
+                format!("unknown target {other:?}: expected \"problem\" or \"contest\""),
+            )),
+        }
     }
 
     fn tool_stress_package(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
@@ -1181,9 +1351,26 @@ fn is_known_tool(name: &str) -> bool {
             | "init_package"
             | "build_package"
             | "stress_package"
+            | "audit_contest"
+            | "run_external_solution"
             | "import_polygon"
             | "export_oj_package"
     )
+}
+
+fn is_supported_source_path(raw: &str) -> bool {
+    if raw.ends_with('/') || raw.ends_with('\\') {
+        return false;
+    }
+    Path::new(raw)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("cpp")
+                || ext.eq_ignore_ascii_case("cc")
+                || ext.eq_ignore_ascii_case("cxx")
+                || ext.eq_ignore_ascii_case("c")
+        })
 }
 
 fn parse_option_value(v: &Value) -> Result<TemplateOptionValue, String> {
@@ -1781,9 +1968,11 @@ fn package_tools() -> Value {
         {
             "name": "inspect_package",
             "title": "Inspect problem package",
-            "description": "Read-only overview of a problem's local Polygon package: file inventory, statically expanded tests, \
-                package content hash, static freshness status (not_a_package / verified_fresh / stale / unverified / failed), \
-                dirty-input issues, latest build report, per-gate status, and dynamic next_steps. Never compiles or executes code.",
+            "description": "Read-only overview of a problem's local Polygon package: file inventory (including interactor.cpp), \
+                interactive/multi-run flags (`interactive`, `runs`), OI `subtasks` summary & `total_score`, per-solution expectations \
+                (`score`, `subtasks`), statically expanded tests, package content hash, static freshness status \
+                (not_a_package / verified_fresh / stale / unverified / failed), dirty-input issues, latest build report, \
+                per-gate status, and dynamic next_steps. Never compiles or executes code.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1816,11 +2005,16 @@ fn package_tools() -> Value {
             "name": "init_package",
             "title": "Initialize problem package scaffold",
             "description": "Scaffold a local Polygon package inside problems/<id>/ (validator.cpp, generators/gen_random.cpp, \
-                solutions/std.cpp, validator self-tests, and initial [[test]] / [solutions.std] in problem.toml) without overwriting existing files.",
+                solutions/std.cpp, validator self-tests, and initial [[test]] / [solutions.std] in problem.toml) without overwriting existing files. \
+                Supports optional `interactive` (generates interactor.cpp with flush/deadlock best practices), `runs` (multi-run pass count >= 2), \
+                and `subtasks` (OI [[subtask]] scaffold).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
+                    "interactive": { "type": "boolean", "description": "Generate interactive problem scaffold (`interactor.cpp` + interactive `std.cpp`)." },
+                    "runs": { "type": "integer", "minimum": 1, "description": "Optional multi-run communication pass count (`>= 2` writes `[package].runs = N`)." },
+                    "subtasks": { "type": "boolean", "description": "Generate OI `[[subtask]]` scaffold in `problem.toml`." },
                 },
                 "required": ["id"],
                 "additionalProperties": false,
@@ -1830,16 +2024,18 @@ fn package_tools() -> Value {
         {
             "name": "build_package",
             "title": "Build and verify problem package",
-            "description": "Compile validator/checker/generators/solutions, run self-tests, generate and validate tests, and execute the \
-                tests × solutions matrix. Supports mode \"debug\" (default, allows subset filtering via tests/solutions, never issues verified=true) \
-                and mode \"verify\" (full strict acceptance; issues verified=true only when all hard gates pass).",
+            "description": "Compile validator/interactor/checker/generators/solutions, run self-tests, generate and validate tests, and execute the \
+                tests × solutions matrix (including interactive dual-pipe proxy with bounded `transcript`, multi-run `runs`, and OI `subtasks` / per-solution \
+                `total_score` & `subtask_scores`). Supports mode \"debug\" (default, allows subset filtering via tests/solutions, never issues verified=true), \
+                mode \"verify\" (full strict acceptance; issues verified=true only when all hard gates pass), and mode \"sanitize\" (isolated ASan/UBSan \
+                undefined-behavior check with relaxed time limits that writes only sanitizer-report.json and never overwrites report.json or verified status).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": { "type": "string", "description": "Problem ID (slug under problems/)." },
-                    "mode": { "type": "string", "enum": ["debug", "verify"], "description": "Build mode: \"debug\" (default) or \"verify\" (strict full acceptance)." },
-                    "tests": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of tests (1-based index, name, or tag); debug mode only." },
-                    "solutions": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of solution names; debug mode only." },
+                    "mode": { "type": "string", "enum": ["debug", "verify", "sanitize"], "description": "Build mode: \"debug\" (default), \"verify\" (strict full acceptance), or \"sanitize\" (isolated ASan/UBSan UB check)." },
+                    "tests": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of tests (1-based index, name, or tag); debug/sanitize mode." },
+                    "solutions": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of solution names; debug/sanitize mode." },
                     "jobs": { "type": "integer", "minimum": 1, "description": "Optional parallel worker count override." },
                 },
                 "required": ["id"],
@@ -1850,9 +2046,9 @@ fn package_tools() -> Value {
         {
             "name": "stress_package",
             "title": "Stress test problem package",
-            "description": "Run bounded differential stress testing with a generator against std and one or more target solutions. \
-                Saves the first counterexample to tests/stress-<n>.in without modifying problem.toml, and returns seed, gen_cmd, \
-                truncated input/outputs, and checker diagnostic.",
+            "description": "Run bounded differential stress testing (supporting traditional, interactive, and multi-run packages) with a generator against std \
+                and one or more target solutions. Saves the first counterexample to tests/stress-<n>.in without modifying problem.toml, and returns seed, \
+                gen_cmd, truncated input/outputs, checker diagnostic, and bounded interactive `transcript` when applicable.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1867,6 +2063,43 @@ fn package_tools() -> Value {
                 "additionalProperties": false,
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
+        {
+            "name": "audit_contest",
+            "title": "Audit contest readiness",
+            "description": "Read-only contest-wide readiness audit across all problems in a contest: verification freshness, time-limit safety margins \
+                (std ratio & AC-vs-TLE margin), max test file sizes, cumulative std runtime, solution coverage, validator/checker self-tests, sanitizer \
+                UB check status, xcpc-lint statement/editorial/sample/image counts, actionable risk flags, and next_steps. Safe under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Contest ID (directory name under contests/)." },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "run_external_solution",
+            "title": "Run external tester solution(s)",
+            "description": "Evaluate external C/C++ submission file(s) against a single problem (`target=\"problem\"`, using `path` or `paths`) or a \
+                single-level / multi-tester directory against an entire contest (`target=\"contest\"`, using `path`). Compiles and executes strictly \
+                in a temporary directory without modifying `solutions/` or `problem.toml`. Allowed under `--read-only` when `auto_build` is false.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string", "enum": ["problem", "contest"], "description": "Evaluate against a single problem or an entire contest." },
+                    "id": { "type": "string", "description": "Problem ID or contest ID." },
+                    "path": { "type": "string", "description": "Local absolute or workspace-relative path to a C/C++ file (for problem) or directory (for contest)." },
+                    "paths": { "type": "array", "items": { "type": "string" }, "description": "Array of local C/C++ file paths (only when target is \"problem\")." },
+                    "auto_build": { "type": "boolean", "description": "Automatically build missing test data in debug mode before running (default false; refused under --read-only)." },
+                    "jobs": { "type": "integer", "minimum": 1, "description": "Optional parallel worker count when auto_build triggers a build." },
+                },
+                "required": ["target", "id"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
         },
         {
             "name": "import_polygon",
@@ -1980,6 +2213,8 @@ mod tests {
                 "init_package",
                 "build_package",
                 "stress_package",
+                "audit_contest",
+                "run_external_solution",
                 "import_polygon",
                 "export_oj_package",
             ]

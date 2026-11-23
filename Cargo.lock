@@ -5210,6 +5210,7 @@ dependencies = [
  "xcpc-domain",
  "xcpc-engine",
  "xcpc-judge",
+ "xcpc-lint",
  "xcpc-packages",
  "xcpc-storage",
 ]
@@ -5291,6 +5292,7 @@ dependencies = [
  "xcpc-domain",
  "xcpc-engine",
  "xcpc-judge",
+ "xcpc-lint",
  "xcpc-packages",
  "xcpc-storage",
  "zip",

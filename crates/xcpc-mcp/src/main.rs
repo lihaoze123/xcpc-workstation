@@ -277,10 +277,24 @@ enum ProblemCommand {
 
 #[derive(Subcommand)]
 enum PackageCommand {
+    /// Inspect a local Polygon package (read-only: files, subtasks, freshness, latest report).
+    Inspect {
+        /// Problem ID (slug under problems/).
+        id: String,
+    },
     /// Scaffold a local Polygon package (validator, generator, std, validator self-tests) without overwriting existing files.
     Init {
         /// Problem ID (slug under problems/).
         id: String,
+        /// Generate interactive problem scaffold (`interactor.cpp` and interactive `std.cpp`).
+        #[arg(long)]
+        interactive: bool,
+        /// Multi-run communication pass count (`>= 2` writes `[package].runs = N`).
+        #[arg(long)]
+        runs: Option<u32>,
+        /// Generate OI `[[subtask]]` scaffold in `problem.toml`.
+        #[arg(long)]
+        subtasks: bool,
     },
     /// Compile, generate tests, validate, and run solutions against the checker.
     Build {
@@ -288,12 +302,15 @@ enum PackageCommand {
         #[arg(value_name = "ID", required = true)]
         ids: Vec<String>,
         /// Run full strict acceptance verification (all tests × all solutions, all hard gates).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "sanitize")]
         strict: bool,
-        /// Subset of tests to run (1-based index, name, or tag; comma-separated or repeatable; debug mode only).
+        /// Run isolated ASan/UBSan undefined-behavior check across generators, validator, checker, interactor, and expected-AC solutions.
+        #[arg(long, conflicts_with = "strict")]
+        sanitize: bool,
+        /// Subset of tests to run (1-based index, name, or tag; comma-separated or repeatable; debug/sanitize mode).
         #[arg(long, value_delimiter = ',')]
         tests: Vec<String>,
-        /// Subset of solution names to run (comma-separated or repeatable; debug mode only).
+        /// Subset of solution names to run (comma-separated or repeatable; debug/sanitize mode).
         #[arg(long, value_delimiter = ',')]
         solutions: Vec<String>,
         /// Parallel worker count (overrides both tool and solution concurrency).
@@ -319,6 +336,42 @@ enum PackageCommand {
         /// Time budget in seconds.
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+    },
+    /// Evaluate one or more external `.cpp` files against a problem's built test data without modifying the workspace.
+    VerifyExternal {
+        /// Problem ID (slug under problems/).
+        id: String,
+        /// External `.cpp` solution file(s) to evaluate.
+        #[arg(value_name = "FILE", required = true)]
+        files: Vec<PathBuf>,
+        /// Automatically build test data in debug mode if not yet built.
+        #[arg(long)]
+        auto_build: bool,
+        /// Parallel worker count (used when `--auto-build` triggers a build).
+        #[arg(long, short = 'j')]
+        jobs: Option<usize>,
+        /// Also export a Markdown report to this file path.
+        #[arg(long)]
+        markdown: Option<PathBuf>,
+    },
+    /// Atomically adopt an external `.cpp` solution into `problems/<id>/solutions/` and register it in `problem.toml`.
+    Adopt {
+        /// Problem ID (slug under problems/).
+        id: String,
+        /// External `.cpp` file to adopt.
+        file: PathBuf,
+        /// Target solution name under `solutions/<name>.cpp` (defaults to file stem).
+        #[arg(long)]
+        name: Option<String>,
+        /// Expected verdict(s) (comma-separated or repeatable, e.g. `AC` or `WA,TLE`; defaults to `AC`).
+        #[arg(long, value_delimiter = ',')]
+        expect: Vec<String>,
+        /// Optional test tag filter(s) (comma-separated or repeatable).
+        #[arg(long = "tag", value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark the adopted solution as `main = true`.
+        #[arg(long)]
+        main: bool,
     },
 }
 
@@ -484,6 +537,30 @@ enum ContestCommand {
     Unarchive {
         /// Contest ID.
         id: String,
+    },
+    /// Run a read-only contest readiness audit across all problems in the contest.
+    Audit {
+        /// Contest ID.
+        id: String,
+        /// Also export a Markdown audit report to this file path.
+        #[arg(long)]
+        markdown: Option<PathBuf>,
+    },
+    /// Evaluate a directory of external tester submissions (single-level or `<dir>/<tester>/<prob>.cpp`) against a contest without modifying the workspace.
+    VerifyExternal {
+        /// Contest ID.
+        id: String,
+        /// External submissions directory (single-level or 2-level multi-tester layout).
+        path: PathBuf,
+        /// Automatically build missing test data in debug mode before evaluating.
+        #[arg(long)]
+        auto_build: bool,
+        /// Parallel worker count (used when `--auto-build` triggers a build).
+        #[arg(long, short = 'j')]
+        jobs: Option<usize>,
+        /// Also export a Markdown report to this file path.
+        #[arg(long)]
+        markdown: Option<PathBuf>,
     },
 }
 
@@ -1204,8 +1281,23 @@ fn print_polygon_import_result(res: &xcpc_packages::PolygonImportResult) {
         xcpc_packages::PolygonImportKind::Problem => {
             if let Some(p) = res.problems.first() {
                 println!("已导入题目「{}」（{}）", p.id, p.title);
+                let mut extras = Vec::new();
+                if p.has_interactor {
+                    extras.push("交互题".to_owned());
+                }
+                if let Some(r) = p.runs.filter(|&r| r > 1) {
+                    extras.push(format!("多轮 ×{r}"));
+                }
+                if p.subtasks_count > 0 {
+                    extras.push(format!("子任务 {} 个", p.subtasks_count));
+                }
+                let extra_str = if extras.is_empty() {
+                    String::new()
+                } else {
+                    format!("，{}", extras.join("，"))
+                };
                 println!(
-                    "  样例 {} 组，测试点 {} 组，生成器 {} 个，解法 {} 个，校验器：{}",
+                    "  样例 {} 组，测试点 {} 组，生成器 {} 个，解法 {} 个，校验器：{}{extra_str}",
                     p.samples_count,
                     p.tests_count,
                     p.generators_count,
@@ -1334,12 +1426,34 @@ fn print_package_warnings(warnings: &[xcpc_packages::PackageWarning]) {
 
 fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
     let ws = open_workspace(cli)?;
-    if ws.is_read_only() {
-        return Err(xcpc_storage::Error::ReadOnly.into());
-    }
     match action {
-        PackageCommand::Init { id } => {
-            let res = xcpc_judge::init_package(&ws, id)?;
+        PackageCommand::Inspect { id } => {
+            let insp = xcpc_judge::inspect_package(&ws, id)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&insp).expect("serializable")
+                );
+            } else {
+                print_package_inspection(&insp);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PackageCommand::Init {
+            id,
+            interactive,
+            runs,
+            subtasks,
+        } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let opts = xcpc_judge::InitPackageOptions {
+                interactive: *interactive,
+                runs: *runs,
+                subtasks: *subtasks,
+            };
+            let res = xcpc_judge::init_package_with_options(&ws, id, &opts)?;
             if cli.json {
                 println!(
                     "{}",
@@ -1369,56 +1483,100 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
         PackageCommand::Build {
             ids,
             strict,
+            sanitize,
             tests,
             solutions,
             jobs,
         } => {
-            let opts = xcpc_judge::BuildOptions {
-                mode: if *strict {
-                    xcpc_judge::BuildMode::Verify
-                } else {
-                    xcpc_judge::BuildMode::Debug
-                },
-                tests: tests.clone(),
-                solutions: solutions.clone(),
-                jobs: *jobs,
-                solution_jobs: *jobs,
-                ..Default::default()
-            };
-            if ids.len() == 1 {
-                let report = xcpc_judge::build_package(&ws, &ids[0], &opts, None, None)?;
-                if cli.json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).expect("serializable")
-                    );
-                } else {
-                    print_build_report(&report);
-                }
-                let passed = if *strict {
-                    report.ok && report.verified
-                } else {
-                    report.ok
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            if *sanitize {
+                let opts = xcpc_judge::SanitizeOptions {
+                    tests: tests.clone(),
+                    solutions: solutions.clone(),
+                    jobs: *jobs,
+                    ..Default::default()
                 };
-                if passed {
-                    Ok(ExitCode::SUCCESS)
+                if ids.len() == 1 {
+                    let report = xcpc_judge::sanitize_package(&ws, &ids[0], &opts, None, None)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("serializable")
+                        );
+                    } else {
+                        print_sanitizer_report(&report);
+                    }
+                    if report.ok {
+                        Ok(ExitCode::SUCCESS)
+                    } else {
+                        Ok(ExitCode::from(1))
+                    }
                 } else {
-                    Ok(ExitCode::from(1))
+                    let report = xcpc_judge::sanitize_packages_batch(&ws, ids, &opts, None, None)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("serializable")
+                        );
+                    } else {
+                        print_batch_build_report(&report);
+                    }
+                    if report.ok {
+                        Ok(ExitCode::SUCCESS)
+                    } else {
+                        Ok(ExitCode::from(1))
+                    }
                 }
             } else {
-                let report = xcpc_judge::build_packages_batch(&ws, ids, &opts, None, None)?;
-                if cli.json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).expect("serializable")
-                    );
+                let opts = xcpc_judge::BuildOptions {
+                    mode: if *strict {
+                        xcpc_judge::BuildMode::Verify
+                    } else {
+                        xcpc_judge::BuildMode::Debug
+                    },
+                    tests: tests.clone(),
+                    solutions: solutions.clone(),
+                    jobs: *jobs,
+                    solution_jobs: *jobs,
+                    ..Default::default()
+                };
+                if ids.len() == 1 {
+                    let report = xcpc_judge::build_package(&ws, &ids[0], &opts, None, None)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("serializable")
+                        );
+                    } else {
+                        print_build_report(&report);
+                    }
+                    let passed = if *strict {
+                        report.ok && report.verified
+                    } else {
+                        report.ok
+                    };
+                    if passed {
+                        Ok(ExitCode::SUCCESS)
+                    } else {
+                        Ok(ExitCode::from(1))
+                    }
                 } else {
-                    print_batch_build_report(&report);
-                }
-                if report.ok {
-                    Ok(ExitCode::SUCCESS)
-                } else {
-                    Ok(ExitCode::from(1))
+                    let report = xcpc_judge::build_packages_batch(&ws, ids, &opts, None, None)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("serializable")
+                        );
+                    } else {
+                        print_batch_build_report(&report);
+                    }
+                    if report.ok {
+                        Ok(ExitCode::SUCCESS)
+                    } else {
+                        Ok(ExitCode::from(1))
+                    }
                 }
             }
         }
@@ -1430,6 +1588,9 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
             max_iter,
             timeout,
         } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
             let opts = xcpc_judge::StressOptions {
                 generator: generator.clone(),
                 args: args.clone(),
@@ -1449,6 +1610,84 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        PackageCommand::VerifyExternal {
+            id,
+            files,
+            auto_build,
+            jobs,
+            markdown,
+        } => {
+            if *auto_build && ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let opts = xcpc_judge::ExternalRunOptions {
+                auto_build: *auto_build,
+                jobs: *jobs,
+                ..Default::default()
+            };
+            let report =
+                xcpc_judge::run_external_solutions_for_problem(&ws, id, files, &opts, None)?;
+            let md_written = if let Some(path) = markdown {
+                let md = xcpc_judge::render_external_problem_markdown(&report);
+                Some(write_explicit_file(path, md.as_bytes())?)
+            } else {
+                None
+            };
+            if cli.json {
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                value["ok"] = json!(true);
+                if let Some(ref p) = md_written {
+                    value["markdown"] = json!(p);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_external_problem_report(&report, md_written.as_deref());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PackageCommand::Adopt {
+            id,
+            file,
+            name,
+            expect,
+            tags,
+            main,
+        } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let opts = xcpc_judge::AdoptSolutionOptions {
+                name: name.clone(),
+                expect: expect.clone(),
+                tags: tags.clone(),
+                is_main: *main,
+            };
+            let res = xcpc_judge::adopt_external_solution(&ws, id, file, &opts)?;
+            if cli.json {
+                let mut value = serde_json::to_value(&res).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                println!(
+                    "已收编外部解法「{}」至 {}（题目「{}」{}）",
+                    res.solution_name,
+                    res.dest_rel,
+                    res.problem_id,
+                    if res.updated_problem_toml {
+                        "，已更新 problem.toml"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -1459,6 +1698,168 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KiB", bytes as f64 / 1024.0)
     } else {
         format!("{bytes} B")
+    }
+}
+
+fn format_score_value(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-6 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+fn print_transcript(tr: &xcpc_judge::InteractionTranscript, indent: &str, max_lines: usize) {
+    let mut shown = 0usize;
+    for entry in &tr.head {
+        if shown >= max_lines {
+            break;
+        }
+        let arrow = match entry.direction {
+            xcpc_judge::TranscriptDirection::InteractorToSolution => "→",
+            xcpc_judge::TranscriptDirection::SolutionToInteractor => "←",
+        };
+        let run_prefix = match entry.run {
+            Some(r) => format!("[run #{r}] "),
+            None => String::new(),
+        };
+        println!("{indent}{run_prefix}{arrow} {}", entry.text);
+        shown += 1;
+    }
+    if tr.omitted_entries > 0 {
+        println!("{indent}...（省略 {} 行交互记录）...", tr.omitted_entries);
+    }
+    for entry in &tr.tail {
+        if shown >= max_lines {
+            break;
+        }
+        let arrow = match entry.direction {
+            xcpc_judge::TranscriptDirection::InteractorToSolution => "→",
+            xcpc_judge::TranscriptDirection::SolutionToInteractor => "←",
+        };
+        let run_prefix = match entry.run {
+            Some(r) => format!("[run #{r}] "),
+            None => String::new(),
+        };
+        println!("{indent}{run_prefix}{arrow} {}", entry.text);
+        shown += 1;
+    }
+    if !tr.interactor_message.trim().is_empty() {
+        println!("{indent}交互器输出：{}", tr.interactor_message.trim());
+    }
+}
+
+fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
+    let freshness_str = match &insp.freshness {
+        xcpc_judge::PackageFreshness::NotAPackage => "非题目包（仅含题面）",
+        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => "已验收（最新）",
+        xcpc_judge::PackageFreshness::Stale { .. } => "已过期（文件有变动）",
+        xcpc_judge::PackageFreshness::Unverified { .. } => "未验收",
+        xcpc_judge::PackageFreshness::Failed { .. } => "上次构建未通过",
+    };
+    let mut modes = Vec::new();
+    if insp.interactive {
+        modes.push("交互题".to_owned());
+    }
+    if insp.runs > 1 {
+        modes.push(format!("多轮 ×{}", insp.runs));
+    }
+    if !insp.subtasks.is_empty() {
+        if let Some(total) = insp.total_score {
+            modes.push(format!("OI 子任务（总分 {total}）"));
+        } else {
+            modes.push(format!("OI 子任务（{} 组）", insp.subtasks.len()));
+        }
+    }
+    let mode_suffix = if modes.is_empty() {
+        String::new()
+    } else {
+        format!("，{}", modes.join("，"))
+    };
+    println!(
+        "题目包「{}」：{freshness_str}（校验器：{}{}）",
+        insp.problem_id, insp.checker, mode_suffix
+    );
+    if let Some(ref inter) = insp.files.interactor {
+        println!("  交互器：{inter}");
+    }
+    if let Some(ref val) = insp.files.validator {
+        println!("  校验器（Validator）：{val}");
+    }
+    if let Some(ref chk) = insp.files.custom_checker {
+        println!("  自定义 Checker：{chk}");
+    }
+    println!(
+        "  测试点：{} 组，生成器：{} 个，解法：{} 个",
+        insp.expanded_tests.len(),
+        insp.files.generators.len(),
+        insp.solutions.len()
+    );
+
+    if !insp.subtasks.is_empty() {
+        println!("\n子任务：");
+        for st in &insp.subtasks {
+            let scoring = match st.scoring {
+                xcpc_domain::SubtaskScoring::Min => "min",
+                xcpc_domain::SubtaskScoring::Sum => "sum",
+            };
+            let deps = if st.depends.is_empty() {
+                String::new()
+            } else {
+                format!("，依赖 [{}]", st.depends.join(", "))
+            };
+            println!(
+                "  #{}：{} 分（{scoring}，{} 组测试点{deps}）",
+                st.id, st.score, st.test_count
+            );
+        }
+    }
+
+    if !insp.solutions.is_empty() {
+        println!("\n解法配置：");
+        for s in &insp.solutions {
+            let role = if s.is_main { " [标程]" } else { "" };
+            let mut extra = Vec::new();
+            if let Some(ref sc) = s.score {
+                match sc {
+                    xcpc_domain::ScoreExpect::Exact(v) => extra.push(format!("预期总分 {v}")),
+                    xcpc_domain::ScoreExpect::Range([lo, hi]) => {
+                        extra.push(format!("预期总分 {lo}..={hi}"))
+                    }
+                }
+            }
+            if !s.subtasks.is_empty() {
+                let parts: Vec<String> = s
+                    .subtasks
+                    .iter()
+                    .map(|(k, v)| match v {
+                        xcpc_domain::ExpectVerdict::Single(one) => format!("{k}={one}"),
+                        xcpc_domain::ExpectVerdict::Multiple(many) => {
+                            format!("{k}={}", many.join("|"))
+                        }
+                    })
+                    .collect();
+                extra.push(format!("子任务预期 {{{}}}", parts.join(", ")));
+            }
+            let extra_str = if extra.is_empty() {
+                String::new()
+            } else {
+                format!("，{}", extra.join("，"))
+            };
+            println!(
+                "  {}{role}（{}）：预期 [{}]{extra_str}",
+                s.name,
+                s.source_rel,
+                s.expected.join("|")
+            );
+        }
+    }
+
+    if !insp.next_steps.is_empty() {
+        println!("\n下一步建议：");
+        for step in &insp.next_steps {
+            println!("  - {step}");
+        }
     }
 }
 
@@ -1474,13 +1875,33 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     } else {
         "未通过"
     };
+    let mut mode_tags = Vec::new();
+    if report.interactive {
+        mode_tags.push("交互题".to_owned());
+    }
+    if report.runs > 1 {
+        mode_tags.push(format!("多轮 ×{}", report.runs));
+    }
+    if !report.subtasks.is_empty() {
+        if let Some(total) = report.total_score {
+            mode_tags.push(format!("OI 子任务，总分 {total}"));
+        } else {
+            mode_tags.push(format!("OI 子任务 {} 组", report.subtasks.len()));
+        }
+    }
+    let extra_tags = if mode_tags.is_empty() {
+        String::new()
+    } else {
+        format!("，{}", mode_tags.join("，"))
+    };
     println!(
-        "题目包「{}」：{}（模式：{}{}，校验器：{}）",
+        "题目包「{}」：{}（模式：{}{}，校验器：{}{}）",
         report.problem_id,
         status_str,
         mode_str,
         if report.subset { "，局部运行" } else { "" },
-        report.checker
+        report.checker,
+        extra_tags,
     );
     if let Some(ref c) = report.compiler {
         println!("  编译器：{}（{}）", c.name, c.version);
@@ -1574,6 +1995,25 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
         }
     }
 
+    if !report.subtasks.is_empty() {
+        println!("\n子任务分组：");
+        for st in &report.subtasks {
+            let scoring = match st.scoring {
+                xcpc_domain::SubtaskScoring::Min => "min",
+                xcpc_domain::SubtaskScoring::Sum => "sum",
+            };
+            let deps = if st.depends.is_empty() {
+                String::new()
+            } else {
+                format!("，依赖 [{}]", st.depends.join(", "))
+            };
+            println!(
+                "  #{}：{} 分（{scoring}，{} 组测试点{deps}）",
+                st.id, st.score, st.test_count
+            );
+        }
+    }
+
     if !report.solutions.is_empty() {
         println!("\n解法结果：");
         for s in &report.solutions {
@@ -1583,8 +2023,13 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
                 "不符预期"
             };
             let role = if s.is_main { " [标程]" } else { "" };
+            let score_part = match (s.total_score, s.max_score) {
+                (Some(got), Some(max)) => format!("，得分 {}/{max}", format_score_value(got)),
+                (Some(got), None) => format!("，得分 {}", format_score_value(got)),
+                _ => String::new(),
+            };
             println!(
-                "  [{mark}] {}{role}：实际 {}，预期 [{}]，通过 {}/{}，最慢 {}ms，峰值 {:.1} MiB",
+                "  [{mark}] {}{role}：实际 {}，预期 [{}]{score_part}，通过 {}/{}，最慢 {}ms，峰值 {:.1} MiB",
                 s.name,
                 s.actual_verdict,
                 s.expected.join("|"),
@@ -1593,6 +2038,22 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
                 s.max_time_ms,
                 s.max_memory_kib as f64 / 1024.0,
             );
+            if !s.subtask_scores.is_empty() {
+                let parts: Vec<String> = s
+                    .subtask_scores
+                    .iter()
+                    .map(|ss| {
+                        format!(
+                            "#{}: {}/{} ({})",
+                            ss.subtask_id,
+                            format_score_value(ss.score),
+                            ss.max_score,
+                            ss.verdict
+                        )
+                    })
+                    .collect();
+                println!("    子任务得分：{}", parts.join(" | "));
+            }
         }
     }
 
@@ -1604,6 +2065,10 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     if !failing_cells.is_empty() {
         println!("\n非 AC 详情（最多显示 20 项）：");
         for c in failing_cells.iter().take(20) {
+            let ratio_str = match c.score_ratio {
+                Some(r) if r > 0.0 && r < 1.0 => format!("，得分率 {:.0}%", r * 100.0),
+                _ => String::new(),
+            };
             let detail = if !c.checker_message.is_empty() {
                 format!(" — {}", c.checker_message.trim())
             } else if !c.stderr.is_empty() {
@@ -1612,9 +2077,12 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
                 String::new()
             };
             println!(
-                "  #{} {} × {}：{}（{}ms）{detail}",
+                "  #{} {} × {}：{}（{}ms{ratio_str}）{detail}",
                 c.test_index, c.test_name, c.solution, c.verdict, c.cpu_time_ms
             );
+            if let Some(ref tr) = c.transcript {
+                print_transcript(tr, "    ", 12);
+            }
         }
     }
 
@@ -1676,6 +2144,10 @@ fn print_stress_result(res: &xcpc_judge::StressResult) {
         if let Some(ref out) = res.solution_output_preview {
             println!("--- 解法输出 ---\n{out}");
         }
+        if let Some(ref tr) = res.transcript {
+            println!("--- 交互日志 ---");
+            print_transcript(tr, "  ", 20);
+        }
     } else {
         println!(
             "对拍「{}」：通过（共 {} 轮，耗时 {} ms，未发现反例）",
@@ -1711,6 +2183,253 @@ fn print_batch_build_report(report: &xcpc_judge::BatchBuildReport) {
         } else {
             println!("  [{tag}] {}（{}ms）", item.problem_id, item.elapsed_ms);
         }
+    }
+}
+
+fn print_sanitizer_report(report: &xcpc_judge::SanitizerReport) {
+    let status_str = match report.status {
+        xcpc_judge::SanitizerStatus::Passed => "通过",
+        xcpc_judge::SanitizerStatus::Failed => "发现问题",
+        xcpc_judge::SanitizerStatus::Unsupported => "当前工具链不支持 ASan/UBSan",
+    };
+    println!(
+        "题目包「{}」UB 体检（ASan/UBSan）：{status_str}{}",
+        report.problem_id,
+        if report.subset {
+            "（局部运行）"
+        } else {
+            ""
+        }
+    );
+    if let Some(ref c) = report.compiler {
+        println!(
+            "  编译器：{}（{}），放宽时限：{:.2}s",
+            c.name,
+            c.version,
+            report.relaxed_time_limit_ms as f64 / 1000.0
+        );
+    }
+    if let Some(ref reason) = report.unsupported_reason {
+        println!("  不支持原因：{reason}");
+    }
+    if !report.compile_failures.is_empty() {
+        println!("\n编译失败：");
+        for cf in &report.compile_failures {
+            println!("  {}（{}）：", cf.target, cf.source_path);
+            for line in cf.stderr.lines().take(20) {
+                println!("    {line}");
+            }
+        }
+    }
+    if !report.targets.is_empty() {
+        println!("\n检查目标：");
+        for t in &report.targets {
+            let tag = if t.passed { "通过" } else { "失败" };
+            println!(
+                "  [{tag}] {}（{}）：运行 {} 次，发现 {} 处异常",
+                t.target, t.source_path, t.checked_runs, t.findings_count
+            );
+        }
+    }
+    if !report.findings.is_empty() {
+        println!("\n发现异常（{} 处）：", report.findings.len());
+        for f in &report.findings {
+            let test_ctx = match (f.test_index, f.test_name.as_deref()) {
+                (Some(idx), Some(name)) => format!("（测试 #{idx} {name}）"),
+                (Some(idx), None) => format!("（测试 #{idx}）"),
+                _ => String::new(),
+            };
+            println!("  {}{test_ctx}：{}", f.target, f.summary);
+            for frame in f.stack_summary.iter().take(6) {
+                println!("    {frame}");
+            }
+        }
+    }
+    if !report.diagnostics.is_empty() {
+        println!("\n诊断信息：");
+        for d in &report.diagnostics {
+            println!("  - {d}");
+        }
+    }
+    if !report.next_steps.is_empty() {
+        println!("\n下一步建议：");
+        for step in &report.next_steps {
+            println!("  - {step}");
+        }
+    }
+}
+
+fn print_external_submission_line(s: &xcpc_judge::ExternalSubmissionResult) {
+    let prefix = match (&s.tester, &s.problem_label) {
+        (Some(t), Some(l)) => format!("{t}/{l}\t"),
+        (Some(t), None) => format!("{t}\t"),
+        (None, Some(l)) => format!("{l}\t"),
+        (None, None) => String::new(),
+    };
+    let ratio = s
+        .ratio_vs_std
+        .map(|r| format!("（{r:.2}× std）"))
+        .unwrap_or_default();
+    let score = match (s.total_score, s.max_score) {
+        (Some(got), Some(max)) => format!("，得分 {}/{max}", format_score_value(got)),
+        (Some(got), None) => format!("，得分 {}", format_score_value(got)),
+        _ => String::new(),
+    };
+    println!(
+        "  {prefix}{}：{}，通过 {}/{}{score}，最慢 {}ms{ratio}",
+        s.file_name, s.verdict, s.passed_tests, s.total_tests, s.max_time_ms
+    );
+    if let Some(ref ce) = s.compile_error {
+        if let Some(first_line) = ce.lines().find(|l| !l.trim().is_empty()) {
+            println!("    编译错误：{}", first_line.trim());
+        }
+    } else if let Some(ref ff) = s.first_failure {
+        let msg = if ff.message.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", ff.message.trim())
+        };
+        println!(
+            "    首个失败：#{} {}（{}）{msg}",
+            ff.test_index, ff.test_name, ff.verdict
+        );
+    }
+}
+
+fn print_external_problem_report(
+    report: &xcpc_judge::ExternalProblemReport,
+    markdown_path: Option<&str>,
+) {
+    println!(
+        "题目「{}」外部提交试跑（共 {} 份）：",
+        report.problem_id,
+        report.submissions.len()
+    );
+    for s in &report.submissions {
+        print_external_submission_line(s);
+    }
+    if let Some(path) = markdown_path {
+        println!("已导出 Markdown 报告：{path}");
+    }
+}
+
+fn print_external_contest_report(
+    report: &xcpc_judge::ExternalContestReport,
+    markdown_path: Option<&str>,
+) {
+    let mode = match report.mode {
+        xcpc_judge::ExternalContestMode::SingleDirectory => "单目录",
+        xcpc_judge::ExternalContestMode::MultiTester => "多验题人目录",
+    };
+    println!(
+        "比赛「{}」（{}）外部提交试跑（{mode}，共 {} 份提交）：",
+        report.contest_id,
+        report.contest_title,
+        report.submissions.len()
+    );
+    if !report.testers.is_empty() {
+        println!("  验题人：{}", report.testers.join("、"));
+    }
+    for s in &report.submissions {
+        print_external_submission_line(s);
+    }
+    if !report.unmatched.is_empty() {
+        println!("\n未匹配文件（{} 份，已跳过）：", report.unmatched.len());
+        for u in &report.unmatched {
+            if let Some(ref t) = u.tester {
+                println!("  [{t}] {}：{}", u.file_path, u.reason);
+            } else {
+                println!("  {}：{}", u.file_path, u.reason);
+            }
+        }
+    }
+    if let Some(path) = markdown_path {
+        println!("已导出 Markdown 报告：{path}");
+    }
+}
+
+fn print_contest_audit_report(
+    report: &xcpc_judge::ContestAuditReport,
+    markdown_path: Option<&str>,
+) {
+    let s = &report.summary;
+    let ready = if s.ready_for_freeze {
+        "可定稿"
+    } else {
+        "存在阻塞项"
+    };
+    println!(
+        "比赛「{}」（{}）验题体检：{ready}（共 {} 题：已验收 {} / 过期 {} / 失败 {} / 未构建 {} / 纯出版 {}）",
+        report.contest_id,
+        report.contest_title,
+        s.total_problems,
+        s.fresh_count,
+        s.stale_count,
+        s.failed_count,
+        s.unbuilt_count,
+        s.statement_only_count
+    );
+    println!(
+        "  风险汇总：错误 {} 项，告警 {} 项；UB 体检：通过 {} / 异常 {} / 未运行 {}",
+        s.error_risk_count,
+        s.warning_risk_count,
+        s.sanitizer_passed_count,
+        s.sanitizer_failed_count,
+        s.sanitizer_not_run_count
+    );
+    if !report.problems.is_empty() {
+        println!("\n逐题总览：");
+        println!(
+            "  题号\t题目 ID\t验收状态\t标程耗时占比\t单点最大体积\t独立AC/错解\tUB体检\tLint(E/W)"
+        );
+        for row in &report.problems {
+            let ratio = match (row.std_max_time_ms, row.time_limit_ms, row.std_time_ratio) {
+                (Some(std_ms), Some(tl_ms), Some(r)) => format!(
+                    "{:.2}s/{:.2}s({:.0}%)",
+                    std_ms as f64 / 1000.0,
+                    tl_ms as f64 / 1000.0,
+                    r * 100.0
+                ),
+                _ => "-".to_owned(),
+            };
+            let max_file = if row.max_test_file_bytes > 0 {
+                format_bytes(row.max_test_file_bytes)
+            } else {
+                "-".to_owned()
+            };
+            println!(
+                "  {}\t{}\t{}\t{}\t{}\t{}/{}\t{}\t{}/{}",
+                row.label,
+                row.problem_id,
+                row.verification_status.label_zh(),
+                ratio,
+                max_file,
+                row.independent_ac_count,
+                row.wrong_solution_count,
+                row.sanitizer_status.label_zh(),
+                row.lint_error_count,
+                row.lint_warning_count,
+            );
+        }
+    }
+    if !report.risk_flags.is_empty() {
+        println!("\n风险项（{} 项）：", report.risk_flags.len());
+        for flag in &report.risk_flags {
+            let tag = match flag.level {
+                xcpc_judge::AuditRiskLevel::Error => "错误",
+                xcpc_judge::AuditRiskLevel::Warning => "告警",
+            };
+            println!("  [{tag}] [{}] {}", flag.code, flag.message);
+        }
+    }
+    if !report.next_steps.is_empty() {
+        println!("\n下一步建议：");
+        for step in &report.next_steps {
+            println!("  - {step}");
+        }
+    }
+    if let Some(path) = markdown_path {
+        println!("已导出 Markdown 报告：{path}");
     }
 }
 
@@ -2333,7 +3052,78 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        ContestCommand::Audit { id, markdown } => {
+            let report = views::audit_contest_with_lint(&ws, id)?;
+            let md_written = if let Some(path) = markdown {
+                let md = xcpc_judge::render_contest_audit_markdown(&report);
+                Some(write_explicit_file(path, md.as_bytes())?)
+            } else {
+                None
+            };
+            if cli.json {
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                value["ok"] = json!(true);
+                if let Some(ref p) = md_written {
+                    value["markdown"] = json!(p);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_contest_audit_report(&report, md_written.as_deref());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        ContestCommand::VerifyExternal {
+            id,
+            path,
+            auto_build,
+            jobs,
+            markdown,
+        } => {
+            if *auto_build && ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let opts = xcpc_judge::ExternalRunOptions {
+                auto_build: *auto_build,
+                jobs: *jobs,
+                ..Default::default()
+            };
+            let report =
+                xcpc_judge::run_external_solutions_for_contest(&ws, id, path, &opts, None)?;
+            let md_written = if let Some(md_path) = markdown {
+                let md = xcpc_judge::render_external_contest_markdown(&report);
+                Some(write_explicit_file(md_path, md.as_bytes())?)
+            } else {
+                None
+            };
+            if cli.json {
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                value["ok"] = json!(true);
+                if let Some(ref p) = md_written {
+                    value["markdown"] = json!(p);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_external_contest_report(&report, md_written.as_deref());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+/// Atomically writes bytes to an explicit user-specified path, creating parent directories if needed.
+fn write_explicit_file(path: &std::path::Path, bytes: &[u8]) -> Result<String, Fatal> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    xcpc_storage::write_atomic(path, bytes)
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(path.display().to_string())
 }
 
 /// Writes to `explicit` (a path the user gave, anywhere), else to `default` in the
