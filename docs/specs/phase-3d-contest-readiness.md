@@ -2,6 +2,8 @@
 
 > 状态：已确认（2026-11-24）
 > 关联文档：[roadmap.md](../roadmap.md)、[local-polygon.md](./local-polygon.md)、[phase-3c-interactive-communication-subtasks.md](./phase-3c-interactive-communication-subtasks.md)
+>
+> **2026-11-24 界面更新**：本规格的 Core、CLI、MCP 能力不变；**桌面端部分已由 [authoring-ui-refactor.md](./authoring-ui-refactor.md) 取代**：取消独立的「验题体检」视图，改为在比赛工作室左侧大纲中显示每题状态，选中题目后就地「出题」与检查；四个动作收进标题栏「检查 ▾」；「UB 体检」在界面上称为「内存检查」；验题人代码的结果拆回到各题；比赛内检查使用比赛覆写后的时限与内存。下文 §2.1、§4.2 中涉及桌面端的描述以该规格为准。
 
 ## 1. 目标与定位
 
@@ -64,7 +66,7 @@ Phase 3D 围绕**整场验题与质量体检**补齐这三块能力，全部下�
 
 ### 4.2 桌面端、CLI 与 MCP 入口
 
-- **桌面端**：比赛内新增「验题体检」视图（表格总览 + 风险高亮），提供四个高频动作：
+- **桌面端**（已由 [authoring-ui-refactor.md](./authoring-ui-refactor.md) §4 取代，以下为初版记录）：比赛内新增「验题体检」视图（表格总览 + 风险高亮），提供四个高频动作：
   1. **一键验收全部过期/未验题**（顺序执行并实时更新进度）；
   2. **一键整场 UB 体检**（对全场比赛运行 Sanitizer 体检）；
   3. **导入验题人目录试跑**（调起原生文件/目录选择器）；
@@ -73,6 +75,7 @@ Phase 3D 围绕**整场验题与质量体检**补齐这三块能力，全部下�
   - `xcpc contest audit <id> [--json] [--markdown <path>]`
   - `xcpc contest verify-external <id> <path> [--json] [--markdown <path>]`
   - `xcpc package build <id> --sanitize [--tests …] [--solutions …] [--json]`
+  - `xcpc package build <id> --strict --contest <比赛>`：在比赛覆写后的时限与内存下检查（见 [authoring-ui-refactor.md](./authoring-ui-refactor.md) §4）
 - **MCP**：
   - `audit_contest`（只读，`--read-only` 可用）：返回整场比赛逐题健康度、风险预警与 `next_steps` 引导；
   - `build_package` 扩展 `mode: "sanitize"`；

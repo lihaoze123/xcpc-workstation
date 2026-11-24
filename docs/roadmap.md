@@ -253,7 +253,19 @@
 2. **验题人外部提交试跑（零污染）**：支持单题单文件、整场单目录（按题号或 slug 自动匹配）与多验题人二级目录；临时目录编译运行不改写工作区文件，支持导出 Markdown 验题报告，并对满意解法提供一键「收编进 `solutions/`」。
 3. **比赛级「验题体检」闭环**：比赛内新增「验题体检」视图 + `xcpc contest audit` CLI + `audit_contest` MCP 工具，聚合每题验收状态、标程耗时占比、AC/TLE 安全余量、数据体积与评测总耗时预警、错解覆盖、lint 与 Sanitizer 状态；支持一键验收过期题、整场 UB 体检、验题人目录试跑与导出整场 Markdown 报告。
 
-**不做**：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、Nix / Hull 互通、CPLib 专门支持、函数式 `grader.cpp` 通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
+### Phase 3 界面收敛：出题与比赛检查
+
+2026-11-24 实机评审后讨论确认，排在 Phase 3D 之后、候选 Phase 3E 之前，详细规格见 [specs/authoring-ui-refactor.md](./specs/authoring-ui-refactor.md)（评审证据见 [review-phase3-ux.md](./review-phase3-ux.md)）。**不新增功能**，只重组结构、统一用词、补齐出错反馈：
+
+1. **统一词表**：「检查」取代验证 / 验收 / 构建；题目状态只有「未检查 / 有问题 / 已通过」；「内存检查」「验题人代码」「加入解法」「可以定稿」；CLI 中文输出同步，命令名、MCP 与错误码不变。
+2. **出错与环境缺失**：错误文案取自 Core `human_message`，执行类操作不再落到「操作没有完成」；没有编译器时在状态位提前说明并直达「设置 → 工具链」；失败原因写具体原因而不是检查项标题。
+3. **出题面板（单题与比赛共用）**：标题栏管对象、面板工具行管题目动作；侧栏「题型」条目统一配置交互 / 轮数 / 计分并按题型显隐；矩阵颜色只表达「不符合预期」；诊断面板合并重复输出、交互日志按轮分组。
+4. **比赛工作室**：取消独立的「验题体检」页；大纲显示每题状态，选中题目后就地「出题」与检查；「检查 ▾」收纳内存检查、试跑验题人代码、导出检查报告；批量进度原位显示；验题人代码结果拆回各题；比赛内检查使用比赛覆写后的时限与内存。
+5. **视觉工艺**：颜色走 Token，字号收敛为 12 / 13 / 14，代码编辑器默认关闭连字，状态只用一种编码。
+
+**不做**：新增检查维度、界面上的「验题人 × 题目」矩阵、改 CLI 命令名与 MCP 接口。
+
+**不做**（Phase 3 整体）：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、Nix / Hull 互通、CPLib 专门支持、函数式 `grader.cpp` 通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
 
 ## Phase 4：训练与生态
 
@@ -262,7 +274,7 @@
 
 ## 待定（尚未排期）
 
-- **候选 Phase 3E：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，定位在 Phase 3D 验题试跑的自然延伸，待 3C / 3D 落地后评估是否排在 Phase 4 之前）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 三种赛制与内容哈希断点续测；引入 `code_sha256` + `judge_scope`（`none | pretest | full`）+ 可选 `honeypot` 三道防线与分层审计模型（`REJUDGED` / `SUSPECT` / `CHEATER`），产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
+- **候选 Phase 3E：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，定位在 Phase 3D 验题试跑的自然延伸，待 3C / 3D 与「Phase 3 界面收敛」落地后评估是否排在 Phase 4 之前）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 三种赛制与内容哈希断点续测；引入 `code_sha256` + `judge_scope`（`none | pretest | full`）+ 可选 `honeypot` 三道防线与分层审计模型（`REJUDGED` / `SUSPECT` / `CHEATER`），产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
 - 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
 - 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。

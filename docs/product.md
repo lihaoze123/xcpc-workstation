@@ -226,7 +226,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
   - `xcpc package build <id> [--strict] [--tests …] [--solutions …] [--jobs N]`：编译 → 自测 → 生成 → validator → 标程 → 全解法 → 安全边际摘要与单步复现命令；
   - `xcpc package stress <id> --gen <name> --args "…" [--solutions a,b]`：递增种子对拍，反例写出 `tests/stress-<n>.in`。
 - 产物放在 `build/problems/<slug>/`（不进 Git）；编译、生成、运行三级内容哈希缓存放在 `~/.cache/xcpc/`，跨工作区共享。
-- **GUI**：出版工作室单题第 4 个 Tab「构建」（轻量出题控制台：构建/严格验收/局部运行、测试×解法矩阵、点击单元格看 checker/stderr 诊断、一键脚手架、跳转外部编辑器；失败汇入 Preflight 徽章）+「设置 → 工具链」。
+- **GUI**：单题与比赛工作室中选中题目时的「出题」Tab（轻量出题控制台：检查 / 运行选中、题型设置、测试×解法矩阵、点击单元格看判定与交互日志、一键脚手架、跳转外部编辑器；状态以「未检查 / 有问题 / 已通过」在状态位就地呈现）+「设置 → 工具链」。界面结构与用词以 [specs/authoring-ui-refactor.md](./specs/authoring-ui-refactor.md) 为准。
 - **Agent / Skill 协同**：提供 5 个 MCP 工具（`inspect_package`、`inspect_test_case`、`init_package`、`build_package`、`stress_package`），仓库内建 `skills/xcpc-problem-creator/`（支持 `xcpc init --with-skills` 安装至工作区）并同步升级 `AGENTS.md`。
 - **生态包（Phase 3B，`crates/xcpc-packages`）**：
   - **Polygon ZIP 导入**：支持单题（`problem.xml`）与整场（`contest.xml`，展开全部子题并生成 `contest.toml`）；题面一次性转为 `statement(.zh/.en).md`（复杂 LaTeX 环境经 `tylax` 转为 ```` ```typst ```` 原始块，配图入 `assets/`）；全量导入 `samples/`、声明式 `[[test]]` 生成器（手写 / `from-file` 多测 / 缺源码时回退静态 `tests/*.in`）、`validator.cpp`、`checker.cpp`（标准 `std::*` 映射到 `[package].checker`）、`solutions/*` 与自测；slug 冲突拒绝（支持指定目标 `id`），交互 / 非 C++ / 子任务保留文件并输出 `warnings`；含 Zip Slip 防护与原子暂存。
