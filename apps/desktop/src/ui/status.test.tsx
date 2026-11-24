@@ -1,5 +1,6 @@
 import { describe, expect, test } from "nsh/test";
 import { languagePref, systemLocale, t } from "./i18n";
+import { currentToast, dismissToast, showToast } from "./Toast";
 import { markForPackageStatus, problemStatusModel, problemTypeSummary, type ProblemStatusInput } from "./studio/statusLogic";
 
 function input(over: Partial<ProblemStatusInput> = {}): ProblemStatusInput {
@@ -94,5 +95,28 @@ describe("题型 summary uses spacing, never `·` (design-system §1.4)", () => 
     const s = problemTypeSummary({ interactive: true, runs: 2, subtaskScore: 100 });
     expect(s).toBe("交互　两轮　子任务 100 分");
     expect(s.includes("·")).toBe(false);
+  });
+});
+
+describe("Single-slot Toast (design-system §6.5 tier 3)", () => {
+  test("replaces previous toast without stacking and uses tone-specific durations", () => {
+    dismissToast();
+    expect(currentToast()).toBeUndefined();
+
+    showToast({ tone: "success", text: "比赛检查通过，可以定稿" });
+    const first = currentToast();
+    expect(first?.tone).toBe("success");
+    expect(first?.text).toBe("比赛检查通过，可以定稿");
+    expect(first?.durationMs).toBe(3000);
+
+    showToast({ tone: "issues", text: "检查完成：2 题有问题", action: { label: "查看", run: () => {} } });
+    const second = currentToast();
+    expect(second?.id).not.toBe(first?.id);
+    expect(second?.tone).toBe("issues");
+    expect(second?.durationMs).toBe(4500);
+    expect(second?.action?.label).toBe("查看");
+
+    dismissToast();
+    expect(currentToast()).toBeUndefined();
   });
 });

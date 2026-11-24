@@ -39,7 +39,7 @@ export interface StatusModel {
   details?: string;
 }
 
-export function StatusMark(props: { kind: StatusMarkKind; testID?: string }) {
+export function StatusMark(props: { kind: StatusMarkKind; emphasis?: "slot" | "list"; testID?: string }) {
   return (
     <View
       testID={props.testID}
@@ -52,7 +52,12 @@ export function StatusMark(props: { kind: StatusMarkKind; testID?: string }) {
         <View style={{ width: 7, height: 7, borderRadius: 3.5 }} class="bg-destructive" />
       </If>
       <If when={props.kind === "passed"}>
-        <Icon name="check" size={13} tone="muted-foreground" style={{ opacity: 0.6 }} />
+        <Icon
+          name="check"
+          size={13}
+          tone={props.emphasis === "slot" ? "chart-2" : "muted-foreground"}
+          style={props.emphasis === "slot" ? undefined : { opacity: 0.6 }}
+        />
       </If>
       <If when={props.kind === "running"}>
         <DelayedSpinner active size={11} class="border-muted-foreground" />
@@ -125,7 +130,7 @@ export function StatusSlot(props: {
           }}
           class="hover:bg-muted active:bg-accent"
         >
-          <StatusMark kind={props.model.mark} />
+          <StatusMark kind={props.model.mark} emphasis="slot" />
           <Text
             style={{ flex: 1, minWidth: 0, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
             class={props.model.mark === "issues" ? "text-foreground" : "text-secondary-foreground"}

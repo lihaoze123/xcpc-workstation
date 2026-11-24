@@ -1343,4 +1343,19 @@ export const en: Record<MessageKey, string> = {
   "readiness.exportExternalDialogTitle": "Export External Trial Run Report",
   "readiness.exportButton": "Export",
   "readiness.exportFilter": "Markdown File",
+
+  // ── Toast notifications (§6.5 tier 3) ──────────────────────────────────────
+  "toast.view": "View",
+  "toast.contestCheckReady": "Contest check passed, ready to finalize",
+  "toast.contestCheckDone": "Checked {count} problems, all passed",
+  "toast.contestCheckIssues": "Check finished: {count} problems have issues",
+  "toast.contestMemoryIssues": "Memory check finished: issues in {count} problems",
+  "toast.memoryClean": "Memory check finished, no issues found",
+  "toast.memoryIssues": "Memory check found {count} issues",
+  "toast.problemCheckPassed": "Check passed",
+  "toast.problemCheckIssues": "Check finished with issues",
+  "toast.testerEmpty": "No matching contest problems in folder",
+  "toast.testerAllPassed": "All tester code passed ({count})",
+  "toast.testerFailed": "Tester code: {count} did not pass",
+  "toast.reportExported": "Check report exported",
 };

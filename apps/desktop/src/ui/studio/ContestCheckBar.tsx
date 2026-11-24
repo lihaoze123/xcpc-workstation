@@ -64,7 +64,7 @@ export function ContestCheckBar(props: {
     const report = state()?.report;
     let ids = idsToCheck(report, all || mode === "sanitize");
     if (ids.length === 0 && !all) ids = idsToCheck(report, true);
-    const err = startContestCheck(props.contestId, ids, mode);
+    const err = startContestCheck(props.contestId, ids, mode, () => statusOpen.set(true));
     if (err) notice.set(err);
   }
 
@@ -74,7 +74,7 @@ export function ContestCheckBar(props: {
       statusOpen.set(true);
       return;
     }
-    const err = await runTesterFolder(props.contestId, props.readOnly);
+    const err = await runTesterFolder(props.contestId, props.readOnly, () => statusOpen.set(true));
     if (err) notice.set(err);
   }
 

@@ -21,6 +21,7 @@ import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { compilerMissing, dialog, goSettings, onExternalChange, preview, type UiError } from "../store";
+import { showToast } from "../Toast";
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import { StatusSlot, type StatusModel } from "./StatusSlot";
@@ -452,14 +453,37 @@ export function BuildConsole(props: {
           if (next.reportJson && next.slug === untracked(() => props.problemId)) {
             if (next.mode === "sanitize") {
               const san = parseSanitizerReport(next.reportJson);
-              if (san) sanitizerReport.set(san);
+              if (san) {
+                sanitizerReport.set(san);
+                if (!next.cancelled && !next.error) {
+                  if (san.status === "passed") {
+                    showToast({ tone: "success", text: t("toast.memoryClean") });
+                  } else if (san.status === "failed") {
+                    showToast({
+                      tone: "issues",
+                      text: t("toast.memoryIssues", { count: Math.max(1, san.findings?.length ?? 0) }),
+                      action: { label: t("toast.view"), run: () => selection.set({ kind: "sanitizer" }) },
+                    });
+                  }
+                }
+              }
             } else {
               try {
                 const rep = JSON.parse(next.reportJson) as BuildReportData;
                 finishedReport.set(rep);
-                // Tier 3 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
-                if (!next.cancelled && !next.error && (rep.mode === "debug" || rep.subset)) {
-                  quickRunDone.trigger();
+                if (!next.cancelled && !next.error) {
+                  if (rep.mode === "debug" || rep.subset) {
+                    // Tier 2 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
+                    quickRunDone.trigger();
+                  } else if (rep.verified) {
+                    showToast({ tone: "success", text: t("toast.problemCheckPassed") });
+                  } else {
+                    showToast({
+                      tone: "issues",
+                      text: t("toast.problemCheckIssues"),
+                      action: { label: t("toast.view"), run: () => statusOpen.set(true) },
+                    });
+                  }
                 }
               } catch {
                 // ignore
@@ -736,8 +760,22 @@ export function BuildConsole(props: {
       notice.set({ code: res.code, error: res.error, context: t("build.external.button") });
       return;
     }
-    externalReport.set(parseExternalProblemReport(res.reportJson));
+    const parsed = parseExternalProblemReport(res.reportJson);
+    externalReport.set(parsed);
     externalMarkdown.set(res.markdown ?? undefined);
+    const subs = parsed?.submissions ?? [];
+    if (subs.length > 0) {
+      const failed = subs.filter((s) => s.verdict !== "AC").length;
+      if (failed > 0) {
+        showToast({
+          tone: "issues",
+          text: t("toast.testerFailed", { count: failed }),
+          action: { label: t("toast.view"), run: () => selection.set({ kind: "external" }) },
+        });
+      } else {
+        showToast({ tone: "success", text: t("toast.testerAllPassed", { count: subs.length }) });
+      }
+    }
   }
 
   async function exportExternalMarkdown() {

@@ -7,6 +7,7 @@ import { signal } from "nsh";
 import type { BatchTaskSnapshotJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { onExternalChange, preview, type UiError } from "../store";
+import { showToast } from "../Toast";
 import {
   idsToCheck,
   parseContestAuditReport,
@@ -62,7 +63,12 @@ onExternalChange(() => {
 let streamSeq = 0;
 
 /** Checks `ids` one after another under the contest's limits; marks spin in place. */
-export function startContestCheck(contestId: string, ids: string[], mode: "verify" | "sanitize"): UiError | undefined {
+export function startContestCheck(
+  contestId: string,
+  ids: string[],
+  mode: "verify" | "sanitize",
+  onOpenStatus?: () => void,
+): UiError | undefined {
   if (ids.length === 0 || contestBatch()?.running) return undefined;
   const res = preview.startBatchBuild(ids, mode, contestId);
   if (!res.ok) return { code: res.code, error: res.error, context: t("contestCheck.context") };
@@ -76,7 +82,31 @@ export function startContestCheck(contestId: string, ids: string[], mode: "verif
       if (ev.kind === "problem_finished") void refreshContestCheck(contestId);
       if (ev.kind === "all_finished" || ev.kind === "cancelled" || ev.kind === "error" || ev.kind === "closed") {
         contestBatch.set({ ...ev.snapshot, running: false });
-        void refreshContestCheck(contestId);
+        await refreshContestCheck(contestId);
+        if (mine !== streamSeq || ev.kind === "cancelled" || ev.kind === "closed") return;
+        const viewAction = onOpenStatus ? { label: t("toast.view"), run: onOpenStatus } : undefined;
+        if (mode === "sanitize") {
+          const failed = ev.snapshot.failed;
+          if (failed > 0) {
+            showToast({ tone: "issues", text: t("toast.contestMemoryIssues", { count: failed }), action: viewAction });
+          } else {
+            showToast({ tone: "success", text: t("toast.memoryClean") });
+          }
+        } else {
+          const rep = contestCheck()?.contestId === contestId ? contestCheck()?.report : undefined;
+          const issues = rep ? rep.summary.failed_count : ev.snapshot.failed;
+          if (issues > 0 || ev.snapshot.failed > 0) {
+            showToast({
+              tone: "issues",
+              text: t("toast.contestCheckIssues", { count: Math.max(issues, ev.snapshot.failed) }),
+              action: viewAction,
+            });
+          } else if (rep?.summary.ready_for_freeze) {
+            showToast({ tone: "success", text: t("toast.contestCheckReady") });
+          } else {
+            showToast({ tone: "success", text: t("toast.contestCheckDone", { count: ev.snapshot.succeeded }) });
+          }
+        }
         return;
       }
     }
@@ -89,7 +119,11 @@ export function cancelContestCheck(): void {
 }
 
 /** Runs a folder of tester code (`A.cpp`…, or one sub-folder per tester) against the contest. */
-export async function runTesterFolder(contestId: string, readOnly: boolean): Promise<UiError | undefined> {
+export async function runTesterFolder(
+  contestId: string,
+  readOnly: boolean,
+  onOpenStatus?: () => void,
+): Promise<UiError | undefined> {
   if (testerRunning()) return undefined;
   const picked = await preview.pickExternalFolder({
     title: t("contestCheck.folderTitle"),
@@ -102,14 +136,29 @@ export async function runTesterFolder(contestId: string, readOnly: boolean): Pro
   testerRunning.set(false);
   if (!res.ok) return { code: res.code, error: res.error, context: t("contestCheck.tryTesterCode") };
   const report = parseExternalContestReport(res.reportJson);
+  const subs = report?.submissions ?? [];
   const byProblem = new Map<string, ExternalSubmissionResultData[]>();
-  for (const sub of report?.submissions ?? []) {
+  for (const sub of subs) {
     const list = byProblem.get(sub.problem_id);
     if (list) list.push(sub);
     else byProblem.set(sub.problem_id, [sub]);
   }
   testerResults.set(byProblem);
   testerMarkdown.set(res.markdown ? { contestId, markdown: res.markdown } : undefined);
+  if (subs.length === 0) {
+    showToast({ tone: "info", text: t("toast.testerEmpty") });
+  } else {
+    const failed = subs.filter((s) => s.verdict !== "AC").length;
+    if (failed > 0) {
+      showToast({
+        tone: "issues",
+        text: t("toast.testerFailed", { count: failed }),
+        action: onOpenStatus ? { label: t("toast.view"), run: onOpenStatus } : undefined,
+      });
+    } else {
+      showToast({ tone: "success", text: t("toast.testerAllPassed", { count: subs.length }) });
+    }
+  }
   return undefined;
 }
 
@@ -124,6 +173,10 @@ export async function exportCheckReport(contestId: string): Promise<UiError | un
     buttonLabel: t("contestCheck.exportButton"),
     filterLabel: t("contestCheck.exportFilter"),
   });
-  if (res.cancelled || res.ok) return undefined;
+  if (res.cancelled) return undefined;
+  if (res.ok) {
+    showToast({ tone: "success", text: t("toast.reportExported") });
+    return undefined;
+  }
   return { error: res.error, context: t("contestCheck.exportReport") };
 }

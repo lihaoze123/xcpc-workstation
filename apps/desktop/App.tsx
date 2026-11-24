@@ -18,6 +18,7 @@ import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
 import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/SettingsView";
 import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
 import { StudioView } from "./src/ui/studio/StudioView";
+import { ToastHost } from "./src/ui/Toast";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import {
@@ -404,6 +405,7 @@ function App() {
       </If>
       <ShortcutsModal />
       <NewWorkspaceModal open={newWorkspaceModalOpen()} onClose={() => newWorkspaceModalOpen.set(false)} />
+      <ToastHost />
     </View>
   );
 }

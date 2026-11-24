@@ -26,6 +26,7 @@ import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { minimalEdit, ratioOf, type Book } from "../logic";
+import { setToastBottomLift } from "../Toast";
 import {
   book as storeBook,
   closeStudio,
@@ -129,6 +130,12 @@ export function StudioView(props: { active: boolean }) {
   const previewCollapsed = signal(false);
   const focusMode = signal(false);
   const previewHidden = computed(() => focusMode() || previewCollapsed() || isFullConsole());
+
+  // Lift the global bottom-right toast above the preview canvas's zoom pill when preview is shown.
+  effect(() => {
+    setToastBottomLift(props.active && !previewHidden());
+  });
+  cleanup(() => setToastBottomLift(false));
 
   // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).

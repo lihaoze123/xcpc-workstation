@@ -1341,6 +1341,21 @@ export const zhCN = {
   "readiness.exportExternalDialogTitle": "导出外部验题试跑报告",
   "readiness.exportButton": "导出",
   "readiness.exportFilter": "Markdown 文件",
+
+  // ── Toast notifications (§6.5 tier 3) ──────────────────────────────────────
+  "toast.view": "查看",
+  "toast.contestCheckReady": "比赛检查通过，可以定稿",
+  "toast.contestCheckDone": "已检查 {count} 题，均通过",
+  "toast.contestCheckIssues": "检查完成：{count} 题有问题",
+  "toast.contestMemoryIssues": "内存检查完成：{count} 题发现问题",
+  "toast.memoryClean": "内存检查完成，没有发现问题",
+  "toast.memoryIssues": "内存检查发现 {count} 处问题",
+  "toast.problemCheckPassed": "检查通过",
+  "toast.problemCheckIssues": "检查完成，发现问题",
+  "toast.testerEmpty": "文件夹中没有匹配到比赛题目",
+  "toast.testerAllPassed": "验题人代码全部通过（{count} 份）",
+  "toast.testerFailed": "验题人代码：{count} 份未通过",
+  "toast.reportExported": "已导出检查报告",
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

@@ -81,6 +81,7 @@ export type IconTone =
   | "primary"
   | "primary-foreground"
   | "destructive"
+  | "chart-2"
   | "chart-4";
 
 /** A line icon, 16 points by default, in the secondary text color unless told. */
