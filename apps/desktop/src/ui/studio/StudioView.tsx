@@ -314,6 +314,69 @@ export function StudioView(props: { active: boolean }) {
   let compileTimer: number | undefined;
   let editor: EditorRef | undefined;
   let editorPath = "";
+
+  // One MarkdownEditor per recently opened file (LRU): switching back to a file
+  // is a display flip instead of rebuilding NSH's <Editor> (40-100ms), and each
+  // file keeps its own undo stack, caret and scroll. Hidden ones are inactive.
+  const EDITOR_SLOTS = 8;
+  interface EditorSlot {
+    path: string;
+    /** What the editor was created with. */
+    first: WorkspaceFile;
+    /** Its text and disk hash when it was last the current file. */
+    text: string;
+    hash: string;
+    ref?: EditorRef;
+    actions?: MarkdownEditorActions;
+    vim?: VimMode;
+  }
+  const slots = signal<EditorSlot[]>([]);
+  /** A new slot's editor takes the focus when it mounts (the outgoing one had it). */
+  let focusOnMount = false;
+  const isCurrentSlot = (s: EditorSlot) => file()?.path === s.path;
+
+  /** Makes `f` the current editor: reuses its slot or adds one, evicting the oldest. */
+  function enterSlot(f: WorkspaceFile, focus: boolean) {
+    focusOnMount = focus;
+    const list = untracked(slots);
+    const found = list.find((s) => s.path === f.path);
+    if (found) {
+      slots.set([...list.filter((s) => s !== found), found]);
+      text = found.text;
+      editor = found.ref;
+      editorActions = found.actions;
+      editorPath = found.ref ? f.path : "";
+      vimMode.set(found.vim);
+      if (focus) found.ref?.focus();
+      // Changed on disk while hidden: bring it up to date as one undoable edit.
+      if (f.hash !== found.hash) replaceText(f.text);
+      return;
+    }
+    const slot: EditorSlot = { path: f.path, first: f, text: f.text, hash: f.hash };
+    const next = [...list, slot];
+    while (next.length > EDITOR_SLOTS) next.shift();
+    slots.set(next);
+    text = f.text;
+    editor = undefined;
+    editorActions = undefined;
+    editorPath = "";
+  }
+
+  /**
+   * Remembers the outgoing file's text and hash in its slot and takes the focus
+   * from its (now hidden) editor, which would otherwise keep swallowing keys.
+   * Returns whether it had the focus, so the incoming editor can take it.
+   */
+  function leaveSlot(): boolean {
+    const f = untracked(file);
+    const slot = f && untracked(slots).find((s) => s.path === f.path);
+    if (!slot) return false;
+    slot.text = text;
+    slot.hash = f.hash;
+    const focused = !!slot.actions?.isFocused();
+    slot.ref?.blur();
+    return focused;
+  }
   let pendingCursor: { path: string; line: number; column: number } | undefined;
   let compileImmediate = false;
 
@@ -369,6 +432,7 @@ export function StudioView(props: { active: boolean }) {
       clearTimeout(compileTimer);
       compileTimer = undefined;
       save();
+      const hadFocus = leaveSlot();
       batch(() => {
         conflict.set(undefined);
         dirty = false;
@@ -380,7 +444,7 @@ export function StudioView(props: { active: boolean }) {
           file.set(undefined);
         } else {
           const f = preview.read(next);
-          text = f.text;
+          enterSlot(f, hadFocus);
           file.set(f);
         }
       });
@@ -1405,40 +1469,90 @@ export function StudioView(props: { active: boolean }) {
                       flex: 1,
                       minWidth: 0,
                       maxWidth: previewHidden() ? 760 : undefined,
+                      position: "relative",
                     }}
                   >
-                    <Each of={file() ? [file()!] : []} key={(f) => f.path}>
-                      {(f) => (
-                        <MarkdownEditor
-                          active={() => props.active}
-                          hidden={!isMarkdownTab()}
-                          previewHidden={previewHidden()}
-                          typewriter={focusMode()}
-                          publishLanguage={publishLanguage()}
-                          onRef={(r) => {
-                            editor = r;
-                            editorPath = f().path;
-                            queueMicrotask(applyPending);
+                    <Each of={slots()} key={(slot) => slot.path}>
+                      {(slot) => (
+                        <View
+                          // Stacked, not display:none: NSH tears down a display:none subtree's native
+                          // views, and rebuilding <Editor>'s rows costs as much as a new editor.
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                            left: 0,
+                            visibility: isCurrentSlot(slot()) ? "visible" : "hidden",
+                            pointerEvents: isCurrentSlot(slot()) ? "auto" : "none",
                           }}
-                          onActions={(a) => {
-                            editorActions = a;
-                          }}
-                          defaultValue={f().text}
-                          placeholder={editorPlaceholder()}
-                          readOnly={readOnly()}
-                          diagnostics={editorDiagnostics()}
-                          onInsertImage={openAssets}
-                          onPasteImage={pasteImageBytes}
-                          onVimModeChange={(m) => vimMode.set(m)}
-                          onVimEscape={handleEscape}
-                          onSlashActiveChange={(active) => {
-                            slashActive = active;
-                            if (active) {
-                              clearTimeout(saveTimer);
-                              saveTimer = undefined;
-                              clearTimeout(compileTimer);
-                              compileTimer = undefined;
-                            } else if (dirty) {
+                        >
+                          <MarkdownEditor
+                            active={() => props.active && isCurrentSlot(slot())}
+                            hidden={!isMarkdownTab() || !isCurrentSlot(slot())}
+                            previewHidden={previewHidden()}
+                            typewriter={focusMode()}
+                            publishLanguage={publishLanguage()}
+                            onRef={(r) => {
+                              const s = slot();
+                              s.ref = r;
+                              if (!isCurrentSlot(s)) return;
+                              editor = r;
+                              editorPath = s.path;
+                              if (focusOnMount) r.focus();
+                              focusOnMount = false;
+                              queueMicrotask(applyPending);
+                            }}
+                            onActions={(a) => {
+                              const s = slot();
+                              s.actions = a;
+                              if (isCurrentSlot(s)) editorActions = a;
+                            }}
+                            defaultValue={slot().first.text}
+                            placeholder={editorPlaceholder()}
+                            // A hidden editor never takes edits (they would not be saved).
+                            readOnly={readOnly() || !isCurrentSlot(slot())}
+                            diagnostics={isCurrentSlot(slot()) ? editorDiagnostics() : []}
+                            onInsertImage={openAssets}
+                            onPasteImage={pasteImageBytes}
+                            onVimModeChange={(m) => {
+                              const s = slot();
+                              s.vim = m;
+                              if (isCurrentSlot(s)) vimMode.set(m);
+                            }}
+                            onVimEscape={handleEscape}
+                            onSlashActiveChange={(active) => {
+                              if (!untracked(() => isCurrentSlot(slot()))) return;
+                              slashActive = active;
+                              if (active) {
+                                clearTimeout(saveTimer);
+                                saveTimer = undefined;
+                                clearTimeout(compileTimer);
+                                compileTimer = undefined;
+                              } else if (dirty) {
+                                clearTimeout(saveTimer);
+                                saveTimer = setTimeout(save, SAVE_AFTER);
+                                if (compileImmediate) {
+                                  compileImmediate = false;
+                                  compileNow();
+                                } else {
+                                  scheduleCompile();
+                                }
+                                scheduleStatus();
+                              }
+                            }}
+                            onChange={(value) => {
+                              if (!untracked(() => isCurrentSlot(slot()))) return;
+                              if (value === text) return;
+                              text = value;
+                              dirty = true;
+                              if (slashActive) {
+                                clearTimeout(saveTimer);
+                                saveTimer = undefined;
+                                clearTimeout(compileTimer);
+                                compileTimer = undefined;
+                                return;
+                              }
                               clearTimeout(saveTimer);
                               saveTimer = setTimeout(save, SAVE_AFTER);
                               if (compileImmediate) {
@@ -1448,30 +1562,9 @@ export function StudioView(props: { active: boolean }) {
                                 scheduleCompile();
                               }
                               scheduleStatus();
-                            }
-                          }}
-                          onChange={(value) => {
-                            if (value === text) return;
-                            text = value;
-                            dirty = true;
-                            if (slashActive) {
-                              clearTimeout(saveTimer);
-                              saveTimer = undefined;
-                              clearTimeout(compileTimer);
-                              compileTimer = undefined;
-                              return;
-                            }
-                            clearTimeout(saveTimer);
-                            saveTimer = setTimeout(save, SAVE_AFTER);
-                            if (compileImmediate) {
-                              compileImmediate = false;
-                              compileNow();
-                            } else {
-                              scheduleCompile();
-                            }
-                            scheduleStatus();
-                          }}
-                        />
+                            }}
+                          />
+                        </View>
                       )}
                     </Each>
                     <If when={!file() && target()?.target === "contest"}>

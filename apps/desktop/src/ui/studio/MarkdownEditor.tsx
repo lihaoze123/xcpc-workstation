@@ -121,6 +121,8 @@ export interface MarkdownEditorActions {
   openFind(): void;
   closeFind(): boolean;
   isFindOpen(): boolean;
+  /** Whether the editor holds the keyboard focus. */
+  isFocused(): boolean;
   currentLine(): Promise<number>;
 }
 
@@ -1166,6 +1168,7 @@ export function MarkdownEditor(props: {
     openFind,
     closeFind,
     isFindOpen: () => findOpen(),
+    isFocused: () => untracked(focused),
     currentLine: async () => {
       const sel = await primary();
       return (sel?.head.line ?? 0) + 1;
