@@ -2,8 +2,12 @@
 // into a single Chrome Trace / Perfetto `.json` timeline.
 // - Zero overhead when disabled (single boolean check, no rAF or allocations).
 // - O(1) fixed-capacity circular ring buffer (never calls O(N) `Array.shift()`).
-// - Records only anomalous frames (>8.33ms @ 120Hz / >16.67ms @ 60Hz) plus a
-//   compact summary counter so idle frames never flood the buffer or dilute jank.
+// - Records only frames that missed a refresh (> 1.5x the display's measured
+//   vsync period) plus a summary counter, so normal vsync jitter (8.3-8.5ms at
+//   120Hz) never floods the buffer.
+// - Note: the rAF loop keeps NSH's engine thread ticking every refresh while
+//   recording (idle CPU rises); jank rates therefore include idle frames, which
+//   is why the analyzer also reports absolute stall time and per-interaction INP.
 
 import { Preview } from "xcpc-workstation/native";
 import { signal } from "nsh";
@@ -36,8 +40,30 @@ let ringDropped = 0;
 // Frame counters for accurate jank rate without storing 7,200 idle events/min.
 let frameTotal = 0;
 let frameJank60 = 0;
-let frameJank120 = 0;
+let frameMissed = 0;
+let frameStallMs = 0;
 let frameWorstMs = 0;
+
+// Display refresh period, calibrated from the median of the first frames.
+const VSYNC_CALIBRATION_FRAMES = 60;
+const FALLBACK_VSYNC_MS = 1000 / 60;
+let vsyncMs = 0;
+let calibration: number[] = [];
+
+/** A frame "missed" a refresh when it took more than 1.5 refresh periods. */
+export function isMissedFrame(dtMs: number, vsync: number): boolean {
+  return dtMs > vsync * 1.5;
+}
+
+/** A frame would have dropped at 60Hz when it took more than 1.5 x 16.67ms. */
+export function isJank60(dtMs: number): boolean {
+  return dtMs > (1000 / 60) * 1.5;
+}
+
+function median(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)] ?? FALLBACK_VSYNC_MS;
+}
 
 export const traceRecording = signal(false);
 
@@ -52,8 +78,11 @@ function resetRing(): void {
   ringDropped = 0;
   frameTotal = 0;
   frameJank60 = 0;
-  frameJank120 = 0;
+  frameMissed = 0;
+  frameStallMs = 0;
   frameWorstMs = 0;
+  vsyncMs = 0;
+  calibration = [];
 }
 
 function pushJsEvent(ev: JsTraceEvent): void {
@@ -94,20 +123,33 @@ function startFrameWatch(): void {
     }
     const now = nowMs();
     const dt = now - lastFrameMs;
+    if (vsyncMs === 0) {
+      calibration.push(dt);
+      if (calibration.length >= VSYNC_CALIBRATION_FRAMES) {
+        vsyncMs = median(calibration);
+        calibration = [];
+      }
+    }
+    const vsync = vsyncMs || FALLBACK_VSYNC_MS;
     frameTotal += 1;
     if (dt > frameWorstMs) frameWorstMs = dt;
-    if (dt > 8.33) {
-      frameJank120 += 1;
-      const isJank60 = dt > 16.67;
-      if (isJank60) frameJank60 += 1;
+    if (isMissedFrame(dt, vsync)) {
+      frameMissed += 1;
+      frameStallMs += dt - vsync;
+      const jank60 = isJank60(dt);
+      if (jank60) frameJank60 += 1;
       pushJsEvent({
-        name: isJank60 ? "ui.long_frame" : "ui.slow_frame_120hz",
+        name: jank60 ? "ui.long_frame" : "ui.missed_frame",
         cat: "frame",
         ph: "X",
         tsMs: lastFrameMs,
         durMs: dt,
         tid: TID_UI_MAIN,
-        args: { dtMs: Math.round(dt * 100) / 100, jank60: isJank60 },
+        args: {
+          dtMs: Math.round(dt * 100) / 100,
+          missedRefreshes: Math.max(1, Math.round(dt / vsync) - 1),
+          jank60,
+        },
       });
     }
     lastFrameMs = now;
@@ -166,8 +208,10 @@ export function stopTraceRecording(): void {
       tid: TID_UI_MAIN,
       args: {
         totalFrames: frameTotal,
+        vsyncMs: Math.round((vsyncMs || FALLBACK_VSYNC_MS) * 100) / 100,
+        missed: frameMissed,
         jank60: frameJank60,
-        jank120: frameJank120,
+        stallMs: Math.round(frameStallMs * 100) / 100,
         worstMs: Math.round(frameWorstMs * 100) / 100,
         droppedJsEvents: ringDropped,
       },
@@ -259,8 +303,10 @@ export function traceInstant(cat: string, name: string, args?: Record<string, un
 
 /**
  * Measures Interaction-to-Next-Paint (INP) for a user action (`ux.inp` span).
- * Runs `fn()` immediately; when recording is active, closes the span on the next
- * animation frame (with a fallback timer in headless environments without a frame clock).
+ * Runs `fn()` immediately; when recording, the span closes when the frame
+ * *after* the one that applies the update starts (double rAF), i.e. once the
+ * commit, layout and paint triggered by `fn()` are done. A single rAF fires
+ * before NSH applies the update and would only time the handler itself.
  */
 export function traceInteraction<T>(
   name: string,
@@ -287,8 +333,11 @@ export function traceInteraction<T>(
     });
   };
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => finish(false));
-    fallback = setTimeout(() => finish(true), 40);
+    requestAnimationFrame(() => requestAnimationFrame(() => finish(false)));
+    // Only for hosts without a running frame clock (headless tests): a stalled
+    // engine thread delays this timer just as much as the frames, so it never
+    // cuts a real long interaction short.
+    fallback = setTimeout(() => finish(true), 1000);
   } else {
     finish(false);
   }

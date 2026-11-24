@@ -21,6 +21,8 @@ import {
 } from "./motion";
 import {
   getJsTraceEvents,
+  isJank60,
+  isMissedFrame,
   startTraceRecording,
   stopTraceRecording,
   traceInteraction,
@@ -108,12 +110,30 @@ describe("UI/UX quantitative gates (Phase 1)", () => {
     startTraceRecording();
     expect(traceSpan("ui", "enabled_span", () => "ok")).toBe("ok");
     expect(traceInteraction("tab_switch", () => "done")).toBe("done");
-    await new Promise<void>((resolve) => setTimeout(resolve, 45));
+    // INP closes on the second frame after the interaction (or the headless fallback).
+    const hasInp = () => getJsTraceEvents().some((e) => e.name === "ux.inp.tab_switch");
+    for (let waited = 0; !hasInp() && waited < 1200; waited += 20) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
     stopTraceRecording();
 
     const events = getJsTraceEvents();
     expect(events.some((e) => e.cat === "ui" && e.name === "enabled_span")).toBe(true);
     expect(events.some((e) => e.cat === "ux.inp" && e.name === "ux.inp.tab_switch")).toBe(true);
+  });
+
+  test("frame watch flags missed refreshes relative to the measured vsync, not a fixed 8.33ms", () => {
+    // 120Hz jitter (8.3-8.6ms) is a normal frame, not jank.
+    expect(isMissedFrame(8.46, 8.33)).toBe(false);
+    expect(isMissedFrame(10.9, 8.33)).toBe(false);
+    // One refresh missed at 120Hz.
+    expect(isMissedFrame(16.8, 8.33)).toBe(true);
+    // At 60Hz a 20ms frame is jitter, a 33ms frame missed one refresh.
+    expect(isMissedFrame(20, 16.67)).toBe(false);
+    expect(isMissedFrame(33.4, 16.67)).toBe(true);
+    // 60Hz jank is display independent: > 1.5 x 16.67ms.
+    expect(isJank60(16.8)).toBe(false);
+    expect(isJank60(25.1)).toBe(true);
   });
 
   test("adaptive typing cadence fires fast on pause and coalesces cleanly during bursts", () => {
