@@ -1,3 +1,4 @@
+import { traceSpan } from "./trace";
 // The app's state shared by the shell and the views: the native bridge, the workspace,
 // the preferences, where the user is (a space, or the studio on an object), the watch
 // loop on external changes, and the studio's actions for the command palette.
@@ -116,7 +117,7 @@ export function hasWorkspace(): boolean {
 /** Reads the workspace again after a change and tells the views. */
 export function refresh() {
   batch(() => {
-    info.set(preview.workspace());
+    info.set(traceSpan("ipc", "workspace", () => preview.workspace()));
     revision.set(revision() + 1);
   });
 }

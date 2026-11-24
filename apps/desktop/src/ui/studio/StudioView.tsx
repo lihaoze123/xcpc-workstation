@@ -52,7 +52,7 @@ import {
 } from "../store";
 import { afterNextPaint } from "../frame";
 import { panelTransition } from "../motion";
-import { traceInteraction, traceUntilPaint } from "../trace";
+import { traceInteraction, traceSpan, traceUntilPaint } from "../trace";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
@@ -220,7 +220,7 @@ export function StudioView(props: { active: boolean }) {
   const contest = computed(() => {
     void revision();
     const t = target();
-    return t?.target === "contest" ? preview.contestDetail(t.id) : undefined;
+    return t?.target === "contest" ? traceSpan("ipc", "contest_detail", () => preview.contestDetail(t.id)) : undefined;
   });
   const label = computed(() => {
     const c = contest();
@@ -234,9 +234,9 @@ export function StudioView(props: { active: boolean }) {
     void revision();
     void packageRefreshSeq();
     const t = target();
-    if (t?.target === "problem") return preview.inspectPackage(t.id, null);
+    if (t?.target === "problem") return traceSpan("ipc", "inspect_package", () => preview.inspectPackage(t.id, null));
     const it = item();
-    return t?.target === "contest" && it && !it.missing ? preview.inspectPackage(it.id, t.id) : undefined;
+    return t?.target === "contest" && it && !it.missing ? traceSpan("ipc", "inspect_package", () => preview.inspectPackage(it.id, t.id)) : undefined;
   });
   const hasPackage = computed(() => !!packageInspection()?.hasPackage);
   const frozen = computed(() => !!contest()?.frozen);
@@ -1620,10 +1620,20 @@ export function StudioView(props: { active: boolean }) {
                           inspectorOpen.set(false);
                         }
                       }}
-                      onRefreshPackage={() => {
-                        refresh();
-                        packageRefreshSeq.set(packageRefreshSeq() + 1);
-                        compileNow();
+                      onRefreshPackage={(opts) => {
+                        const run = () =>
+                          traceSpan("build", "refresh_package", () => {
+                            // One batch: the package inspection reads both, and runs once.
+                            batch(() => {
+                              refresh();
+                              packageRefreshSeq.set(packageRefreshSeq() + 1);
+                            });
+                            // A check changes no statement or sample: the preview stays.
+                            if (!opts?.afterBuild) compileNow();
+                          });
+                        // After a check, its result, matrix and toast reach the screen first.
+                        if (opts?.afterBuild) afterNextPaint(run);
+                        else run();
                       }}
                       onSwitchToStatement={() => setStudioMode("statement")}
                     />

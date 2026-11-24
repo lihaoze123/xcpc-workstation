@@ -259,7 +259,8 @@ export function BuildConsole(props: {
   readOnly: boolean;
   inspectionResult: PackageInspectionResultJs | undefined;
   onInitPackage?: () => void;
-  onRefreshPackage: () => void;
+  /** `afterBuild`: a check just finished; nothing but the package and its status changed. */
+  onRefreshPackage: (opts?: { afterBuild?: boolean }) => void;
   onSwitchToStatement?: () => void;
   onCollapseInspector?: () => void;
   controller?: (c: BuildConsoleController | undefined) => void;
@@ -444,8 +445,8 @@ export function BuildConsole(props: {
   }
   function startPolling() {
     if (pollTimer !== undefined) return;
-    pollTimer = setInterval(() => {
-      const next = preview.packageBuildStatus();
+    pollTimer = setInterval(() => traceSpan("build", "poll_tick", () => {
+      const next = traceSpan("build", "poll_ipc", () => preview.packageBuildStatus());
       const prev = untracked(buildStatus);
       // Skip signal writes on idle ticks where scalar progress did not change so
       // `statusModel` and footer text are not invalidated 16.7x/sec unnecessarily.
@@ -501,10 +502,12 @@ export function BuildConsole(props: {
                 const rep = JSON.parse(next.reportJson) as BuildReportData;
                 // Commit finishedReport + clear liveCells atomically so cells reconcile
                 // in-place without an empty-matrix flash.
-                batch(() => {
-                  finishedReport.set(rep);
-                  liveCells.set([]);
-                });
+                traceSpan("build", "report_apply", () =>
+                  batch(() => {
+                    finishedReport.set(rep);
+                    liveCells.set([]);
+                  }),
+                );
                 if (!next.cancelled && !next.error) {
                   if (rep.mode === "debug" || rep.subset) {
                     // Tier 2 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
@@ -532,11 +535,11 @@ export function BuildConsole(props: {
           if (next.mode === "sanitize") {
             refreshSanitizerReport(untracked(() => props.problemId));
           } else {
-            props.onRefreshPackage();
+            props.onRefreshPackage({ afterBuild: true });
           }
         }
       }
-    }, 60) as unknown as number;
+    }), 60) as unknown as number;
   }
   effect(() => {
     if (buildStatus().running) startPolling();
