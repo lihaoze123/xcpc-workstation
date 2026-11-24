@@ -34,7 +34,7 @@
 
 - **单一 Rust Core**：NSH 桌面 GUI、`xcpc mcp`（stdio）和 `xcpc <subcommand> --json` 共用同一套 Core。业务逻辑只能写在 `crates/` 里，`apps/desktop` 和 `xcpc-mcp` 只是外壳。
 - **数据流**：开放目录（单一事实源）→ domain → convert（Markdown + Math，按二级标题识别章节，样例取自 `samples/`）→ typst（`olymp-classic`）→ `typst-render`（预览用像素缓冲，或 PNG）或 `typst-pdf`。
-- **题目**：目录名 slug 就是 ID，创建后不再改名；外部身份写在 `[[source]]` 中。**训练状态不写进任何内容文件**，在运行时由 `training/logs.jsonl` 和 `.xcpc/oj_sync.db` 合并派生。
+- **题目**：目录名 slug 就是 ID，创建后不再改名；外部身份写在 `[[source]]` 中。**训练状态不写进任何内容文件**，在运行时由 `training/logs.jsonl` 和用户全局 `<dataDir>/oj_sync.db` 合并派生。
 - **比赛**：活引用；覆写只允许改元数据（标题、限制、`show-metadata`）。冻结时把源文件和 PDF 复制进 `snapshot/`。
 - UI 组件以 `nsh/base` 为基础：优先用现成组件，需要时可以基于 NSH 自己写组件（比如预览用的 `PageImage`），不引入第三方 UI 组件库。
 

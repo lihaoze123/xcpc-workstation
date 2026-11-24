@@ -267,15 +267,50 @@
 
 **不做**（Phase 3 整体）：`wasi-sdk` / `wasmtime` / `xcpc.lock` / wasm64、Nix / Hull 互通、CPLib 专门支持、函数式 `grader.cpp` 通信题 / 提交答案题 / 自定义 judger、应用内 C++ IDE。
 
-## Phase 4：训练与生态
+## Phase 4：插件体系、个人训练看板与选手工具箱
 
-- Codeforces / AtCoder / QOJ 同步、训练看板、复盘与待补队列；训练类 MCP 工具。
-- Competitive Companion 收题。
+2026-11-24 深度对齐确认（候选 Phase 3E 排到远期），参考 `lihaoze123/cptracker` 看板实践，按「**混合沙箱插件 + 数据看板驱动 + 只记状态与题解 + 离线实战工具箱**」拆分为 **4A → 4B → 4C** 三步推进，详细规格见 [specs/phase-4-training-and-ecosystem.md](./specs/phase-4-training-and-ecosystem.md)：
 
-## 待定（尚未排期）
+### Phase 4A：插件底座、官方 OJ 插件、训练状态与题库联动
 
-- **候选 Phase 3E：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，定位在 Phase 3D 验题试跑的自然延伸，待 3C / 3D 与「Phase 3 界面收敛」落地后评估是否排在 Phase 4 之前）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 三种赛制与内容哈希断点续测；引入 `code_sha256` + `judge_scope`（`none | pretest | full`）+ 可选 `honeypot` 三道防线与分层审计模型（`REJUDGED` / `SUSPECT` / `CHEATER`），产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
-- 洛谷 / 牛客 / LeetCode 的 Cookie 同步。
+1. **混合式沙箱插件引擎（`crates/xcpc-plugin`）**：
+   - Rust Core 内嵌 QuickJS 沙箱运行目录包 `manifest.toml` + `index.js`（零构建步骤，GUI / CLI / MCP 共用），宿主提供域名白名单 HTTP、HTML 选择器、`keyring` 凭据托管（手动粘贴 + `verify()` 验证，不做登录 WebView）、可选 `workspace_read` 受控只读权限与声明式 UI Schema 渲染；协议开放 `oj_source`、`tool`、`commands`、`importer`/`exporter` 与 `credentials` 五类扩展点（4A 先落 `oj_source` 与 `credentials`）；
+   - 官方 `codeforces` 与 `atcoder` 两个 `oj_source` 插件采用「内置默认 + `<dataDir>/plugins/<id>/` 本地同名覆盖」（每平台单个主 handle，AtCoder 仅同步 Algorithm Rating，含跨平台难度统一换算、提交/Rating 增量同步、近期比赛日程与 URL 解析）；支持本地目录/`.zip` 安装、去中心化 `index.json` 仓库订阅（SHA-256 校验）、`xcpc plugin init/test`（含 `xcpc-plugin.d.ts`）与桌面端热重载。
+2. **全局同步与工作区隔离（`crates/xcpc-sync`）**：
+   - 插件目录（`<dataDir>/plugins/`）、账号配置、凭据与同步缓存 `<dataDir>/oj_sync.db` 放用户全局目录，多工作区共享；
+   - `training/logs.jsonl` 留在工作区进 Git，**只记状态变更**（`todo` / `attempted` / `ac` / `upsolved` / `clear`），思路与总结直接写进题目自己的 `editorial.md`；`workspace.toml` 支持 `training = false` 供多人出题仓隐藏训练入口与题库状态列。
+3. **题库联动、应用内收题与导航**：
+   - 运行时合并 `logs.jsonl` 与 `<dataDir>/oj_sync.db` 派生题目状态（不写进 `problem.toml`），题库支持筛选与右键/详情一键切换状态；支持按 URL 快速新建题目（走插件解析与本地缓存补全）；
+   - 左侧导航升级为 **5 项**：`题库 (Cmd+1)` / `比赛 (Cmd+2)` / `训练 (Cmd+3)` / `工具 (Cmd+4)` / `设置 (Cmd+5)`；「设置 → 插件」统一管理插件安装/启停、OJ handle、凭据与同步；CLI 提供 `xcpc plugin`、`xcpc sync`、`xcpc training status`、`xcpc problem from-url`。
+
+### Phase 4B：高密度训练看板、比赛日历、提交检索与训练 MCP
+
+1. **「训练」空间三视图（`总览` | `比赛日历` | `提交`）**：
+   - **总览**：顶部指标（各平台 Rating、周期过题/提交、Streak）+ 全局时间窗口（近 30 天 / 90 天 / 今年 / 全部）+ **双模式年度热力图**（每日题数 / 每日最高难度，跨年）+ 带段位色带的 Rating 曲线 + **有效难度突破趋势**（每周/月 AC 难度 P75 / P90）+ 难度分桶与支持按最低难度过滤的高难标签短板（点击钻取）；
+   - **比赛日历**：聚合已启用 `oj_source` 插件的近期比赛，本地时间排期与倒计时，一键打开赛页；
+   - **提交**：支持「按提交 / 按题目去重」切换（便于筛出 WA/TLE 未过题），点击「收入题库」静默入库（带 `title / rating / tags / [[source]]` 与空 `statement.md`）+ 右下角 Toast 提供「打开」。
+2. **MCP 与 CLI**：精简 3 工具 `get_training_dashboard`、`set_training_status`、`ingest_problem` 及对应 CLI `--json`。
+
+### Phase 4C：独立「工具」Tab（纯净插件容器 + 4 个官方预装工具插件 + `commands` & `importer`/`exporter`）
+
+1. **纯净插件容器与双层运行时**（左侧导航 `工具 (Cmd+4)`，多人出题仓亦常驻可用，宿主零硬编码业务小工具）：
+   - 无头 `index.js` 插件复用宿主文本/Markdown/表格/只读图视图/`svg`&`image`（`resvg` 直出预览与导出 PNG，支持 CodeSnap 类插件）与 CLI `xcpc tool list|run`；
+   - 桌面 UI `ui.js` 插件采用 Obsidian / VS Code 信任模型直跑 NSH 渲染层（安装前显式提示非沙箱边界，自由度拉满）；
+   - `commands` 挂载至 `Cmd+K`；`importer`/`exporter` 接入导入导出入口并由 Core 统一执行沙箱与门禁落盘。
+2. **4 个官方内置默认工具插件**（与 CF/AtCoder 同机制：预装、可禁用、可导出本地副本魔改，全面狗粮化验证 Plugin SDK）：
+   - `graph-editor`（`ui.js` 标杆，对标 `another_graph_editor`：文本边表 ↔ 画布双向联动、拖拽与树/力导向/坐标系布局、着色/重标号/导出图片）；
+   - `math-bitwise`（64 位按位翻转、进制转换、质因数分解、`gcd/exgcd`、模逆元/快速幂、CRT、常用模数速查）；
+   - `complexity-mem`（运算量安全边界与数组精确 MB 估算）；
+   - `string-lab`（KMP 前缀函数、Z 函数、Manacher、SA / LCP 表格对齐展示）。
+
+**不做**：比赛复盘页（`training/reviews/*.md`）、独立待补队列页、耗时/VP/错因标签录入表单、单平台多账号合并、Competitive Companion 端口监听、题单（`sheets/*.toml`）、能力雷达图/平台环形图、盲盒抽题、间隔复习提醒、年度总结幻灯片。
+
+## 待定与远期（尚未排期）
+
+- **远期（原候选 Phase 3E）：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，2026-11-24 确认排到远期）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 赛制与断点续测；引入三道防线反作弊与分层审计模型，产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
+- **更多社区 OJ 插件**（洛谷 / 牛客 / QOJ / LeetCode 等，基于 Phase 4A 的 `oj_source` + `credentials` 插件协议按需扩展，无需宿主硬编码）。
+- **Competitive Companion（`:10043`）按需监听**（若后续有从杂牌 OJ 批量抓样例的刚需，可作为默认关闭的可选开关独立补充）。
+- **题单（`sheets/*.toml`）**。
 - 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。
 - 代码模板册（TRD）。

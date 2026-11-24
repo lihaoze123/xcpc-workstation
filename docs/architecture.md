@@ -78,8 +78,9 @@ crates/
   xcpc-engine     # typst World、olymp-classic 模板（内嵌）、字体加载、render/pdf
   xcpc-lint       # 题面检查与印刷前预检（Phase 2）
   xcpc-judge      # 本地 Polygon（Phase 3A）：本机原生编译器、内置 testlib.h、轻量运行器、双档门禁、build / stress、三级缓存
-  xcpc-packages   # 生态数据包（Phase 3B）：Polygon ZIP 导入（单题/整场 + tylax 转换）、DOMjudge / Hydro 最小集合导出；Competitive Companion（Phase 4）
-  xcpc-sync       # 外部 OJ 同步（后续阶段）
+  xcpc-packages   # 生态数据包（Phase 3B）：Polygon ZIP 导入（单题/整场 + tylax 转换）、DOMjudge / Hydro 最小集合导出
+  xcpc-plugin     # 混合沙箱插件引擎（Phase 4A）：内嵌 QuickJS、白名单 HTTP、HTML 选择器、keyring 凭据托管、oj_source / tool 扩展点
+  xcpc-sync       # 外部 OJ 同步调度与看板聚合（Phase 4A/4B）：调度 oj_source 插件落盘全局 <dataDir>/oj_sync.db
   xcpc-mcp        # `xcpc` 二进制：CLI 子命令 + `xcpc mcp`
 apps/
   desktop         # NSH mixed app：TSX UI + 调用 Core 的 Rust native module
@@ -134,10 +135,7 @@ erDiagram
 
     TRAINING_EVENT {
         string problem_id FK
-        string kind "mark | vp | upsolve | review"
-        string result "ac | wa | tle | upsolved | ..."
-        int duration_sec
-        string[] mistake_tags
+        string status "todo | attempted | ac | upsolved | clear"
         datetime at
     }
 
@@ -155,13 +153,12 @@ erDiagram
 
 ## 5. 本地存储
 
-开放目录是**单一事实源**。题库检索用 Core 的内存索引，不落盘；SQLite 只存放外部 OJ 同步数据（Phase 4），删除后可以重新同步。
+开放目录是**单一事实源**。题库检索用 Core 的内存索引，不落盘；外部 OJ 同步数据存放在用户全局目录 `<dataDir>/oj_sync.db`（多工作区共享，删除后可重新同步）。
 
 ```text
 xcpc-workspace/
 ├── .xcpc/                    # 纯本地派生目录，固定写入 .gitignore，绝不进 Git
-│   └── oj_sync.db            # 外部 OJ 同步明细、Rating、参赛记录、赛程缓存（Phase 4）
-├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典（不含个人 OJ 账号）
+├── workspace.toml            # 工作区配置：默认 template、`[template-options.<template>]`、标签词典、可选 `training = false`（不含个人 OJ 账号）
 ├── AGENTS.md                 # 工作区级 Agent 指南（`xcpc init` 时写入的静态文本，之后归用户）
 ├── templates/                # 工作区 Typst 模板（`<name>.typ`，初始化时按所选预设落盘，进 Git，全部可自由编辑）
 │   └── preamble.typ          # 可选：工作区级 Typst 宏与样式注入（保留名，进 Git，不列为可选比赛模板）
@@ -183,13 +180,12 @@ xcpc-workspace/
 │       ├── template.typ      # 可选：单场比赛专属模板（存在即优先于 `contest.toml` 的 `template`）
 │       ├── assets/           # 比赛专属配图/封面徽标
 │       └── snapshot/         # 仅在冻结后存在：每题源文件副本 + 生效 `template.typ`/preamble/合并参数 + 当时的两本 PDF（进 Git）
-├── sheets/                   # 题单（后续阶段）
 └── training/
-    └── logs.jsonl            # 追加写入的训练事件
+    └── logs.jsonl            # 追加写入的极简状态事件（进 Git，仅记状态变更）
 ```
 
 - 工作区的根目录以 `workspace.toml` 为标志（Phase 1 可以是空文件）。`xcpc` 依次用 `--workspace`、`XCPC_WORKSPACE`、当前目录向上查找来确定工作区，桌面端用后两者。
-- **个人数据与项目数据解耦**：外观主题（用户全局 `<dataDir>/theme.toml`，不设工作区级 `.xcpc/theme.toml`）、编辑器与界面偏好、OJ 账号及系统钥匙串凭据均属于用户个人配置，不写入任何工作区；工作区内的 `.xcpc/` 始终是纯本地派生目录，由 `init_workspace` 固定写入 `.gitignore`，绝不提交到 Git；影响编译结果的公共宏放在 `templates/preamble.typ` 随工作区纳入 Git。
+- **个人数据与项目数据解耦**：外观主题（用户全局 `<dataDir>/theme.toml`，不设工作区级 `.xcpc/theme.toml`）、编辑器与界面偏好、OJ 账号、全局同步缓存（`<dataDir>/oj_sync.db`）及系统钥匙串凭据均属于用户个人配置，不写入任何工作区；工作区内的 `.xcpc/` 始终是纯本地派生目录，由 `init_workspace` 固定写入 `.gitignore`，绝不提交到 Git；影响编译结果的公共宏放在 `templates/preamble.typ` 随工作区纳入 Git。
 - 导出的 PDF 默认写到工作区的 `build/`（派生物，建议加入 `.gitignore`）：Phase 1–2 默认为 `build/<id>.pdf` / `build/<id>-editorial.pdf`；**Phase 2.5 起**在 Core（`crates/xcpc-convert/src/publish.rs`）统一改为按标题命名（如 `build/春季训练赛-试题册.pdf` / `build/春季训练赛-题解.pdf`，自动替换路径非法字符），GUI、CLI 与 MCP 保持一致；CLI 的 `-o` / `--output` 与 MCP 的 `output` 参数仍可覆盖输出路径。
 - **内置示例工作区（Phase 2.5）**：示例工作区静态资源打包进二进制，由 Core 提供「释放到指定目录」接口，供 CLI `xcpc init --example` 与 GUI「打开示例」共用。
 - **Phase 1** 直接扫描目录。**Phase 2** 起 Core 维护内存索引（元数据 + 题面/题解的规范化纯文本）：桌面端启动时扫描一遍，之后由 `notify` 增量更新（同时监听 `workspace.toml`、`templates/*.typ`（含 `templates/preamble.typ`）与 `contests/*/template.typ`，外部编辑器保存后立即热刷新预览与模板 schema）；CLI 和 MCP 每次启动现扫。不引入 SQLite / FTS5，也不做 JSON Schema。
@@ -237,7 +233,7 @@ flowchart LR
 | 题库与组卷 | `search_problems`、`get_problem`、`get_contest`、`write_problem`、`compose_contest`、`set_override`（支持单题级模板参数覆写）、`set_template_options`（更新工作区/比赛/单题的模板选择与参数）、`freeze_contest` | Phase 2 / 2.5 |
 | 题目包 | `inspect_package`、`inspect_test_case`（只读，`--read-only` 可用）、`init_package`、`build_package`（`verify`/`debug` 双模式、结构化报告与门禁）、`stress_package`（有界对拍与反例摘要）；后三者在 `--read-only` 下不可用 | Phase 3A |
 | 生态数据包 | `import_polygon`（导入 Polygon 单题/整场 ZIP，受 `--read-only` 限制）、`export_oj_package`（导出 DOMjudge / Hydro 最小集合 ZIP，写入工作区 `build/`，受 `--read-only` 限制） | Phase 3B |
-| 训练 | `get_training_dashboard`、`log_training_record`、`generate_upsolve_plan` | Phase 4 |
+| 训练 | `get_training_dashboard`（只读）、`set_training_status`、`ingest_problem`（后两者 `--read-only` 禁用） | Phase 4B |
 
 **MCP 没有解冻工具**，解冻只能由人在 GUI 或 CLI 中完成。
 

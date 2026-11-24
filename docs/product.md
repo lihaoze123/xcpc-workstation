@@ -98,8 +98,8 @@ expect = ["tle", "ac"]       # 整题结论之一：ac / wa / tle / mle / re / a
 
 训练状态**不写进任何内容文件**，在运行时由两部分合并得出：
 
-- `training/logs.jsonl`：本地事件日志，记录手动标记、VP、补题、耗时、错因标签和复习提醒。手动修改状态也写成一条事件。
-- `.xcpc/oj_sync.db`：外部 OJ 同步来的提交记录，用 `[[source]]` 中的 `platform` + `id` 匹配到题目。
+- `training/logs.jsonl`：极简本地状态事件日志，仅记录手动状态变更（`todo` / `attempted` / `ac` / `upsolved` / `clear`）；思路与总结直接写入题目的 `editorial.md`。
+- `<dataDir>/oj_sync.db`：用户全局的外部 OJ 同步记录（多工作区共享），用 `[[source]]` 中的 `platform` + `id` 匹配到题目。
 
 合并规则是取最高状态：`ac` / `upsolved` > `attempted` > `todo`。任意一个 source 有 AC，这道题就算 AC。
 
@@ -148,29 +148,34 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 - **删除题目**：被未冻结的比赛（无论是否已归档）引用时拒绝删除并列出这些比赛；只被冻结的比赛引用时允许。
 - **组题辅助**（Phase 2）：每题起止页（取真实编译结果）、难度分布和标签计数。不做按条件抽题，交给 Agent 组合 `search_problems` 与 `compose_contest`。
 
-## 4. 个人训练与 OJ 同步（Phase 4）
+## 4. 个人训练、插件扩展与选手工具箱（Phase 4）
 
-### 4.1 分级同步（`xcpc-sync`）
+详细规格见 [specs/phase-4-training-and-ecosystem.md](./specs/phase-4-training-and-ecosystem.md)（2026-11-24 深度对齐确认，按 4A / 4B / 4C 三步推进；多人出题仓可通过 `workspace.toml` 中 `training = false` 隐藏训练视图）。
 
-| 梯队 | 平台 | 接入方式 |
-| :--- | :--- | :--- |
-| 第一梯队 | **Codeforces**、**AtCoder**（官方 / Kenkoooo）、**QOJ** | 免鉴权的公开 API |
-| 第二梯队 | **洛谷**、**牛客**、**LeetCode** | 可选的本地 Cookie/Token，存放在系统钥匙串（`keyring`）中；遇到风控时降级为提示手动刷新 |
+### 4.1 混合式沙箱插件体系（`xcpc-plugin`）
+
+- 采用「Rust Core 内嵌 QuickJS 沙箱 + 声明式 UI Schema」的混合模式（GUI / CLI / MCP 共用），全局存放于 `<dataDir>/plugins/`。
+- 首期开放三个扩展点：**OJ 数据源（`oj_source`）**、**工具箱扩展（`tool`）** 与 **凭据托管（`credentials`，系统钥匙串 + 域名白名单隔离）**。
+- 官方预装 **Codeforces** 与 **AtCoder**（官方 / Kenkoooo 公开 JSON API，每平台单个 handle，含跨平台难度统一换算）作为默认插件；洛谷 / 牛客 / QOJ / 校内 OJ 等均可通过社区或个人编写的轻量 JS 规则插件无缝接入。
 
 ### 4.2 同步记录与精选题库分层
 
-- 海量的提交记录、Rating、参赛记录和赛程缓存只存放在 `.xcpc/oj_sync.db`，不进入 `problems/`。
-- 只有主动写题解、加入题单或比赛、或用 Competitive Companion 抓题时，题目才会「收入题库」，写入 `problems/<slug>/`，同时生成对应的 `[[source]]`。
+- 海量的提交记录、Rating、近期比赛与题目元信息存放在用户全局目录 `<dataDir>/oj_sync.db`（多工作区共享，可随时删除重建），不进入 `problems/`。
+- **完全应用内收题**（不做 Competitive Companion 端口监听）：只有主动从同步记录一键「收入题库」、按 URL 快速新建、写题解或加入比赛时，题目才会写入 `problems/<slug>/`，同时生成对应的 `[[source]]`。
 
-### 4.3 看板与复盘
+### 4.3 看板、比赛日历与提交检索（数据看板驱动）
 
-- **总览**：各平台 Rating；今日 / 本周 / 本月 / 累计的 AC 数和提交数；提交热力图与 AC 热力图双模式切换，带跨年选择器。
-- **画像**：Rating 曲线叠加、能力雷达图、平台过题环形图、难度分布、标签 AC Top 榜、近期提交时间线。
-- **复盘**：每场外部比赛或本地 VP 都可以写复盘笔记，自动标出「赛时 AC / 赛后已补 / 待补」，未补的题进入待补队列。
+- **总览**：各平台当前/最高 Rating；今日 / 本周 / 本月 / 累计过题与提交数；全局时间窗口（近 30 天 / 90 天 / 今年 / 全部）；**双模式年度热力图**（每日题数 / 每日最高难度，借鉴 `cptracker`）；带段位色带的 Rating 曲线；**有效难度突破趋势**（每周/月 AC 难度 P75 / P90）；难度分桶分布与支持按最低难度过滤的高难标签短板（不做雷达图、环形图等装饰图表）。
+- **比赛日历**：聚合已启用 OJ 插件的近期比赛，本地时间排期与倒计时，一键打开赛页。
+- **提交**：支持「按提交 / 按题目去重」切换，筛选未过题并一键静默「收入题库」；不做独立复盘页与独立待补队列，思路与总结直接写入题目的 `editorial.md`。
 
-### 4.4 题单
+### 4.4 独立「工具」Tab（纯净插件化工具箱）
 
-题单（`sheets/*.toml`）可以自建或导入，对照同步记录自动显示完成进度，也可以整份排册导出为 PDF。
+左侧导航常驻 `工具 (Cmd+4)`（多人出题仓亦可用），宿主仅提供纯净的插件容器与基础渲染器；4 大高频离线工具（图论 / 树 / 几何可视化画板、数论与位运算工作台、复杂度与内存估算器、字符串算法调试器）全部以**官方内置默认插件**形式交付（可禁用、可导出本地副本魔改），并支持安装社区 `tool` / 桌面 `ui.js` 插件扩展。
+
+### 4.5 题单（远期）
+
+题单（`sheets/*.toml`）排入远期待定；当前由「比赛」与「题库分组」覆盖组织需求。
 
 ## 5. 代码模板册（TRD）
 
@@ -183,7 +188,7 @@ prob-type = "交互型"          # 单题级模板参数覆写（按模板名隔
 | **Codeforces Polygon（ZIP）** | 完整（Phase 3B） | — | 单题（`problem.xml`）与整场（`contest.xml` 展开子题并生成 `contest.toml`）；多语言 LaTeX 题面一次性转 `.md`（复杂环境经 `tylax` 转 ```` ```typst ```` 块）；全量导入样例、配图、`validator`/`checker`/`generators`/`solutions` 与自测；交互/非 C++/子任务保留文件并输出 `warnings` |
 | **DOMjudge（ICPC Package）** | 后续阶段 | 支持（Phase 3B） | 对齐 `Polygon2DOMjudge` 的最小集合 ZIP（单题 / 整场 `A-<slug>.zip`…）：`domjudge-problem.ini`（无气球颜色）、`problem.yaml`、`data/sample|secret/`、`problem.pdf`、标准/自定义 `output_validators/`（Kattis 42/43 适配），严格剔除内部源码与解法 |
 | **Hydro OJ** | 后续阶段 | 支持（Phase 3B） | 最小集合 ZIP（单题 / 整场批量）：`problem.yaml`、`additional_file/problem.pdf` + `problem_zh/en.md`（`@[pdf](file://problem.pdf?noDisposition=1)`）、`testdata/config.yaml` 与 `.in/.out`、自定义 `testlib` checker |
-| **Competitive Companion（`:10043`）** | 实时抓取（Phase 4） | — | 浏览器插件一键把题目元数据、样例、限制和链接收入题库 |
+| **Competitive Companion（`:10043`）** | 远期待定 | — | Phase 4 改为完全应用内提供（从同步记录一键收题 + 按 URL 快速新建），不常驻监听本地端口 |
 | **FPS（XML）** | 后续阶段 | 后续阶段 | 题面、样例、Base64 图片、标程 |
 | **QOJ / 通用 Markdown 包** | 后续阶段 | 后续阶段 | Markdown 题面 + 题解 + 静态资源 |
 | **PDF** | — | 完整 | 整本题册（封面、题表、补白）、单题、A4 题解册、TRD |
