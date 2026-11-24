@@ -786,8 +786,14 @@ impl Preview {
 
     /// Starts a strictly sequential background batch package build/verification task
     /// (`mode`: `"verify"` or `"debug"`). Stream progress via `nextBatchEvent(taskId)`.
-    pub fn start_batch_build(&self, ids: Vec<String>, mode: String) -> BatchStartResultJs {
-        self.state.start_batch_build(ids, mode)
+    /// With `contest_id`, each problem is checked under that contest's overridden limits.
+    pub fn start_batch_build(
+        &self,
+        ids: Vec<String>,
+        mode: String,
+        contest_id: Option<String>,
+    ) -> BatchStartResultJs {
+        self.state.start_batch_build(ids, mode, contest_id)
     }
 
     /// Starts a background batch export task (`format`: `"domjudge"`, `"hydro"`, or
@@ -1314,9 +1320,10 @@ impl Preview {
         mode: String,
         tests: Option<Vec<String>>,
         solutions: Option<Vec<String>>,
+        contest_id: Option<String>,
     ) -> ActionResult {
         self.state
-            .start_package_build(&slug, &mode, tests, solutions)
+            .start_package_build(&slug, &mode, tests, solutions, contest_id)
     }
 
     /// Signals cancellation to the currently running background package build, if any.

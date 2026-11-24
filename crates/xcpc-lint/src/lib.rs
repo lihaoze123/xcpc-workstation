@@ -152,6 +152,7 @@ pub fn lint_problem(
     let mut findings = Vec::new();
     lint_problem_dir(
         ws,
+        None,
         &problem.id,
         None,
         &problem.dir,
@@ -199,6 +200,7 @@ pub fn lint_contest(
             if seen_dirs.insert(snap_dir.clone()) {
                 lint_problem_dir(
                     ws,
+                    Some(&contest.id),
                     &item.id,
                     Some(&item.label),
                     &snap_dir,
@@ -213,6 +215,7 @@ pub fn lint_contest(
                     if seen_dirs.insert(problem.dir.clone()) {
                         lint_problem_dir(
                             ws,
+                            Some(&contest.id),
                             &problem.id,
                             Some(&item.label),
                             &problem.dir,
@@ -243,8 +246,10 @@ pub fn lint_contest(
     Ok(findings)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lint_problem_dir(
     ws: &Workspace,
+    contest_id: Option<&str>,
     problem_id: &str,
     label: Option<&str>,
     dir: &str,
@@ -325,7 +330,7 @@ fn lint_problem_dir(
     // 4. Static package freshness check (never compiles or executes anything).
     //    Frozen contest snapshots exclude package files and are already frozen.
     if !is_snapshot {
-        lint_package_freshness(ws, problem_id, label, dir, findings);
+        lint_package_freshness(ws, contest_id, problem_id, label, dir, findings);
     }
 
     Ok(())
@@ -333,6 +338,7 @@ fn lint_problem_dir(
 
 fn lint_package_freshness(
     ws: &Workspace,
+    contest_id: Option<&str>,
     problem_id: &str,
     label: Option<&str>,
     dir: &str,
@@ -343,13 +349,13 @@ fn lint_package_freshness(
         None => format!("题目「{problem_id}」"),
     };
     let meta_rel = format!("{dir}/problem.toml");
-    match xcpc_judge::check_package_freshness(ws, problem_id) {
+    match xcpc_judge::check_package_freshness_in(ws, problem_id, contest_id) {
         Ok(PackageFreshness::NotAPackage | PackageFreshness::VerifiedFresh { .. }) => {}
         Ok(PackageFreshness::Unverified { .. }) => {
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_UNVERIFIED.to_owned(),
-                message: format!("{prefix}包含题目包但尚未通过严格验收，请先完成严格验收"),
+                message: format!("{prefix}的测试数据还没检查，请先检查"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -359,7 +365,7 @@ fn lint_package_freshness(
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_STALE.to_owned(),
-                message: format!("{prefix}的题目包文件已变更，请重新执行严格验收"),
+                message: format!("{prefix}改动后还没重新检查，请重新检查"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -369,9 +375,7 @@ fn lint_package_freshness(
             findings.push(Finding {
                 severity: Severity::Error,
                 code: code::PACKAGE_FAILED.to_owned(),
-                message: format!(
-                    "{prefix}的题目包最近一次验收未通过（{summary}），请修复后重新验收"
-                ),
+                message: format!("{prefix}检查有问题（{summary}），请修复后重新检查"),
                 file: Some(meta_rel),
                 line: None,
                 column: None,
@@ -1155,7 +1159,7 @@ mod tests {
             Some("problems/pkg/problem.toml")
         );
         assert!(unverified[0].message.contains("题目「pkg」"));
-        assert!(unverified[0].message.contains("严格验收"));
+        assert!(unverified[0].message.contains("还没检查"));
 
         // Contest referencing unverified package problem also gets PACKAGE_UNVERIFIED.
         let cdir = dir.path().join("contests/c-pkg");
@@ -1207,7 +1211,7 @@ mod tests {
         assert_eq!(stale[0].code, code::PACKAGE_STALE);
         assert_eq!(stale[0].file.as_deref(), Some("problems/pkg/problem.toml"));
         assert!(stale[0].message.contains("题目「pkg」"));
-        assert!(stale[0].message.contains("重新执行严格验收"));
+        assert!(stale[0].message.contains("重新检查"));
     }
 
     #[test]

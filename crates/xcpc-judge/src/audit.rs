@@ -14,12 +14,12 @@ use xcpc_storage::Workspace;
 
 use crate::error::Result;
 use crate::package::{
-    PackageFreshness, build_dir_for, check_package_freshness, compute_package_hash,
-    discover_solutions, expand_tests, find_interactor_source, find_validator_source,
-    has_explicit_checker, load_latest_report, load_verified_report, resolve_checker_spec,
+    PackageFreshness, build_dir_for, check_package_freshness_in, compute_package_hash,
+    contest_limits_key, discover_solutions, effective_run_limits, expand_tests,
+    find_interactor_source, find_validator_source, has_explicit_checker, load_latest_report,
+    load_verified_report_in, resolve_checker_spec,
 };
 use crate::report::{BuildReport, GateStatus};
-use crate::runner::RunLimits;
 use crate::sanitize::{SanitizerStatus, load_sanitizer_report};
 
 /// Default threshold for single test file size warning (20 MiB).
@@ -245,7 +245,7 @@ pub fn audit_contest(
     };
 
     for item in &contest.meta.problems {
-        let row = audit_single_problem(ws, &item.label, &item.id, opts);
+        let row = audit_single_problem(ws, &contest.id, &item.label, &item.id, opts);
         match row.verification_status {
             VerificationStatus::Fresh => summary.fresh_count += 1,
             VerificationStatus::Stale => summary.stale_count += 1,
@@ -297,6 +297,7 @@ pub fn audit_contest(
 
 fn audit_single_problem(
     ws: &Workspace,
+    contest_id: &str,
     label: &str,
     slug: &str,
     opts: &AuditOptions,
@@ -350,17 +351,21 @@ fn audit_single_problem(
 
     let interactive = find_interactor_source(&prob_dir).is_some();
     let has_subtasks = !problem.meta.subtask.is_empty();
-    let time_limit_ms = RunLimits::from_problem_limits(
-        problem.meta.limits.time.as_deref(),
-        problem.meta.limits.memory.as_deref(),
-    )
-    .ok()
-    .map(|l| l.time_limit_ms);
+    // Checks inside a contest run under the contest's overridden limits.
+    let time_limit_ms = effective_run_limits(ws, slug, Some(contest_id))
+        .ok()
+        .map(|l| l.time_limit_ms);
+    let limits_key = contest_limits_key(ws, slug, Some(contest_id))
+        .ok()
+        .flatten();
+    let limits_key = limits_key.as_deref();
 
-    let freshness = check_package_freshness(ws, slug).unwrap_or(PackageFreshness::Failed {
-        package_hash: String::new(),
-        summary: "failed to inspect package freshness".to_owned(),
-    });
+    let freshness = check_package_freshness_in(ws, slug, Some(contest_id)).unwrap_or(
+        PackageFreshness::Failed {
+            package_hash: String::new(),
+            summary: "无法读取检查记录".to_owned(),
+        },
+    );
     let current_hash = compute_package_hash(ws, slug).unwrap_or_default();
 
     let verification_status = match &freshness {
@@ -378,7 +383,7 @@ fn audit_single_problem(
                 code: "package_stale".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
-                message: format!("题目 {label}（{slug}）的题目包已变更，验收已过期"),
+                message: format!("题目 {label}（{slug}）改动后还没重新检查"),
             });
         }
         PackageFreshness::Failed { summary, .. } => {
@@ -387,7 +392,7 @@ fn audit_single_problem(
                 code: "package_failed".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
-                message: format!("题目 {label}（{slug}）最近一次构建/验收失败：{summary}"),
+                message: format!("题目 {label}（{slug}）有问题：{summary}"),
             });
         }
         PackageFreshness::Unverified { .. } => {
@@ -396,7 +401,7 @@ fn audit_single_problem(
                 code: "package_unverified".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
-                message: format!("题目 {label}（{slug}）尚未完成严格验收"),
+                message: format!("题目 {label}（{slug}）还没检查"),
             });
         }
         PackageFreshness::NotAPackage | PackageFreshness::VerifiedFresh { .. } => {}
@@ -405,10 +410,10 @@ fn audit_single_problem(
     // Prefer verified report when fresh; otherwise latest report.
     let report: Option<BuildReport> = match verification_status {
         VerificationStatus::Fresh => {
-            load_verified_report(ws, slug).or_else(|| load_latest_report(ws, slug))
+            load_verified_report_in(ws, slug, limits_key).or_else(|| load_latest_report(ws, slug))
         }
         VerificationStatus::StatementOnly => None,
-        _ => load_latest_report(ws, slug).or_else(|| load_verified_report(ws, slug)),
+        _ => load_latest_report(ws, slug).or_else(|| load_verified_report_in(ws, slug, limits_key)),
     };
 
     // Solutions coverage (independent AC & wrong solutions).
@@ -449,7 +454,7 @@ fn audit_single_problem(
                 code: "missing_independent_ac".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
-                message: format!("题目 {label}（{slug}）缺少独立 AC 参考解（无交叉验证）"),
+                message: format!("题目 {label}（{slug}）只有标程，没有另一份正确解法互相印证"),
             });
         }
         if wrong_solution_count == 0 {
@@ -458,7 +463,7 @@ fn audit_single_problem(
                 code: "missing_wrong_solution".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
-                message: format!("题目 {label}（{slug}）缺少错解（WA/TLE 等）以检验数据强度"),
+                message: format!("题目 {label}（{slug}）没有错解，无法确认数据能卡掉错误做法"),
             });
         }
     }
@@ -474,7 +479,14 @@ fn audit_single_problem(
     ) = if let Some(ref r) = report {
         let sm = &r.safety_margin;
         let std_max = Some(sm.std_max_time_ms);
-        let ratio = Some(sm.std_time_ratio);
+        // Ratio against the limit this check is judged under (contest overrides included).
+        let tl_ms = time_limit_ms.unwrap_or(sm.time_limit_ms);
+        let std_time_ratio = if tl_ms > 0 {
+            sm.std_max_time_ms as f64 / tl_ms as f64
+        } else {
+            sm.std_time_ratio
+        };
+        let ratio = Some(std_time_ratio);
         let slowest_ac = sm.slowest_ac_time_ms;
         let fastest_tle = sm.fastest_tle_time_ms;
         let ac_tle_ratio = match (slowest_ac, fastest_tle) {
@@ -494,17 +506,17 @@ fn audit_single_problem(
                 .sum::<u64>()
         });
 
-        if sm.std_time_ratio > 0.50 {
+        if std_time_ratio > 0.50 {
             risk_flags.push(AuditRiskFlag {
                 level: AuditRiskLevel::Warning,
                 code: "tight_std_time_margin".to_owned(),
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
                 message: format!(
-                    "题目 {label}（{slug}）标程最慢耗时占时限 {:.0}%（{}ms / {}ms，建议 ≤ 50%）",
-                    sm.std_time_ratio * 100.0,
-                    sm.std_max_time_ms,
-                    sm.time_limit_ms
+                    "题目 {label}（{slug}）在 {} 时限下，标程最慢 {}（{:.0}%），建议不超过一半",
+                    format_seconds(tl_ms),
+                    format_seconds(sm.std_max_time_ms),
+                    std_time_ratio * 100.0
                 ),
             });
         }
@@ -517,7 +529,7 @@ fn audit_single_problem(
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
                 message: format!(
-                    "题目 {label}（{slug}）最慢 AC 与最快 TLE 耗时过于接近（{margin:.2}×）"
+                    "题目 {label}（{slug}）最慢的正确解法和最快的超时解法用时太接近（只差 {margin:.2} 倍）"
                 ),
             });
         }
@@ -530,7 +542,7 @@ fn audit_single_problem(
                 problem_label: Some(label.to_owned()),
                 problem_id: Some(slug.to_owned()),
                 message: format!(
-                    "题目 {label}（{slug}）标程全测试点累计耗时 {:.1}s 超过预算阈值 {:.1}s",
+                    "题目 {label}（{slug}）标程跑完全部数据要 {:.1} 秒，超过 {:.1} 秒，评测会排队",
                     cum as f64 / 1000.0,
                     opts.max_cumulative_std_ms as f64 / 1000.0
                 ),
@@ -571,7 +583,7 @@ fn audit_single_problem(
             problem_label: Some(label.to_owned()),
             problem_id: Some(slug.to_owned()),
             message: format!(
-                "题目 {label}（{slug}）存在超大单点数据 {}（{mb:.1} MiB > {limit_mb:.0} MiB）",
+                "题目 {label}（{slug}）的数据 {} 有 {mb:.1} MiB，超过 {limit_mb:.0} MiB",
                 max_test_file_name.as_deref().unwrap_or("test")
             ),
         });
@@ -613,9 +625,7 @@ fn audit_single_problem(
                         code: "sanitizer_ub_found".to_owned(),
                         problem_label: Some(label.to_owned()),
                         problem_id: Some(slug.to_owned()),
-                        message: format!(
-                            "题目 {label}（{slug}）Sanitizer UB 体检发现 {fc} 处未定义行为"
-                        ),
+                        message: format!("题目 {label}（{slug}）内存检查发现 {fc} 处问题"),
                     });
                     SanitizerAuditStatus::Failed
                 }
@@ -644,10 +654,7 @@ fn audit_single_problem(
             code: "lint_errors".to_owned(),
             problem_label: Some(label.to_owned()),
             problem_id: Some(slug.to_owned()),
-            message: format!(
-                "题目 {label}（{slug}）存在 {} 个题面/配图 lint 错误",
-                lint.error_count
-            ),
+            message: format!("题目 {label}（{slug}）的题面有 {} 处错误", lint.error_count),
         });
     } else if lint.warning_count > 0 {
         risk_flags.push(AuditRiskFlag {
@@ -656,7 +663,7 @@ fn audit_single_problem(
             problem_label: Some(label.to_owned()),
             problem_id: Some(slug.to_owned()),
             message: format!(
-                "题目 {label}（{slug}）存在 {} 个题面/题解/样例 lint 告警",
+                "题目 {label}（{slug}）的题面、题解或样例有 {} 处提醒",
                 lint.warning_count
             ),
         });
@@ -959,6 +966,14 @@ pub fn render_contest_audit_markdown(report: &ContestAuditReport) -> String {
     }
 
     md
+}
+
+/// `800` → `0.8 秒`, `1000` → `1 秒`.
+fn format_seconds(ms: u64) -> String {
+    let s = ms as f64 / 1000.0;
+    let text = format!("{s:.2}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!("{text} 秒")
 }
 
 fn now_epoch_secs() -> u64 {

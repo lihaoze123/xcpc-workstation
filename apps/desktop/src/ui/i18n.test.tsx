@@ -11,7 +11,7 @@ import {
   zhCN,
   type MessageKey,
 } from "./i18n";
-import { diffKind, errorCopy, windowTitle } from "./logic";
+import { CORE_WORDED_CODES, diffKind, errorCopy, windowTitle } from "./logic";
 import { filterShortcutGroups } from "./ShortcutsModal";
 import { matchesSlashCommand, SLASH_COMMANDS, slashSnippetFor } from "./studio/SlashPopover";
 
@@ -210,5 +210,37 @@ describe("Slash command snippets follow publishing language with UI locale fallb
     } finally {
       resetLocale();
     }
+  });
+});
+
+describe("Execution errors never fall back to the generic line (authoring-ui-refactor §6.2)", () => {
+  test("judge codes show the Core human message verbatim", () => {
+    resetLocale();
+    const required = [
+      "no_compiler",
+      "compiler_not_found",
+      "no_main_solution",
+      "multiple_main_solutions",
+      "unknown_checker",
+      "test_not_found",
+      "generator_not_found",
+      "solution_not_found",
+      "invalid_limit",
+      "invalid_config",
+    ];
+    const generic = t("error.generic");
+    for (const code of required) {
+      expect(CORE_WORDED_CODES.has(code)).toBe(true);
+      const raw = `core message for ${code}`;
+      const copy = errorCopy(code, raw);
+      expect(copy.message).toBe(raw);
+      expect(copy.message).not.toBe(generic);
+    }
+  });
+
+  test("unknown codes with Chinese Core text keep that text", () => {
+    resetLocale();
+    expect(errorCopy("something_new", "交互器编译失败。").message).toBe("交互器编译失败。");
+    expect(errorCopy("something_new", "boom").message).toBe(t("error.generic"));
   });
 });

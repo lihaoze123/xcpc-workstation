@@ -557,7 +557,7 @@ function streamBatchTask(taskId: number) {
 
 export function startBatchBuildTask(ids: string[], mode: "verify" | "debug"): UiError | undefined {
   if (ids.length === 0) return undefined;
-  const res = preview.startBatchBuild(ids, mode);
+  const res = preview.startBatchBuild(ids, mode, null);
   if (!res.ok) return { code: res.code, error: res.error };
   streamBatchTask(res.taskId);
   return undefined;

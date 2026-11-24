@@ -2035,7 +2035,7 @@ impl State {
                 frozen: false,
                 outputs: Vec::new(),
                 diagnostics: Vec::new(),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 code: Some(e.code().to_owned()),
             },
         }
@@ -2073,7 +2073,7 @@ impl State {
             Err(e) => UnfreezeDiffResultJs {
                 ok: false,
                 diffs: Vec::new(),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 code: Some(e.code().to_owned()),
             },
         }
@@ -2999,7 +2999,7 @@ impl State {
             Err(e) => PackageInitResultJs {
                 ok: false,
                 code: Some(e.code().to_owned()),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -3011,6 +3011,7 @@ impl State {
         mode: &str,
         tests: Option<Vec<String>>,
         solutions: Option<Vec<String>>,
+        contest_id: Option<String>,
     ) -> ActionResult {
         let (ws, cxx_override) = {
             let core = self.core.lock().unwrap();
@@ -3074,6 +3075,7 @@ impl State {
             tests: tests_vec.clone(),
             solutions: solutions_vec.clone(),
             cxx_override: cxx_path.clone(),
+            contest: contest_id,
             ..Default::default()
         };
         let sanitize_opts = xcpc_judge::SanitizeOptions {
@@ -3387,7 +3389,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3410,7 +3412,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3468,7 +3470,7 @@ impl State {
             Err(e) => PackageCreateResultJs {
                 ok: false,
                 code: Some(e.code().to_owned()),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -3513,7 +3515,7 @@ impl State {
             Err(e) => AddedTestResultJs {
                 ok: false,
                 code: Some(e.code().to_owned()),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -3560,7 +3562,7 @@ impl State {
             Err(e) => AddedTestResultJs {
                 ok: false,
                 code: Some(e.code().to_owned()),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -3596,7 +3598,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3612,7 +3614,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3634,7 +3636,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3661,7 +3663,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3677,7 +3679,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3699,7 +3701,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3721,7 +3723,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3766,7 +3768,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3793,7 +3795,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3814,7 +3816,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3877,7 +3879,7 @@ impl State {
                 self.invalidate_cache();
                 ActionResult::ok()
             }
-            Err(e) => ActionResult::err(e.code(), e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.human_message()),
         }
     }
 
@@ -3957,7 +3959,7 @@ impl State {
             Err(e) => NormalizeDirtyResultJs {
                 ok: false,
                 code: Some(e.code().to_owned()),
-                error: Some(e.to_string()),
+                error: Some(e.human_message()),
                 ..Default::default()
             },
         }
@@ -4390,6 +4392,7 @@ impl State {
         self: &Arc<Self>,
         ids: Vec<String>,
         mode: String,
+        contest_id: Option<String>,
     ) -> BatchStartResultJs {
         let unique_ids = dedup_ids_preserve_order(&ids);
         if unique_ids.is_empty() {
@@ -4468,6 +4471,7 @@ impl State {
         let opts = xcpc_judge::BuildOptions {
             mode: build_mode,
             cxx_override: cxx_path.clone(),
+            contest: contest_id,
             ..Default::default()
         };
         let sanitize_opts = xcpc_judge::SanitizeOptions {
@@ -5723,7 +5727,7 @@ impl State {
                     ),
                 }
             }
-            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+            Err(e) => JsonReportResultJs::err(e.code(), e.human_message()),
         }
     }
 
@@ -5759,7 +5763,7 @@ impl State {
                     ),
                 }
             }
-            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+            Err(e) => JsonReportResultJs::err(e.code(), e.human_message()),
         }
     }
 
@@ -5795,7 +5799,7 @@ impl State {
                     ),
                 }
             }
-            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+            Err(e) => JsonReportResultJs::err(e.code(), e.human_message()),
         }
     }
 
@@ -5844,7 +5848,7 @@ impl State {
                     code: None,
                 }
             }
-            Err(e) => AdoptSolutionResultJs::err(e.code(), e.to_string()),
+            Err(e) => AdoptSolutionResultJs::err(e.code(), e.human_message()),
         }
     }
 
@@ -5893,7 +5897,7 @@ impl State {
                     ),
                 }
             }
-            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
+            Err(e) => JsonReportResultJs::err(e.code(), e.human_message()),
         }
     }
 }

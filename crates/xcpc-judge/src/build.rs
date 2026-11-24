@@ -17,9 +17,10 @@ use crate::cache::{JudgeCache, write_atomic};
 use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, TestSource, build_dir_for, check_dirty_inputs,
-    compute_package_hash, discover_solutions, expand_tests, find_generator_source,
-    find_interactor_source, find_validator_source, has_explicit_checker, load_latest_report,
-    report_path_for, resolve_checker_spec, verified_report_path_for,
+    compute_package_hash_in, contest_limits_key, discover_solutions, effective_run_limits,
+    expand_tests, find_generator_source, find_interactor_source, find_validator_source,
+    has_explicit_checker, load_latest_report, report_path_for, resolve_checker_spec,
+    verified_report_path_in,
 };
 use crate::report::{
     BuildMode, BuildReport, GateResult, GateStatus, InteractionTranscript, MatrixCell,
@@ -50,6 +51,9 @@ pub struct BuildOptions {
     pub cxx_override: Option<PathBuf>,
     /// Optional explicit cache directory override (default: `~/.cache/xcpc`).
     pub cache_dir: Option<PathBuf>,
+    /// Check inside this contest: run under the contest's overridden time and memory limits.
+    /// The verified state is kept per limit context ([`crate::contest_limits_key`]).
+    pub contest: Option<String>,
 }
 
 /// Optional progress callback invoked during `build_package`.
@@ -457,7 +461,8 @@ pub fn build_package(
 
     let problem = ws.load_problem(slug)?;
     let prob_dir = ws.resolve(&problem.dir)?;
-    let mut package_hash = compute_package_hash(ws, slug)?;
+    let limits_key = contest_limits_key(ws, slug, opts.contest.as_deref())?;
+    let mut package_hash = compute_package_hash_in(ws, slug, limits_key.as_deref())?;
     let compiler = resolve_active_compiler(opts.cxx_override.as_deref())?;
     let cache = match &opts.cache_dir {
         Some(dir) => JudgeCache::open(dir)?,
@@ -465,10 +470,7 @@ pub fn build_package(
     };
     let testlib = resolve_testlib(ws.root(), &prob_dir);
 
-    let limits = RunLimits::from_problem_limits(
-        problem.meta.limits.time.as_deref(),
-        problem.meta.limits.memory.as_deref(),
-    )?;
+    let limits = effective_run_limits(ws, slug, opts.contest.as_deref())?;
 
     let interactor_src = find_interactor_source(&prob_dir);
     let is_interactive = interactor_src.is_some();
@@ -717,7 +719,7 @@ pub fn build_package(
             repro_commands: vec![],
             next_steps: vec!["修复编译错误后重新运行构建。".to_owned()],
         };
-        persist_report(ws, slug, &report)?;
+        persist_report(ws, slug, limits_key.as_deref(), &report)?;
         emit(ProgressEvent::Finished {
             ok: false,
             verified: false,
@@ -1500,7 +1502,7 @@ pub fn build_package(
         };
         gates.push(GateResult {
             id: "validator".to_owned(),
-            title: "Validator 存在与自测".to_owned(),
+            title: "校验器与自测".to_owned(),
             status,
             message: "缺少 validator.cpp".to_owned(),
         });
@@ -1510,7 +1512,7 @@ pub fn build_package(
     } else if !val_self_all_pass {
         gates.push(GateResult {
             id: "validator".to_owned(),
-            title: "Validator 存在与自测".to_owned(),
+            title: "校验器与自测".to_owned(),
             status: GateStatus::Fail,
             message: "部分 validator 自测用例未通过".to_owned(),
         });
@@ -1523,7 +1525,7 @@ pub fn build_package(
         };
         gates.push(GateResult {
             id: "validator".to_owned(),
-            title: "Validator 存在与自测".to_owned(),
+            title: "校验器与自测".to_owned(),
             status,
             message: "校验器缺少自测用例（需要至少 1 组有效和 1 组无效用例）".to_owned(),
         });
@@ -1532,7 +1534,7 @@ pub fn build_package(
     } else {
         gates.push(GateResult {
             id: "validator".to_owned(),
-            title: "Validator 存在与自测".to_owned(),
+            title: "校验器与自测".to_owned(),
             status: GateStatus::Pass,
             message: format!(
                 "已通过 {} 组有效和 {} 组无效自测用例",
@@ -1562,7 +1564,7 @@ pub fn build_package(
         if !chk_all_pass {
             gates.push(GateResult {
                 id: "checker_self_tests".to_owned(),
-                title: "自定义 Checker 自测".to_owned(),
+                title: "评测器自测".to_owned(),
                 status: GateStatus::Fail,
                 message: "部分自定义 checker 自测未通过".to_owned(),
             });
@@ -1575,7 +1577,7 @@ pub fn build_package(
             };
             gates.push(GateResult {
                 id: "checker_self_tests".to_owned(),
-                title: "自定义 Checker 自测".to_owned(),
+                title: "评测器自测".to_owned(),
                 status,
                 message: "自定义评测器缺少自测用例（需要至少 1 组通过和 1 组不通过用例）"
                     .to_owned(),
@@ -1584,7 +1586,7 @@ pub fn build_package(
         } else {
             gates.push(GateResult {
                 id: "checker_self_tests".to_owned(),
-                title: "自定义 Checker 自测".to_owned(),
+                title: "评测器自测".to_owned(),
                 status: GateStatus::Pass,
                 message: format!(
                     "已通过 {} 组通过和 {} 组不通过自测用例",
@@ -1603,7 +1605,7 @@ pub fn build_package(
     } else {
         gates.push(GateResult {
             id: "checker_self_tests".to_owned(),
-            title: "内置 Checker".to_owned(),
+            title: "内置评测器".to_owned(),
             status: GateStatus::Skip,
             message: format!("使用内置标准校验器 {}", checker_spec.display_name()),
         });
@@ -1617,7 +1619,7 @@ pub fn build_package(
             }
             gates.push(GateResult {
                 id: "subtasks".to_owned(),
-                title: "OI 子任务配置与依赖".to_owned(),
+                title: "子任务配置".to_owned(),
                 status: GateStatus::Fail,
                 message: subtask_val.errors.join("；"),
             });
@@ -1627,14 +1629,14 @@ pub fn build_package(
         } else if !subtask_val.warnings.is_empty() {
             gates.push(GateResult {
                 id: "subtasks".to_owned(),
-                title: "OI 子任务配置与依赖".to_owned(),
+                title: "子任务配置".to_owned(),
                 status: GateStatus::Warn,
                 message: subtask_val.warnings.join("；"),
             });
         } else {
             gates.push(GateResult {
                 id: "subtasks".to_owned(),
-                title: "OI 子任务配置与依赖".to_owned(),
+                title: "子任务配置".to_owned(),
                 status: GateStatus::Pass,
                 message: format!(
                     "{} 个子任务配置有效（总分 {}）",
@@ -1649,14 +1651,14 @@ pub fn build_package(
     if dirty_inputs.is_empty() {
         gates.push(GateResult {
             id: "dirty_inputs".to_owned(),
-            title: "手写数据格式检查".to_owned(),
+            title: "手写数据格式".to_owned(),
             status: GateStatus::Pass,
             message: "未发现 CRLF、BOM 或缺少末尾换行".to_owned(),
         });
     } else {
         gates.push(GateResult {
             id: "dirty_inputs".to_owned(),
-            title: "手写数据格式检查".to_owned(),
+            title: "手写数据格式".to_owned(),
             status: GateStatus::Warn,
             message: format!(
                 "{} 个手写输入文件存在格式问题（CRLF、BOM 或缺少末尾换行）",
@@ -1670,7 +1672,7 @@ pub fn build_package(
     if validator_src.is_some() {
         gates.push(GateResult {
             id: "validator_tests".to_owned(),
-            title: "全量测试数据校验".to_owned(),
+            title: "测试数据格式".to_owned(),
             status: if all_validator_ok {
                 GateStatus::Pass
             } else {
@@ -1687,7 +1689,7 @@ pub fn build_package(
     // 6. All solutions match expect.
     gates.push(GateResult {
         id: "solutions_expect".to_owned(),
-        title: "解法判定符合预期".to_owned(),
+        title: "解法结果符合预期".to_owned(),
         status: if all_solutions_matched {
             GateStatus::Pass
         } else {
@@ -1705,7 +1707,7 @@ pub fn build_package(
     let margin_pct = (safety_margin.std_time_ratio * 100.0).round();
     gates.push(GateResult {
         id: "std_time_margin".to_owned(),
-        title: "标程耗时余量（≤ 50% 时限）".to_owned(),
+        title: "标程用时不超过时限一半".to_owned(),
         status: if std_within_margin {
             GateStatus::Pass
         } else if opts.mode == BuildMode::Verify {
@@ -1742,14 +1744,14 @@ pub fn build_package(
         }
         gates.push(GateResult {
             id: "solution_diversity".to_owned(),
-            title: "解法覆盖度（交叉验证与错解）".to_owned(),
+            title: "参考解与错解".to_owned(),
             status: GateStatus::Warn,
             message: format!("建议补充：{}", missing.join("、")),
         });
     } else {
         gates.push(GateResult {
             id: "solution_diversity".to_owned(),
-            title: "解法覆盖度（交叉验证与错解）".to_owned(),
+            title: "参考解与错解".to_owned(),
             status: GateStatus::Pass,
             message: "已包含独立参考解与错解".to_owned(),
         });
@@ -1771,7 +1773,7 @@ pub fn build_package(
     // If `sample = true` wrote new files into `samples/`, recompute `package_hash` so the
     // persisted report matches the post-writeback package contents on disk.
     if wrote_back_sample {
-        package_hash = compute_package_hash(ws, slug)?;
+        package_hash = compute_package_hash_in(ws, slug, limits_key.as_deref())?;
     }
 
     // P0-2: During subset runs, preserve untouched `(test_index, solution)` cells from the
@@ -1821,18 +1823,23 @@ pub fn build_package(
         next_steps,
     };
 
-    persist_report(ws, slug, &report)?;
+    persist_report(ws, slug, limits_key.as_deref(), &report)?;
     emit(ProgressEvent::Finished { ok, verified });
     Ok(report)
 }
 
-fn persist_report(ws: &Workspace, slug: &str, report: &BuildReport) -> Result<()> {
+fn persist_report(
+    ws: &Workspace,
+    slug: &str,
+    limits_key: Option<&str>,
+    report: &BuildReport,
+) -> Result<()> {
     let json = serde_json::to_vec_pretty(report)
         .map_err(|e| JudgeError::Internal(format!("serialize build report: {e}")))?;
     write_atomic(&report_path_for(ws, slug), &json)?;
 
     // Preserve verified state separately so Debug / subset runs NEVER overwrite it.
-    let verified_path = verified_report_path_for(ws, slug);
+    let verified_path = verified_report_path_in(ws, slug, limits_key);
     if report.verified {
         write_atomic(&verified_path, &json)?;
     } else if report.mode == BuildMode::Verify && !report.subset && verified_path.is_file() {

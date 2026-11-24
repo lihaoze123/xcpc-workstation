@@ -344,6 +344,24 @@ const RULES = new Set([
   "not_a_package",
 ]);
 
+/**
+ * Judge codes whose Core `human_message` is already the three-part plain-language
+ * copy (authoring-ui-refactor §6.2): the GUI shows it as-is.
+ */
+export const CORE_WORDED_CODES = new Set([
+  "no_compiler",
+  "compiler_not_found",
+  "no_main_solution",
+  "multiple_main_solutions",
+  "unknown_checker",
+  "test_not_found",
+  "generator_not_found",
+  "solution_not_found",
+  "invalid_limit",
+  "invalid_config",
+  "internal",
+]);
+
 /** The words for a Core error `code` (the raw `error` stays for Copy Details). */
 export function errorCopy(code: string | null | undefined, raw?: string | null): ErrorCopy {
   const rule = code ? RULES.has(code) : false;
@@ -415,9 +433,12 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
     default:
       break;
   }
+  if (code && CORE_WORDED_CODES.has(code) && raw) return { message: raw, rule: false };
   if (raw && /already exists/.test(raw)) return { message: t("error.duplicateIdExists"), rule: false };
   if (raw && /read-only/.test(raw)) return { message: t("error.readOnly"), rule: true };
   if (raw && /no workspace/i.test(raw)) return { message: t("error.notWorkspace"), next: t("error.notWorkspaceNext"), rule: false };
+  // Any other Core error that already arrives in plain Chinese beats the generic line.
+  if (raw && /[\u4e00-\u9fff]/.test(raw)) return { message: raw, rule: false };
   return { message: t("error.generic"), rule: false };
 }
 

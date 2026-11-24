@@ -79,26 +79,26 @@ impl JudgeError {
         match self {
             JudgeError::Storage(e) => e.human_message(),
             JudgeError::NoCompiler => {
-                "未检测到 C++ 编译器（g++ 或 clang++）。请在「设置 → 工具链」指定编译器路径，或安装后重试。"
+                "没有找到 C++ 编译器（g++ 或 clang++）。请安装后重试，或在「设置 → 工具链」中指定编译器路径。"
                     .to_owned()
             }
             JudgeError::CompilerNotFound(p) => {
-                format!("指定的编译器路径不存在：「{p}」。请检查「设置 → 工具链」或 XCPC_CXX 配置。")
+                format!("指定的编译器不存在：「{p}」。请在「设置 → 工具链」中重新指定。")
             }
             JudgeError::NoMainSolution(slug) => {
-                format!("题目「{slug}」未声明标程。请在 problem.toml 中为标程添加 `main = true`。")
+                format!("题目「{slug}」还没有标程。请在解法中把一份解法设为标程。")
             }
             JudgeError::MultipleMainSolutions(slug, names) => {
                 format!(
-                    "题目「{slug}」声明了多个标程（{}），只能保留一个 `main = true`。",
+                    "题目「{slug}」有多份标程（{}），只能保留一份。",
                     names.join("、")
                 )
             }
             JudgeError::UnknownChecker(name) => {
-                format!("未知的内置校验器「{name}」。可选：wcmp、ncmp、fcmp、lcmp、rcmp4、rcmp6、rcmp9、yesno、nyesno 或 checker.cpp。")
+                format!("不认识的评测器「{name}」。可选内置评测器 wcmp、ncmp、fcmp、lcmp、rcmp4、rcmp6、rcmp9、yesno、nyesno，或自定义 checker.cpp。")
             }
             JudgeError::TestNotFound(sel) => {
-                format!("找不到测试点「{sel}」。请检查测试点编号或名称。")
+                format!("找不到测试「{sel}」。请检查测试编号或名称。")
             }
             JudgeError::GeneratorNotFound(name) => {
                 format!("找不到生成器「{name}」（generators/{name}.cpp）。")
@@ -107,12 +107,13 @@ impl JudgeError {
                 format!("找不到解法「{name}」（solutions/{name}.cpp）。")
             }
             JudgeError::InvalidLimit { kind, value } => {
-                format!("题目 {kind} 限制格式无效：「{value}」。示例：time = \"1s\"，memory = \"256MB\"。")
+                let kind = if *kind == "memory" { "内存" } else { "时间" };
+                format!("题目的{kind}限制写法有误：「{value}」。示例：时间 1s，内存 256MB。")
             }
-            JudgeError::InvalidConfig(msg) => format!("题目包配置有误：{msg}"),
-            JudgeError::Cancelled => "构建已取消。".to_owned(),
+            JudgeError::InvalidConfig(msg) => format!("测试数据配置有误：{msg}"),
+            JudgeError::Cancelled => "检查已取消。".to_owned(),
             JudgeError::Io { context, source } => format!("{context}：{source}"),
-            JudgeError::Internal(msg) => format!("评测引擎内部错误：{msg}"),
+            JudgeError::Internal(msg) => format!("检查时出现内部错误：{msg}"),
         }
     }
 }

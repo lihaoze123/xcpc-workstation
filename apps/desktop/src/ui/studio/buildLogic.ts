@@ -342,6 +342,7 @@ export function isMissingCompilerError(error: string | null | undefined): boolea
     lower.includes("no c++ compiler") ||
     lower.includes("compiler not found") ||
     lower.includes("未检测到") ||
+    lower.includes("没有找到 c++") ||
     lower.includes("g++") && lower.includes("not found")
   );
 }

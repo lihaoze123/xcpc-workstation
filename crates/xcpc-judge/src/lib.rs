@@ -46,10 +46,11 @@ pub use ops::{
 };
 pub use package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, PackageFreshness, TestSource, build_dir_for,
-    check_dirty_inputs, check_package_freshness, compute_package_hash, discover_solutions,
+    check_dirty_inputs, check_package_freshness, check_package_freshness_in, compute_package_hash,
+    compute_package_hash_in, contest_limits_key, discover_solutions, effective_run_limits,
     expand_tests, find_interactor_source, has_explicit_checker, load_latest_report,
-    load_verified_report, report_path_for, resolve_checker_spec, sanitizer_report_path_for,
-    verified_report_path_for,
+    load_verified_report, load_verified_report_in, report_path_for, resolve_checker_spec,
+    sanitizer_report_path_for, verified_report_path_for, verified_report_path_in,
 };
 pub use report::{
     BuildMode, BuildReport, DirtyInputIssue, GateResult, GateStatus, InteractionTranscript,

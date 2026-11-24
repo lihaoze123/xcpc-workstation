@@ -707,7 +707,7 @@ export function BuildConsole(props: {
     } else {
       liveCells.set([]);
     }
-    const res = preview.startPackageBuild(props.problemId, effectiveMode, testsArg, solsArg);
+    const res = preview.startPackageBuild(props.problemId, effectiveMode, testsArg, solsArg, null);
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("ctx.packageBuild") });
       return;

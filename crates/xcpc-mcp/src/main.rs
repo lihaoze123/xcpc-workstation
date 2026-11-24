@@ -316,6 +316,9 @@ enum PackageCommand {
         /// Parallel worker count (overrides both tool and solution concurrency).
         #[arg(long, short = 'j')]
         jobs: Option<usize>,
+        /// Check under this contest's overridden time and memory limits.
+        #[arg(long, value_name = "CONTEST", conflicts_with = "sanitize")]
+        contest: Option<String>,
     },
     /// Run bounded differential stress testing against `std` and save the first counterexample to `tests/stress-<n>.in`.
     Stress {
@@ -1487,6 +1490,7 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
             tests,
             solutions,
             jobs,
+            contest,
         } => {
             if ws.is_read_only() {
                 return Err(xcpc_storage::Error::ReadOnly.into());
@@ -1540,6 +1544,7 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
                     solutions: solutions.clone(),
                     jobs: *jobs,
                     solution_jobs: *jobs,
+                    contest: contest.clone(),
                     ..Default::default()
                 };
                 if ids.len() == 1 {
@@ -2931,7 +2936,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
                     serde_json::to_string_pretty(&out).expect("serializable")
                 );
             } else {
-                print_report(&out.report, &out.outputs);
+                print_report(&out.report, &out.outputs, Some((&ws, id.as_str())));
                 if out.frozen {
                     println!("已定稿比赛「{}」", out.id);
                 } else {
@@ -3151,7 +3156,9 @@ fn write_output(
     }
 }
 
-fn print_report(report: &Report, outputs: &[String]) {
+/// `contest`: the contest being checked, so a re-check hint carries `--contest` when that
+/// contest overrides the problem's limits.
+fn print_report(report: &Report, outputs: &[String], contest: Option<(&Workspace, &str)>) {
     for d in &report.diagnostics {
         eprintln!("{}", d.display());
         for hint in &d.hints {
@@ -3167,7 +3174,16 @@ fn print_report(report: &Report, outputs: &[String]) {
             .and_then(|rest| rest.split('/').next())
             .filter(|s| !s.is_empty())
         {
-            eprintln!("  提示：请先运行 `xcpc package build {slug} --strict`");
+            let in_contest = contest
+                .filter(|(ws, cid)| {
+                    matches!(
+                        xcpc_judge::contest_limits_key(ws, slug, Some(cid)),
+                        Ok(Some(_))
+                    )
+                })
+                .map(|(_, cid)| format!(" --contest {cid}"))
+                .unwrap_or_default();
+            eprintln!("  提示：请先运行 `xcpc package build {slug} --strict{in_contest}`");
         }
     }
     if let Some(pages) = report.pages {
@@ -3192,7 +3208,7 @@ fn finish(cli: &Cli, out: Output) -> ExitCode {
             serde_json::to_string_pretty(&out).expect("serializable")
         );
     } else {
-        print_report(&out.report, &out.outputs);
+        print_report(&out.report, &out.outputs, None);
     }
     if ok {
         ExitCode::SUCCESS

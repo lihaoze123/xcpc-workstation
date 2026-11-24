@@ -2202,8 +2202,19 @@ fn collect_package_files(prob_dir: &Path, checker_spec: &CheckerSpec) -> Package
         out
     };
 
-    let val_valid = list_files(prob_dir.join("tests/validator/valid"));
-    let val_invalid = list_files(prob_dir.join("tests/validator/invalid"));
+    // Validator self-tests: top level (no `--group`) plus one `<subtask_id>/` level
+    // (run with `--group <subtask_id>`), listed as `name.in` and `<subtask_id>/name.in`.
+    let list_self_tests = |dir: PathBuf| -> Vec<String> {
+        let mut out = list_files(dir.clone());
+        for sub in list_dirs(dir.clone()) {
+            for f in list_files(dir.join(&sub)) {
+                out.push(format!("{sub}/{f}"));
+            }
+        }
+        out
+    };
+    let val_valid = list_self_tests(prob_dir.join("tests/validator/valid"));
+    let val_invalid = list_self_tests(prob_dir.join("tests/validator/invalid"));
     let chk_dirs = list_dirs(prob_dir.join("tests/checker"));
 
     let mut self_test_files = Vec::new();

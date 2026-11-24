@@ -170,7 +170,7 @@ export function ContestReadinessView(props: { contestId: string; readOnly: boole
   function startBatch(ids: string[], mode: "verify" | "sanitize") {
     if (props.readOnly || batchRunning() || ids.length === 0) return;
     notice.set(undefined);
-    const res = preview.startBatchBuild(ids, mode);
+    const res = preview.startBatchBuild(ids, mode, props.contestId);
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("readiness.title") });
       return;

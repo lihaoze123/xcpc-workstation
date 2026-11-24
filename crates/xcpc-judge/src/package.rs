@@ -14,6 +14,7 @@ use xcpc_storage::Workspace;
 use crate::assets::is_standard_checker;
 use crate::error::{JudgeError, Result, io_err};
 use crate::report::{BuildReport, DirtyInputIssue};
+use crate::runner::RunLimits;
 use crate::toolchain::SourceLanguage;
 
 /// Static freshness status of a problem package (never compiles or executes anything).
@@ -140,6 +141,15 @@ pub fn verified_report_path_for(ws: &Workspace, slug: &str) -> PathBuf {
     build_dir_for(ws, slug).join("verified_report.json")
 }
 
+/// Path to the strict-verified report for a contest limit context (`key` from
+/// [`contest_limits_key`]); `None` is the problem's own limits ([`verified_report_path_for`]).
+pub fn verified_report_path_in(ws: &Workspace, slug: &str, key: Option<&str>) -> PathBuf {
+    match key {
+        None => verified_report_path_for(ws, slug),
+        Some(k) => build_dir_for(ws, slug).join(format!("verified_report.{k}.json")),
+    }
+}
+
 /// Path to the isolated sanitizer UB check report (`build/problems/<slug>/sanitizer-report.json`).
 pub fn sanitizer_report_path_for(ws: &Workspace, slug: &str) -> PathBuf {
     build_dir_for(ws, slug).join("sanitizer-report.json")
@@ -155,6 +165,72 @@ pub fn load_latest_report(ws: &Workspace, slug: &str) -> Option<BuildReport> {
 pub fn load_verified_report(ws: &Workspace, slug: &str) -> Option<BuildReport> {
     let bytes = fs::read(verified_report_path_for(ws, slug)).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+/// Loads the strict-verified report for a contest limit context (see [`verified_report_path_in`]).
+pub fn load_verified_report_in(
+    ws: &Workspace,
+    slug: &str,
+    key: Option<&str>,
+) -> Option<BuildReport> {
+    let bytes = fs::read(verified_report_path_in(ws, slug, key)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The time and memory limits a check of `slug` runs under: the problem's own `[limits]`,
+/// or, inside `contest`, the contest item's overrides over them.
+pub fn effective_run_limits(
+    ws: &Workspace,
+    slug: &str,
+    contest: Option<&str>,
+) -> Result<RunLimits> {
+    let problem = ws.load_problem(slug)?;
+    let mut limits = problem.meta.limits.clone();
+    if let Some(cid) = contest {
+        let contest = ws.load_contest(cid)?;
+        if let Some(item) = contest.meta.problems.iter().find(|i| i.id == slug) {
+            limits = item.apply(&problem.meta).limits;
+        }
+    }
+    RunLimits::from_problem_limits(limits.time.as_deref(), limits.memory.as_deref())
+}
+
+/// A stable, filesystem-safe key (`t1000-m262144`) for a contest whose overrides change the
+/// time or memory limit of `slug`; `None` when the check runs under the problem's own limits.
+///
+/// A strict check under different limits is a different check: it gets its own package hash
+/// and its own verified report, so checking in a contest never invalidates the library state.
+pub fn contest_limits_key(
+    ws: &Workspace,
+    slug: &str,
+    contest: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(cid) = contest else {
+        return Ok(None);
+    };
+    let own = effective_run_limits(ws, slug, None)?;
+    let eff = effective_run_limits(ws, slug, Some(cid))?;
+    if own.time_limit_ms == eff.time_limit_ms && own.memory_limit_kib == eff.memory_limit_kib {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "t{}-m{}",
+        eff.time_limit_ms, eff.memory_limit_kib
+    )))
+}
+
+/// [`compute_package_hash`] for a limit context: the plain hash when `key` is `None`.
+pub fn compute_package_hash_in(ws: &Workspace, slug: &str, key: Option<&str>) -> Result<String> {
+    let base = compute_package_hash(ws, slug)?;
+    let Some(k) = key else {
+        return Ok(base);
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"xcpc-package-hash-limits-v1\0");
+    hasher.update(base.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(k.as_bytes());
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Computes a deterministic SHA-256 content hash over all package-relevant files of `slug`:
@@ -230,6 +306,16 @@ pub fn compute_package_hash(ws: &Workspace, slug: &str) -> Result<String> {
 /// Performs a pure static freshness check for `slug` without compiling or executing anything.
 /// Used by `xcpc check` and `freeze_contest`.
 pub fn check_package_freshness(ws: &Workspace, slug: &str) -> Result<PackageFreshness> {
+    check_package_freshness_in(ws, slug, None)
+}
+
+/// [`check_package_freshness`] for a check inside `contest`: uses the contest's overridden
+/// time and memory limits (see [`contest_limits_key`]).
+pub fn check_package_freshness_in(
+    ws: &Workspace,
+    slug: &str,
+    contest: Option<&str>,
+) -> Result<PackageFreshness> {
     let problem = ws.load_problem(slug)?;
     let prob_dir = ws.resolve(&problem.dir)?;
 
@@ -237,9 +323,11 @@ pub fn check_package_freshness(ws: &Workspace, slug: &str) -> Result<PackageFres
         return Ok(PackageFreshness::NotAPackage);
     }
 
-    let current_hash = compute_package_hash(ws, slug)?;
+    let key = contest_limits_key(ws, slug, contest)?;
+    let key = key.as_deref();
+    let current_hash = compute_package_hash_in(ws, slug, key)?;
 
-    if let Some(verified) = load_verified_report(ws, slug)
+    if let Some(verified) = load_verified_report_in(ws, slug, key)
         && verified.verified
     {
         if verified.package_hash == current_hash {
@@ -286,18 +374,25 @@ fn summarize_failure(report: &BuildReport) -> String {
             .iter()
             .map(|c| c.target.as_str())
             .collect();
-        return format!("compile failed: {}", targets.join(", "));
+        return format!("编译失败：{}", targets.join("、"));
     }
+    // The concrete reason (gate message), never just the gate title.
     let failed_gates: Vec<&str> = report
         .gates
         .iter()
         .filter(|g| g.status == crate::report::GateStatus::Fail)
-        .map(|g| g.title.as_str())
+        .map(|g| {
+            if g.message.trim().is_empty() {
+                g.title.as_str()
+            } else {
+                g.message.as_str()
+            }
+        })
         .collect();
     if !failed_gates.is_empty() {
-        return failed_gates.join("; ");
+        return failed_gates.join("；");
     }
-    "build failed".to_owned()
+    "检查没有通过".to_owned()
 }
 
 /// Resolves which checker to use for a problem.

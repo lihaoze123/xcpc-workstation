@@ -580,3 +580,96 @@ fn contest_audit_aggregates_statuses_warnings_lint_and_markdown() {
     // Clean up temporary big file check.
     assert!(Path::new(&big_in).exists());
 }
+
+#[test]
+fn inspect_counts_validator_self_tests_in_subtask_subfolders() {
+    let (_dir, ws, _cache) = setup_workspace();
+    create_apb_package(&ws, "apb-groups", false);
+    let prob = ws.root().join("problems/apb-groups");
+    fs::create_dir_all(prob.join("tests/validator/valid/1")).unwrap();
+    fs::create_dir_all(prob.join("tests/validator/invalid/2")).unwrap();
+    fs::write(prob.join("tests/validator/valid/1/02.in"), "1 1\n").unwrap();
+    fs::write(prob.join("tests/validator/invalid/2/02.in"), "x\n").unwrap();
+
+    let inspection = xcpc_judge::inspect_package(&ws, "apb-groups").unwrap();
+    let files = &inspection.files;
+    assert_eq!(files.validator_self_tests_valid, vec!["01.in", "1/02.in"]);
+    assert_eq!(files.validator_self_tests_invalid, vec!["01.in", "2/02.in"]);
+    assert!(
+        files
+            .self_test_files
+            .contains(&"tests/validator/valid/1/02.in".to_owned())
+    );
+}
+
+#[test]
+fn contest_limit_overrides_get_their_own_check() {
+    use xcpc_judge::{PackageFreshness, check_package_freshness, check_package_freshness_in};
+    if detect_toolchain(None).active.is_none() {
+        return;
+    }
+    let (_dir, ws, cache) = setup_workspace();
+    create_apb_package(&ws, "apb", false);
+    create_contest(&ws, "same", &[("A", "apb")]);
+    let cdir = ws.root().join("contests/loose");
+    fs::create_dir_all(&cdir).unwrap();
+    fs::write(
+        cdir.join("contest.toml"),
+        "name = \"Loose\"\n\n[[problem]]\nlabel = \"A\"\nid = \"apb\"\nlimits = { time = \"2s\" }\n",
+    )
+    .unwrap();
+
+    let fresh = |f: PackageFreshness| matches!(f, PackageFreshness::VerifiedFresh { .. });
+
+    // A library check covers contests that keep the problem's own limits only.
+    let lib = build_package(
+        &ws,
+        "apb",
+        &BuildOptions {
+            mode: BuildMode::Verify,
+            cache_dir: Some(cache.path().to_path_buf()),
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(lib.verified, "{lib:#?}");
+    assert_eq!(lib.safety_margin.time_limit_ms, 1000);
+    assert!(fresh(check_package_freshness(&ws, "apb").unwrap()));
+    assert!(fresh(
+        check_package_freshness_in(&ws, "apb", Some("same")).unwrap()
+    ));
+    assert!(matches!(
+        check_package_freshness_in(&ws, "apb", Some("loose")).unwrap(),
+        PackageFreshness::Unverified { .. }
+    ));
+
+    // Checking inside the contest runs under its 2s limit and keeps the library state.
+    let in_contest = build_package(
+        &ws,
+        "apb",
+        &BuildOptions {
+            mode: BuildMode::Verify,
+            cache_dir: Some(cache.path().to_path_buf()),
+            contest: Some("loose".to_owned()),
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(in_contest.verified, "{in_contest:#?}");
+    assert_eq!(in_contest.safety_margin.time_limit_ms, 2000);
+    assert!(fresh(
+        check_package_freshness_in(&ws, "apb", Some("loose")).unwrap()
+    ));
+    assert!(fresh(check_package_freshness(&ws, "apb").unwrap()));
+
+    let audit = audit_contest(&ws, "loose", &AuditOptions::default()).unwrap();
+    assert_eq!(audit.problems[0].time_limit_ms, Some(2000));
+    assert_eq!(
+        audit.problems[0].verification_status,
+        VerificationStatus::Fresh
+    );
+}

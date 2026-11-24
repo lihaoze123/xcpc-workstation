@@ -918,7 +918,7 @@ impl Server {
         }
         reject_unknown_keys(
             args,
-            &["id", "mode", "tests", "solutions", "jobs"],
+            &["id", "mode", "tests", "solutions", "jobs", "contest"],
             "build_package",
         )
         .map_err(|m| fail("invalid_arguments", m))?;
@@ -929,6 +929,7 @@ impl Server {
         let jobs = opt_u32(args, "jobs")
             .map_err(|m| fail("invalid_arguments", m))?
             .map(|n| n.max(1) as usize);
+        let contest = opt_str(args, "contest").map_err(|m| fail("invalid_arguments", m))?;
 
         if mode_raw.as_deref() == Some("sanitize") {
             let opts = xcpc_judge::SanitizeOptions {
@@ -963,6 +964,7 @@ impl Server {
             solutions,
             jobs,
             solution_jobs: jobs,
+            contest,
             ..Default::default()
         };
         let report = xcpc_judge::build_package(&self.ws, &id, &opts, None, None)
@@ -2037,6 +2039,7 @@ fn package_tools() -> Value {
                     "tests": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of tests (1-based index, name, or tag); debug/sanitize mode." },
                     "solutions": { "type": "array", "items": { "type": "string" }, "description": "Optional subset of solution names; debug/sanitize mode." },
                     "jobs": { "type": "integer", "minimum": 1, "description": "Optional parallel worker count override." },
+                    "contest": { "type": "string", "description": "Optional contest ID: check under that contest's overridden time and memory limits (needed before freezing a contest that overrides limits)." },
                 },
                 "required": ["id"],
                 "additionalProperties": false,

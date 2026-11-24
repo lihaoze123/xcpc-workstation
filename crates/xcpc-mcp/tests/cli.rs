@@ -1117,7 +1117,7 @@ fn package_cli_init_build_strict_and_stress_end_to_end() {
     assert_eq!(stale_freeze.status.code(), Some(1));
     let sf_stderr = String::from_utf8_lossy(&stale_freeze.stderr);
     assert!(sf_stderr.contains("题目 A（aplusb）"), "{sf_stderr}");
-    assert!(sf_stderr.contains("重新执行严格验收"), "{sf_stderr}");
+    assert!(sf_stderr.contains("重新检查"), "{sf_stderr}");
     assert!(
         sf_stderr.contains("xcpc package build aplusb --strict"),
         "{sf_stderr}"
