@@ -572,10 +572,11 @@ fn contest_audit_aggregates_statuses_warnings_lint_and_markdown() {
     assert!(!audit.next_steps.is_empty());
 
     let md = render_contest_audit_markdown(&audit);
-    assert!(md.contains("整场验题体检报告"));
+    assert!(md.contains("比赛检查报告"));
     assert!(md.contains("prob-fresh"));
     assert!(md.contains("prob-stale"));
-    assert!(md.contains("large_test_file"));
+    assert!(md.contains("099.in"), "{md}");
+    assert!(!md.contains("large_test_file"), "{md}");
 
     // Clean up temporary big file check.
     assert!(Path::new(&big_in).exists());

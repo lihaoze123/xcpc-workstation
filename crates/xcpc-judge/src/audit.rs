@@ -84,11 +84,11 @@ pub enum VerificationStatus {
 impl VerificationStatus {
     pub fn label_zh(self) -> &'static str {
         match self {
-            VerificationStatus::Fresh => "已验收",
-            VerificationStatus::Stale => "已过期",
-            VerificationStatus::Failed => "失败",
-            VerificationStatus::Unbuilt => "未构建",
-            VerificationStatus::StatementOnly => "纯出版",
+            VerificationStatus::Fresh => "已通过",
+            VerificationStatus::Stale => "未检查",
+            VerificationStatus::Failed => "有问题",
+            VerificationStatus::Unbuilt => "未检查",
+            VerificationStatus::StatementOnly => "仅题面",
         }
     }
 }
@@ -108,10 +108,10 @@ impl SanitizerAuditStatus {
     pub fn label_zh(self) -> &'static str {
         match self {
             SanitizerAuditStatus::PassedFresh => "通过",
-            SanitizerAuditStatus::PassedStale => "已过期",
-            SanitizerAuditStatus::Failed => "发现 UB",
+            SanitizerAuditStatus::PassedStale => "未检查",
+            SanitizerAuditStatus::Failed => "发现问题",
             SanitizerAuditStatus::Unsupported => "不支持",
-            SanitizerAuditStatus::NotRun => "未运行",
+            SanitizerAuditStatus::NotRun => "未检查",
         }
     }
 }
@@ -825,7 +825,7 @@ fn build_next_steps(
         .collect();
     if !need_verify.is_empty() {
         steps.push(format!(
-            "对 {} 道未通过/已过期题目执行严格验收：{}",
+            "检查 {} 道未通过或未检查的题目：{}",
             need_verify.len(),
             need_verify.join("、")
         ));
@@ -837,12 +837,12 @@ fn build_next_steps(
             .map(|r| r.problem_id.as_str())
             .collect();
         steps.push(format!(
-            "修复 Sanitizer UB 体检报错的题目：{}",
+            "修复内存检查发现问题的题目：{}",
             failed_san.join("、")
         ));
     } else if summary.sanitizer_not_run_count > 0 {
         steps.push(format!(
-            "有 {} 道题目包尚未运行 UB 体检，建议在冻结前执行整场 Sanitizer 体检。",
+            "有 {} 道题尚未做内存检查，建议定稿前检查一次。",
             summary.sanitizer_not_run_count
         ));
     }
@@ -857,37 +857,37 @@ fn build_next_steps(
 /// Renders a clean Markdown report for [`ContestAuditReport`].
 pub fn render_contest_audit_markdown(report: &ContestAuditReport) -> String {
     let mut md = String::new();
+    let unchecked = report.summary.stale_count + report.summary.unbuilt_count;
     md.push_str(&format!(
-        "# 整场验题体检报告：{}（{}）\n\n",
+        "# 比赛检查报告：{}（{}）\n\n",
         report.contest_title, report.contest_id
     ));
     md.push_str(&format!(
-        "- 题目总数：{}（已验收 {} / 已过期 {} / 失败 {} / 未构建 {} / 纯出版 {}）\n",
+        "- 题目总数：{}（已通过 {} / 未检查 {} / 有问题 {} / 仅题面 {}）\n",
         report.summary.total_problems,
         report.summary.fresh_count,
-        report.summary.stale_count,
+        unchecked,
         report.summary.failed_count,
-        report.summary.unbuilt_count,
         report.summary.statement_only_count
     ));
     md.push_str(&format!(
-        "- Sanitizer UB 体检：通过 {} / 发现 UB {} / 未运行 {}\n",
+        "- 内存检查：通过 {} / 发现问题 {} / 未检查 {}\n",
         report.summary.sanitizer_passed_count,
         report.summary.sanitizer_failed_count,
         report.summary.sanitizer_not_run_count
     ));
     md.push_str(&format!(
-        "- 冻结就绪状态：{}\n\n",
+        "- 定稿状态：{}\n\n",
         if report.summary.ready_for_freeze {
-            "已就绪"
+            "可以定稿"
         } else {
-            "未就绪（存在阻断项）"
+            "还不能定稿"
         }
     ));
 
-    md.push_str("## 逐题体检总览\n\n");
+    md.push_str("## 逐题总览\n\n");
     md.push_str(
-        "| 题号 | 题目 | 验收状态 | 标程最慢 / 时限 | 累计标程耗时 | 最大单点 | 独立AC / 错解 | 自测(V/C) | UB 体检 | Lint (E/W) |\n",
+        "| 题号 | 题目 | 状态 | 标程最慢 / 时限 | 累计标程耗时 | 最大单点 | 独立AC / 错解 | 自测(V/C) | 内存检查 | 题面告警 (E/W) |\n",
     );
     md.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | :---: | --- | ---: |\n");
     for r in &report.problems {
@@ -948,13 +948,13 @@ pub fn render_contest_audit_markdown(report: &ContestAuditReport) -> String {
     }
 
     if !report.risk_flags.is_empty() {
-        md.push_str("\n## 风险与预警\n\n");
+        md.push_str("\n## 问题与提醒\n\n");
         for f in &report.risk_flags {
             let tag = match f.level {
-                AuditRiskLevel::Error => "[ERROR]",
-                AuditRiskLevel::Warning => "[WARN]",
+                AuditRiskLevel::Error => "[问题]",
+                AuditRiskLevel::Warning => "[提醒]",
             };
-            md.push_str(&format!("- **{tag}** `{}`: {}\n", f.code, f.message));
+            md.push_str(&format!("- **{tag}** {}\n", f.message));
         }
     }
 

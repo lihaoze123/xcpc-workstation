@@ -130,7 +130,22 @@ description: 在 XCPC Workstation 中端到端创作、验证与出版算法竞�
 
 ---
 
-## 6. 子 Skill 与参考文档索引
+## 6. 向用户转述结果时的用词
+
+工具名、参数和内部字段继续使用技术词（`build_package`、`mode: "verify"`、`sanitize`、`audit_contest`、`run_external_solution`、`min`/`sum`），但在向用户汇报检查结果、说明问题或给出下一步建议时，使用与桌面端一致的白话词表：
+
+- 全量跑数据与解法：说「**检查**」（不说「严格验收」「构建」「验证」）；
+- 题目状态：只说「**未检查 / 有问题 / 已通过**」（不说「未构建」「已过期」「验收失败」「已验收」）；
+- 比赛整体可交付：说「**可以定稿**」（不说「存在阻塞项」「预警」「验题体检」）；
+- `sanitize` 结果：说「**内存检查**」「没有发现内存问题」（不说「UB 体检」「放宽时限」）；
+- 外部提交：说「**验题人代码**」「试跑验题人代码」「加入解法」（不说「外部解法」「收编进 solutions/」）；
+- 子任务计分：说明规则时用「**全对才得分 / 按通过比例得分**」，部分分解预期说「**应得分数**」；
+- `ILE`：转述为「**卡住了（未刷新输出或协议死锁）**」；
+- 与标程用时对比：说「**与标程相近**」或「**比标程慢 N 倍**」（仅在 ≥ 2 倍时写倍数，不写 `1.00× std`）。
+
+---
+
+## 7. 子 Skill 与参考文档索引
 
 - [`judge-validator/SKILL.md`](./judge-validator/SKILL.md)：`validator.cpp`（含 `--group` 子任务校验）、`checker.cpp`（含 `quitp` 与二段复判）、`interactor.cpp`（交互协议、防死锁 `ILE`、防信息泄露）、`runs = N` 多轮通信与目录自测指南
 - [`solutions-tutorial/SKILL.md`](./solutions-tutorial/SKILL.md)：标程性能红线、交互 flush / 多轮累计 CPU、独立暴力与 OI 部分分解（`score`/`subtasks`）、`stress_package` 对拍闭环与 `editorial.md` 写作规范

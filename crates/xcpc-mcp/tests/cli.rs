@@ -1080,7 +1080,7 @@ fn package_cli_init_build_strict_and_stress_end_to_end() {
     assert_eq!(human_out.status.code(), Some(0));
     let human_stdout = String::from_utf8_lossy(&human_out.stdout);
     assert!(
-        human_stdout.contains("题目包「aplusb」：构建通过"),
+        human_stdout.contains("题目「aplusb」：通过"),
         "{human_stdout}"
     );
     assert!(human_stdout.contains("安全边际："), "{human_stdout}");
@@ -2067,7 +2067,7 @@ fn cli_phase_3d_sanitize_audit_external_and_adopt() {
         None,
     );
     let san_stdout = String::from_utf8_lossy(&san_human.stdout);
-    assert!(san_stdout.contains("UB 体检"), "{san_stdout}");
+    assert!(san_stdout.contains("内存检查"), "{san_stdout}");
 
     // 2. `contest audit round-3d` (read-only, JSON + Markdown + human).
     let ext_dir = tempfile::tempdir().unwrap();
@@ -2115,7 +2115,11 @@ fn cli_phase_3d_sanitize_audit_external_and_adopt() {
         None,
     );
     assert_eq!(audit_human.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&audit_human.stdout).contains("验题体检"));
+    let audit_human_stdout = String::from_utf8_lossy(&audit_human.stdout);
+    assert!(
+        audit_human_stdout.contains("检查结果：可以定稿"),
+        "{audit_human_stdout}"
+    );
 
     // 3. External trial run (multi-tester contest + single problem) & adopt.
     let testers_dir = ext_dir.path().join("testers");

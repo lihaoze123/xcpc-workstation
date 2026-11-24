@@ -1680,7 +1680,7 @@ fn run_package(cli: &Cli, action: &PackageCommand) -> Result<ExitCode, Fatal> {
                 );
             } else {
                 println!(
-                    "已收编外部解法「{}」至 {}（题目「{}」{}）",
+                    "已将验题人代码「{}」加入解法 {}（题目「{}」{}）",
                     res.solution_name,
                     res.dest_rel,
                     res.problem_id,
@@ -1756,11 +1756,11 @@ fn print_transcript(tr: &xcpc_judge::InteractionTranscript, indent: &str, max_li
 
 fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
     let freshness_str = match &insp.freshness {
-        xcpc_judge::PackageFreshness::NotAPackage => "非题目包（仅含题面）",
-        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => "已验收（最新）",
-        xcpc_judge::PackageFreshness::Stale { .. } => "已过期（文件有变动）",
-        xcpc_judge::PackageFreshness::Unverified { .. } => "未验收",
-        xcpc_judge::PackageFreshness::Failed { .. } => "上次构建未通过",
+        xcpc_judge::PackageFreshness::NotAPackage => "仅题面",
+        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => "已通过",
+        xcpc_judge::PackageFreshness::Stale { .. } => "未检查（改动后还没重新检查）",
+        xcpc_judge::PackageFreshness::Unverified { .. } => "未检查",
+        xcpc_judge::PackageFreshness::Failed { .. } => "有问题",
     };
     let mut modes = Vec::new();
     if insp.interactive {
@@ -1771,9 +1771,9 @@ fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
     }
     if !insp.subtasks.is_empty() {
         if let Some(total) = insp.total_score {
-            modes.push(format!("OI 子任务（总分 {total}）"));
+            modes.push(format!("子任务（总分 {total}）"));
         } else {
-            modes.push(format!("OI 子任务（{} 组）", insp.subtasks.len()));
+            modes.push(format!("子任务（{} 组）", insp.subtasks.len()));
         }
     }
     let mode_suffix = if modes.is_empty() {
@@ -1782,17 +1782,17 @@ fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
         format!("，{}", modes.join("，"))
     };
     println!(
-        "题目包「{}」：{freshness_str}（校验器：{}{}）",
+        "题目「{}」：{freshness_str}（评测器：{}{}）",
         insp.problem_id, insp.checker, mode_suffix
     );
     if let Some(ref inter) = insp.files.interactor {
         println!("  交互器：{inter}");
     }
     if let Some(ref val) = insp.files.validator {
-        println!("  校验器（Validator）：{val}");
+        println!("  校验器：{val}");
     }
     if let Some(ref chk) = insp.files.custom_checker {
-        println!("  自定义 Checker：{chk}");
+        println!("  自定义评测器：{chk}");
     }
     println!(
         "  测试点：{} 组，生成器：{} 个，解法：{} 个",
@@ -1805,13 +1805,13 @@ fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
         println!("\n子任务：");
         for st in &insp.subtasks {
             let scoring = match st.scoring {
-                xcpc_domain::SubtaskScoring::Min => "min",
-                xcpc_domain::SubtaskScoring::Sum => "sum",
+                xcpc_domain::SubtaskScoring::Min => "全对才得分",
+                xcpc_domain::SubtaskScoring::Sum => "按通过比例得分",
             };
             let deps = if st.depends.is_empty() {
                 String::new()
             } else {
-                format!("，依赖 [{}]", st.depends.join(", "))
+                format!("，依赖：{}", st.depends.join("、"))
             };
             println!(
                 "  #{}：{} 分（{scoring}，{} 组测试点{deps}）",
@@ -1827,9 +1827,9 @@ fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
             let mut extra = Vec::new();
             if let Some(ref sc) = s.score {
                 match sc {
-                    xcpc_domain::ScoreExpect::Exact(v) => extra.push(format!("预期总分 {v}")),
+                    xcpc_domain::ScoreExpect::Exact(v) => extra.push(format!("应得分数 {v}")),
                     xcpc_domain::ScoreExpect::Range([lo, hi]) => {
-                        extra.push(format!("预期总分 {lo}..={hi}"))
+                        extra.push(format!("应得分数 {lo}..={hi}"))
                     }
                 }
             }
@@ -1870,15 +1870,15 @@ fn print_package_inspection(insp: &xcpc_judge::PackageInspection) {
 
 fn print_build_report(report: &xcpc_judge::BuildReport) {
     let mode_str = match report.mode {
-        xcpc_judge::BuildMode::Debug => "开发构建",
-        xcpc_judge::BuildMode::Verify => "严格验收",
+        xcpc_judge::BuildMode::Debug => "快速调试",
+        xcpc_judge::BuildMode::Verify => "检查",
     };
     let status_str = if report.verified {
-        "已通过验收"
+        "已通过"
     } else if report.ok {
-        "构建通过"
+        "通过"
     } else {
-        "未通过"
+        "有问题"
     };
     let mut mode_tags = Vec::new();
     if report.interactive {
@@ -1889,9 +1889,9 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     }
     if !report.subtasks.is_empty() {
         if let Some(total) = report.total_score {
-            mode_tags.push(format!("OI 子任务，总分 {total}"));
+            mode_tags.push(format!("子任务，总分 {total}"));
         } else {
-            mode_tags.push(format!("OI 子任务 {} 组", report.subtasks.len()));
+            mode_tags.push(format!("子任务 {} 组", report.subtasks.len()));
         }
     }
     let extra_tags = if mode_tags.is_empty() {
@@ -1900,7 +1900,7 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
         format!("，{}", mode_tags.join("，"))
     };
     println!(
-        "题目包「{}」：{}（模式：{}{}，校验器：{}{}）",
+        "题目「{}」：{}（模式：{}{}，评测器：{}{}）",
         report.problem_id,
         status_str,
         mode_str,
@@ -2092,12 +2092,12 @@ fn print_build_report(report: &xcpc_judge::BuildReport) {
     }
 
     if !report.gates.is_empty() {
-        println!("\n验收门禁：");
+        println!("\n检查项：");
         for g in &report.gates {
             let tag = match g.status {
                 xcpc_judge::GateStatus::Pass => "通过",
-                xcpc_judge::GateStatus::Fail => "失败",
-                xcpc_judge::GateStatus::Warn => "警告",
+                xcpc_judge::GateStatus::Fail => "有问题",
+                xcpc_judge::GateStatus::Warn => "提醒",
                 xcpc_judge::GateStatus::Skip => "跳过",
             };
             println!("  [{tag}] {}：{}", g.title, g.message);
@@ -2163,22 +2163,22 @@ fn print_stress_result(res: &xcpc_judge::StressResult) {
 
 fn print_batch_build_report(report: &xcpc_judge::BatchBuildReport) {
     println!(
-        "批量构建完成（共 {} 题，耗时 {} ms）：通过 {}，失败 {}，跳过 {}",
+        "批量检查完成（共 {} 题，耗时 {} ms）：已通过 {}，有问题 {}，跳过 {}",
         report.total, report.elapsed_ms, report.passed, report.failed, report.skipped
     );
     for item in &report.items {
         let tag = match item.status {
             xcpc_judge::BatchBuildItemStatus::Passed => {
                 if item.verified {
-                    "已验收"
+                    "已通过"
                 } else {
                     "通过"
                 }
             }
-            xcpc_judge::BatchBuildItemStatus::Failed => "失败",
+            xcpc_judge::BatchBuildItemStatus::Failed => "有问题",
             xcpc_judge::BatchBuildItemStatus::Skipped => "跳过",
-            xcpc_judge::BatchBuildItemStatus::Error => "错误",
-            xcpc_judge::BatchBuildItemStatus::Cancelled => "取消",
+            xcpc_judge::BatchBuildItemStatus::Error => "有问题",
+            xcpc_judge::BatchBuildItemStatus::Cancelled => "已取消",
         };
         if let Some(ref msg) = item.message {
             println!(
@@ -2193,12 +2193,12 @@ fn print_batch_build_report(report: &xcpc_judge::BatchBuildReport) {
 
 fn print_sanitizer_report(report: &xcpc_judge::SanitizerReport) {
     let status_str = match report.status {
-        xcpc_judge::SanitizerStatus::Passed => "通过",
-        xcpc_judge::SanitizerStatus::Failed => "发现问题",
-        xcpc_judge::SanitizerStatus::Unsupported => "当前工具链不支持 ASan/UBSan",
+        xcpc_judge::SanitizerStatus::Passed => "没有发现内存问题",
+        xcpc_judge::SanitizerStatus::Failed => "发现内存问题",
+        xcpc_judge::SanitizerStatus::Unsupported => "当前编译器不支持内存检查",
     };
     println!(
-        "题目包「{}」UB 体检（ASan/UBSan）：{status_str}{}",
+        "题目「{}」内存检查：{status_str}{}",
         report.problem_id,
         if report.subset {
             "（局部运行）"
@@ -2207,12 +2207,7 @@ fn print_sanitizer_report(report: &xcpc_judge::SanitizerReport) {
         }
     );
     if let Some(ref c) = report.compiler {
-        println!(
-            "  编译器：{}（{}），放宽时限：{:.2}s",
-            c.name,
-            c.version,
-            report.relaxed_time_limit_ms as f64 / 1000.0
-        );
+        println!("  编译器：{}（{}）", c.name, c.version);
     }
     if let Some(ref reason) = report.unsupported_reason {
         println!("  不支持原因：{reason}");
@@ -2273,7 +2268,13 @@ fn print_external_submission_line(s: &xcpc_judge::ExternalSubmissionResult) {
     };
     let ratio = s
         .ratio_vs_std
-        .map(|r| format!("（{r:.2}× std）"))
+        .map(|r| {
+            if r >= 2.0 {
+                format!("（比标程慢 {r:.1} 倍）")
+            } else {
+                "（与标程相近）".to_owned()
+            }
+        })
         .unwrap_or_default();
     let score = match (s.total_score, s.max_score) {
         (Some(got), Some(max)) => format!("，得分 {}/{max}", format_score_value(got)),
@@ -2306,7 +2307,7 @@ fn print_external_problem_report(
     markdown_path: Option<&str>,
 ) {
     println!(
-        "题目「{}」外部提交试跑（共 {} 份）：",
+        "题目「{}」验题人代码试跑（共 {} 份）：",
         report.problem_id,
         report.submissions.len()
     );
@@ -2314,7 +2315,7 @@ fn print_external_problem_report(
         print_external_submission_line(s);
     }
     if let Some(path) = markdown_path {
-        println!("已导出 Markdown 报告：{path}");
+        println!("已导出检查报告：{path}");
     }
 }
 
@@ -2324,10 +2325,10 @@ fn print_external_contest_report(
 ) {
     let mode = match report.mode {
         xcpc_judge::ExternalContestMode::SingleDirectory => "单目录",
-        xcpc_judge::ExternalContestMode::MultiTester => "多验题人目录",
+        xcpc_judge::ExternalContestMode::MultiTester => "多位验题人",
     };
     println!(
-        "比赛「{}」（{}）外部提交试跑（{mode}，共 {} 份提交）：",
+        "比赛「{}」（{}）验题人代码试跑（{mode}，共 {} 份）：",
         report.contest_id,
         report.contest_title,
         report.submissions.len()
@@ -2349,7 +2350,7 @@ fn print_external_contest_report(
         }
     }
     if let Some(path) = markdown_path {
-        println!("已导出 Markdown 报告：{path}");
+        println!("已导出检查报告：{path}");
     }
 }
 
@@ -2358,24 +2359,28 @@ fn print_contest_audit_report(
     markdown_path: Option<&str>,
 ) {
     let s = &report.summary;
+    let unchecked_count = s.stale_count + s.unbuilt_count;
     let ready = if s.ready_for_freeze {
-        "可定稿"
+        "可以定稿".to_owned()
+    } else if s.failed_count > 0 {
+        format!("{} 题有问题", s.failed_count)
+    } else if unchecked_count > 0 {
+        format!("{unchecked_count} 题未检查")
     } else {
-        "存在阻塞项"
+        "存在问题".to_owned()
     };
     println!(
-        "比赛「{}」（{}）验题体检：{ready}（共 {} 题：已验收 {} / 过期 {} / 失败 {} / 未构建 {} / 纯出版 {}）",
+        "比赛「{}」（{}）检查结果：{ready}（共 {} 题：已通过 {} / 未检查 {} / 有问题 {} / 仅题面 {}）",
         report.contest_id,
         report.contest_title,
         s.total_problems,
         s.fresh_count,
-        s.stale_count,
+        unchecked_count,
         s.failed_count,
-        s.unbuilt_count,
         s.statement_only_count
     );
     println!(
-        "  风险汇总：错误 {} 项，告警 {} 项；UB 体检：通过 {} / 异常 {} / 未运行 {}",
+        "  检查汇总：问题 {} 项，提醒 {} 项；内存检查：通过 {} / 发现问题 {} / 未检查 {}",
         s.error_risk_count,
         s.warning_risk_count,
         s.sanitizer_passed_count,
@@ -2385,7 +2390,7 @@ fn print_contest_audit_report(
     if !report.problems.is_empty() {
         println!("\n逐题总览：");
         println!(
-            "  题号\t题目 ID\t验收状态\t标程耗时占比\t单点最大体积\t独立AC/错解\tUB体检\tLint(E/W)"
+            "  题号\t题目 ID\t状态\t标程耗时占比\t单点最大体积\t独立AC/错解\t内存检查\t题面告警(E/W)"
         );
         for row in &report.problems {
             let ratio = match (row.std_max_time_ms, row.time_limit_ms, row.std_time_ratio) {
@@ -2418,13 +2423,13 @@ fn print_contest_audit_report(
         }
     }
     if !report.risk_flags.is_empty() {
-        println!("\n风险项（{} 项）：", report.risk_flags.len());
+        println!("\n问题与提醒（{} 项）：", report.risk_flags.len());
         for flag in &report.risk_flags {
             let tag = match flag.level {
-                xcpc_judge::AuditRiskLevel::Error => "错误",
-                xcpc_judge::AuditRiskLevel::Warning => "告警",
+                xcpc_judge::AuditRiskLevel::Error => "问题",
+                xcpc_judge::AuditRiskLevel::Warning => "提醒",
             };
-            println!("  [{tag}] [{}] {}", flag.code, flag.message);
+            println!("  [{tag}] {}", flag.message);
         }
     }
     if !report.next_steps.is_empty() {
@@ -2434,7 +2439,7 @@ fn print_contest_audit_report(
         }
     }
     if let Some(path) = markdown_path {
-        println!("已导出 Markdown 报告：{path}");
+        println!("已导出检查报告：{path}");
     }
 }
 
