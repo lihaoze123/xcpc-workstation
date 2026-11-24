@@ -22,9 +22,9 @@ use crate::cache::JudgeCache;
 use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, ExpandedTest, PackageFreshness, TestSource, build_dir_for, check_dirty_inputs,
-    check_package_freshness, compute_package_hash, discover_solutions, expand_tests,
-    find_generator_source, find_interactor_source, find_validator_source, has_explicit_checker,
-    load_latest_report, resolve_checker_spec,
+    check_package_freshness_in, compute_package_hash_in, contest_limits_key, discover_solutions,
+    expand_tests, find_generator_source, find_interactor_source, find_validator_source,
+    has_explicit_checker, load_latest_report, resolve_checker_spec,
 };
 use crate::report::{
     BuildReport, DirtyInputIssue, GateResult, InteractionTranscript, SubtaskSummary,
@@ -275,11 +275,22 @@ pub struct StressResult {
 
 /// Pure read-only inspection of a problem package. Never compiles or executes anything.
 pub fn inspect_package(ws: &Workspace, slug: &str) -> Result<PackageInspection> {
+    inspect_package_in(ws, slug, None)
+}
+
+/// [`inspect_package`] inside `contest`: freshness and the package hash follow the contest's
+/// overridden time and memory limits (see [`crate::contest_limits_key`]).
+pub fn inspect_package_in(
+    ws: &Workspace,
+    slug: &str,
+    contest: Option<&str>,
+) -> Result<PackageInspection> {
     let problem = ws.load_problem(slug)?;
     let prob_dir = ws.resolve(&problem.dir)?;
     let has_pkg = problem.meta.has_package_in_dir(&prob_dir);
-    let package_hash = compute_package_hash(ws, slug)?;
-    let freshness = check_package_freshness(ws, slug)?;
+    let limits_key = contest_limits_key(ws, slug, contest)?;
+    let package_hash = compute_package_hash_in(ws, slug, limits_key.as_deref())?;
+    let freshness = check_package_freshness_in(ws, slug, contest)?;
     let is_interactive = find_interactor_source(&prob_dir).is_some();
     let runs = problem.meta.run_count();
     let use_checker = !is_interactive || has_explicit_checker(&prob_dir, &problem.meta);

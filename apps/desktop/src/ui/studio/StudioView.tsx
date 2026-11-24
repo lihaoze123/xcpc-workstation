@@ -54,8 +54,10 @@ import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { BuildConsole, type BuildConsoleController } from "./BuildConsole";
-import { ContestReadinessView } from "./ContestReadinessView";
-import { shouldShowBuildTab } from "./buildLogic";
+import { ContestCheckBar } from "./ContestCheckBar";
+import { contestBatch, contestCheck, ensureContestCheck, idsToCheck, startContestCheck } from "./contestCheck";
+import type { StatusMarkKind } from "./StatusSlot";
+import { markForAuditRow } from "./statusLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
@@ -65,7 +67,7 @@ import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
-type StudioMode = "statement" | "authoring" | "readiness";
+type StudioMode = "statement" | "authoring";
 type Tab = "statement" | "samples" | "editorial";
 const lastStudioModeByProblem = new Map<string, "statement" | "authoring">();
 const SAVE_AFTER = 500;
@@ -97,9 +99,15 @@ export function StudioView(props: { active: boolean }) {
   // The studio keeps what it showed while hidden, so coming back is instant.
   const target = computed<StudioTarget | undefined>((prev) => studio() ?? prev);
   const studioMode = signal<StudioMode>("statement");
-  const isAuthoring = computed(() => target()?.target === "problem" && studioMode() === "authoring");
-  const isReadiness = computed(() => target()?.target === "contest" && studioMode() === "readiness");
-  const isFullConsole = computed(() => isAuthoring() || isReadiness());
+  const coverActive = signal(false);
+  // 出题 is a problem's own panel; in a contest it is the selected problem's (§4), not the cover's.
+  const isAuthoring = computed(() => {
+    if (studioMode() !== "authoring") return false;
+    const tg = target();
+    if (tg?.target === "problem") return true;
+    return tg?.target === "contest" && !coverActive() && !!item() && !item()!.missing;
+  });
+  const isFullConsole = computed(() => isAuthoring());
   const tab = signal<Tab>(storeBook() === "editorial" ? "editorial" : "statement");
   const book = computed<Book>(() => (tab() === "editorial" ? "editorial" : "statements"));
   const initialWinWidth = untracked(windowSize).width;
@@ -133,7 +141,7 @@ export function StudioView(props: { active: boolean }) {
   let layoutMotionInit = false;
 
   effect(() => {
-    const showOutline = !focusMode() && !isReadiness();
+    const showOutline = !focusMode();
     if (outlineRaf !== undefined) {
       cancelAnimationFrame(outlineRaf);
       outlineRaf = undefined;
@@ -187,7 +195,6 @@ export function StudioView(props: { active: boolean }) {
   });
   const assetsRefreshSeq = signal(0);
   const packageRefreshSeq = signal(0);
-  const coverActive = signal(false);
   const starts = signal<PreviewStart[]>([]);
   const diagnostics = signal<PreviewDiagnostic[]>([]);
   const status = signal<ExportBookStatusJs | undefined>(undefined);
@@ -218,9 +225,11 @@ export function StudioView(props: { active: boolean }) {
     void revision();
     void packageRefreshSeq();
     const t = target();
-    return t?.target === "problem" ? preview.inspectPackage(t.id) : undefined;
+    if (t?.target === "problem") return preview.inspectPackage(t.id, null);
+    const it = item();
+    return t?.target === "contest" && it && !it.missing ? preview.inspectPackage(it.id, t.id) : undefined;
   });
-  const hasPackage = computed(() => shouldShowBuildTab(target()?.target, !!packageInspection()?.hasPackage));
+  const hasPackage = computed(() => !!packageInspection()?.hasPackage);
   const frozen = computed(() => !!contest()?.frozen);
   const archived = computed(() => !!contest()?.archived);
   const paths = computed(() => {
@@ -256,27 +265,32 @@ export function StudioView(props: { active: boolean }) {
     });
   });
 
-  // Apply optional `initialTab` when navigating directly to Authoring, Readiness, or a Statement tab.
+  // Apply optional `initialTab` when navigating directly to Authoring or a Statement tab.
+  // Switching problems inside the same contest keeps the user's current 「题面 | 出题」 mode.
+  let lastContestId: string | undefined;
   effect(() => {
     const s = studio();
     if (!s) return;
     const want = s.initialTab;
     untracked(() => {
-      if (want === "readiness" && s.target === "contest") {
-        studioMode.set("readiness");
+      if (want === "build" && s.target === "contest") {
+        studioMode.set("authoring");
       } else if (want === "build" && s.target === "problem") {
         packageRefreshSeq.set(packageRefreshSeq() + 1);
         studioMode.set("authoring");
         lastStudioModeByProblem.set(s.id, "authoring");
-      } else if (want && want !== "build" && want !== "readiness") {
+      } else if (want && want !== "build") {
         studioMode.set("statement");
         if (s.target === "problem") lastStudioModeByProblem.set(s.id, "statement");
         tab.set(want);
       } else if (s.target === "problem" && !want) {
         studioMode.set(lastStudioModeByProblem.get(s.id) ?? "statement");
+      } else if (s.target === "contest") {
+        if (s.id !== lastContestId) studioMode.set("statement");
       } else {
         studioMode.set("statement");
       }
+      lastContestId = s.target === "contest" ? s.id : undefined;
     });
   });
 
@@ -541,13 +555,9 @@ export function StudioView(props: { active: boolean }) {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
-  function setTab(next: Tab | "build" | "readiness") {
+  function setTab(next: Tab | "build") {
     if (next === "build") {
-      if (target()?.target === "problem") studioMode.set("authoring");
-      return;
-    }
-    if (next === "readiness") {
-      if (target()?.target === "contest") studioMode.set("readiness");
+      studioMode.set("authoring");
       return;
     }
     if (studioMode() !== "statement") studioMode.set("statement");
@@ -563,17 +573,43 @@ export function StudioView(props: { active: boolean }) {
   function setStudioMode(next: StudioMode) {
     const t = target();
     if (!t) return;
-    if (t.target === "problem") {
-      if (next === "readiness") return;
-      if (next === "authoring") {
-        packageRefreshSeq.set(packageRefreshSeq() + 1);
-      }
-      lastStudioModeByProblem.set(t.id, next);
-      studioMode.set(next);
-    } else if (t.target === "contest") {
-      if (next === "authoring") return;
-      studioMode.set(next);
-    }
+    if (next === "authoring") packageRefreshSeq.set(packageRefreshSeq() + 1);
+    if (t.target === "problem") lastStudioModeByProblem.set(t.id, next);
+    studioMode.set(next);
+  }
+
+  const compactToggles = computed(() => target()?.target === "contest" && windowSize().width > 0 && windowSize().width < 1280);
+
+  // ── Contest check (§4) ─────────────────────────────────────────────────────
+  effect(() => {
+    const tg = target();
+    if (tg?.target === "contest") untracked(() => ensureContestCheck(tg.id));
+  });
+
+  // When a contest batch check moves on, the open problem's panel reads its new state.
+  let lastBatchCompleted = -1;
+  effect(() => {
+    const b = contestBatch();
+    const done = b ? b.completed + (b.running ? 0 : 1000) : -1;
+    if (done === lastBatchCompleted) return;
+    lastBatchCompleted = done;
+    untracked(() => packageRefreshSeq.set(packageRefreshSeq() + 1));
+  });
+
+  /** A contest problem's outline mark: spinning while the batch checks it, else its state. */
+  function outlineMark(problemId: string): StatusMarkKind {
+    const b = contestBatch();
+    if (b?.running && b.currentProblemId === problemId) return "running";
+    const report = contestCheck()?.report;
+    return markForAuditRow(report?.problems.find((r) => r.problem_id === problemId));
+  }
+
+  /** 「前往」 from the contest status popover: that problem's 出题 panel. */
+  function goContestProblem(problemId: string) {
+    const it = contest()?.items.find((i) => i.id === problemId);
+    if (!it) return;
+    selectLabel(it.label);
+    setStudioMode("authoring");
   }
 
   const initPackageModalOpen = signal(false);
@@ -952,6 +988,14 @@ export function StudioView(props: { active: boolean }) {
         },
         unfreeze: () => target() && unfreezeFor.set(target()!.id),
         setTab,
+        checkContest: () => {
+          const tg = target();
+          if (tg?.target !== "contest" || info().readOnly || frozen()) return;
+          let ids = idsToCheck(contestCheck()?.report, false);
+          if (ids.length === 0) ids = idsToCheck(contestCheck()?.report, true);
+          const err = startContestCheck(tg.id, ids, "verify");
+          if (err) notice.set(err);
+        },
         runSanitize: () => {
           if (target()?.target !== "problem") return;
           setStudioMode("authoring");
@@ -1001,10 +1045,6 @@ export function StudioView(props: { active: boolean }) {
     { value: "statement" as StudioMode, label: t("studio.mode.statement") },
     { value: "authoring" as StudioMode, label: t("studio.mode.authoring") },
   ]);
-  const contestModeItems = computed(() => [
-    { value: "statement" as StudioMode, label: t("studio.mode.statement") },
-    { value: "readiness" as StudioMode, label: t("studio.mode.readiness") },
-  ]);
   const editorPlaceholder = () =>
     tab() === "editorial"
       ? t("studio.placeholder.editorial")
@@ -1036,25 +1076,27 @@ export function StudioView(props: { active: boolean }) {
                 </Text>
               </If>
             </View>
-            <If when={target()?.target === "problem"}>
-              <View style={{ marginLeft: 4, flexShrink: 0 }}>
+            <If when={target()?.target === "problem" || (target()?.target === "contest" && !coverActive() && !!item() && !item()!.missing)}>
+              <View testID="studio-mode-switch" style={{ marginLeft: 4, flexShrink: 0 }}>
                 <Segmented
                   items={modeItems()}
-                  value={studioMode()}
+                  value={isAuthoring() ? "authoring" : "statement"}
                   onChange={setStudioMode}
                   itemWidth={locale() === "en" ? 76 : 64}
                 />
               </View>
             </If>
-            <If when={target()?.target === "contest"}>
-              <View testID="contest-studio-mode-switch" style={{ marginLeft: 4, flexShrink: 0 }}>
-                <Segmented
-                  items={contestModeItems()}
-                  value={studioMode() === "readiness" ? "readiness" : "statement"}
-                  onChange={setStudioMode}
-                  itemWidth={locale() === "en" ? 84 : 76}
-                />
-              </View>
+            <If when={target()?.target === "contest" ? target()!.id : undefined}>
+              {(cid) => (
+                <View style={{ marginLeft: 2, flexShrink: 0 }}>
+                  <ContestCheckBar
+                    part="status"
+                    contestId={cid()}
+                    readOnly={info().readOnly || frozen() || archived()}
+                    onGoProblem={goContestProblem}
+                  />
+                </View>
+              )}
             </If>
             <If when={target()?.target === "contest" && frozen()}>
               <View style={{ flexShrink: 0 }}>
@@ -1076,25 +1118,58 @@ export function StudioView(props: { active: boolean }) {
         }
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <If when={target()?.target === "contest" ? target()!.id : undefined}>
+              {(cid) => (
+                <ContestCheckBar
+                  part="button"
+                  contestId={cid()}
+                  readOnly={info().readOnly || frozen() || archived()}
+                  onGoProblem={goContestProblem}
+                />
+              )}
+            </If>
             <If when={!isFullConsole()}>
-              <Btn
-                label={t("studio.preview")}
-                icon="fileText"
-                variant="ghost"
-                testID="toggle-preview"
-                tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
-                onPress={togglePreview}
-                style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
-              />
-              <Btn
-                label={t("studio.focus")}
-                icon="filePenLine"
-                variant="ghost"
-                testID="toggle-focus"
-                tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
-                onPress={toggleFocusMode}
-                style={focusMode() ? { backgroundColor: token("accent") } : undefined}
-              />
+              {/* In a narrow contest window the two view toggles drop their labels (tooltips keep them). */}
+              <If
+                when={!compactToggles()}
+                else={
+                  <>
+                    <IconBtn
+                      icon="fileText"
+                      testID="toggle-preview"
+                      tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
+                      onPress={togglePreview}
+                      style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
+                    />
+                    <IconBtn
+                      icon="filePenLine"
+                      testID="toggle-focus"
+                      tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
+                      onPress={toggleFocusMode}
+                      style={focusMode() ? { backgroundColor: token("accent") } : undefined}
+                    />
+                  </>
+                }
+              >
+                <Btn
+                  label={t("studio.preview")}
+                  icon="fileText"
+                  variant="ghost"
+                  testID="toggle-preview"
+                  tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
+                  onPress={togglePreview}
+                  style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
+                />
+                <Btn
+                  label={t("studio.focus")}
+                  icon="filePenLine"
+                  variant="ghost"
+                  testID="toggle-focus"
+                  tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
+                  onPress={toggleFocusMode}
+                  style={focusMode() ? { backgroundColor: token("accent") } : undefined}
+                />
+              </If>
               <ExportButton
                 status={status()}
                 book={book()}
@@ -1134,6 +1209,7 @@ export function StudioView(props: { active: boolean }) {
               current={label()}
               coverActive={coverActive()}
               readOnly={info().readOnly}
+              markFor={outlineMark}
               onSelect={(l) => selectLabel(l)}
               onCover={() => {
                 coverActive.set(true);
@@ -1389,7 +1465,8 @@ export function StudioView(props: { active: boolean }) {
                   {(id) => (
                     <BuildConsole
                       problemId={id()}
-                      readOnly={info().readOnly}
+                      contestId={target()?.target === "contest" ? target()!.id : undefined}
+                      readOnly={info().readOnly || frozen() || archived()}
                       inspectionResult={packageInspection()}
                       controller={(c) => buildConsole.set(c)}
                       onInitPackage={initPackageScaffold}
@@ -1405,16 +1482,6 @@ export function StudioView(props: { active: boolean }) {
                         compileNow();
                       }}
                       onSwitchToStatement={() => setStudioMode("statement")}
-                    />
-                  )}
-                </If>
-
-                <If when={isReadiness() && target()?.target === "contest" ? target()!.id : undefined}>
-                  {(cid) => (
-                    <ContestReadinessView
-                      contestId={cid()}
-                      readOnly={info().readOnly || frozen() || archived()}
-                      onRefreshWorkspace={() => refresh()}
                     />
                   )}
                 </If>
@@ -1486,10 +1553,11 @@ export function StudioView(props: { active: boolean }) {
             {(t) => (
               <Inspector
                 open={inspectorOpen()}
+                topOffset={isAuthoring() ? 38 : 0}
                 target={t().target}
                 id={t().id}
                 contest={contest()}
-                item={item()}
+                item={isAuthoring() ? undefined : item()}
                 freeze={freeze}
                 assetsRefreshSeq={assetsRefreshSeq()}
                 hasPackage={hasPackage()}

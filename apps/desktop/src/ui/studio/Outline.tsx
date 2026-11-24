@@ -12,6 +12,7 @@ import { tip } from "../kit";
 import { labels, moveItem } from "../logic";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
+import { StatusMark, type StatusMarkKind } from "./StatusSlot";
 
 export const OUTLINE_WIDTH = 232;
 const ROW_GAP = 1;
@@ -22,6 +23,8 @@ export function Outline(props: {
   current: string | undefined;
   coverActive?: boolean;
   readOnly?: boolean;
+  /** The problem's status mark (§3.1); none when absent. */
+  markFor?: (problemId: string) => StatusMarkKind;
   onSelect: (label: string) => void;
   onCover: () => void;
   onReorder: (ids: string[]) => boolean;
@@ -106,6 +109,7 @@ export function Outline(props: {
                     page={startOf(x().item.id)?.first}
                     active={!props.coverActive && x().label === props.current}
                     missing={x().item.missing}
+                    mark={props.markFor?.(x().item.id)}
                   />
                 </View>
               );
@@ -157,6 +161,7 @@ function Row(props: {
   active: boolean;
   missing?: boolean;
   isCover?: boolean;
+  mark?: StatusMarkKind;
   onPress?: () => void;
 }) {
   return (
@@ -200,8 +205,11 @@ function Row(props: {
       <If when={props.missing}>
         <Icon name="triangleAlert" size={13} tone="destructive" />
       </If>
+      <If when={!props.isCover && !props.missing}>
+        <StatusMark kind={props.mark ?? "none"} />
+      </If>
       <If when={props.page !== undefined}>
-        <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], minWidth: 24, textAlign: "right" }} class="text-muted-foreground">
           {`p.${props.page}`}
         </Text>
       </If>

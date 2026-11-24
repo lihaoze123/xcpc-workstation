@@ -40,9 +40,9 @@ pub use ops::{
     PackageSolutionInfo, PackageSourceKind, StressOptions, StressResult, TestCasePreview,
     add_generator_test, add_hand_test, create_package_source, delete_generator, delete_interactor,
     delete_self_test, delete_solution, delete_subtask, init_package, init_package_with_options,
-    inspect_package, inspect_test_case, normalize_dirty_inputs, remove_test_rule,
-    set_package_checker, set_package_runs, set_solution_config, set_solution_scoring,
-    set_test_subtask, stress_package, update_generator_test, upsert_subtask,
+    inspect_package, inspect_package_in, inspect_test_case, normalize_dirty_inputs,
+    remove_test_rule, set_package_checker, set_package_runs, set_solution_config,
+    set_solution_scoring, set_test_subtask, stress_package, update_generator_test, upsert_subtask,
 };
 pub use package::{
     CheckerSpec, DiscoveredSolution, ExpandedTest, PackageFreshness, TestSource, build_dir_for,

@@ -8,6 +8,7 @@ import type { UiError } from "../store";
 import type { GateResultData, SingleStatusKind } from "./buildLogic";
 import { humanizeCheckText, isMissingCompilerError } from "./buildLogic";
 import type { StatusItem, StatusMarkKind, StatusModel } from "./StatusSlot";
+import type { ContestAuditReportData, ExternalSubmissionResultData, ProblemAuditRowData } from "./readinessLogic";
 
 export interface ProblemStatusInput {
   hasPackage: boolean;
@@ -251,4 +252,122 @@ export function stdRatioWords(ratio: number | null | undefined): string {
   if (ratio < 2) return t("build.external.ratioNear");
   const n = Math.round(ratio * 10) / 10;
   return t("build.external.ratioSlower", { n: Number.isInteger(n) ? String(n) : n.toFixed(1) });
+}
+
+const UNCHECKED_CODES = new Set(["package_stale", "package_unverified"]);
+
+/** A contest problem's mark from its audit row (§3.1): error-level findings make a red dot. */
+export function markForAuditRow(row: ProblemAuditRowData | undefined): StatusMarkKind {
+  if (!row || row.verification_status === "statement_only") return "none";
+  if (row.verification_status === "failed") return "issues";
+  if ((row.risk_flags ?? []).some((f) => f.level === "error" && !UNCHECKED_CODES.has(f.code))) return "issues";
+  if (row.verification_status === "stale" || row.verification_status === "unbuilt") return "unchecked";
+  return "passed";
+}
+
+/** 「题目 B（weighted-walk）有问题：…」 → 「…」: the popover names the problem on its own line. */
+function stripProblemPrefix(message: string): string {
+  return message.replace(/^题目 \S+（[^）]*）(有问题：)?/, "").trim() || message;
+}
+
+export interface ContestStatusInput {
+  report: ContestAuditReportData | undefined;
+  running?: { done: number; total: number };
+  compilerMissing: boolean;
+  error?: UiError;
+  /** Tester submissions by problem ID (this session only). */
+  tester: ReadonlyMap<string, readonly ExternalSubmissionResultData[]>;
+}
+
+export interface ContestStatusActions {
+  goProblem: (problemId: string) => void;
+  goSettings: () => void;
+}
+
+/** The contest title bar's status slot (§3.2, §4): 「2 题有问题」「1 题未检查」「可以定稿」. */
+export function contestStatusModel(input: ContestStatusInput, actions: ContestStatusActions): StatusModel {
+  const rows = (input.report?.problems ?? []).filter((r) => r.verification_status !== "statement_only");
+  if (input.running) {
+    return {
+      mark: "running",
+      label: t("status.checkingProgress", { done: input.running.done, total: input.running.total }),
+      items: [],
+      reminders: [],
+    };
+  }
+  if (rows.length === 0 && !input.error) return { mark: "none", label: "", items: [], reminders: [] };
+  if (input.compilerMissing) {
+    return {
+      mark: "issues",
+      label: t("status.noCompiler"),
+      items: [{ id: "no_compiler", text: t("status.noCompilerDetail") }],
+      reminders: [],
+      action: { label: t("status.goSettings"), run: actions.goSettings },
+    };
+  }
+  if (input.error && input.error.code !== "cancelled") {
+    const words = errorCopy(input.error.code, input.error.error);
+    return {
+      mark: "issues",
+      label: words.message,
+      items: [{ id: "error", text: words.message }],
+      reminders: [],
+      details: errorDetails(input.error.code, input.error.error, input.error.context),
+    };
+  }
+
+  const where = (r: ProblemAuditRowData) => `${r.label}　${r.title}`;
+  const items: StatusItem[] = [];
+  const unchecked: StatusItem[] = [];
+  const reminders: StatusItem[] = [];
+  let issueProblems = 0;
+  let uncheckedProblems = 0;
+  for (const r of rows) {
+    const mark = markForAuditRow(r);
+    const flags = r.risk_flags ?? [];
+    if (mark === "issues") {
+      issueProblems += 1;
+      for (const f of flags.filter((f) => f.level === "error" && !UNCHECKED_CODES.has(f.code))) {
+        items.push({ id: `${r.problem_id}:${f.code}`, text: stripProblemPrefix(f.message), where: where(r), onGo: () => actions.goProblem(r.problem_id) });
+      }
+    } else if (mark === "unchecked") {
+      uncheckedProblems += 1;
+      unchecked.push({
+        id: `${r.problem_id}:unchecked`,
+        text: r.verification_status === "stale" ? t("status.stale") : t("status.notChecked"),
+        where: where(r),
+        onGo: () => actions.goProblem(r.problem_id),
+      });
+    }
+    for (const f of flags.filter((f) => f.level === "warning")) {
+      reminders.push({ id: `${r.problem_id}:${f.code}`, text: stripProblemPrefix(f.message), where: where(r), onGo: () => actions.goProblem(r.problem_id) });
+    }
+  }
+
+  // Tester code: 「alice 有 2 题未通过（B、D）」.
+  const failedByTester = new Map<string, ProblemAuditRowData[]>();
+  for (const r of rows) {
+    for (const sub of input.tester.get(r.problem_id) ?? []) {
+      if (sub.verdict === "AC" && !sub.compile_error) continue;
+      const who = sub.tester || t("contestCheck.testerAnon");
+      const list = failedByTester.get(who) ?? [];
+      if (!list.includes(r)) list.push(r);
+      failedByTester.set(who, list);
+    }
+  }
+  for (const [who, list] of failedByTester) {
+    reminders.unshift({
+      id: `tester:${who}`,
+      text: t("contestCheck.testerFailed", { tester: who, count: list.length, labels: list.map((r) => r.label).join("、") }),
+      onGo: () => actions.goProblem(list[0].problem_id),
+    });
+  }
+
+  if (issueProblems > 0) {
+    return { mark: "issues", label: t("contestCheck.issues", { count: issueProblems }), items: [...items, ...unchecked], reminders };
+  }
+  if (uncheckedProblems > 0) {
+    return { mark: "unchecked", label: t("contestCheck.unchecked", { count: uncheckedProblems }), items: unchecked, reminders };
+  }
+  return { mark: "passed", label: t("contestCheck.ready"), items: [], reminders };
 }

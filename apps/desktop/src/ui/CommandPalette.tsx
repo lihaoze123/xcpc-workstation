@@ -75,19 +75,18 @@ function actions(): Action[] {
     { id: "a:tab-statement", icon: "fileText", label: t("palette.action.tabStatement"), keywords: ["statement", "tab", "题面", "timian"], shortcut: "alt+1", run: () => s!.setTab("statement"), when: () => inStudio },
     { id: "a:tab-samples", icon: "table", label: t("palette.action.tabSamples"), keywords: ["samples", "sample", "tab", "样例", "yangli"], shortcut: "alt+2", run: () => s!.setTab("samples"), when: () => inStudio },
     { id: "a:tab-editorial", icon: "filePenLine", label: t("palette.action.tabEditorial"), keywords: ["editorial", "solution", "tab", "题解", "tijie"], shortcut: "alt+3", run: () => s!.setTab("editorial"), when: () => inStudio },
-    { id: "a:tab-build", icon: "database", label: t("palette.action.tabBuild"), keywords: ["build", "judge", "package", "verify", "authoring", "出题", "构建", "chuti", "goujian", "yanshou"], shortcut: "alt+4", run: () => s!.setTab("build"), when: () => inStudio && !contest },
+    { id: "a:tab-build", icon: "database", label: t("palette.action.tabBuild"), keywords: ["build", "judge", "package", "verify", "authoring", "出题", "构建", "chuti", "goujian", "yanshou"], shortcut: "alt+4", run: () => s!.setTab("build"), when: () => inStudio },
     { id: "a:sanitize-problem", icon: "shieldCheck", label: t("palette.action.sanitizeProblem"), keywords: ["sanitize", "asan", "ubsan", "ub", "体检", "tijian"], run: () => s!.runSanitize(), when: () => inStudio && !contest && s!.hasPackage() && !info().readOnly },
     {
-      id: "a:contest-readiness",
+      id: "a:contest-check",
       icon: "shieldCheck",
-      label: t("palette.action.contestReadiness"),
-      keywords: ["readiness", "audit", "contest", "check", "验题", "体检", "yanti", "tijian"],
+      label: t("palette.action.contestCheck"),
+      keywords: ["check", "audit", "contest", "verify", "检查", "比赛", "jiancha"],
       run: () => {
-        if (contest) {
-          s!.setTab("readiness");
-        } else {
+        if (contest) s!.checkContest();
+        else {
           const cid = selectedContest();
-          if (cid) openStudio({ target: "contest", id: cid, initialTab: "readiness" });
+          if (cid) openStudio({ target: "contest", id: cid });
         }
       },
       when: () => contest || (!inStudio && !!selectedContest()),

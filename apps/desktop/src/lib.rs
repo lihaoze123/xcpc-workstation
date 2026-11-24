@@ -1290,8 +1290,13 @@ impl Preview {
 
     /// Pure read-only inspection of a problem package (`hasPackage`, freshness, files,
     /// expanded tests, latest report, gates, and next steps).
-    pub fn inspect_package(&self, slug: String) -> PackageInspectionResultJs {
-        self.state.inspect_package(&slug)
+    /// With `contest_id`, freshness follows that contest's overridden limits.
+    pub fn inspect_package(
+        &self,
+        slug: String,
+        contest_id: Option<String>,
+    ) -> PackageInspectionResultJs {
+        self.state.inspect_package_in(&slug, contest_id.as_deref())
     }
 
     /// Scaffolds a problem package with `testlib.h` templates without overwriting existing

@@ -24,6 +24,7 @@ import { compilerMissing, dialog, goSettings, onExternalChange, preview, type Ui
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import { StatusSlot, type StatusModel } from "./StatusSlot";
+import { testerResults } from "./contestCheck";
 import { judgeModeOf, problemStatusModel, sanitizerTargetName, stdRatioWords, verdictWords, problemTypeSummary, runsLabel, solutionExpectLabel, type JudgeMode } from "./statusLogic";
 import {
   BUILTIN_CHECKERS,
@@ -66,7 +67,6 @@ import {
   type TestSummaryData,
 } from "./buildLogic";
 import {
-  formatExternalRatio,
   inferAdoptExpect,
   parseExternalProblemReport,
   parseSanitizerReport,
@@ -250,6 +250,8 @@ const COL_TEST_W = 200;
 
 export function BuildConsole(props: {
   problemId: string;
+  /** Inside a contest: check under its overridden limits and show its tester code. */
+  contestId?: string;
   readOnly: boolean;
   inspectionResult: PackageInspectionResultJs | undefined;
   onInitPackage?: () => void;
@@ -310,6 +312,13 @@ export function BuildConsole(props: {
   const externalRunning = signal(false);
   const externalExported = createTransientFlag(1600);
   const adoptedExternalPaths = signal<Record<string, boolean>>({});
+
+  /** This problem's own trial runs plus the contest's tester code (session only, §4.1). */
+  const testerSubs = computed<ExternalSubmissionResultData[]>(() => [
+    ...(externalReport()?.submissions ?? []),
+    ...(props.contestId ? (testerResults().get(props.problemId) ?? []) : []),
+  ]);
+  const showTesterColumn = computed(() => testerSubs().some((sub) => !!sub.tester));
 
   function refreshSanitizerReport(slug: string) {
     const res = preview.loadSanitizerReport(slug);
@@ -691,7 +700,7 @@ export function BuildConsole(props: {
     } else {
       liveCells.set([]);
     }
-    const res = preview.startPackageBuild(props.problemId, effectiveMode, testsArg, solsArg, null);
+    const res = preview.startPackageBuild(props.problemId, effectiveMode, testsArg, solsArg, props.contestId ?? null);
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("ctx.packageBuild") });
       return;
@@ -899,7 +908,7 @@ export function BuildConsole(props: {
     }
     finishedReport.set(undefined);
     props.onRefreshPackage();
-    const freshRaw = preview.inspectPackage(props.problemId).inspectionJson;
+    const freshRaw = preview.inspectPackage(props.problemId, props.contestId ?? null).inspectionJson;
     let targetIndex: number | undefined;
     if (freshRaw) {
       try {
@@ -1236,11 +1245,11 @@ export function BuildConsole(props: {
                   onPress={() => selection.set({ kind: "sanitizer" })}
                 />
               </If>
-              <If when={(externalReport()?.submissions.length ?? 0) > 0 || externalRunning()}>
+              <If when={testerSubs().length > 0 || externalRunning()}>
                 <TreeRow
                   testID="tree-item-external"
                   icon="folderOpen"
-                  label={t("build.tree.testerCode", { count: externalReport()?.submissions.length ?? 0 })}
+                  label={t("build.tree.testerCode", { count: testerSubs().length })}
                   active={selection().kind === "external"}
                   onPress={() => selection.set({ kind: "external" })}
                 />
@@ -3344,7 +3353,7 @@ export function BuildConsole(props: {
                   class="border-border"
                 >
                   <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
-                    {t("build.tree.testerCode", { count: externalReport()?.submissions.length ?? 0 })}
+                    {t("build.tree.testerCode", { count: testerSubs().length })}
                   </Text>
                   <If when={!!externalMarkdown()}>
                     <Btn
@@ -3359,7 +3368,7 @@ export function BuildConsole(props: {
 
                 <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: 8, paddingBottom: 24, paddingLeft: 12, paddingRight: 12 }}>
                   <If
-                    when={externalReport() && externalReport()!.submissions.length > 0}
+                    when={testerSubs().length > 0}
                     else={
                       <Text style={{ fontSize: 13, padding: 8 }} class="text-secondary-foreground">
                         {t("build.external.running")}
@@ -3367,6 +3376,9 @@ export function BuildConsole(props: {
                     }
                   >
                     <View style={{ height: 32, paddingLeft: 8, paddingRight: 8, flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      <If when={showTesterColumn()}>
+                        <Text style={{ width: 88, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colTester")}</Text>
+                      </If>
                       <Text style={{ flex: 1, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colFile")}</Text>
                       <Text style={{ width: 64, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colVerdict")}</Text>
                       <Text style={{ width: 72, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colPassed")}</Text>
@@ -3374,7 +3386,7 @@ export function BuildConsole(props: {
                       <Text style={{ width: 112, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colRatio")}</Text>
                       <View style={{ width: 28 }} />
                     </View>
-                    <Each of={externalReport()?.submissions ?? []} key={(s) => s.file_path}>
+                    <Each of={testerSubs()} key={(s) => `${s.tester ?? ""}:${s.file_path}`}>
                       {(sub, idx) => {
                         const adopted = () => !!adoptedExternalPaths()[sub().file_path];
                         const failText = () => {
@@ -3388,6 +3400,11 @@ export function BuildConsole(props: {
                             class="group border-t border-border hover:bg-muted"
                             style={{ height: 38, paddingLeft: 8, paddingRight: 8, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 12 }}
                           >
+                            <If when={showTesterColumn()}>
+                              <Text style={{ width: 88, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+                                {sub().tester ?? ""}
+                              </Text>
+                            </If>
                             <Text style={{ flex: 1, fontSize: 13, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {sub().file_name}
                             </Text>

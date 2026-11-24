@@ -3081,7 +3081,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
     );
     assert!(init.created_files.iter().any(|f| f == "interactor.cpp"));
 
-    let insp_res = preview.inspect_package("guess".into());
+    let insp_res = preview.inspect_package("guess".into(), None);
     assert!(insp_res.ok && insp_res.has_package);
     let insp: JsonValue = insp_res
         .inspection_json
@@ -3096,7 +3096,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
     // Update runs and delete/recreate interactor.
     assert!(preview.set_package_runs("guess".into(), Some(3)).ok);
     let after_runs: JsonValue = preview
-        .inspect_package("guess".into())
+        .inspect_package("guess".into(), None)
         .inspection_json
         .parse()
         .unwrap();
@@ -3104,7 +3104,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
 
     assert!(preview.delete_interactor("guess".into()).ok);
     let after_del_int: JsonValue = preview
-        .inspect_package("guess".into())
+        .inspect_package("guess".into(), None)
         .inspection_json
         .parse()
         .unwrap();
@@ -3122,7 +3122,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
     // Reset runs to single-run default.
     assert!(preview.set_package_runs("guess".into(), None).ok);
     let after_reset_runs: JsonValue = preview
-        .inspect_package("guess".into())
+        .inspect_package("guess".into(), None)
         .inspection_json
         .parse()
         .unwrap();
@@ -3160,7 +3160,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
     );
 
     let with_sub3: JsonValue = preview
-        .inspect_package("guess".into())
+        .inspect_package("guess".into(), None)
         .inspection_json
         .parse()
         .unwrap();
@@ -3176,7 +3176,7 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
 
     assert!(preview.delete_subtask("guess".into(), "3".into(), true).ok);
     let after_del_sub3: JsonValue = preview
-        .inspect_package("guess".into())
+        .inspect_package("guess".into(), None)
         .inspection_json
         .parse()
         .unwrap();

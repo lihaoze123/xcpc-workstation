@@ -1,20 +1,14 @@
 import { expect, test } from "nsh/test";
+import { languagePref, systemLocale } from "./i18n";
 import {
-  auditRowRiskSeverity,
-  buildMultiTesterMatrix,
-  formatCumulativeMs,
-  formatExternalRatio,
-  formatSafetyMarginRatio,
-  formatStdTimeBudget,
+  idsToCheck,
   inferAdoptExpect,
   parseContestAuditReport,
   parseSanitizerReport,
-  selectPackageProblemIds,
-  selectStaleOrUnverifiedProblemIds,
   type ContestAuditReportData,
-  type ExternalContestReportData,
   type ProblemAuditRowData,
 } from "./studio/readinessLogic";
+import { contestStatusModel, markForAuditRow } from "./studio/statusLogic";
 
 function makeRow(overrides: Partial<ProblemAuditRowData>): ProblemAuditRowData {
   return {
@@ -31,7 +25,7 @@ function makeRow(overrides: Partial<ProblemAuditRowData>): ProblemAuditRowData {
     wrong_solution_count: 1,
     validator_self_test: "passed",
     checker_self_test: "not_applicable",
-    sanitizer_status: "passed_fresh",
+    sanitizer_status: "not_run",
     sanitizer_findings_count: 0,
     lint_error_count: 0,
     lint_warning_count: 0,
@@ -40,102 +34,137 @@ function makeRow(overrides: Partial<ProblemAuditRowData>): ProblemAuditRowData {
   };
 }
 
-test("selectStaleOrUnverifiedProblemIds picks stale, failed, and unbuilt in order", () => {
-  const report: ContestAuditReportData = {
-    contest_id: "c1",
-    contest_title: "Contest 1",
+function makeReport(problems: ProblemAuditRowData[]): ContestAuditReportData {
+  return {
+    contest_id: "c",
+    contest_title: "C",
     frozen: false,
-    audited_at_epoch_secs: 1000,
+    audited_at_epoch_secs: 0,
     summary: {
-      total_problems: 5,
-      fresh_count: 1,
-      stale_count: 1,
-      failed_count: 1,
-      unbuilt_count: 1,
-      statement_only_count: 1,
-      sanitizer_passed_count: 1,
+      total_problems: problems.length,
+      fresh_count: 0,
+      stale_count: 0,
+      failed_count: 0,
+      unbuilt_count: 0,
+      statement_only_count: 0,
+      sanitizer_passed_count: 0,
       sanitizer_failed_count: 0,
-      sanitizer_not_run_count: 3,
-      error_risk_count: 1,
-      warning_risk_count: 2,
+      sanitizer_not_run_count: 0,
+      error_risk_count: 0,
+      warning_risk_count: 0,
       ready_for_freeze: false,
     },
-    problems: [
-      makeRow({ label: "A", problem_id: "a", verification_status: "fresh" }),
-      makeRow({ label: "B", problem_id: "b", verification_status: "stale" }),
-      makeRow({ label: "C", problem_id: "c", verification_status: "statement_only" }),
-      makeRow({ label: "D", problem_id: "d", verification_status: "failed" }),
-      makeRow({ label: "E", problem_id: "e", verification_status: "unbuilt" }),
-    ],
+    problems,
   };
-  expect(selectStaleOrUnverifiedProblemIds(report)).toEqual(["b", "d", "e"]);
-  expect(selectPackageProblemIds(report)).toEqual(["a", "b", "d", "e"]);
+}
+
+const zh = () => {
+  systemLocale.set("zh-CN");
+  languagePref.set("system");
+};
+const noActions = { goProblem: () => {}, goSettings: () => {} };
+
+test("outline marks follow the three states (§3.1)", () => {
+  expect(markForAuditRow(makeRow({}))).toBe("passed");
+  expect(markForAuditRow(makeRow({ verification_status: "stale" }))).toBe("unchecked");
+  expect(markForAuditRow(makeRow({ verification_status: "unbuilt" }))).toBe("unchecked");
+  expect(markForAuditRow(makeRow({ verification_status: "failed" }))).toBe("issues");
+  expect(markForAuditRow(makeRow({ verification_status: "statement_only" }))).toBe("none");
+  expect(
+    markForAuditRow(makeRow({ risk_flags: [{ level: "error", code: "lint_errors", message: "x" }] })),
+  ).toBe("issues");
+  // 「还没检查」 is not an issue.
+  expect(
+    markForAuditRow(
+      makeRow({ verification_status: "unbuilt", risk_flags: [{ level: "error", code: "package_unverified", message: "x" }] }),
+    ),
+  ).toBe("unchecked");
 });
 
-test("formatting helpers render tabular metrics cleanly", () => {
-  const row = makeRow({
-    time_limit_ms: 2000,
-    std_max_time_ms: 380,
-    std_time_ratio: 0.19,
-    ac_tle_margin_ratio: 4.25,
+test("「检查」 runs unchecked and failing problems; 全部重新检查 runs all", () => {
+  const report = makeReport([
+    makeRow({ problem_id: "a" }),
+    makeRow({ problem_id: "b", verification_status: "stale" }),
+    makeRow({ problem_id: "c", verification_status: "failed" }),
+    makeRow({ problem_id: "d", verification_status: "statement_only" }),
+  ]);
+  expect(idsToCheck(report, false)).toEqual(["b", "c"]);
+  expect(idsToCheck(report, true)).toEqual(["a", "b", "c"]);
+  expect(idsToCheck(undefined, true)).toEqual([]);
+});
+
+test("contest status slot: issues first, then not checked, else 可以定稿", () => {
+  zh();
+  const issues = contestStatusModel(
+    {
+      report: makeReport([
+        makeRow({
+          label: "B",
+          problem_id: "b",
+          title: "区间求和",
+          verification_status: "failed",
+          risk_flags: [{ level: "error", code: "package_failed", message: "题目 B（b）有问题：校验器缺少自测用例" }],
+        }),
+        makeRow({ label: "C", problem_id: "c", verification_status: "unbuilt" }),
+      ]),
+      compilerMissing: false,
+      tester: new Map(),
+    },
+    noActions,
+  );
+  expect(issues.mark).toBe("issues");
+  expect(issues.label).toBe("1 题有问题");
+  expect(issues.items[0].text).toBe("校验器缺少自测用例");
+  expect(issues.items[0].where).toBe("B　区间求和");
+
+  const unchecked = contestStatusModel(
+    { report: makeReport([makeRow({ verification_status: "stale" })]), compilerMissing: false, tester: new Map() },
+    noActions,
+  );
+  expect(unchecked).toMatchObject({ mark: "unchecked", label: "1 题未检查" });
+
+  const ready = contestStatusModel({ report: makeReport([makeRow({})]), compilerMissing: false, tester: new Map() }, noActions);
+  expect(ready).toMatchObject({ mark: "passed", label: "可以定稿" });
+
+  const running = contestStatusModel(
+    { report: makeReport([makeRow({})]), running: { done: 2, total: 4 }, compilerMissing: false, tester: new Map() },
+    noActions,
+  );
+  expect(running).toMatchObject({ mark: "running", label: "检查中 2/4" });
+});
+
+test("tester code that does not pass is summarized per tester", () => {
+  zh();
+  const sub = (tester: string, verdict: string) => ({
+    tester,
+    problem_id: "b",
+    file_path: `/t/${tester}/B.cpp`,
+    file_name: "B.cpp",
+    verdict,
+    passed_tests: 0,
+    total_tests: 1,
+    max_time_ms: 1,
+    max_memory_kib: 1,
   });
-  expect(formatStdTimeBudget(row)).toBe("380ms (19%)");
-  expect(formatSafetyMarginRatio(row)).toBe("4.3×");
-  expect(formatExternalRatio(1.354)).toBe("1.35× std");
-  expect(formatExternalRatio(undefined)).toBe("—");
-  expect(formatCumulativeMs(450)).toBe("450ms");
-  expect(formatCumulativeMs(32500)).toBe("32.5s");
-});
-
-test("auditRowRiskSeverity highlights error, warning, and ok rows accurately", () => {
-  expect(auditRowRiskSeverity(makeRow({}))).toBe("ok");
-  expect(auditRowRiskSeverity(makeRow({ verification_status: "stale" }))).toBe("warning");
-  expect(auditRowRiskSeverity(makeRow({ sanitizer_status: "failed", sanitizer_findings_count: 1 }))).toBe("error");
-  expect(auditRowRiskSeverity(makeRow({ lint_error_count: 1 }))).toBe("error");
+  const m = contestStatusModel(
+    {
+      report: makeReport([makeRow({ label: "B", problem_id: "b" })]),
+      compilerMissing: false,
+      tester: new Map([["b", [sub("alice", "WA"), sub("bob", "AC")]]]),
+    },
+    noActions,
+  );
+  expect(m.reminders.map((r) => r.text)).toEqual(["alice 有 1 题未通过（B）"]);
 });
 
 test("inferAdoptExpect maps standard verdicts and falls back to AC", () => {
-  expect(inferAdoptExpect("AC")).toEqual(["AC"]);
-  expect(inferAdoptExpect("tle")).toEqual(["TLE"]);
   expect(inferAdoptExpect("WA")).toEqual(["WA"]);
-  expect(inferAdoptExpect("CE")).toEqual(["AC"]);
-});
-
-test("buildMultiTesterMatrix indexes submissions by tester and problem", () => {
-  const report: ExternalContestReportData = {
-    contest_id: "c1",
-    contest_title: "C1",
-    mode: "multi_tester",
-    problems: [
-      { label: "A", problem_id: "a", title: "A" },
-      { label: "B", problem_id: "b", title: "B" },
-    ],
-    testers: ["alice", "bob"],
-    submissions: [
-      {
-        tester: "alice",
-        problem_id: "a",
-        problem_label: "A",
-        file_path: "/tmp/alice/A.cpp",
-        file_name: "A.cpp",
-        verdict: "AC",
-        passed_tests: 10,
-        total_tests: 10,
-        max_time_ms: 42,
-        max_memory_kib: 2048,
-        ratio_vs_std: 1.1,
-      },
-    ],
-    unmatched: [],
-  };
-  const matrix = buildMultiTesterMatrix(report);
-  expect(matrix.testers).toEqual(["alice", "bob"]);
-  expect(matrix.cells.get("alice::a")?.length).toBe(1);
-  expect(matrix.cells.get("bob::a")).toBeUndefined();
+  expect(inferAdoptExpect(" tle ")).toEqual(["TLE"]);
+  expect(inferAdoptExpect("ILE")).toEqual(["AC"]);
 });
 
 test("JSON parsers handle invalid or empty inputs safely", () => {
-  expect(parseSanitizerReport(null)).toBeUndefined();
-  expect(parseSanitizerReport("{bad")).toBeUndefined();
   expect(parseContestAuditReport(undefined)).toBeUndefined();
+  expect(parseContestAuditReport("not json")).toBeUndefined();
+  expect(parseSanitizerReport("")).toBeUndefined();
 });

@@ -200,81 +200,6 @@ export function parseContestAuditReport(json: string | null | undefined): Contes
   }
 }
 
-/** Returns contest problem IDs that need verification (`stale`, `failed`, or `unbuilt`). */
-export function selectStaleOrUnverifiedProblemIds(report: ContestAuditReportData | undefined): string[] {
-  if (!report) return [];
-  return report.problems
-    .filter(
-      (row) =>
-        row.verification_status === "stale" ||
-        row.verification_status === "failed" ||
-        row.verification_status === "unbuilt",
-    )
-    .map((row) => row.problem_id);
-}
-
-/** Returns all problem IDs in the contest that have a package (non-`statement_only`) for UB check. */
-export function selectPackageProblemIds(report: ContestAuditReportData | undefined): string[] {
-  if (!report) return [];
-  return report.problems
-    .filter((row) => row.verification_status !== "statement_only")
-    .map((row) => row.problem_id);
-}
-
-/** Formats `std` slowest runtime against TL, e.g. `380ms (19%)`. */
-export function formatStdTimeBudget(row: ProblemAuditRowData): string {
-  if (row.std_max_time_ms === undefined || row.std_max_time_ms === null) return "—";
-  const msStr = `${row.std_max_time_ms}ms`;
-  if (row.std_time_ratio === undefined || row.std_time_ratio === null || !Number.isFinite(row.std_time_ratio)) {
-    return msStr;
-  }
-  const pct = Math.round(row.std_time_ratio * 100);
-  return `${msStr} (${pct}%)`;
-}
-
-/** Formats AC vs TLE safety margin ratio, e.g. `4.2×`. */
-export function formatSafetyMarginRatio(row: ProblemAuditRowData): string {
-  if (row.ac_tle_margin_ratio === undefined || row.ac_tle_margin_ratio === null || !Number.isFinite(row.ac_tle_margin_ratio)) {
-    return "—";
-  }
-  return `${row.ac_tle_margin_ratio.toFixed(row.ac_tle_margin_ratio >= 10 ? 0 : 1)}×`;
-}
-
-/** Formats external submission runtime ratio vs `std`, e.g. `1.35× std`. */
-export function formatExternalRatio(ratio: number | undefined | null): string {
-  if (ratio === undefined || ratio === null || !Number.isFinite(ratio)) return "—";
-  return `${ratio.toFixed(2)}× std`;
-}
-
-/** Formats cumulative `std` runtime concisely (`1.2s` or `450ms`). */
-export function formatCumulativeMs(ms: number | undefined | null): string {
-  if (ms === undefined || ms === null || !Number.isFinite(ms)) return "—";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms)}ms`;
-}
-
-/** Determines the highest risk severity of an audit row for visual highlighting. */
-export function auditRowRiskSeverity(row: ProblemAuditRowData): "error" | "warning" | "ok" {
-  const flags = row.risk_flags ?? [];
-  if (
-    row.verification_status === "failed" ||
-    row.sanitizer_status === "failed" ||
-    row.lint_error_count > 0 ||
-    flags.some((f) => f.level === "error")
-  ) {
-    return "error";
-  }
-  if (
-    row.verification_status === "stale" ||
-    row.verification_status === "unbuilt" ||
-    row.lint_warning_count > 0 ||
-    flags.some((f) => f.level === "warning")
-  ) {
-    return "warning";
-  }
-  return "ok";
-}
-
 /** Suggests default `expect` verdict list when adopting an external submission. */
 export function inferAdoptExpect(verdict: string): string[] {
   const upper = verdict.trim().toUpperCase();
@@ -284,20 +209,11 @@ export function inferAdoptExpect(verdict: string): string[] {
   return ["AC"];
 }
 
-/** Builds a lookup map of `(tester, problem_id) -> submissions[]` for multi-tester matrix display. */
-export function buildMultiTesterMatrix(report: ExternalContestReportData): {
-  testers: string[];
-  problems: ContestProblemRefData[];
-  cells: Map<string, ExternalSubmissionResultData[]>;
-} {
-  const testers = report.testers ?? [];
-  const cells = new Map<string, ExternalSubmissionResultData[]>();
-  for (const sub of report.submissions) {
-    const tester = sub.tester ?? "";
-    const key = `${tester}::${sub.problem_id}`;
-    const list = cells.get(key);
-    if (list) list.push(sub);
-    else cells.set(key, [sub]);
-  }
-  return { testers, problems: report.problems, cells };
+/** Problems 「检查」 runs (§4): the ones not checked yet or with issues; every one with `all`. */
+export function idsToCheck(report: ContestAuditReportData | undefined, all: boolean): string[] {
+  if (!report) return [];
+  return report.problems
+    .filter((r) => r.verification_status !== "statement_only")
+    .filter((r) => all || r.verification_status !== "fresh" || (r.risk_flags ?? []).some((f) => f.level === "error"))
+    .map((r) => r.problem_id);
 }

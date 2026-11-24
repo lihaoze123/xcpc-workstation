@@ -74,7 +74,7 @@ export type StudioTarget = {
   target: "problem" | "contest";
   id: string;
   label?: string;
-  initialTab?: "statement" | "samples" | "editorial" | "build" | "readiness";
+  initialTab?: "statement" | "samples" | "editorial" | "build";
 };
 
 /** An error the views show with `ErrorDisplay`: the Core's code and raw text, and where it came from. */
@@ -518,7 +518,9 @@ export type StudioActions = {
   reveal(): void;
   freeze(): void;
   unfreeze(): void;
-  setTab(tab: "statement" | "samples" | "editorial" | "build" | "readiness"): void;
+  setTab(tab: "statement" | "samples" | "editorial" | "build"): void;
+  /** In a contest: check every problem not checked yet or with issues (§4). */
+  checkContest(): void;
   runSanitize(): void;
   toggleInspector(): void;
   openAssets(): void;

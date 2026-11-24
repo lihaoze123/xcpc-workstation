@@ -447,7 +447,7 @@ export function LibraryView(props: { active: boolean }) {
         { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
         {
           label: t("library.menu.createPackage"),
-          disabled: ro || preview.inspectPackage(row.id).hasPackage,
+          disabled: ro || preview.inspectPackage(row.id, null).hasPackage,
           onSelect: () => {
             const res = preview.initPackage(row.id);
             if (res.ok) {
@@ -962,7 +962,7 @@ function ProblemInspector(props: { id: string; active: boolean; groups: readonly
     ];
     return [
       { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
-      ...(ro || preview.inspectPackage(props.id).hasPackage
+      ...(ro || preview.inspectPackage(props.id, null).hasPackage
         ? []
         : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
       { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: ro },

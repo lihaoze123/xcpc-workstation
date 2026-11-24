@@ -2875,7 +2875,16 @@ impl State {
         xcpc_judge::detect_toolchain(override_path.as_deref().map(Path::new)).into()
     }
 
+    #[cfg(test)]
     pub(crate) fn inspect_package(&self, slug: &str) -> PackageInspectionResultJs {
+        self.inspect_package_in(slug, None)
+    }
+
+    pub(crate) fn inspect_package_in(
+        &self,
+        slug: &str,
+        contest: Option<&str>,
+    ) -> PackageInspectionResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return PackageInspectionResultJs {
@@ -2884,7 +2893,7 @@ impl State {
                 ..Default::default()
             };
         };
-        match xcpc_judge::inspect_package(&ws, slug) {
+        match xcpc_judge::inspect_package_in(&ws, slug, contest) {
             Ok(insp) => {
                 let freshness_status = freshness_status_str(&insp.freshness).to_owned();
                 let has_package = insp.has_package;

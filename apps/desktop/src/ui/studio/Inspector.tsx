@@ -33,6 +33,7 @@ type InspectorTab = "info" | "layout";
 
 export function Inspector(props: {
   open: boolean;
+  topOffset?: number;
   target: "problem" | "contest";
   id: string;
   contest?: ContestDetailJs;
@@ -107,7 +108,7 @@ export function Inspector(props: {
       testID="inspector"
       style={{
         position: "absolute",
-        top: 0,
+        top: props.topOffset ?? 0,
         right: 0,
         bottom: 0,
         width: INSPECTOR_WIDTH,

@@ -147,7 +147,7 @@ impl RunLimits {
 /// Parses a human-readable time limit such as `"1s"`, `"2.5s"`, `"500ms"` into milliseconds.
 pub fn parse_time_limit_ms(raw: &str) -> Result<u64> {
     let s = raw.trim().to_ascii_lowercase().replace(' ', "");
-    if let Some(num) = s.strip_suffix("ms") {
+    if let Some(num) = s.strip_suffix("ms").or_else(|| s.strip_suffix("毫秒")) {
         let v: f64 = num.parse().map_err(|_| JudgeError::InvalidLimit {
             kind: "time",
             value: raw.to_owned(),
@@ -161,8 +161,11 @@ pub fn parse_time_limit_ms(raw: &str) -> Result<u64> {
         return Ok(v.ceil() as u64);
     }
     let num = s
-        .strip_suffix("sec")
+        .strip_suffix("seconds")
+        .or_else(|| s.strip_suffix("second"))
+        .or_else(|| s.strip_suffix("sec"))
         .or_else(|| s.strip_suffix('s'))
+        .or_else(|| s.strip_suffix('秒'))
         .unwrap_or(&s);
     let v: f64 = num.parse().map_err(|_| JudgeError::InvalidLimit {
         kind: "time",
