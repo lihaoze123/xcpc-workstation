@@ -26,7 +26,12 @@ import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { adaptiveCompileDelayMs, minimalEdit, ratioOf, type Book } from "../logic";
-import { setToastBottomLift } from "../Toast";
+import { setToastBottomLift, showToast } from "../Toast";
+import {
+  parseJsonReport,
+  type PluginExportReport,
+  type RegisteredExporter,
+} from "../tools/types";
 import {
   book as storeBook,
   closeStudio,
@@ -37,6 +42,7 @@ import {
   loadPrefs,
   onExternalChange,
   openStudio,
+  pluginsRevision,
   preview,
   refresh,
   revision,
@@ -617,6 +623,40 @@ export function StudioView(props: { active: boolean }) {
     notice.set(undefined);
     lastOjRevealPath.set(res.revealPath || res.paths[0]);
     exportedSeq.set(exportedSeq() + 1);
+  }
+
+  const pluginExporters = computed<RegisteredExporter[]>(() => {
+    void pluginsRevision();
+    return parseJsonReport<RegisteredExporter[]>(
+      typeof preview.pluginListExporters === "function" ? preview.pluginListExporters() : undefined,
+      [],
+    );
+  });
+
+  async function exportViaPlugin(pluginId: string, exporterId: string) {
+    save();
+    const cur = untracked(target);
+    if (!cur || exporting()) return;
+    const res = await preview.pluginRunExporter(pluginId, exporterId, cur.target, cur.id);
+    if (!res.ok) {
+      showToast({ tone: "issues", text: res.error ?? t("tools.exportFailed") });
+      return;
+    }
+    const report = parseJsonReport<PluginExportReport>(res, { out_dir: "", files: [] });
+    if (report.out_dir) {
+      lastOjRevealPath.set(report.out_dir);
+    }
+    exportedSeq.set(exportedSeq() + 1);
+    showToast({
+      tone: "success",
+      text: report.summary || t("tools.exportSuccess"),
+      action: report.out_dir
+        ? {
+            label: t("common.revealInFolder"),
+            run: () => void preview.revealInFolder(report.out_dir),
+          }
+        : undefined,
+    });
   }
 
   async function reveal(b: Book) {
@@ -1291,8 +1331,10 @@ export function StudioView(props: { active: boolean }) {
                 busy={exporting()}
                 exportedSeq={exportedSeq()}
                 canRevealOj={!!lastOjRevealPath()}
+                pluginExporters={pluginExporters()}
                 onExport={(b) => void exportBook(b)}
                 onExportOj={(fmt) => void exportOjPackage(fmt)}
+                onExportPlugin={(pid, eid) => void exportViaPlugin(pid, eid)}
                 onReveal={(b) => void reveal(b)}
               />
             </If>

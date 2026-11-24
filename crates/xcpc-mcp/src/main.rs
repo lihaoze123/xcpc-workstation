@@ -19,6 +19,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use serde_json::json;
@@ -161,26 +162,41 @@ enum Command {
         #[command(subcommand)]
         action: PackageCommand,
     },
-    /// Import problems or contests from external archives (e.g. Polygon ZIP).
+    /// Import problems or contests from external archives (`polygon` or `<plugin>:<importer>`).
     Import {
-        #[command(subcommand)]
-        action: ImportCommand,
+        /// Importer target: `polygon` or `<plugin>:<importer>`.
+        target: String,
+        /// Input archive or file path(s).
+        #[arg(value_name = "FILE", required = true)]
+        files: Vec<PathBuf>,
+        /// Override target problem slug or contest ID (for `polygon`).
+        #[arg(long)]
+        id: Option<String>,
+        /// Assign imported problem(s) to this persistent group (for `polygon`).
+        #[arg(long)]
+        group: Option<String>,
+        /// Disable automatic grouping by contest name for Polygon contest imports.
+        #[arg(long)]
+        no_auto_group: bool,
     },
-    /// Export verified problem(s) or contest(s) to OJ packages (DOMjudge or Hydro).
+    /// Export problem(s) or contest(s) to OJ packages (`domjudge`, `hydro`) or a plugin exporter (`<plugin>:<exporter>`).
     Export {
-        /// Target OJ format (`domjudge` or `hydro`).
-        format: ExportFormat,
+        /// Target format: `domjudge`, `hydro`, or `<plugin>:<exporter>`.
+        format: String,
         /// Export a single `problem`, an entire `contest`, or a batch of `problems`.
         kind: ExportKind,
         /// Problem ID, contest ID, or one or more problem IDs (when kind is `problems`).
         #[arg(value_name = "ID", required = true)]
         ids: Vec<String>,
-        /// Output `.zip` path (for problem) or directory (for contest / problems). Defaults under `build/`.
+        /// Output `.zip` path (for OJ problem) or directory (for contest / problems / plugin exporter). Defaults under `build/`.
         #[arg(long = "output", alias = "out", short = 'o')]
         out: Option<PathBuf>,
-        /// Bypass strict verification check (built testdata is still required).
+        /// Bypass strict verification check (built testdata is still required; for `domjudge`/`hydro`).
         #[arg(long)]
         force: bool,
+        /// Compile statement PDF and pass `pdf_base64` to plugin exporter (`<plugin>:<exporter>`).
+        #[arg(long)]
+        with_pdf: bool,
     },
     /// Inspect built-in and custom Typst templates and their declarative schemas.
     Template {
@@ -191,6 +207,11 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         action: PluginCommand,
+    },
+    /// List and run headless offline tools provided by enabled plugins.
+    Tool {
+        #[command(subcommand)]
+        action: ToolCommand,
     },
     /// Sync OJ accounts, submissions, and contests via enabled oj_source plugins, or manage handles.
     Sync {
@@ -412,39 +433,44 @@ enum PackageCommand {
     },
 }
 
-#[derive(Subcommand)]
-enum ImportCommand {
-    /// Import a Polygon problem or contest ZIP archive into the workspace.
-    Polygon {
-        /// Path to the Polygon `.zip` archive.
-        zip: PathBuf,
-        /// Override target problem slug or contest ID.
-        #[arg(long)]
-        id: Option<String>,
-        /// Assign imported problem(s) to this persistent group (overrides auto-grouping).
-        #[arg(long)]
-        group: Option<String>,
-        /// Disable automatic grouping by contest name for Polygon contest imports.
-        #[arg(long)]
-        no_auto_group: bool,
-    },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy)]
 enum ExportFormat {
-    #[value(alias = "dj")]
     Domjudge,
-    #[value(alias = "hydrooj")]
     Hydro,
 }
 
 impl ExportFormat {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "domjudge" | "dj" => Some(ExportFormat::Domjudge),
+            "hydro" | "hydrooj" => Some(ExportFormat::Hydro),
+            _ => None,
+        }
+    }
+
     fn into_oj_format(self) -> xcpc_packages::OjFormat {
         match self {
             ExportFormat::Domjudge => xcpc_packages::OjFormat::Domjudge,
             ExportFormat::Hydro => xcpc_packages::OjFormat::Hydro,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum ToolCommand {
+    /// List all enabled tool plugins, their tools, and input schemas.
+    List,
+    /// Run a headless tool (`<plugin>:<tool>`) in the plugin QuickJS sandbox.
+    Run {
+        /// Tool reference in `<plugin>:<tool>` format.
+        target: String,
+        /// Input parameter (`key=value`; repeatable; numbers/booleans parsed as JSON).
+        #[arg(long = "input", value_name = "KEY=VALUE")]
+        inputs: Vec<String>,
+        /// Input parameters as a JSON object (merged before `--input`).
+        #[arg(long = "input-json", value_name = "JSON")]
+        input_json: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1455,16 +1481,31 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         Command::Problem { action } => run_problem(cli, action),
         Command::Contest { action } => run_contest(cli, action),
         Command::Package { action } => run_package(cli, action),
-        Command::Import { action } => run_import(cli, action),
+        Command::Import {
+            target,
+            files,
+            id,
+            group,
+            no_auto_group,
+        } => run_import(
+            cli,
+            target,
+            files,
+            id.as_deref(),
+            group.as_deref(),
+            *no_auto_group,
+        ),
         Command::Export {
             format,
             kind,
             ids,
             out,
             force,
-        } => run_export(cli, *format, *kind, ids, out.as_ref(), *force),
+            with_pdf,
+        } => run_export(cli, format, *kind, ids, out.as_ref(), *force, *with_pdf),
         Command::Template { action } => run_template(cli, action),
         Command::Plugin { action } => run_plugin(cli, action),
+        Command::Tool { action } => run_tool(cli, action),
         Command::Sync {
             action,
             platform,
@@ -1474,125 +1515,656 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
     }
 }
 
-fn run_import(cli: &Cli, action: &ImportCommand) -> Result<ExitCode, Fatal> {
+fn split_plugin_ref<'a>(raw: &'a str, label: &str) -> Result<(&'a str, &'a str), Fatal> {
+    let Some((plugin_id, item_id)) = raw.split_once(':') else {
+        return Err(Fatal {
+            code: "invalid_arguments",
+            message: format!("expected `<plugin>:{label}` format, got {raw:?}"),
+            human: Some(format!(
+                "参数格式应为 `<plugin>:{label}`，实际收到「{raw}」。"
+            )),
+            exit_code: 2,
+        });
+    };
+    let plugin_id = plugin_id.trim();
+    let item_id = item_id.trim();
+    if plugin_id.is_empty() || item_id.is_empty() || item_id.contains(':') {
+        return Err(Fatal {
+            code: "invalid_arguments",
+            message: format!("invalid `<plugin>:{label}` reference: {raw:?}"),
+            human: Some(format!("无效的 `<plugin>:{label}` 引用：「{raw}」。")),
+            exit_code: 2,
+        });
+    }
+    Ok((plugin_id, item_id))
+}
+
+fn run_import(
+    cli: &Cli,
+    target: &str,
+    files: &[PathBuf],
+    id: Option<&str>,
+    group: Option<&str>,
+    no_auto_group: bool,
+) -> Result<ExitCode, Fatal> {
     let ws = open_workspace(cli)?;
     if ws.is_read_only() {
         return Err(xcpc_storage::Error::ReadOnly.into());
     }
-    match action {
-        ImportCommand::Polygon {
-            zip,
-            id,
-            group,
+    if target.eq_ignore_ascii_case("polygon") {
+        if files.len() != 1 {
+            return Err(Fatal {
+                code: "invalid_arguments",
+                message: "expected exactly one Polygon `.zip` archive path".to_owned(),
+                human: Some("`import polygon` 需要且仅需要一个 `.zip` 归档路径。".to_owned()),
+                exit_code: 2,
+            });
+        }
+        let opts = xcpc_packages::PolygonImportOptions {
+            target_id: id.map(str::to_owned),
+            group: group.map(str::to_owned),
             no_auto_group,
-        } => {
-            let opts = xcpc_packages::PolygonImportOptions {
-                target_id: id.clone(),
-                group: group.clone(),
-                no_auto_group: *no_auto_group,
-                ..Default::default()
-            };
-            let res = xcpc_packages::import_polygon(&ws, zip, &opts)?;
+            ..Default::default()
+        };
+        let res = xcpc_packages::import_polygon(&ws, &files[0], &opts)?;
+        if cli.json {
+            let mut value = serde_json::to_value(&res).expect("serializable");
+            value["ok"] = json!(true);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).expect("serializable")
+            );
+        } else {
+            print_polygon_import_result(&res);
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let (plugin_id, importer_id) = split_plugin_ref(target, "importer")?;
+    let mut file_inputs = Vec::with_capacity(files.len());
+    for path in files {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("reading import file {}", path.display()))?;
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| path.display().to_string());
+        let content_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let text = String::from_utf8(bytes).ok();
+        file_inputs.push(xcpc_plugin::ImportFileInput {
+            name,
+            content_base64,
+            text,
+        });
+    }
+
+    let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+    let draft = pm.run_importer(plugin_id, importer_id, &file_inputs)?;
+    let report = xcpc_plugin::apply_import_draft(&ws, &draft)?;
+
+    if cli.json {
+        let mut value = serde_json::to_value(&report).expect("serializable");
+        value["ok"] = json!(true);
+        value["plugin_id"] = json!(plugin_id);
+        value["importer_id"] = json!(importer_id);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).expect("serializable")
+        );
+    } else {
+        println!(
+            "imported {} via {plugin_id}:{importer_id}: created={} skipped={}",
+            report.kind,
+            report.created_ids.len(),
+            report.skipped_ids.len()
+        );
+        for cid in &report.created_ids {
+            println!("  + {cid}");
+        }
+        for sid in &report.skipped_ids {
+            println!("  = {sid} (skipped)");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn build_problem_export_context(
+    ws: &Workspace,
+    id: &str,
+    pdf_base64: Option<String>,
+) -> Result<xcpc_plugin::ExportContext, Fatal> {
+    let problem = ws.load_problem(id)?;
+    let metadata = serde_json::to_value(&problem.meta).unwrap_or_else(|_| json!({}));
+    let statement_md = problem
+        .statement(Language::Chinese)
+        .or_else(|| problem.statements.first())
+        .map(|s| s.file.text.clone());
+    let editorial_md = problem.editorial.as_ref().map(|e| e.text.clone());
+    let samples = problem
+        .samples
+        .iter()
+        .map(|s| xcpc_plugin::DraftSample {
+            input: s.input.clone(),
+            output: s.output.clone(),
+        })
+        .collect();
+    Ok(xcpc_plugin::ExportContext {
+        kind: "problem".to_owned(),
+        id: problem.id,
+        title: problem.meta.title,
+        metadata,
+        statement_md,
+        editorial_md,
+        samples: Some(samples),
+        pdf_base64,
+        problems: None,
+    })
+}
+
+fn build_contest_export_context(
+    ws: &Workspace,
+    id: &str,
+    pdf_base64: Option<String>,
+) -> Result<xcpc_plugin::ExportContext, Fatal> {
+    let contest = ws.load_contest(id)?;
+    let metadata = serde_json::to_value(&contest.meta).unwrap_or_else(|_| json!({}));
+    let mut problems = Vec::with_capacity(contest.meta.problems.len());
+    for item in &contest.meta.problems {
+        problems.push(build_problem_export_context(ws, &item.id, None)?);
+    }
+    Ok(xcpc_plugin::ExportContext {
+        kind: "contest".to_owned(),
+        id: contest.id,
+        title: contest.meta.name,
+        metadata,
+        statement_md: None,
+        editorial_md: None,
+        samples: None,
+        pdf_base64,
+        problems: Some(problems),
+    })
+}
+
+fn compile_export_pdf_base64(cli: &Cli, ws: &Workspace, target: &Target) -> Result<String, Fatal> {
+    let mut engine = publish::engine(ws, &fonts(cli));
+    let (compiled, _, report) =
+        publish::check(ws, &mut engine, target, Kind::Statements, None, None)?;
+    let compiled = compiled.filter(|_| report.ok).ok_or_else(|| Fatal {
+        code: "pdf_compile_failed",
+        message: "failed to compile statement PDF for export".to_owned(),
+        human: Some("导出时编译题面 PDF 失败，请先使用 `xcpc check` 排查错误。".to_owned()),
+        exit_code: 1,
+    })?;
+    let pdf = compiled
+        .pdf()
+        .map_err(|e| anyhow::anyhow!("PDF export failed: {}", e[0].message))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&pdf))
+}
+
+fn run_export(
+    cli: &Cli,
+    format: &str,
+    kind: ExportKind,
+    ids: &[String],
+    out: Option<&PathBuf>,
+    force: bool,
+    with_pdf: bool,
+) -> Result<ExitCode, Fatal> {
+    if let Some(oj_fmt) = ExportFormat::parse(format) {
+        let ws = open_workspace(cli)?;
+        if ws.is_read_only() {
+            return Err(xcpc_storage::Error::ReadOnly.into());
+        }
+        let oj_format = oj_fmt.into_oj_format();
+        return match kind {
+            ExportKind::Problem | ExportKind::Contest => {
+                if ids.len() != 1 {
+                    return Err(Fatal {
+                        code: "invalid_arguments",
+                        message: "expected exactly one ID for `export problem` / `export contest`"
+                            .to_owned(),
+                        human: Some(
+                            "`export problem` 或 `export contest` 只能指定一个 ID；批量导出请使用 `export <format> problems <ID>...`。"
+                                .to_owned(),
+                        ),
+                        exit_code: 2,
+                    });
+                }
+                let id = &ids[0];
+                let target = match kind {
+                    ExportKind::Problem => xcpc_packages::ExportTarget::Problem(id.clone()),
+                    ExportKind::Contest => xcpc_packages::ExportTarget::Contest(id.clone()),
+                    ExportKind::Problems => unreachable!(),
+                };
+                let output_path = match out {
+                    Some(path) => path.clone(),
+                    None => match kind {
+                        ExportKind::Problem => ws
+                            .root()
+                            .join(format!("build/{id}-{}.zip", oj_format.as_str())),
+                        ExportKind::Contest => {
+                            ws.root().join(format!("build/{id}-{}", oj_format.as_str()))
+                        }
+                        ExportKind::Problems => unreachable!(),
+                    },
+                };
+                let opts = xcpc_packages::ExportOjOptions {
+                    format: oj_format,
+                    output_path,
+                    force,
+                    language: None,
+                };
+                let res = xcpc_packages::export_oj_package(&ws, &target, &opts)?;
+                if cli.json {
+                    let mut value = serde_json::to_value(&res).expect("serializable");
+                    value["ok"] = json!(true);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&value).expect("serializable")
+                    );
+                } else {
+                    print_export_oj_result(&res);
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            ExportKind::Problems => {
+                let output_path = out.cloned().unwrap_or_default();
+                let opts = xcpc_packages::ExportOjOptions {
+                    format: oj_format,
+                    output_path,
+                    force,
+                    language: None,
+                };
+                let res = xcpc_packages::export_oj_packages_batch(&ws, ids, &opts, None, None)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&res).expect("serializable")
+                    );
+                } else {
+                    print_batch_export_oj_result(&res);
+                }
+                if res.ok {
+                    Ok(ExitCode::SUCCESS)
+                } else {
+                    Ok(ExitCode::from(1))
+                }
+            }
+        };
+    }
+
+    let (plugin_id, exporter_id) = split_plugin_ref(format, "exporter")?;
+    if matches!(kind, ExportKind::Problems) || ids.len() != 1 {
+        return Err(Fatal {
+            code: "invalid_arguments",
+            message: "plugin exporter expects `export <plugin>:<exporter> <problem|contest> <id>`"
+                .to_owned(),
+            human: Some(
+                "插件导出格式为 `xcpc export <plugin>:<exporter> <problem|contest> <id>`。"
+                    .to_owned(),
+            ),
+            exit_code: 2,
+        });
+    }
+    let id = &ids[0];
+    let ws = open_workspace(cli)?;
+    let out_dir = out
+        .cloned()
+        .unwrap_or_else(|| ws.root().join("build").join("exports"));
+
+    let pdf_base64 = if with_pdf {
+        let target = match kind {
+            ExportKind::Problem => Target::Problem(id.clone()),
+            ExportKind::Contest => Target::Contest(id.clone()),
+            ExportKind::Problems => unreachable!(),
+        };
+        Some(compile_export_pdf_base64(cli, &ws, &target)?)
+    } else {
+        None
+    };
+
+    let ctx = match kind {
+        ExportKind::Problem => build_problem_export_context(&ws, id, pdf_base64)?,
+        ExportKind::Contest => build_contest_export_context(&ws, id, pdf_base64)?,
+        ExportKind::Problems => unreachable!(),
+    };
+
+    let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+    let output = pm.run_exporter(plugin_id, exporter_id, &ctx)?;
+    let written = xcpc_plugin::write_export_output(&ws, &output, &out_dir)?;
+
+    if cli.json {
+        let files: Vec<String> = written.iter().map(|p| p.display().to_string()).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "plugin_id": plugin_id,
+                "exporter_id": exporter_id,
+                "kind": ctx.kind,
+                "id": ctx.id,
+                "out_dir": out_dir.display().to_string(),
+                "files": files,
+                "summary": output.summary,
+            }))
+            .expect("serializable")
+        );
+    } else {
+        if let Some(ref summary) = output.summary {
+            println!("{summary}");
+        }
+        println!(
+            "exported {} {} via {plugin_id}:{exporter_id} ({} file(s))",
+            ctx.kind,
+            ctx.id,
+            written.len()
+        );
+        for p in &written {
+            println!("  wrote {}", p.display());
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn parse_tool_input_value(raw: &str) -> serde_json::Value {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw)
+        && matches!(
+            val,
+            serde_json::Value::Number(_) | serde_json::Value::Bool(_)
+        )
+    {
+        return val;
+    }
+    serde_json::Value::String(raw.to_owned())
+}
+
+fn run_tool(cli: &Cli, action: &ToolCommand) -> Result<ExitCode, Fatal> {
+    let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+    match action {
+        ToolCommand::List => {
+            let groups = pm.list_tools();
             if cli.json {
-                let mut value = serde_json::to_value(&res).expect("serializable");
+                let items: Vec<serde_json::Value> = groups
+                    .iter()
+                    .map(|g| {
+                        let tools: Vec<serde_json::Value> = g
+                            .tools
+                            .iter()
+                            .map(|t| {
+                                let mut tv = serde_json::to_value(t).expect("serializable");
+                                tv["ref"] = json!(format!("{}:{}", g.plugin_id, t.id));
+                                tv
+                            })
+                            .collect();
+                        json!({
+                            "plugin_id": g.plugin_id,
+                            "plugin_name": g.plugin_name,
+                            "plugin_description": g.plugin_description,
+                            "has_ui": g.has_ui,
+                            "ui_entry": g.ui_entry,
+                            "is_builtin": g.is_builtin,
+                            "tools": tools,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "plugins": items,
+                    }))
+                    .expect("serializable")
+                );
+            } else if groups.is_empty() {
+                println!("no enabled tool plugins");
+            } else {
+                for g in &groups {
+                    let ui_tag = if g.has_ui { " [ui]" } else { "" };
+                    println!("{} — {}{ui_tag}", g.plugin_id, g.plugin_name);
+                    if !g.plugin_description.is_empty() {
+                        println!("  {}", g.plugin_description);
+                    }
+                    for t in &g.tools {
+                        let inputs_desc: Vec<String> = t
+                            .inputs
+                            .iter()
+                            .map(|inp| {
+                                let req = if inp.required { "*" } else { "" };
+                                format!("{}{req}:{}", inp.name, inp.kind)
+                            })
+                            .collect();
+                        let schema_str = if inputs_desc.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", inputs_desc.join(", "))
+                        };
+                        println!("  {}:{}  {}{schema_str}", g.plugin_id, t.id, t.name);
+                        if let Some(ref desc) = t.description
+                            && !desc.is_empty()
+                        {
+                            println!("    {desc}");
+                        }
+                    }
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        ToolCommand::Run {
+            target,
+            inputs,
+            input_json,
+        } => {
+            let (plugin_id, tool_id) = split_plugin_ref(target, "tool")?;
+            let mut map = serde_json::Map::new();
+            if let Some(raw_json) = input_json {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(raw_json).map_err(|e| Fatal {
+                        code: "invalid_arguments",
+                        message: format!("invalid --input-json: {e}"),
+                        human: Some(format!("`--input-json` 不是有效的 JSON：{e}")),
+                        exit_code: 2,
+                    })?;
+                let obj = parsed.as_object().ok_or_else(|| Fatal {
+                    code: "invalid_arguments",
+                    message: "--input-json must be a JSON object".to_owned(),
+                    human: Some("`--input-json` 必须是 JSON 对象。".to_owned()),
+                    exit_code: 2,
+                })?;
+                for (k, v) in obj {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            for pair in inputs {
+                let Some((k, v)) = pair.split_once('=') else {
+                    return Err(Fatal {
+                        code: "invalid_arguments",
+                        message: format!("invalid --input {pair:?}: expected `key=value`"),
+                        human: Some(format!(
+                            "`--input` 参数格式应为 `key=value`，实际收到「{pair}」。"
+                        )),
+                        exit_code: 2,
+                    });
+                };
+                let key = k.trim();
+                if key.is_empty() {
+                    return Err(Fatal {
+                        code: "invalid_arguments",
+                        message: format!("empty input key in --input {pair:?}"),
+                        human: Some(format!("`--input` 键名不能为空：「{pair}」。")),
+                        exit_code: 2,
+                    });
+                }
+                map.insert(key.to_owned(), parse_tool_input_value(v));
+            }
+
+            let needs_ws = pm
+                .load_plugin(plugin_id)
+                .map(|p| p.info.manifest.permissions.workspace_read)
+                .unwrap_or(false);
+            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> = if needs_ws {
+                open_workspace_optional(cli)?.map(|ws| {
+                    Arc::new(CliWorkspaceReader { ws }) as Arc<dyn xcpc_plugin::WorkspaceReader>
+                })
+            } else {
+                None
+            };
+
+            let result = pm.run_tool(
+                plugin_id,
+                tool_id,
+                serde_json::Value::Object(map),
+                ws_reader,
+            )?;
+
+            if cli.json {
+                let mut value = serde_json::to_value(&result).expect("serializable");
                 value["ok"] = json!(true);
+                value["plugin_id"] = json!(plugin_id);
+                value["tool_id"] = json!(tool_id);
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&value).expect("serializable")
                 );
             } else {
-                print_polygon_import_result(&res);
+                print_tool_result(&result);
             }
             Ok(ExitCode::SUCCESS)
         }
     }
 }
 
-fn run_export(
-    cli: &Cli,
-    format: ExportFormat,
-    kind: ExportKind,
-    ids: &[String],
-    out: Option<&PathBuf>,
-    force: bool,
-) -> Result<ExitCode, Fatal> {
-    let ws = open_workspace(cli)?;
-    if ws.is_read_only() {
-        return Err(xcpc_storage::Error::ReadOnly.into());
+fn print_tool_result(result: &xcpc_plugin::ToolExecutionResult) {
+    if let Some(ref summary) = result.summary
+        && !summary.trim().is_empty()
+    {
+        println!("{summary}");
     }
-    let oj_format = format.into_oj_format();
-    match kind {
-        ExportKind::Problem | ExportKind::Contest => {
-            if ids.len() != 1 {
-                return Err(Fatal {
-                    code: "invalid_arguments",
-                    message: "expected exactly one ID for `export problem` / `export contest`"
-                        .to_owned(),
-                    human: Some(
-                        "`export problem` 或 `export contest` 只能指定一个 ID；批量导出请使用 `export <format> problems <ID>...`。"
-                            .to_owned(),
-                    ),
-                    exit_code: 2,
-                });
-            }
-            let id = &ids[0];
-            let target = match kind {
-                ExportKind::Problem => xcpc_packages::ExportTarget::Problem(id.clone()),
-                ExportKind::Contest => xcpc_packages::ExportTarget::Contest(id.clone()),
-                ExportKind::Problems => unreachable!(),
-            };
-            let output_path = match out {
-                Some(path) => path.clone(),
-                None => match kind {
-                    ExportKind::Problem => ws
-                        .root()
-                        .join(format!("build/{id}-{}.zip", oj_format.as_str())),
-                    ExportKind::Contest => {
-                        ws.root().join(format!("build/{id}-{}", oj_format.as_str()))
-                    }
-                    ExportKind::Problems => unreachable!(),
-                },
-            };
-            let opts = xcpc_packages::ExportOjOptions {
-                format: oj_format,
-                output_path,
-                force,
-                language: None,
-            };
-            let res = xcpc_packages::export_oj_package(&ws, &target, &opts)?;
-            if cli.json {
-                let mut value = serde_json::to_value(&res).expect("serializable");
-                value["ok"] = json!(true);
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&value).expect("serializable")
-                );
-            } else {
-                print_export_oj_result(&res);
-            }
-            Ok(ExitCode::SUCCESS)
+    for (idx, block) in result.blocks.iter().enumerate() {
+        if idx > 0
+            || result
+                .summary
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            println!();
         }
-        ExportKind::Problems => {
-            let output_path = out.cloned().unwrap_or_default();
-            let opts = xcpc_packages::ExportOjOptions {
-                format: oj_format,
-                output_path,
-                force,
-                language: None,
-            };
-            let res = xcpc_packages::export_oj_packages_batch(&ws, ids, &opts, None, None)?;
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&res).expect("serializable")
-                );
-            } else {
-                print_batch_export_oj_result(&res);
+        match block {
+            xcpc_plugin::ToolOutputBlock::Text { title, content, .. }
+            | xcpc_plugin::ToolOutputBlock::Markdown { title, content } => {
+                if let Some(t) = title {
+                    println!("=== {t} ===");
+                }
+                println!("{content}");
             }
-            if res.ok {
-                Ok(ExitCode::SUCCESS)
-            } else {
-                Ok(ExitCode::from(1))
+            xcpc_plugin::ToolOutputBlock::Table {
+                title,
+                headers,
+                rows,
+                ..
+            } => {
+                if let Some(t) = title {
+                    println!("=== {t} ===");
+                }
+                let col_count = headers
+                    .len()
+                    .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+                if col_count == 0 {
+                    continue;
+                }
+                let mut widths = vec![0usize; col_count];
+                for (i, h) in headers.iter().enumerate() {
+                    widths[i] = widths[i].max(h.chars().count());
+                }
+                for row in rows {
+                    for (i, cell) in row.iter().enumerate() {
+                        widths[i] = widths[i].max(cell.chars().count());
+                    }
+                }
+                let format_row = |cells: &[String]| -> String {
+                    (0..col_count)
+                        .map(|i| {
+                            let cell = cells.get(i).map(String::as_str).unwrap_or("");
+                            let pad = widths[i].saturating_sub(cell.chars().count());
+                            format!("{cell}{}", " ".repeat(pad))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                };
+                if !headers.is_empty() {
+                    println!("{}", format_row(headers));
+                    let sep: Vec<String> = widths.iter().map(|&w| "-".repeat(w.max(1))).collect();
+                    println!("{}", sep.join("  "));
+                }
+                for row in rows {
+                    println!("{}", format_row(row));
+                }
+            }
+            xcpc_plugin::ToolOutputBlock::Graph {
+                title,
+                directed,
+                weighted,
+                nodes,
+                edges,
+                layout,
+                ..
+            } => {
+                if let Some(t) = title {
+                    println!("=== {t} ===");
+                }
+                let is_directed = directed.unwrap_or(false);
+                let is_weighted = weighted.unwrap_or(false);
+                println!(
+                    "graph: {} node(s), {} edge(s), directed={}, weighted={}, layout={}",
+                    nodes.len(),
+                    edges.len(),
+                    is_directed,
+                    is_weighted,
+                    layout.as_deref().unwrap_or("default")
+                );
+                for e in edges {
+                    let arrow = if e.directed.unwrap_or(is_directed) {
+                        "->"
+                    } else {
+                        "--"
+                    };
+                    match (&e.weight, &e.label) {
+                        (Some(w), _) => println!("  {} {arrow} {} [w={w}]", e.from, e.to),
+                        (None, Some(l)) => println!("  {} {arrow} {} [{l}]", e.from, e.to),
+                        (None, None) => println!("  {} {arrow} {}", e.from, e.to),
+                    }
+                }
+            }
+            xcpc_plugin::ToolOutputBlock::Svg {
+                title,
+                svg,
+                width,
+                height,
+            } => {
+                if let Some(t) = title {
+                    println!("=== {t} ===");
+                }
+                match (width, height) {
+                    (Some(w), Some(h)) => println!("[svg {w}x{h}, {} bytes]", svg.len()),
+                    _ => println!("[svg, {} bytes]", svg.len()),
+                }
+                println!("{svg}");
+            }
+            xcpc_plugin::ToolOutputBlock::Image {
+                title,
+                png_base64,
+                width,
+                height,
+            } => {
+                if let Some(t) = title {
+                    println!("=== {t} ===");
+                }
+                match (width, height) {
+                    (Some(w), Some(h)) => {
+                        println!("[image/png {w}x{h}, {} base64 chars]", png_base64.len())
+                    }
+                    _ => println!("[image/png, {} base64 chars]", png_base64.len()),
+                }
             }
         }
     }

@@ -1119,3 +1119,553 @@ fn mcp_training_tools_end_to_end_and_read_only_guard() {
     );
     assert_eq!(mcp_err_code(&ro_ing), "read_only");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4C: CLI `xcpc tool`, `xcpc import <plugin>:<importer>`,
+// and `xcpc export <plugin>:<exporter>` E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tool_list_includes_four_official_builtin_plugins() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let out = run_xcpc(None, data_dir.path(), &["tool", "list", "--json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = parse_json_stdout(&out);
+    assert_eq!(json["ok"], true);
+
+    let plugins = json["plugins"].as_array().expect("plugins array");
+    let ids: Vec<&str> = plugins
+        .iter()
+        .filter_map(|p| p["plugin_id"].as_str())
+        .collect();
+    for expected in [
+        "graph-editor",
+        "math-bitwise",
+        "complexity-mem",
+        "string-lab",
+    ] {
+        assert!(ids.contains(&expected), "missing {expected} in {ids:?}");
+    }
+
+    let graph = plugins
+        .iter()
+        .find(|p| p["plugin_id"] == "graph-editor")
+        .unwrap();
+    assert_eq!(graph["has_ui"], true);
+    assert_eq!(graph["is_builtin"], true);
+    assert!(
+        graph["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["ref"] == "graph-editor:parse-graph"
+                && !t["inputs"].as_array().unwrap().is_empty())
+    );
+
+    let comp = plugins
+        .iter()
+        .find(|p| p["plugin_id"] == "complexity-mem")
+        .unwrap();
+    assert_eq!(comp["has_ui"], false);
+    assert!(
+        comp["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["ref"] == "complexity-mem:complexity")
+    );
+
+    // Human mode prints cleanly
+    let human = run_xcpc(None, data_dir.path(), &["tool", "list"]);
+    assert!(human.status.success());
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(stdout.contains("complexity-mem:complexity"), "{stdout}");
+    assert!(stdout.contains("graph-editor:parse-graph"), "{stdout}");
+}
+
+#[test]
+fn tool_run_executes_all_four_official_builtin_tools() {
+    let data_dir = tempfile::tempdir().unwrap();
+
+    // 1. complexity-mem:complexity
+    let out1 = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "complexity-mem:complexity",
+            "--input",
+            "n=200000",
+            "--json",
+        ],
+    );
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    let j1 = parse_json_stdout(&out1);
+    assert_eq!(j1["ok"], true);
+    assert_eq!(j1["plugin_id"], "complexity-mem");
+    assert_eq!(j1["tool_id"], "complexity");
+    let b1 = j1["blocks"].as_array().expect("blocks");
+    assert!(!b1.is_empty());
+    assert!(b1.iter().any(|b| b["type"] == "table"));
+
+    // 2. string-lab:analyze
+    let out2 = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "string-lab:analyze",
+            "--input",
+            "text=abacaba",
+            "--json",
+        ],
+    );
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    let j2 = parse_json_stdout(&out2);
+    assert_eq!(j2["ok"], true);
+    let b2 = j2["blocks"].as_array().expect("blocks");
+    assert!(!b2.is_empty());
+    assert!(b2.iter().any(|b| b["type"] == "table"));
+
+    // 3. math-bitwise:number-theory
+    let out3 = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "math-bitwise:number-theory",
+            "--input",
+            "n=998244353",
+            "--json",
+        ],
+    );
+    assert!(
+        out3.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out3.stderr)
+    );
+    let j3 = parse_json_stdout(&out3);
+    assert_eq!(j3["ok"], true);
+    let b3 = j3["blocks"].as_array().expect("blocks");
+    assert!(!b3.is_empty());
+    assert!(b3.iter().any(|b| b["type"] == "table"));
+
+    // 4. graph-editor:parse-graph
+    let out4 = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "graph-editor:parse-graph",
+            "--input",
+            "text=1 2\n2 3",
+            "--json",
+        ],
+    );
+    assert!(
+        out4.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out4.stderr)
+    );
+    let j4 = parse_json_stdout(&out4);
+    assert_eq!(j4["ok"], true);
+    let b4 = j4["blocks"].as_array().expect("blocks");
+    assert!(b4.iter().any(|b| b["type"] == "graph"));
+    assert!(b4.iter().any(|b| b["type"] == "svg"));
+    let graph_block = b4.iter().find(|b| b["type"] == "graph").unwrap();
+    assert_eq!(graph_block["nodes"].as_array().unwrap().len(), 3);
+    assert_eq!(graph_block["edges"].as_array().unwrap().len(), 2);
+
+    // Human mode renders table/graph/svg cleanly without panicking
+    let human = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "graph-editor:parse-graph",
+            "--input-json",
+            r#"{"format":"edge_list","directed":true}"#,
+            "--input",
+            "text=1 2\n2 3",
+        ],
+    );
+    assert!(human.status.success());
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(human_stdout.contains("1 -> 2"), "{human_stdout}");
+    assert!(human_stdout.contains("<svg"), "{human_stdout}");
+}
+
+#[test]
+fn tool_run_custom_headless_svg_and_workspace_read_plugin() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let plugin_dir = tmp.path().join("svg-badge");
+    fs::create_dir_all(&plugin_dir).unwrap();
+    fs::write(
+        plugin_dir.join("manifest.toml"),
+        r#"id = "svg-badge"
+name = "SVG Badge Tool"
+version = "0.1.0"
+description = "Generates an SVG badge and reads workspace problems."
+entry = "index.js"
+capabilities = ["tool"]
+
+[permissions]
+domains = []
+workspace_read = true
+
+[[tools]]
+id = "render"
+name = "Render Badge"
+
+[[tools.inputs]]
+name = "label"
+label = "Label"
+kind = "string"
+required = true
+"#,
+    )
+    .unwrap();
+    fs::write(
+        plugin_dir.join("index.js"),
+        r#"module.exports = {
+  runTool(toolId, inputs) {
+    const label = String((inputs && inputs.label) || "XCPC");
+    const count = inputs && inputs.include_count ? host.workspace.listProblems().length : 0;
+    const text = count > 0 ? label + " (" + count + ")" : label;
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><text x="8" y="20">' + text + '</text></svg>';
+    return {
+      summary: "rendered " + text,
+      blocks: [
+        { type: "svg", title: "Badge", svg, width: 120, height: 32 },
+        { type: "text", title: "Meta", content: "tool=" + toolId + ", count=" + count }
+      ]
+    };
+  }
+};
+"#,
+    )
+    .unwrap();
+
+    let inst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "install", plugin_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        inst.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inst.stderr)
+    );
+
+    let out = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "svg-badge:render",
+            "--input",
+            "label=Hello",
+            "--input",
+            "include_count=true",
+            "--json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let j = parse_json_stdout(&out);
+    assert_eq!(j["ok"], true);
+    assert_eq!(j["summary"], "rendered Hello (1)");
+    assert_eq!(j["blocks"][0]["type"], "svg");
+    assert!(
+        j["blocks"][0]["svg"]
+            .as_str()
+            .unwrap()
+            .contains("Hello (1)")
+    );
+    assert_eq!(j["blocks"][1]["content"], "tool=render, count=1");
+}
+
+#[test]
+fn plugin_importer_and_exporter_e2e_and_path_traversal_rejection() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Install a custom plugin declaring both `importer` and `exporter`.
+    let plugin_dir = tmp.path().join("custom-io");
+    fs::create_dir_all(&plugin_dir).unwrap();
+    fs::write(
+        plugin_dir.join("manifest.toml"),
+        r#"id = "custom-io"
+name = "Custom IO"
+version = "0.1.0"
+description = "Custom importer and exporter for CLI E2E testing."
+entry = "index.js"
+capabilities = ["importer", "exporter"]
+
+[permissions]
+domains = []
+workspace_read = false
+
+[[importers]]
+id = "simple"
+name = "Simple Text Importer"
+extensions = [".txt"]
+
+[[importers]]
+id = "evil-asset"
+name = "Evil Traversal Importer"
+extensions = [".txt"]
+
+[[exporters]]
+id = "bundle"
+name = "Simple Bundle Exporter"
+target = "problem"
+extension = ".txt"
+
+[[exporters]]
+id = "evil-out"
+name = "Evil Traversal Exporter"
+target = "problem"
+extension = ".txt"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        plugin_dir.join("index.js"),
+        r#"module.exports = {
+  importPackage(files, importerId) {
+    if (importerId === "evil-asset") {
+      return {
+        kind: "problem",
+        id: "evil-prob",
+        title: "Evil Problem",
+        statement_md: "Evil.\n",
+        assets: { "../escape.txt": "aGk=" }
+      };
+    }
+    const f = files[0];
+    const lines = String(f.text || "").split(/\r?\n/);
+    return {
+      kind: "problem",
+      id: "imported-demo",
+      title: lines[0] || "Imported Demo",
+      statement_md: (lines.slice(1).join("\n") || "Body") + "\n\n## 输入格式\n\nIn.\n\n## 输出格式\n\nOut.\n",
+      tags: ["imported", "dp"],
+      rating: 1700,
+      time_limit: "2s",
+      memory_limit: "512MB",
+      samples: [{ input: "1 2\n", output: "3\n" }]
+    };
+  },
+  exportPackage(ctx, exporterId) {
+    if (exporterId === "evil-out") {
+      return {
+        files: [{ path: "../escape.txt", text: "pwned" }],
+        summary: "attempted escape"
+      };
+    }
+    const files = [
+      {
+        path: ctx.id + "/meta.json",
+        text: JSON.stringify({
+          kind: ctx.kind,
+          id: ctx.id,
+          title: ctx.title,
+          has_pdf: Boolean(ctx.pdf_base64 && ctx.pdf_base64.length > 0),
+          samples: (ctx.samples || []).length
+        })
+      },
+      {
+        path: ctx.id + "/statement.md",
+        text: ctx.statement_md || ""
+      }
+    ];
+    if (ctx.pdf_base64) {
+      files.push({
+        path: ctx.id + "/statement.pdf",
+        content_base64: ctx.pdf_base64
+      });
+    }
+    return {
+      files,
+      summary: "exported " + ctx.id
+    };
+  }
+};
+"#,
+    )
+    .unwrap();
+
+    let inst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "install", plugin_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        inst.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inst.stderr)
+    );
+
+    // 1. E2E `xcpc import custom-io:simple <file> --json`
+    let src_file = tmp.path().join("problem.txt");
+    fs::write(&src_file, "Imported Sum\nGiven a and b, print a + b.").unwrap();
+
+    let imp = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "import",
+            "custom-io:simple",
+            src_file.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(
+        imp.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&imp.stderr)
+    );
+    let imp_json = parse_json_stdout(&imp);
+    assert_eq!(imp_json["ok"], true);
+    assert_eq!(imp_json["kind"], "problem");
+    assert_eq!(
+        imp_json["created_ids"],
+        serde_json::json!(["imported-demo"])
+    );
+    assert!(
+        ws.path()
+            .join("problems/imported-demo/problem.toml")
+            .is_file()
+    );
+    assert!(
+        ws.path()
+            .join("problems/imported-demo/samples/01.in")
+            .is_file()
+    );
+    assert_eq!(
+        fs::read_to_string(ws.path().join("problems/imported-demo/samples/01.ans")).unwrap(),
+        "3\n"
+    );
+
+    // 2. Importer path traversal is rejected at Core layer (`ZIP_SLIP`)
+    let evil_imp = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "import",
+            "custom-io:evil-asset",
+            src_file.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(evil_imp.status.code(), Some(2));
+    let evil_imp_json = parse_json_stdout(&evil_imp);
+    assert_eq!(evil_imp_json["ok"], false);
+    assert_eq!(evil_imp_json["error"]["code"], "ZIP_SLIP");
+    assert!(!ws.path().join("problems/evil-prob").exists());
+
+    // 3. E2E `xcpc export custom-io:bundle problem imported-demo --out <dir> --with-pdf --json`
+    let out_dir = tmp.path().join("exported");
+    let exp = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "export",
+            "custom-io:bundle",
+            "problem",
+            "imported-demo",
+            "--out",
+            out_dir.to_str().unwrap(),
+            "--with-pdf",
+            "--json",
+        ],
+    );
+    assert!(
+        exp.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&exp.stderr)
+    );
+    let exp_json = parse_json_stdout(&exp);
+    assert_eq!(exp_json["ok"], true);
+    assert_eq!(exp_json["summary"], "exported imported-demo");
+    assert_eq!(exp_json["files"].as_array().unwrap().len(), 3);
+
+    let meta_str = fs::read_to_string(out_dir.join("imported-demo/meta.json")).unwrap();
+    let meta: Value = serde_json::from_str(&meta_str).unwrap();
+    assert_eq!(meta["id"], "imported-demo");
+    assert_eq!(meta["title"], "Imported Sum");
+    assert_eq!(meta["has_pdf"], true);
+    assert_eq!(meta["samples"], 1);
+    let pdf_bytes = fs::read(out_dir.join("imported-demo/statement.pdf")).unwrap();
+    assert!(pdf_bytes.starts_with(b"%PDF"), "expected valid PDF header");
+
+    // 4. Default `--out` writes under `<workspace>/build/exports`
+    let exp_default = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "export",
+            "custom-io:bundle",
+            "problem",
+            "imported-demo",
+            "--json",
+        ],
+    );
+    assert!(
+        exp_default.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&exp_default.stderr)
+    );
+    assert!(
+        ws.path()
+            .join("build/exports/imported-demo/meta.json")
+            .is_file()
+    );
+
+    // 5. Exporter path traversal is rejected at Core layer (`ZIP_SLIP`) and writes nothing outside
+    let evil_exp_dir = tmp.path().join("evil-export-out");
+    let evil_exp = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "export",
+            "custom-io:evil-out",
+            "problem",
+            "imported-demo",
+            "--out",
+            evil_exp_dir.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(evil_exp.status.code(), Some(2));
+    let evil_exp_json = parse_json_stdout(&evil_exp);
+    assert_eq!(evil_exp_json["ok"], false);
+    assert_eq!(evil_exp_json["error"]["code"], "ZIP_SLIP");
+    assert!(!tmp.path().join("escape.txt").exists());
+}

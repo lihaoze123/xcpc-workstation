@@ -5694,6 +5694,7 @@ dependencies = [
 name = "xcpc-desktop"
 version = "0.3.0-beta.1"
 dependencies = [
+ "base64 0.22.1",
  "nsh-base",
  "nsh-core",
  "png",
@@ -5837,6 +5838,8 @@ dependencies = [
  "toml 1.2.1+spec-1.1.0",
  "ureq",
  "url",
+ "xcpc-domain",
+ "xcpc-storage",
  "zip",
 ]
 

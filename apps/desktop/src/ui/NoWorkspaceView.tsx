@@ -24,7 +24,7 @@ import { t } from "./i18n";
 import { Btn, tip } from "./kit";
 import { EASE_EXPO_CURVE } from "./motion";
 import { formatAppVersion, readAboutInfo } from "./SettingsView";
-import { info, openError, pickWorkspace, requestNewWorkspace } from "./store";
+import { goSpace, info, openError, pickWorkspace, requestNewWorkspace } from "./store";
 
 export interface NoWorkspaceViewProps {
   onNew?: () => void;
@@ -240,6 +240,44 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               textStyle={{ fontSize: 13.5, fontWeight: 500 }}
             />
           </View>
+          <If when={!props.replayOnly}>
+            <View
+              style={{
+                marginTop: 6,
+                flexDirection: "row",
+                justifyContent: "center",
+                gap: 8,
+                pointerEvents: visibleStage() >= 2 ? "auto" : "none",
+                opacity: opacities[3],
+                transform: [{ translateY: offsets[3] }],
+              }}
+            >
+              <Btn
+                testID="no-workspace-tools"
+                variant="ghost"
+                size="sm"
+                icon="squareCode"
+                label={t("space.tools")}
+                tooltip={tip(t("space.tools"), "mod+4")}
+                onPress={() => {
+                  snapToFinal();
+                  goSpace("tools");
+                }}
+              />
+              <Btn
+                testID="no-workspace-settings"
+                variant="ghost"
+                size="sm"
+                icon="settings"
+                label={t("space.settings")}
+                tooltip={tip(t("space.settings"), "mod+5")}
+                onPress={() => {
+                  snapToFinal();
+                  goSpace("settings");
+                }}
+              />
+            </View>
+          </If>
         </View>
 
         {/* Fixed-height slot for missing-workspace / open errors, staggered with the final phase

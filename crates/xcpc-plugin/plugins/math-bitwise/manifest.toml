@@ -1,0 +1,74 @@
+id = "math-bitwise"
+name = "数论与位运算工作台"
+version = "1.0.0"
+description = "64 位按位翻转、进制互转、质因数分解、欧拉函数、exgcd、快速幂模逆元、CRT 与常用竞赛模数速查。"
+author = "XCPC Workstation"
+entry = "index.js"
+ui_entry = "ui.js"
+capabilities = ["tool", "commands"]
+
+[permissions]
+domains = []
+workspace_read = false
+
+[[commands]]
+id = "open"
+title = "打开数论与位运算工作台"
+context = "global"
+
+[[tools]]
+id = "bitwise"
+name = "64 位进制与位运算"
+description = "输入十进制、0x 十六进制、0b 二进制或 0o 八进制整数，计算 64 位补码、popcount、clz/ctz 与 lowbit。"
+
+[[tools.inputs]]
+name = "value"
+label = "整数（支持 0x / 0b / 0o / 负数）"
+kind = "string"
+default = "998244353"
+required = true
+
+[[tools]]
+id = "number-theory"
+name = "数论计算器"
+description = "支持质因数分解、φ(n)、约数个数与和、gcd/exgcd、快速幂与模逆元、CRT。"
+
+[[tools.inputs]]
+name = "n"
+label = "整数 n（分解 / φ(n) / 约数）"
+kind = "string"
+default = "998244353"
+required = false
+
+[[tools.inputs]]
+name = "a"
+label = "参数 a（gcd / 快速幂底数 / 逆元）"
+kind = "string"
+default = "3"
+required = false
+
+[[tools.inputs]]
+name = "b"
+label = "参数 b（gcd / 快速幂指数）"
+kind = "string"
+default = "998244351"
+required = false
+
+[[tools.inputs]]
+name = "mod"
+label = "模数 m（快速幂 / 模逆元）"
+kind = "string"
+default = "998244353"
+required = false
+
+[[tools.inputs]]
+name = "crt"
+label = "CRT 同余方程组（每行或分号分隔：r m）"
+kind = "string"
+default = "2 3; 3 5; 2 7"
+required = false
+
+[[tools]]
+id = "mod-reference"
+name = "常用竞赛模数速查"
+description = "列出常见质数模数、原根与 NTT 2 的幂次分解。"

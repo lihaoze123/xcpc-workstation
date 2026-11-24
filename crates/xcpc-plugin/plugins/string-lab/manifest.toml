@@ -1,0 +1,30 @@
+id = "string-lab"
+name = "字符串算法调试器"
+version = "1.0.0"
+description = "离线计算并对齐展示 KMP π、Z 函数、Manacher 回文半径与后缀数组 (SA / RK / LCP)。"
+author = "XCPC Workstation"
+entry = "index.js"
+capabilities = ["tool"]
+
+[permissions]
+domains = []
+workspace_read = false
+
+[[tools]]
+id = "analyze"
+name = "字符串结构分析"
+description = "计算文本串的 KMP 前缀函数、Z 函数、Manacher d1/d2、后缀数组及可选模式串匹配位置。"
+
+[[tools.inputs]]
+name = "text"
+label = "目标字符串 S"
+kind = "string"
+default = "abacaba"
+required = true
+
+[[tools.inputs]]
+name = "pattern"
+label = "可选模式串 P（用于 KMP 匹配）"
+kind = "string"
+default = "aba"
+required = false

@@ -12,6 +12,7 @@ import { revealState, type Book } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
 import type { OjPackageFormat } from "../store";
 import { EASE_STANDARD, ms } from "../theme";
+import type { RegisteredExporter } from "../tools/types";
 
 const CONFIRM_MS = 1800;
 
@@ -25,8 +26,11 @@ export function ExportButton(props: {
   canRevealOj?: boolean;
   /** Demotes the button to outline/secondary styling when another primary CTA owns the screen. */
   secondary?: boolean;
+  /** Enabled plugin exporters (omitted from menu when empty). */
+  pluginExporters?: readonly RegisteredExporter[];
   onExport: (book: Book) => void;
   onExportOj?: (format: OjPackageFormat) => void;
+  onExportPlugin?: (pluginId: string, exporterId: string) => void;
   onReveal: (book: Book) => void;
 }) {
   const reveal = () => revealState(props.status, props.book);
@@ -105,6 +109,17 @@ export function ExportButton(props: {
         },
       );
     }
+    if (props.onExportPlugin && props.pluginExporters && props.pluginExporters.length > 0) {
+      list.push({ separator: true, id: "sep-plugin-exporters" });
+      for (const exp of props.pluginExporters) {
+        list.push({
+          id: `plugin-exp:${exp.plugin_id}:${exp.exporter.id}`,
+          label: exp.exporter.name,
+          note: exp.plugin_name,
+          icon: "sparkles",
+        });
+      }
+    }
     return list;
   };
 
@@ -115,6 +130,13 @@ export function ExportButton(props: {
     else if (id === "reveal") props.onReveal(props.book);
     else if (id === "domjudge") props.onExportOj?.("domjudge");
     else if (id === "hydro") props.onExportOj?.("hydro");
+    else if (id.startsWith("plugin-exp:")) {
+      const rest = id.slice("plugin-exp:".length);
+      const sep = rest.indexOf(":");
+      if (sep > 0) {
+        props.onExportPlugin?.(rest.slice(0, sep), rest.slice(sep + 1));
+      }
+    }
   };
 
   const sec = () => Boolean(props.secondary);

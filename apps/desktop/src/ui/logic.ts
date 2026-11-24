@@ -207,7 +207,7 @@ export function revealState(status: ExportBookStatusJs | undefined, book: Book):
 
 // ── Titles ───────────────────────────────────────────────────────────────────
 
-export type Space = "problems" | "contests" | "training" | "settings";
+export type Space = "problems" | "contests" | "training" | "tools" | "settings";
 
 /** Reactive localized display name for a top-level space. */
 export function spaceName(s: Space): string {
@@ -218,6 +218,8 @@ export function spaceName(s: Space): string {
       return t("space.contests");
     case "training":
       return t("space.training");
+    case "tools":
+      return t("space.tools");
     case "settings":
       return t("space.settings");
   }
@@ -232,7 +234,12 @@ export function windowTitle(state: {
   space: Space;
   studio?: { problemTitle?: string; label?: string; contestName?: string };
 }): string {
-  if (!state.workspace) return APP_NAME;
+  if (!state.workspace) {
+    if (state.space === "tools" || state.space === "settings") {
+      return `${spaceName(state.space)} — ${APP_NAME}`;
+    }
+    return APP_NAME;
+  }
   const s = state.studio;
   if (s) {
     const problem = s.problemTitle ? (s.label ? `${s.label}. ${s.problemTitle}` : s.problemTitle) : undefined;

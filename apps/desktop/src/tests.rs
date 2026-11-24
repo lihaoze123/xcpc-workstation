@@ -3637,3 +3637,94 @@ fn phase4b_training_dashboard_contests_submissions_and_ingest() {
     assert!(!bad_url.ok);
     assert_eq!(bad_url.code.as_deref(), Some("invalid_url"));
 }
+
+#[test]
+fn phase4c_plugin_toolbox_commands_and_render_bridge() {
+    let data_dir = TempDir::new("phase4c-toolbox");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+
+    // 1. plugin_list_tools returns all 4 official built-in tool plugins.
+    let listed = preview.plugin_list_tools();
+    assert!(listed.ok, "list tools error: {:?}", listed.error);
+    let groups: serde_json::Value = serde_json::from_str(&listed.report_json.unwrap()).unwrap();
+    let arr = groups.as_array().unwrap();
+    let ids: HashSet<&str> = arr.iter().filter_map(|g| g["plugin_id"].as_str()).collect();
+    assert!(
+        ids.contains("graph-editor"),
+        "missing graph-editor: {ids:?}"
+    );
+    assert!(
+        ids.contains("math-bitwise"),
+        "missing math-bitwise: {ids:?}"
+    );
+    assert!(
+        ids.contains("complexity-mem"),
+        "missing complexity-mem: {ids:?}"
+    );
+    assert!(ids.contains("string-lab"), "missing string-lab: {ids:?}");
+
+    // 2. plugin_run_tool runs headless tool (string-lab / analyze) cleanly.
+    let run_res = preview.state.plugin_run_tool(
+        "string-lab",
+        "analyze",
+        r#"{"text":"abacaba","pattern":"aba"}"#,
+    );
+    assert!(run_res.ok, "run_tool error: {:?}", run_res.error);
+    let exec_json: serde_json::Value = serde_json::from_str(&run_res.report_json.unwrap()).unwrap();
+    let blocks = exec_json["blocks"].as_array().unwrap();
+    assert!(!blocks.is_empty());
+
+    // 3. plugin_ui_source returns non-empty ui.js for graph-editor and math-bitwise, None for string-lab.
+    let graph_ui = preview.plugin_ui_source("graph-editor".into());
+    assert!(graph_ui.ok, "graph-editor ui error: {:?}", graph_ui.error);
+    assert!(
+        graph_ui
+            .source
+            .as_deref()
+            .unwrap_or("")
+            .contains("function render(sdk)")
+    );
+
+    let math_ui = preview.plugin_ui_source("math-bitwise".into());
+    assert!(math_ui.ok, "math-bitwise ui error: {:?}", math_ui.error);
+    assert!(
+        math_ui
+            .source
+            .as_deref()
+            .unwrap_or("")
+            .contains("function render(sdk)")
+    );
+
+    let string_ui = preview.plugin_ui_source("string-lab".into());
+    assert!(string_ui.ok);
+    assert!(string_ui.source.is_none());
+
+    // 4. plugin_render_svg_png rasterizes valid SVG into non-empty base64 PNG.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#0b6989"/></svg>"##;
+    let png_res = Preview::plugin_render_svg_png(svg.into(), Some(2.0));
+    assert!(png_res.ok, "svg_to_png error: {:?}", png_res.error);
+    let b64 = png_res.png_base64.unwrap();
+    assert!(!b64.is_empty());
+
+    // 5. plugin_list_commands lists built-in tool commands and respects disabling.
+    let cmds = preview.plugin_list_commands(Some("global".into()));
+    assert!(cmds.ok, "list commands error: {:?}", cmds.error);
+    let cmds_json: serde_json::Value = serde_json::from_str(&cmds.report_json.unwrap()).unwrap();
+    let cmd_arr = cmds_json.as_array().unwrap();
+    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "graph-editor"));
+    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "math-bitwise"));
+
+    // Disabling graph-editor removes it from both list_tools and list_commands.
+    let dis = preview.set_plugin_enabled("graph-editor".into(), false);
+    assert!(dis.ok);
+    let listed_after = preview.plugin_list_tools();
+    let groups_after: serde_json::Value =
+        serde_json::from_str(&listed_after.report_json.unwrap()).unwrap();
+    assert!(
+        !groups_after
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["plugin_id"] == "graph-editor")
+    );
+}

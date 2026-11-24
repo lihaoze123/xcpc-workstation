@@ -908,3 +908,665 @@ fn scaffold_and_test_plugin_dir() {
     assert_eq!(oj_report.result["ok"], true);
     assert_eq!(oj_report.result["handle"], "alice");
 }
+
+#[test]
+fn render_svg_to_rgba_and_highlight_code_primitives() {
+    use crate::render::{highlight_code, svg_to_rgba};
+
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12"><rect width="24" height="12" fill="#2563eb"/></svg>"##;
+    let rgba = svg_to_rgba(svg, 2.0).unwrap();
+    assert_eq!(rgba.width, 48);
+    assert_eq!(rgba.height, 24);
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(&rgba.rgba_base64)
+        .unwrap();
+    assert_eq!(raw.len(), (48 * 24 * 4) as usize);
+
+    // Highlight C++ code and verify token kinds & lossless text reconstruction
+    let cpp = "#include <iostream>\nint main() {\n  // hello\n  const int x = 42;\n  return x;\n}";
+    let hl = highlight_code(cpp, "cpp");
+    assert_eq!(hl.language, "cpp");
+    assert_eq!(hl.lines.len(), 6);
+    for (orig, line) in cpp.lines().zip(&hl.lines) {
+        let joined: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(joined, orig);
+    }
+    assert!(
+        hl.lines[0]
+            .tokens
+            .iter()
+            .any(|t| t.kind == "keyword" && t.text == "#include")
+    );
+    assert!(
+        hl.lines[1]
+            .tokens
+            .iter()
+            .any(|t| t.kind == "type" && t.text == "int")
+    );
+    assert!(hl.lines[2].tokens.iter().any(|t| t.kind == "comment"));
+    assert!(
+        hl.lines[3]
+            .tokens
+            .iter()
+            .any(|t| t.kind == "number" && t.text == "42")
+    );
+
+    // Verify QuickJS bridge exposes host.render.svgToRgba & host.highlight
+    let host_ctx = HostContext {
+        manifest: minimal_manifest("hl-test", &[], false),
+        http_client: Arc::new(MockHttpClient::new(|_| ok_json("{}"))),
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let src = r##"
+        module.exports = {
+            check() {
+                const rgba = host.render.svgToRgba(
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#10b981"/></svg>',
+                    1
+                );
+                const hl = host.highlight('fn main() { let s = "hi"; }', "rust");
+                return { width: rgba.width, height: rgba.height, hasB64: rgba.rgba_base64.length > 0, lang: hl.language, tokens: hl.lines[0].tokens };
+            }
+        };
+    "##;
+    let call = PluginRuntime::call_function(src, "check", &[], &host_ctx).unwrap();
+    assert_eq!(call.value["width"], 10);
+    assert_eq!(call.value["height"], 10);
+    assert_eq!(call.value["hasB64"], true);
+    assert_eq!(call.value["lang"], "rust");
+    let tokens = call.value["tokens"].as_array().unwrap();
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t["kind"] == "keyword" && t["text"] == "fn")
+    );
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t["kind"] == "string" && t["text"] == "\"hi\"")
+    );
+}
+
+#[test]
+fn builtin_four_tool_plugins_and_export_copy_with_ui_js() {
+    use crate::commands::PluginCommandAction;
+    use crate::tool::ToolOutputBlock;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    // 1. list_tools should include all 4 built-in tool plugins
+    let tools = mgr.list_tools();
+    let ids: Vec<&str> = tools.iter().map(|t| t.plugin_id.as_str()).collect();
+    assert!(ids.contains(&"graph-editor"), "got: {ids:?}");
+    assert!(ids.contains(&"math-bitwise"), "got: {ids:?}");
+    assert!(ids.contains(&"complexity-mem"), "got: {ids:?}");
+    assert!(ids.contains(&"string-lab"), "got: {ids:?}");
+
+    let graph_group = tools
+        .iter()
+        .find(|t| t.plugin_id == "graph-editor")
+        .unwrap();
+    assert!(graph_group.has_ui);
+    assert_eq!(graph_group.ui_entry.as_deref(), Some("ui.js"));
+    assert!(graph_group.is_builtin);
+
+    // read_ui_source works for built-ins with ui.js and returns None for headless plugins
+    let graph_ui = mgr.read_ui_source("graph-editor").unwrap().unwrap();
+    assert!(graph_ui.contains("module.exports = { render }"));
+    let math_ui = mgr.read_ui_source("math-bitwise").unwrap().unwrap();
+    assert!(math_ui.contains("module.exports = { render }"));
+    assert!(mgr.read_ui_source("complexity-mem").unwrap().is_none());
+
+    // export_builtin_copy must export ui.js as well as manifest.toml and index.js
+    let exported_dir = mgr.export_builtin_copy("graph-editor").unwrap();
+    assert!(exported_dir.join("manifest.toml").is_file());
+    assert!(exported_dir.join("index.js").is_file());
+    assert!(exported_dir.join("ui.js").is_file());
+    let override_ui = mgr.read_ui_source("graph-editor").unwrap().unwrap();
+    assert_eq!(override_ui, graph_ui);
+
+    // 2. graph-editor: edge_list, parent_array, adj_list, coords + open command
+    let g_edge = mgr
+        .run_tool(
+            "graph-editor",
+            "parse-graph",
+            serde_json::json!({
+                "format": "edge_list",
+                "text": "1 2 5\n1 3 2\n2 4 1",
+                "directed": true,
+                "weighted": true,
+                "layout": "force"
+            }),
+            None,
+        )
+        .unwrap();
+    assert_eq!(g_edge.blocks.len(), 2);
+    match &g_edge.blocks[0] {
+        ToolOutputBlock::Graph {
+            nodes,
+            edges,
+            directed,
+            ..
+        } => {
+            assert_eq!(nodes.len(), 4);
+            assert_eq!(edges.len(), 3);
+            assert_eq!(*directed, Some(true));
+        }
+        other => panic!("expected Graph block, got {other:?}"),
+    }
+    match &g_edge.blocks[1] {
+        ToolOutputBlock::Svg { svg, .. } => assert!(svg.contains("<svg")),
+        other => panic!("expected Svg block, got {other:?}"),
+    }
+
+    let g_parent = mgr
+        .run_tool(
+            "graph-editor",
+            "parse-graph",
+            serde_json::json!({
+                "format": "parent_array",
+                "text": "1 1 2 2",
+                "one_indexed": true,
+                "layout": "tree"
+            }),
+            None,
+        )
+        .unwrap();
+    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_parent.blocks[0] {
+        assert_eq!(nodes.len(), 5);
+        assert_eq!(edges.len(), 4);
+    } else {
+        panic!("expected Graph block");
+    }
+
+    let g_adj = mgr
+        .run_tool(
+            "graph-editor",
+            "parse-graph",
+            serde_json::json!({
+                "format": "adj_list",
+                "text": "1: 2(7) 3(4)\n2: 3(1)",
+            }),
+            None,
+        )
+        .unwrap();
+    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_adj.blocks[0] {
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(edges.len(), 3);
+    } else {
+        panic!("expected Graph block");
+    }
+
+    let g_coords = mgr
+        .run_tool(
+            "graph-editor",
+            "parse-graph",
+            serde_json::json!({
+                "format": "coords",
+                "text": "1 0 0\n2 10 0\nedge 1 2",
+                "layout": "coords"
+            }),
+            None,
+        )
+        .unwrap();
+    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_coords.blocks[0] {
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+    } else {
+        panic!("expected Graph block");
+    }
+
+    let open_graph_cmd = mgr
+        .run_command("graph-editor", "open", serde_json::json!({}), None)
+        .unwrap();
+    assert_eq!(
+        open_graph_cmd,
+        PluginCommandAction::OpenTool {
+            plugin_id: "graph-editor".into(),
+            tool_id: None,
+            initial_inputs: None,
+        }
+    );
+
+    // 3. math-bitwise: bitwise, number-theory, mod-reference + open command
+    let bw = mgr
+        .run_tool(
+            "math-bitwise",
+            "bitwise",
+            serde_json::json!({ "value": "0xFF" }),
+            None,
+        )
+        .unwrap();
+    assert!(bw.summary.as_deref().unwrap().contains("popcount=8"));
+
+    let nt = mgr
+        .run_tool(
+            "math-bitwise",
+            "number-theory",
+            serde_json::json!({
+                "n": "360",
+                "a": "3",
+                "b": "998244351",
+                "mod": "998244353",
+                "crt": "2 3; 3 5; 2 7"
+            }),
+            None,
+        )
+        .unwrap();
+    assert_eq!(nt.blocks.len(), 3);
+    let nt_json = serde_json::to_string(&nt).unwrap();
+    assert!(nt_json.contains("2^3 × 3^2 × 5"));
+    assert!(nt_json.contains("x ≡ 23 (mod 105)"));
+
+    let mods = mgr
+        .run_tool("math-bitwise", "mod-reference", serde_json::json!({}), None)
+        .unwrap();
+    let mods_json = serde_json::to_string(&mods).unwrap();
+    assert!(mods_json.contains("998244353"));
+    assert!(mods_json.contains("1000000007"));
+    assert!(mods_json.contains("469762049"));
+
+    let open_math_cmd = mgr
+        .run_command("math-bitwise", "open", serde_json::json!({}), None)
+        .unwrap();
+    assert_eq!(
+        open_math_cmd,
+        PluginCommandAction::OpenTool {
+            plugin_id: "math-bitwise".into(),
+            tool_id: None,
+            initial_inputs: None,
+        }
+    );
+
+    // 4. complexity-mem: complexity & memory
+    let cpx = mgr
+        .run_tool(
+            "complexity-mem",
+            "complexity",
+            serde_json::json!({ "n": 200000, "time_limit_sec": 1, "const_factor": 1 }),
+            None,
+        )
+        .unwrap();
+    assert!(!cpx.blocks.is_empty());
+    let mem = mgr
+        .run_tool(
+            "complexity-mem",
+            "memory",
+            serde_json::json!({ "data_type": "int64", "dimensions": "1024x1024", "limit_mb": 256 }),
+            None,
+        )
+        .unwrap();
+    assert!(mem.summary.as_deref().unwrap().contains("8.000 MiB"));
+
+    // 5. string-lab: analyze
+    let str_res = mgr
+        .run_tool(
+            "string-lab",
+            "analyze",
+            serde_json::json!({ "text": "abacaba", "pattern": "aba" }),
+            None,
+        )
+        .unwrap();
+    let str_json = serde_json::to_string(&str_res).unwrap();
+    assert!(str_json.contains("[0, 4]"));
+    assert!(str_json.contains("abacaba"));
+    assert_eq!(str_res.blocks.len(), 4);
+}
+
+#[test]
+fn custom_headless_codesnap_svg_tool_with_highlight_and_png() {
+    use crate::tool::ToolOutputBlock;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    let plugin_src = tempfile::tempdir().unwrap();
+    std::fs::write(
+        plugin_src.path().join("manifest.toml"),
+        r#"
+id = "codesnap-lite"
+name = "CodeSnap Lite"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["tool"]
+
+[[tools]]
+id = "snap"
+name = "Render Code Card"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_src.path().join("index.js"),
+        r##"
+module.exports = {
+  runTool(toolId, inputs) {
+    const hl = host.highlight(inputs.code || "", inputs.lang || "cpp");
+    const width = 320;
+    const height = 40 + hl.lines.length * 20;
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '"><rect width="100%" height="100%" rx="8" fill="#1e293b"/></svg>';
+    const pngB64 = host.render.svgToPng(svg, 1.0);
+    return {
+      summary: "Highlighted " + hl.lines.length + " lines (" + hl.language + ")",
+      blocks: [
+        { type: "svg", title: "Card SVG", svg, width, height },
+        { type: "image", title: "Card PNG", png_base64: pngB64, width, height },
+      ],
+    };
+  },
+};
+"##,
+    )
+    .unwrap();
+
+    mgr.install_from_dir(plugin_src.path()).unwrap();
+    let res = mgr
+        .run_tool(
+            "codesnap-lite",
+            "snap",
+            serde_json::json!({ "code": "int main() { return 0; }", "lang": "cpp" }),
+            None,
+        )
+        .unwrap();
+    assert_eq!(res.blocks.len(), 2);
+    assert!(matches!(&res.blocks[0], ToolOutputBlock::Svg { .. }));
+    match &res.blocks[1] {
+        ToolOutputBlock::Image { png_base64, .. } => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(png_base64)
+                .unwrap();
+            assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        }
+        other => panic!("expected Image block, got {other:?}"),
+    }
+}
+
+#[test]
+fn commands_context_filtering_and_execution() {
+    use crate::commands::PluginCommandAction;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    let plugin_src = tempfile::tempdir().unwrap();
+    std::fs::write(
+        plugin_src.path().join("manifest.toml"),
+        r#"
+id = "cmd-demo"
+name = "Cmd Demo"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["commands"]
+
+[[commands]]
+id = "ping"
+title = "Ping"
+context = "global"
+
+[[commands]]
+id = "inspect-prob"
+title = "Inspect Problem"
+context = "problem"
+
+[[commands]]
+id = "inspect-contest"
+title = "Inspect Contest"
+context = "contest"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_src.path().join("index.js"),
+        r#"
+module.exports = {
+  runCommand(cmdId, ctx) {
+    if (cmdId === "ping") return { type: "message", text: "pong" };
+    if (cmdId === "inspect-prob") {
+      return {
+        type: "tool_result",
+        result: {
+          blocks: [{ type: "text", content: "prob=" + (ctx && ctx.problem_id) }],
+        },
+      };
+    }
+    return { type: "none" };
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    mgr.install_from_dir(plugin_src.path()).unwrap();
+
+    let global_cmds = mgr.list_commands(Some(CommandContext::Global));
+    assert!(
+        global_cmds
+            .iter()
+            .any(|c| c.plugin_id == "cmd-demo" && c.command.id == "ping")
+    );
+    assert!(
+        !global_cmds
+            .iter()
+            .any(|c| c.plugin_id == "cmd-demo" && c.command.id == "inspect-prob")
+    );
+
+    let prob_cmds = mgr.list_commands(Some(CommandContext::Problem));
+    assert!(
+        prob_cmds
+            .iter()
+            .any(|c| c.plugin_id == "cmd-demo" && c.command.id == "inspect-prob")
+    );
+    assert!(
+        !prob_cmds
+            .iter()
+            .any(|c| c.plugin_id == "cmd-demo" && c.command.id == "inspect-contest")
+    );
+
+    let msg = mgr
+        .run_command("cmd-demo", "ping", serde_json::json!({}), None)
+        .unwrap();
+    assert_eq!(
+        msg,
+        PluginCommandAction::Message {
+            text: "pong".into()
+        }
+    );
+
+    let res = mgr
+        .run_command(
+            "cmd-demo",
+            "inspect-prob",
+            serde_json::json!({ "problem_id": "a-plus-b" }),
+            None,
+        )
+        .unwrap();
+    assert!(matches!(res, PluginCommandAction::ToolResult { .. }));
+}
+
+#[test]
+fn importer_and_exporter_safe_apply_and_traversal_rejection() {
+    use crate::io_ext::{
+        DraftSample, ExportContext, ExportFileEntry, ExportOutput, ImportDraft, ImportFileInput,
+        ProblemDraft, apply_import_draft, write_export_output,
+    };
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    let plugin_src = tempfile::tempdir().unwrap();
+    std::fs::write(
+        plugin_src.path().join("manifest.toml"),
+        r#"
+id = "io-demo"
+name = "IO Demo"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["importer", "exporter"]
+
+[[importers]]
+id = "simple-txt"
+name = "Simple Text"
+extensions = [".txt"]
+
+[[exporters]]
+id = "simple-bundle"
+name = "Simple Bundle"
+extension = ".txt"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_src.path().join("index.js"),
+        r#"
+module.exports = {
+  importPackage(files) {
+    const first = files[0] || { text: "Demo Problem" };
+    return {
+      kind: "problem",
+      id: "imported-a-plus-b",
+      title: "Imported A+B",
+      statement_md: first.text || "Compute A + B.",
+      tags: ["math"],
+      rating: 1200,
+      time_limit: "2s",
+      memory_limit: "512MB",
+      samples: [{ input: "1 2\n", output: "3\n" }],
+      source: { platform: "demo", id: "P100" },
+      assets: { "fig.txt": "aGVsbG8=" },
+    };
+  },
+  exportPackage(ctx) {
+    return {
+      summary: "Exported " + ctx.id,
+      files: [
+        { path: "meta.json", text: JSON.stringify({ id: ctx.id, title: ctx.title }) },
+        { path: "nested/statement.md", text: ctx.statement_md || "" },
+      ],
+    };
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    mgr.install_from_dir(plugin_src.path()).unwrap();
+    assert_eq!(mgr.list_importers().len(), 1);
+    assert_eq!(mgr.list_exporters().len(), 1);
+
+    // 1. Run importer and apply to workspace
+    let ws_dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(ws_dir.path()).unwrap();
+
+    let draft = mgr
+        .run_importer(
+            "io-demo",
+            "simple-txt",
+            &[ImportFileInput {
+                name: "a.txt".into(),
+                content_base64: String::new(),
+                text: Some("Given A and B, output A+B.".into()),
+            }],
+        )
+        .unwrap();
+    let report = apply_import_draft(&ws, &draft).unwrap();
+    assert_eq!(report.kind, "problem");
+    assert_eq!(report.created_ids, vec!["imported-a-plus-b"]);
+    assert!(report.skipped_ids.is_empty());
+    assert!(
+        ws.root()
+            .join("problems/imported-a-plus-b/assets/fig.txt")
+            .is_file()
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.root().join("problems/imported-a-plus-b/samples/01.in"))
+            .unwrap(),
+        "1 2\n"
+    );
+
+    // Second import of same source deduplicates into skipped_ids
+    let report2 = apply_import_draft(&ws, &draft).unwrap();
+    assert!(report2.created_ids.is_empty());
+    assert_eq!(report2.skipped_ids, vec!["imported-a-plus-b"]);
+
+    // Asset path traversal must be rejected with ZipSlip
+    let bad_draft = ImportDraft::Problem(ProblemDraft {
+        id: Some("evil-prob".into()),
+        title: "Evil".into(),
+        statement_md: "x".into(),
+        editorial_md: None,
+        tags: None,
+        rating: None,
+        time_limit: None,
+        memory_limit: None,
+        samples: vec![DraftSample {
+            input: "1\n".into(),
+            output: "1\n".into(),
+        }],
+        source: None,
+        assets: Some(BTreeMap::from([(
+            "../../escape.txt".to_string(),
+            "aGVsbG8=".to_string(),
+        )])),
+    });
+    let err = apply_import_draft(&ws, &bad_draft).unwrap_err();
+    assert!(matches!(err, PluginError::ZipSlip(_)), "got: {err:?}");
+    assert!(!ws.root().join("problems/evil-prob").exists());
+
+    // Read-only workspace must reject import
+    let ro_ws = xcpc_storage::Workspace::open(ws_dir.path(), true).unwrap();
+    let ro_err = apply_import_draft(&ro_ws, &draft).unwrap_err();
+    assert!(
+        matches!(ro_err, PluginError::PermissionDenied { .. }),
+        "got: {ro_err:?}"
+    );
+
+    // 2. Run exporter and write output safely
+    let export_out = mgr
+        .run_exporter(
+            "io-demo",
+            "simple-bundle",
+            &ExportContext {
+                kind: "problem".into(),
+                id: "imported-a-plus-b".into(),
+                title: "Imported A+B".into(),
+                metadata: serde_json::json!({ "rating": 1200 }),
+                statement_md: Some("Given A and B".into()),
+                editorial_md: None,
+                samples: None,
+                pdf_base64: None,
+                problems: None,
+            },
+        )
+        .unwrap();
+    let out_dir = ws.root().join("build/export-demo");
+    let written = write_export_output(&ws, &export_out, &out_dir).unwrap();
+    assert_eq!(written.len(), 2);
+    assert!(out_dir.join("meta.json").is_file());
+    assert!(out_dir.join("nested/statement.md").is_file());
+
+    // Export path traversal must be rejected
+    let evil_export = ExportOutput {
+        files: vec![ExportFileEntry {
+            path: "../outside.txt".into(),
+            content_base64: None,
+            text: Some("pwned".into()),
+        }],
+        summary: None,
+    };
+    let exp_err = write_export_output(&ws, &evil_export, &out_dir).unwrap_err();
+    assert!(
+        matches!(exp_err, PluginError::ZipSlip(_)),
+        "got: {exp_err:?}"
+    );
+
+    // Read-only workspace must reject exporting into workspace dir
+    let ro_exp_err = write_export_output(&ro_ws, &export_out, &out_dir).unwrap_err();
+    assert!(
+        matches!(ro_exp_err, PluginError::PermissionDenied { .. }),
+        "got: {ro_exp_err:?}"
+    );
+}

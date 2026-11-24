@@ -13,6 +13,12 @@ import { TITLE_BAR } from "./TitleBar";
 import { Modal } from "./Modal";
 import { shortcutsOpen } from "./ShortcutsModal";
 import { MONO } from "./theme";
+import { showToast } from "./Toast";
+import {
+  parseJsonReport,
+  type PluginCommandAction,
+  type RegisteredPluginCommand,
+} from "./tools/types";
 import {
   archivedExpanded,
   dialog,
@@ -23,8 +29,10 @@ import {
   info,
   librarySidebarOpen,
   openStudio,
+  openToolPlugin,
   paletteOpen,
   pickWorkspace,
+  pluginsRevision,
   preview,
   requestNewWorkspace,
   selectedContest,
@@ -129,14 +137,57 @@ function actions(): Action[] {
     { id: "a:space-problems", icon: "libraryBig", label: t("space.problems"), keywords: ["problems", "library", "题库", "tiku"], shortcut: inStudio ? undefined : "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
     { id: "a:space-contests", icon: "trophy", label: t("space.contests"), keywords: ["contests", "比赛", "bisai"], shortcut: inStudio ? undefined : "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
     { id: "a:space-training", icon: "crown", label: t("space.training"), keywords: ["training", "dashboard", "calendar", "submissions", "训练", "看板", "xunlian"], shortcut: inStudio ? undefined : "mod+3", run: () => goSpace("training"), when: () => hasWorkspace() && info().trainingEnabled },
-    { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio ? undefined : info().trainingEnabled ? "mod+4" : "mod+3", run: () => goSpace("settings"), when: hasWorkspace },
-    { id: "a:appearance", icon: "pencil", label: t("palette.action.appearance"), keywords: ["appearance", "theme", "dark", "light", "font", "language", "外观", "主题", "字号", "语言", "waiguan", "yuyan"], run: () => goSettings("appearance"), when: hasWorkspace },
-    { id: "a:toolchain", icon: "squareCode", label: t("palette.action.toolchain"), keywords: ["toolchain", "compiler", "g++", "clang++", "cxx", "工具链", "编译器", "gongjulian"], run: () => goSettings("toolchain"), when: hasWorkspace },
+    { id: "a:space-tools", icon: "squareCode", label: t("space.tools"), keywords: ["tools", "toolbox", "plugin", "graph", "math", "工具", "画板", "插件", "gongju"], shortcut: inStudio ? undefined : "mod+4", run: () => goSpace("tools") },
+    { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio ? undefined : "mod+5", run: () => goSpace("settings") },
+    { id: "a:appearance", icon: "pencil", label: t("palette.action.appearance"), keywords: ["appearance", "theme", "dark", "light", "font", "language", "外观", "主题", "字号", "语言", "waiguan", "yuyan"], run: () => goSettings("appearance") },
+    { id: "a:toolchain", icon: "squareCode", label: t("palette.action.toolchain"), keywords: ["toolchain", "compiler", "g++", "clang++", "cxx", "工具链", "编译器", "gongjulian"], run: () => goSettings("toolchain") },
     { id: "a:shortcuts", icon: "code", label: t("palette.action.shortcuts"), keywords: ["shortcut", "shortcuts", "key", "help", "快捷键", "kuaijiejian"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
-    { id: "a:about", icon: "fileText", label: t("palette.action.about"), keywords: ["about", "version", "update", "关于", "版本", "更新", "guanyu"], run: () => goSettings("about"), when: hasWorkspace },
+    { id: "a:about", icon: "fileText", label: t("palette.action.about"), keywords: ["about", "version", "update", "关于", "版本", "更新", "guanyu"], run: () => goSettings("about") },
     { id: "a:open-workspace", icon: "folderOpen", label: t("palette.action.switchWorkspace"), keywords: ["workspace", "open", "switch", "切换", "打开", "工作区", "gongzuoqu"], shortcut: "mod+o", run: () => void pickWorkspace() },
     { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];
+
+  // Dynamically append enabled plugin commands matching the current context.
+  void pluginsRevision();
+  const cmdContext = target?.target === "problem" ? "problem" : target?.target === "contest" ? "contest" : "global";
+  const pluginCmds = parseJsonReport<RegisteredPluginCommand[]>(
+    typeof preview.pluginListCommands === "function" ? preview.pluginListCommands(cmdContext) : undefined,
+    [],
+  );
+  for (const reg of pluginCmds) {
+    list.push({
+      id: `a:plugin:${reg.plugin_id}:${reg.command.id}`,
+      icon: "sparkles",
+      label: reg.command.title,
+      keywords: [reg.plugin_id, reg.plugin_name, reg.command.id, "plugin", "tool", "插件", "工具"],
+      run: () => {
+        const ctxPayload: Record<string, unknown> = { context: cmdContext };
+        if (target?.target === "problem") ctxPayload.problem_id = target.id;
+        else if (target?.target === "contest") ctxPayload.contest_id = target.id;
+        else if (selectedProblem()) ctxPayload.problem_id = selectedProblem();
+        void preview
+          .pluginRunCommand(reg.plugin_id, reg.command.id, JSON.stringify(ctxPayload))
+          .then((res) => {
+            if (!res.ok) {
+              showToast({ tone: "issues", text: res.error ?? t("tools.commandFailed") });
+              return;
+            }
+            const action = parseJsonReport<PluginCommandAction>(res, { type: "none" });
+            if (action.type === "open_tool") {
+              openToolPlugin(action.plugin_id, {
+                toolId: action.tool_id ?? undefined,
+                payload: action.initial_inputs,
+              });
+            } else if (action.type === "message") {
+              showToast({ tone: "info", text: action.text });
+            } else if (action.type === "tool_result") {
+              showToast({ tone: "success", text: action.result.summary ?? reg.command.title });
+            }
+          });
+      },
+    });
+  }
+
   return list.filter((a) => !a.when || a.when());
 }
 

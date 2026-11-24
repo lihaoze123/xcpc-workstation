@@ -13,7 +13,7 @@ use crate::error::{PluginError, Result};
 use crate::http::{HttpClient, HttpRequest};
 use crate::kv::KvStore;
 use crate::manifest::PluginManifest;
-use crate::render::svg_to_png_base64;
+use crate::render::{highlight_code, svg_to_png_base64, svg_to_rgba};
 use crate::workspace::WorkspaceReader;
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -105,6 +105,8 @@ const HOST_BOOTSTRAP_JS: &str = r#"
   const _wsList = globalThis.__xcpc_ws_list_problems;
   const _wsGet = globalThis.__xcpc_ws_get_problem;
   const _svgToPng = globalThis.__xcpc_render_svg_to_png;
+  const _svgToRgba = globalThis.__xcpc_render_svg_to_rgba;
+  const _highlight = globalThis.__xcpc_highlight;
   const _log = globalThis.__xcpc_log;
 
   delete globalThis.__xcpc_http_fetch;
@@ -116,6 +118,8 @@ const HOST_BOOTSTRAP_JS: &str = r#"
   delete globalThis.__xcpc_ws_list_problems;
   delete globalThis.__xcpc_ws_get_problem;
   delete globalThis.__xcpc_render_svg_to_png;
+  delete globalThis.__xcpc_render_svg_to_rgba;
+  delete globalThis.__xcpc_highlight;
   delete globalThis.__xcpc_log;
 
   globalThis.host = Object.freeze({
@@ -160,7 +164,13 @@ const HOST_BOOTSTRAP_JS: &str = r#"
       svgToPng(svg, scale) {
         return _svgToPng(String(svg ?? ""), scale == null ? 1.0 : Number(scale));
       },
+      svgToRgba(svg, scale) {
+        return JSON.parse(_svgToRgba(String(svg ?? ""), scale == null ? 1.0 : Number(scale)));
+      },
     }),
+    highlight(code, lang) {
+      return JSON.parse(_highlight(String(code ?? ""), String(lang ?? "text")));
+    },
     log(level, msg) {
       _log(
         String(level ?? "info"),
@@ -683,7 +693,7 @@ fn register_native_bridges<'js>(
             .map_err(|e| PluginError::JsError(e.to_string()))?;
     }
 
-    // 6. host.render.svgToPng
+    // 6. host.render.{svgToPng, svgToRgba} & host.highlight
     {
         let last_err = Arc::clone(last_host_error);
         let func = Function::new(
@@ -703,6 +713,37 @@ fn register_native_bridges<'js>(
         .map_err(|e| PluginError::JsError(e.to_string()))?;
         globals
             .set("__xcpc_render_svg_to_png", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_rgba = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, svg: String, scale: f64| match svg_to_rgba(&svg, scale as f32) {
+                Ok(rendered) => serde_json::to_string(&rendered)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    Err(Exception::throw_message(&ctx, &msg))
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_render_svg_to_rgba", func_rgba)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let func_hl = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, code: String, lang: String| {
+                let highlighted = highlight_code(&code, &lang);
+                serde_json::to_string(&highlighted)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_highlight", func_hl)
             .map_err(|e| PluginError::JsError(e.to_string()))?;
     }
 

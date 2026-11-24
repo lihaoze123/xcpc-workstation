@@ -44,15 +44,21 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
   );
 }
 
-type TopSpace = "problems" | "contests" | "training";
+type TopSpace = "problems" | "contests" | "training" | "tools";
 
 function isTopSpace(s: Space): s is TopSpace {
-  return s === "problems" || s === "contests" || s === "training";
+  return s === "problems" || s === "contests" || s === "training" || s === "tools";
 }
 
-export function NavRail(props: { space: Space; trainingEnabled?: boolean; onChange: (space: Space) => void }) {
-  const showTraining = () => props.trainingEnabled !== false;
-  const lastTopSpace = signal<TopSpace>(isTopSpace(props.space) ? props.space : "problems");
+export function NavRail(props: {
+  space: Space;
+  trainingEnabled?: boolean;
+  hasWorkspace?: boolean;
+  onChange: (space: Space) => void;
+}) {
+  const wsOpen = () => props.hasWorkspace !== false;
+  const showTraining = () => wsOpen() && props.trainingEnabled !== false;
+  const lastTopSpace = signal<TopSpace>(isTopSpace(props.space) ? props.space : wsOpen() ? "problems" : "tools");
   const slideTop = signal(false);
   let prevSpace: Space = props.space;
 
@@ -71,8 +77,12 @@ export function NavRail(props: { space: Space; trainingEnabled?: boolean; onChan
   const inTopGroup = () => isTopSpace(props.space);
   const topIndicatorY = () => {
     const cur = lastTopSpace();
-    if (cur === "contests") return ITEM_SIZE + ITEM_GAP;
-    if (cur === "training" && showTraining()) return 2 * (ITEM_SIZE + ITEM_GAP);
+    if (!wsOpen()) return 0;
+    const step = ITEM_SIZE + ITEM_GAP;
+    if (cur === "problems") return 0;
+    if (cur === "contests") return step;
+    if (cur === "training" && showTraining()) return 2 * step;
+    if (cur === "tools") return (showTraining() ? 3 : 2) * step;
     return 0;
   };
   const fadeTransition = (): ViewStyle => ({
@@ -119,13 +129,16 @@ export function NavRail(props: { space: Space; trainingEnabled?: boolean; onChan
           }}
           class="bg-accent"
         />
-        {item("problems", "libraryBig", "mod+1")}
-        {item("contests", "trophy", "mod+2")}
-        <If when={showTraining()}>
-          {item("training", "crown", "mod+3")}
+        <If when={wsOpen()}>
+          {item("problems", "libraryBig", "mod+1")}
+          {item("contests", "trophy", "mod+2")}
+          <If when={showTraining()}>
+            {item("training", "crown", "mod+3")}
+          </If>
         </If>
+        {item("tools", "squareCode", "mod+4")}
         <View style={{ flex: 1 }} />
-        {item("settings", "settings", showTraining() ? "mod+4" : "mod+3")}
+        {item("settings", "settings", "mod+5")}
       </View>
     </View>
   );

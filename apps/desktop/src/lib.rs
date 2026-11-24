@@ -50,16 +50,17 @@ pub use crate::types::{
     LimitsJs, MarkdownSpanJs, MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs,
     PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs,
     PackageInspectionResultJs, PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs,
-    PlatformSyncReportJs, PluginCredentialFieldJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer, PreviewLocationJs,
-    PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
-    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
-    RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
-    ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs, SaveReportResultJs, SaveResult,
-    SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
-    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    PlatformSyncReportJs, PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs,
+    PluginSummaryJs, PluginUiSourceResultJs, PluginsOverviewJs, PolygonImportResultJs,
+    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
+    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
+    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs,
+    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
+    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
+    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
+    TrainingSubmissionsQueryJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -2480,6 +2481,284 @@ impl Preview {
             Ok(_) => ActionResult::ok(),
             Err(err) => ActionResult::err("io", err.to_string()),
         }
+    }
+
+    // ---- Phase 4C: Toolbox, Plugin UI SDK, Commands & Importer/Exporter ----------------
+
+    /// Lists all enabled `tool` plugins and their declared headless tools as JSON.
+    pub fn plugin_list_tools(&self) -> JsonReportResultJs {
+        self.state.plugin_list_tools()
+    }
+
+    /// Executes a headless plugin tool action `runTool(toolId, inputs, ctx)` off the UI thread.
+    pub async fn plugin_run_tool(
+        this: Instance<Self>,
+        plugin_id: String,
+        tool_id: String,
+        inputs_json: String,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.plugin_run_tool(&plugin_id, &tool_id, &inputs_json))
+            .await
+            .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run tool failed: {e}")))
+    }
+
+    /// Reads the `ui.js` source for an enabled desktop UI plugin.
+    pub fn plugin_ui_source(&self, plugin_id: String) -> PluginUiSourceResultJs {
+        self.state.plugin_ui_source(&plugin_id)
+    }
+
+    /// Renders an SVG string to a PNG image (base64-encoded) via `resvg` + `tiny-skia`.
+    pub fn plugin_render_svg_png(svg: String, scale: Option<f64>) -> PluginRenderPngResultJs {
+        State::plugin_render_svg_png(&svg, scale)
+    }
+
+    /// Opens a native save dialog and atomically writes a base64-encoded PNG file.
+    pub async fn plugin_save_png_dialog(
+        png_base64: String,
+        default_name: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> SaveReportResultJs {
+        use base64::Engine as _;
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(png_base64.trim()) {
+            Ok(b) => b,
+            Err(err) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(format!("invalid PNG base64: {err}")),
+                };
+            }
+        };
+        let title = label_or(labels.as_ref().and_then(|l| l.title.as_deref()), "保存图片");
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "保存",
+        );
+        let filter = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "PNG 图片",
+        );
+        let file_name = if default_name.trim().is_empty() {
+            "output.png"
+        } else {
+            default_name.trim()
+        };
+        let dialog = SaveDialog::new()
+            .title(title)
+            .button_label(button)
+            .file_name(file_name)
+            .filter(FileFilter::new(filter, ["png"]));
+        let picked = match pick_save_path(dialog).await {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: true,
+                    path: None,
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let path_str = picked.display().to_string();
+        match blocking(move || crate::plugins::atomic_write_file(&picked, &bytes)).await {
+            Ok(Ok(())) => SaveReportResultJs {
+                ok: true,
+                cancelled: false,
+                path: Some(path_str),
+                error: None,
+            },
+            Ok(Err(err)) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(err.to_string()),
+            },
+            Err(err) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(format!("save png task failed: {err}")),
+            },
+        }
+    }
+
+    /// Opens a native save dialog and atomically writes a UTF-8 text file (e.g. SVG / Markdown).
+    pub async fn plugin_save_text_dialog(
+        text: String,
+        default_name: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> SaveReportResultJs {
+        let title = label_or(labels.as_ref().and_then(|l| l.title.as_deref()), "保存文件");
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "保存",
+        );
+        let file_name = if default_name.trim().is_empty() {
+            "output.txt"
+        } else {
+            default_name.trim()
+        };
+        let mut dialog = SaveDialog::new()
+            .title(title)
+            .button_label(button)
+            .file_name(file_name);
+        if let Some(ext) = Path::new(file_name).extension().and_then(|e| e.to_str())
+            && !ext.is_empty()
+        {
+            let filter = label_or(labels.as_ref().and_then(|l| l.filter_label.as_deref()), ext);
+            dialog = dialog.filter(FileFilter::new(filter, [ext]));
+        }
+        let picked = match pick_save_path(dialog).await {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: true,
+                    path: None,
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let path_str = picked.display().to_string();
+        let bytes = text.into_bytes();
+        match blocking(move || crate::plugins::atomic_write_file(&picked, &bytes)).await {
+            Ok(Ok(())) => SaveReportResultJs {
+                ok: true,
+                cancelled: false,
+                path: Some(path_str),
+                error: None,
+            },
+            Ok(Err(err)) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(err.to_string()),
+            },
+            Err(err) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(format!("save text task failed: {err}")),
+            },
+        }
+    }
+
+    /// Lists commands registered by enabled plugins matching `context` (`"global" | "problem" | "contest"`).
+    pub fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
+        self.state.plugin_list_commands(context)
+    }
+
+    /// Runs a plugin command `runCommand(commandId, ctx)` off the UI thread.
+    pub async fn plugin_run_command(
+        this: Instance<Self>,
+        plugin_id: String,
+        command_id: String,
+        context_payload_json: String,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.plugin_run_command(&plugin_id, &command_id, &context_payload_json))
+            .await
+            .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run command failed: {e}")))
+    }
+
+    /// Lists all importers declared by enabled plugins as JSON.
+    pub fn plugin_list_importers(&self) -> JsonReportResultJs {
+        self.state.plugin_list_importers()
+    }
+
+    /// Picks file(s) via the native dialog, runs a plugin importer, and atomically applies the draft.
+    pub async fn plugin_run_importer(
+        this: Instance<Self>,
+        plugin_id: String,
+        importer_id: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let exts = this.with(|p| p.state.plugin_importer_extensions(&plugin_id, &importer_id));
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择导入文件",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "导入",
+        );
+        let mut dialog = OpenDialog::files()
+            .title(title)
+            .button_label(button)
+            .multiple(true);
+        if !exts.is_empty() {
+            let filter = label_or(
+                labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+                "导入文件",
+            );
+            let ext_refs: Vec<&str> = exts.iter().map(String::as_str).collect();
+            dialog = dialog.filter(FileFilter::new(filter, ext_refs));
+        }
+        let picked = match pick_paths(dialog).await {
+            Ok(Some(paths)) if !paths.is_empty() => paths,
+            Ok(_) => return JsonReportResultJs::err("cancelled", "import cancelled"),
+            Err(err) => return JsonReportResultJs::err("io", err),
+        };
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.plugin_run_importer_paths(&plugin_id, &importer_id, &picked))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("task", format!("run importer failed: {e}"))
+            })
+    }
+
+    /// Lists all exporters declared by enabled plugins as JSON.
+    pub fn plugin_list_exporters(&self) -> JsonReportResultJs {
+        self.state.plugin_list_exporters()
+    }
+
+    /// Runs a plugin exporter for a problem or contest and atomically writes output under `build/exports/`.
+    pub async fn plugin_run_exporter(
+        this: Instance<Self>,
+        plugin_id: String,
+        exporter_id: String,
+        kind: String,
+        id: String,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.plugin_run_exporter(&plugin_id, &exporter_id, &kind, &id))
+            .await
+            .unwrap_or_else(|e| {
+                JsonReportResultJs::err("task", format!("run exporter failed: {e}"))
+            })
     }
 }
 

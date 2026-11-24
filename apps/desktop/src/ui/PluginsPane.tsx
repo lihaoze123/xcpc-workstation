@@ -15,7 +15,7 @@ import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
 import { Btn, Chip, createTransientFlag, DelayedSpinner } from "./kit";
 import { Section, SectionRow } from "./layout";
-import { preview, refresh } from "./store";
+import { notifyPluginsChanged, preview, refresh } from "./store";
 import { cardShadow, MONO } from "./theme";
 import { showToast } from "./Toast";
 
@@ -483,6 +483,7 @@ export function PluginsPane() {
 
   const reloadOverview = () => {
     overview.set(preview.reloadPlugins());
+    notifyPluginsChanged();
   };
 
   const runManualSync = async () => {
@@ -541,8 +542,10 @@ export function PluginsPane() {
     });
     if (res.cancelled) return;
     if (res.ok) {
-      if (res.overview) overview.set(res.overview);
-      else reloadOverview();
+      if (res.overview) {
+        overview.set(res.overview);
+        notifyPluginsChanged();
+      } else reloadOverview();
       showToast({
         tone: "success",
         text: t("settings.plugins.installSuccess", { id: res.pluginId ?? "" }),

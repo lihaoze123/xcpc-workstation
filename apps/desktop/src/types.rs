@@ -2272,3 +2272,25 @@ pub struct IngestProblemResultJs {
     #[prop(skip_none)]
     pub error: Option<String>,
 }
+
+// ---- Phase 4C: Toolbox, Plugin UI SDK, Commands & Importer/Exporter --------------------
+
+/// Result of reading a plugin's desktop `ui.js` source (`pluginUiSource`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginUiSourceResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub source: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of rendering an SVG string to a PNG image via `resvg` (`pluginRenderSvgPng`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginRenderPngResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub png_base64: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}

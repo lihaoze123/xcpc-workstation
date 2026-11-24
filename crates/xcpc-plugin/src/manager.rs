@@ -581,6 +581,159 @@ export interface WorkspaceProblemDetail extends WorkspaceProblemSummary {
   editorial_md?: string;
 }
 
+export interface RenderedRgba {
+  width: number;
+  height: number;
+  rgba_base64: string;
+}
+
+export type HighlightTokenKind =
+  | "keyword"
+  | "type"
+  | "string"
+  | "number"
+  | "comment"
+  | "operator"
+  | "ident"
+  | "plain";
+
+export interface HighlightToken {
+  kind: HighlightTokenKind;
+  text: string;
+}
+
+export interface HighlightLine {
+  tokens: HighlightToken[];
+}
+
+export interface HighlightResult {
+  language: string;
+  lines: HighlightLine[];
+}
+
+export interface GraphNode {
+  id: string;
+  label?: string;
+  x?: number;
+  y?: number;
+  color?: string;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  weight?: string;
+  label?: string;
+  directed?: boolean;
+}
+
+export type ToolOutputBlock =
+  | { type: "text"; title?: string; content: string; monospace?: boolean }
+  | { type: "markdown"; title?: string; content: string }
+  | { type: "table"; title?: string; headers: string[]; rows: string[][]; align?: string[] }
+  | {
+      type: "graph";
+      title?: string;
+      directed?: boolean;
+      weighted?: boolean;
+      one_indexed?: boolean;
+      nodes: GraphNode[];
+      edges: GraphEdge[];
+      layout?: string;
+    }
+  | { type: "svg"; title?: string; svg: string; width?: number; height?: number }
+  | { type: "image"; title?: string; png_base64: string; width?: number; height?: number };
+
+export interface ToolExecutionResult {
+  blocks: ToolOutputBlock[];
+  summary?: string;
+}
+
+export type PluginCommandAction =
+  | { type: "message"; text: string }
+  | { type: "open_tool"; plugin_id: string; tool_id?: string; initial_inputs?: unknown }
+  | { type: "tool_result"; result: ToolExecutionResult }
+  | { type: "none" };
+
+export interface ImportFileInput {
+  name: string;
+  content_base64: string;
+  text?: string;
+}
+
+export interface DraftSample {
+  input: string;
+  output: string;
+}
+
+export interface ProblemDraft {
+  id?: string;
+  title: string;
+  statement_md: string;
+  editorial_md?: string;
+  tags?: string[];
+  rating?: number;
+  time_limit?: string;
+  memory_limit?: string;
+  samples: DraftSample[];
+  source?: { platform: string; id: string; url?: string };
+  assets?: Record<string, string>;
+}
+
+export interface ContestDraft {
+  id?: string;
+  title: string;
+  subtitle?: string;
+  problems: ProblemDraft[];
+}
+
+export type ImportDraft =
+  | ({ kind: "problem" } & ProblemDraft)
+  | ({ kind: "contest" } & ContestDraft);
+
+export interface ExportContext {
+  kind: "problem" | "contest";
+  id: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  statement_md?: string;
+  editorial_md?: string;
+  samples?: DraftSample[];
+  pdf_base64?: string;
+  problems?: ExportContext[];
+}
+
+export interface ExportFileEntry {
+  path: string;
+  content_base64?: string;
+  text?: string;
+}
+
+export interface ExportOutput {
+  files: ExportFileEntry[];
+  summary?: string;
+}
+
+export interface PluginModuleExports {
+  runTool?(
+    toolId: string,
+    inputs: Record<string, unknown>,
+    ctx?: { plugin_id: string; tool_id: string }
+  ): ToolExecutionResult | Promise<ToolExecutionResult>;
+  runCommand?(
+    commandId: string,
+    ctx?: Record<string, unknown>
+  ): PluginCommandAction | Promise<PluginCommandAction>;
+  importPackage?(
+    files: ImportFileInput[],
+    importerId?: string
+  ): ImportDraft | Promise<ImportDraft>;
+  exportPackage?(
+    ctx: ExportContext,
+    exporterId?: string
+  ): ExportOutput | Promise<ExportOutput>;
+}
+
 export interface HostApi {
   readonly http: {
     fetch(req: HostHttpRequest): HostHttpResponse;
@@ -602,7 +755,12 @@ export interface HostApi {
   };
   readonly render: {
     svgToPng(svg: string, scale?: number): string;
+    svgToRgba(svg: string, scale?: number): RenderedRgba;
   };
+  highlight(
+    code: string,
+    lang?: "cpp" | "c" | "rust" | "python" | "js" | "ts" | "json" | "toml" | "text" | string
+  ): HighlightResult;
   log(level: "debug" | "info" | "warn" | "error", msg: unknown): void;
 }
 

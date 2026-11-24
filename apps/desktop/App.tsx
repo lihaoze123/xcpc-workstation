@@ -20,6 +20,7 @@ import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/Settings
 import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
 import { StudioView } from "./src/ui/studio/StudioView";
 import { ToastHost } from "./src/ui/Toast";
+import { ToolsView } from "./src/ui/ToolsView";
 import { TrainingView } from "./src/ui/TrainingView";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
@@ -194,8 +195,7 @@ function App() {
   });
 
   keymap.bind({
-    "mod+k": () =>
-      hasWorkspace() && traceInteraction("palette.toggle", () => paletteOpen.set(!paletteOpen())),
+    "mod+k": () => traceInteraction("palette.toggle", () => paletteOpen.set(!paletteOpen())),
     "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
     "mod+1": () =>
       hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("problems"), { space: "problems" }),
@@ -204,16 +204,12 @@ function App() {
     "mod+3": () =>
       hasWorkspace() &&
       !inStudio() &&
-      traceInteraction(
-        "nav.space",
-        () => goSpace(info().trainingEnabled ? "training" : "settings"),
-        { space: info().trainingEnabled ? "training" : "settings" },
-      ),
-    "mod+4": () =>
-      hasWorkspace() &&
-      !inStudio() &&
       info().trainingEnabled &&
-      traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
+      traceInteraction("nav.space", () => goSpace("training"), { space: "training" }),
+    "mod+4": () =>
+      !inStudio() && traceInteraction("nav.space", () => goSpace("tools"), { space: "tools" }),
+    "mod+5": () =>
+      !inStudio() && traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 
@@ -340,6 +336,7 @@ function App() {
         <NavRail
           space={space()}
           trainingEnabled={info().trainingEnabled}
+          hasWorkspace
           onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
         />
         <SpaceStage visible={space() === "problems"} variant="space">
@@ -353,6 +350,9 @@ function App() {
             <TrainingView active={!inStudio() && space() === "training"} />
           </SpaceStage>
         </If>
+        <SpaceStage visible={space() === "tools"} variant="space">
+          <ToolsView active={!inStudio() && space() === "tools"} />
+        </SpaceStage>
         <SpaceStage visible={space() === "settings"} variant="space">
           <SettingsView />
         </SpaceStage>
@@ -360,17 +360,58 @@ function App() {
     </View>
   );
 
+  const noWorkspaceShell = (
+    <If
+      when={space() === "tools" || space() === "settings"}
+      else={
+        <View style={{ flex: 1 }}>
+          <TitleBar borderless />
+          <NoWorkspaceView version={appVersion} />
+        </View>
+      }
+    >
+      <View style={{ flex: 1, flexDirection: "column" }}>
+        <TitleBar
+          leading={
+            <Btn
+              testID="no-workspace-back"
+              label={t("common.back")}
+              icon="arrowLeft"
+              variant="ghost"
+              onPress={() => goSpace("problems")}
+            />
+          }
+          trailing={
+            <Btn
+              size="sm"
+              variant="outline"
+              icon="folderOpen"
+              label={t("brand.openExistingFolder")}
+              onPress={() => void pickWorkspace()}
+            />
+          }
+        />
+        <View style={{ flex: 1, flexDirection: "row" }}>
+          <NavRail
+            space={space()}
+            hasWorkspace={false}
+            trainingEnabled={false}
+            onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
+          />
+          <SpaceStage visible={space() === "tools"} variant="space">
+            <ToolsView active={space() === "tools"} />
+          </SpaceStage>
+          <SpaceStage visible={space() === "settings"} variant="space">
+            <SettingsView />
+          </SpaceStage>
+        </View>
+      </View>
+    </If>
+  );
+
   return (
     <View style={{ flex: 1 }} class="bg-background">
-      <If
-        when={hasWorkspace()}
-        else={
-          <View style={{ flex: 1 }}>
-            <TitleBar borderless />
-            <NoWorkspaceView version={appVersion} />
-          </View>
-        }
-      >
+      <If when={hasWorkspace()} else={noWorkspaceShell}>
         <View style={{ flex: 1 }}>
           {shell}
           <If when={studioMounted()}>
@@ -454,8 +495,8 @@ function App() {
         </View>
         <Dialogs onJumpContest={(contestId) => jumpToContest(contestId)} />
         <UnfreezeDialog />
-        <CommandPalette />
       </If>
+      <CommandPalette />
       <If when={brandReplayOpen()}>
         <BrandReplayOverlay version={appVersion} />
       </If>

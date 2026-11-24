@@ -226,7 +226,7 @@ export function savePrefs(patch: Partial<AppPrefsJs>) {
 function initialSpace(): Space {
   const s = prefs.lastSpace;
   if (s === "training") return info().trainingEnabled ? "training" : "problems";
-  return s === "problems" || s === "contests" || s === "settings" ? s : "problems";
+  return s === "problems" || s === "contests" || s === "tools" || s === "settings" ? s : "problems";
 }
 
 export const space = signal<Space>(initialSpace());
@@ -234,6 +234,36 @@ export type SettingsSection = "workspace" | "layout" | "toolchain" | "plugins" |
 export const settingsSection = signal<SettingsSection>("workspace");
 export const brandReplayOpen = signal(false);
 export const newWorkspaceModalOpen = signal(false);
+
+/** Bumped whenever plugins are enabled, disabled, installed, or reloaded so Tools/Palette/IO menus refresh. */
+export const pluginsRevision = signal(0);
+export function notifyPluginsChanged() {
+  pluginsRevision.set(pluginsRevision() + 1);
+}
+
+/** Currently requested plugin / headless tool / payload for the Tools space. */
+export const activeToolPluginId = signal<string | undefined>(undefined);
+export const activeToolId = signal<string | undefined>(undefined);
+export const activeToolPayload = signal<unknown>(undefined);
+export const activeToolMode = signal<"ui" | "headless" | undefined>(undefined);
+
+/** Navigates to the Tools space, optionally selecting a plugin, headless tool, and initial payload. */
+export function openToolPlugin(
+  pluginId: string,
+  opts?: { toolId?: string; payload?: unknown; mode?: "ui" | "headless" },
+) {
+  batch(() => {
+    studio.set(undefined);
+    activeToolPluginId.set(pluginId);
+    activeToolId.set(opts?.toolId);
+    if (opts && "payload" in opts) {
+      activeToolPayload.set(opts.payload);
+    }
+    activeToolMode.set(opts?.mode);
+    space.set("tools");
+  });
+  savePrefs({ lastSpace: "tools", lastTarget: null, lastId: null, lastLabel: null });
+}
 
 /** Opens the "New Workspace" modal so the user can choose between template and empty workspace. */
 export function requestNewWorkspace() {

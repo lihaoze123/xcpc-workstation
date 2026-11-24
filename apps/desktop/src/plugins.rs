@@ -8,12 +8,15 @@ use std::sync::atomic::Ordering;
 
 use std::str::FromStr;
 
+use base64::Engine as _;
 use xcpc_domain::{
     ProblemSource, SyncedProblemStatus, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
 };
 use xcpc_plugin::{
-    HostContext, OjContext, OjPluginClient, PluginCapability, PluginManager, PluginOrigin,
-    SandboxLimits, UreqHttpClient,
+    CommandContext, DraftSample, ExportContext, HostContext, ImportFileInput, OjContext,
+    OjPluginClient, PluginCapability, PluginManager, PluginOrigin, SandboxLimits, UreqHttpClient,
+    WorkspaceProblemDetail, WorkspaceProblemSummary, WorkspaceReader, apply_import_draft,
+    svg_to_png_base64, write_export_output,
 };
 use xcpc_storage::{CreateProblemOptions, Workspace};
 use xcpc_sync::{
@@ -26,9 +29,10 @@ use crate::state::State;
 use crate::types::{
     ActionResult, CreateProblemFromUrlResultJs, ExportPluginResultJs, IngestProblemRequestJs,
     IngestProblemResultJs, InstallPluginResultJs, JsonReportResultJs, PlatformSyncReportJs,
-    PluginCredentialFieldJs, PluginRepoConfigJs, PluginSummaryJs, PluginsOverviewJs,
-    RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs,
-    SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
+    PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
+    PluginUiSourceResultJs, PluginsOverviewJs, RepoCatalogResultJs, RepoPluginEntryJs,
+    RepoPluginPermissionJs, ResolvedProblemUrlJs, SyncReportJs, TrainingSubmissionsQueryJs,
+    VerifyPluginResultJs,
 };
 
 fn origin_str(origin: PluginOrigin) -> &'static str {
@@ -1047,6 +1051,471 @@ impl State {
             }
         }
     }
+
+    // ---- Phase 4C: Toolbox, UI SDK, Commands, Importers & Exporters --------------------
+
+    fn workspace_reader_if_allowed(
+        &self,
+        pm: &PluginManager,
+        plugin_id: &str,
+    ) -> Option<Arc<dyn WorkspaceReader>> {
+        let loaded = pm.load_plugin(plugin_id).ok()?;
+        if !loaded.info.manifest.permissions.workspace_read {
+            return None;
+        }
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        }?;
+        Some(Arc::new(DesktopWorkspaceReader(ws)))
+    }
+
+    pub(crate) fn plugin_list_tools(&self) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let tools = pm.list_tools();
+        match serde_json::to_string(&tools) {
+            Ok(json) => JsonReportResultJs::ok(Some(json), None),
+            Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_run_tool(
+        &self,
+        plugin_id: &str,
+        tool_id: &str,
+        inputs_json: &str,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let inputs: serde_json::Value = if inputs_json.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(inputs_json) {
+                Ok(v) => v,
+                Err(err) => {
+                    return JsonReportResultJs::err("invalid_json", err.to_string());
+                }
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        let ws_reader = self.workspace_reader_if_allowed(&pm, plugin_id);
+        match pm.run_tool(plugin_id, tool_id, inputs, ws_reader) {
+            Ok(res) => match serde_json::to_string(&res) {
+                Ok(json) => JsonReportResultJs::ok(Some(json), None),
+                Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+            },
+            Err(err) => JsonReportResultJs::err("plugin_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_ui_source(&self, plugin_id: &str) -> PluginUiSourceResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return PluginUiSourceResultJs {
+                    ok: false,
+                    source: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        match pm.read_ui_source(plugin_id) {
+            Ok(source) => PluginUiSourceResultJs {
+                ok: true,
+                source,
+                error: None,
+            },
+            Err(err) => PluginUiSourceResultJs {
+                ok: false,
+                source: None,
+                error: Some(err.to_string()),
+            },
+        }
+    }
+
+    pub(crate) fn plugin_render_svg_png(svg: &str, scale: Option<f64>) -> PluginRenderPngResultJs {
+        match svg_to_png_base64(svg, scale.map(|s| s as f32)) {
+            Ok(b64) => PluginRenderPngResultJs {
+                ok: true,
+                png_base64: Some(b64),
+                error: None,
+            },
+            Err(err) => PluginRenderPngResultJs {
+                ok: false,
+                png_base64: None,
+                error: Some(err.to_string()),
+            },
+        }
+    }
+
+    pub(crate) fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let parsed_ctx = match context.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => None,
+            Some("global") => Some(CommandContext::Global),
+            Some("problem") => Some(CommandContext::Problem),
+            Some("contest") => Some(CommandContext::Contest),
+            Some(other) => {
+                return JsonReportResultJs::err(
+                    "invalid",
+                    format!("unknown command context '{other}'"),
+                );
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        let commands = pm.list_commands(parsed_ctx);
+        match serde_json::to_string(&commands) {
+            Ok(json) => JsonReportResultJs::ok(Some(json), None),
+            Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_run_command(
+        &self,
+        plugin_id: &str,
+        command_id: &str,
+        context_payload_json: &str,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let payload: serde_json::Value = if context_payload_json.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(context_payload_json) {
+                Ok(v) => v,
+                Err(err) => return JsonReportResultJs::err("invalid_json", err.to_string()),
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        let ws_reader = self.workspace_reader_if_allowed(&pm, plugin_id);
+        match pm.run_command(plugin_id, command_id, payload, ws_reader) {
+            Ok(action) => match serde_json::to_string(&action) {
+                Ok(json) => JsonReportResultJs::ok(Some(json), None),
+                Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+            },
+            Err(err) => JsonReportResultJs::err("plugin_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_list_importers(&self) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let list = pm.list_importers();
+        match serde_json::to_string(&list) {
+            Ok(json) => JsonReportResultJs::ok(Some(json), None),
+            Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_importer_extensions(
+        &self,
+        plugin_id: &str,
+        importer_id: &str,
+    ) -> Vec<String> {
+        let Ok(dir) = self.effective_data_dir() else {
+            return Vec::new();
+        };
+        let pm = PluginManager::new(&dir);
+        pm.list_importers()
+            .into_iter()
+            .find(|r| r.plugin_id == plugin_id && r.importer.id == importer_id)
+            .map(|r| {
+                r.importer
+                    .extensions
+                    .into_iter()
+                    .map(|ext| ext.trim().trim_start_matches('.').to_owned())
+                    .filter(|ext| !ext.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn plugin_run_importer_paths(
+        &self,
+        plugin_id: &str,
+        importer_id: &str,
+        paths: &[PathBuf],
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace is open");
+        };
+        if ws.is_read_only() {
+            return JsonReportResultJs::err("read_only", "workspace is read-only");
+        }
+
+        let mut files = Vec::with_capacity(paths.len());
+        for path in paths {
+            let bytes = match std::fs::read(path) {
+                Ok(b) => b,
+                Err(err) => return JsonReportResultJs::err("io", err.to_string()),
+            };
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".to_owned());
+            let content_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let text = String::from_utf8(bytes).ok();
+            files.push(ImportFileInput {
+                name,
+                content_base64,
+                text,
+            });
+        }
+
+        let pm = PluginManager::new(&dir);
+        let draft = match pm.run_importer(plugin_id, importer_id, &files) {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("plugin_error", err.to_string()),
+        };
+
+        match apply_import_draft(&ws, &draft) {
+            Ok(report) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    if let Ok(rebuilt) = xcpc_storage::WorkspaceIndex::scan(&ws) {
+                        core.index = rebuilt;
+                    }
+                }
+                self.invalidate_cache();
+                match serde_json::to_string(&report) {
+                    Ok(json) => JsonReportResultJs::ok(Some(json), None),
+                    Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+                }
+            }
+            Err(err) => JsonReportResultJs::err("import_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_list_exporters(&self) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let list = pm.list_exporters();
+        match serde_json::to_string(&list) {
+            Ok(json) => JsonReportResultJs::ok(Some(json), None),
+            Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_run_exporter(
+        &self,
+        plugin_id: &str,
+        exporter_id: &str,
+        kind: &str,
+        id: &str,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace is open");
+        };
+
+        let ctx = match build_export_context(&ws, kind, id) {
+            Ok(c) => c,
+            Err(err) => return JsonReportResultJs::err("not_found", err),
+        };
+
+        let pm = PluginManager::new(&dir);
+        let output = match pm.run_exporter(plugin_id, exporter_id, &ctx) {
+            Ok(o) => o,
+            Err(err) => return JsonReportResultJs::err("plugin_error", err.to_string()),
+        };
+
+        let out_dir = ws
+            .root()
+            .join("build")
+            .join("exports")
+            .join(format!("{plugin_id}-{id}"));
+        let written = match write_export_output(&ws, &output, &out_dir) {
+            Ok(paths) => paths,
+            Err(err) => return JsonReportResultJs::err("export_error", err.to_string()),
+        };
+
+        let payload = serde_json::json!({
+            "summary": output.summary,
+            "out_dir": out_dir.display().to_string(),
+            "files": written.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        });
+        match serde_json::to_string(&payload) {
+            Ok(json) => JsonReportResultJs::ok(Some(json), None),
+            Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+        }
+    }
+}
+
+struct DesktopWorkspaceReader(Workspace);
+
+impl WorkspaceReader for DesktopWorkspaceReader {
+    fn list_problems(&self) -> xcpc_plugin::Result<Vec<WorkspaceProblemSummary>> {
+        let ids = self
+            .0
+            .list_problems()
+            .map_err(|e| xcpc_plugin::PluginError::InvalidPackage(e.to_string()))?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(p) = self.0.load_problem(&id) {
+                out.push(WorkspaceProblemSummary {
+                    id,
+                    title: p.meta.title,
+                    tags: p.meta.tags,
+                    difficulty: p.meta.rating.map(|r| r.to_string()),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn get_problem(&self, id: &str) -> xcpc_plugin::Result<Option<WorkspaceProblemDetail>> {
+        let problem = match self.0.load_problem(id) {
+            Ok(p) => p,
+            Err(xcpc_storage::Error::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(xcpc_plugin::PluginError::InvalidPackage(e.to_string())),
+        };
+        let lang = problem.default_language();
+        let stmt_rel = problem
+            .statement(lang)
+            .map(|s| s.file.path.clone())
+            .unwrap_or_else(|| format!("{}/statement.md", problem.dir));
+        let statement_md = self.0.read_text(&stmt_rel).ok();
+        let editorial_md = self
+            .0
+            .read_text(&format!("{}/editorial.md", problem.dir))
+            .ok();
+
+        Ok(Some(WorkspaceProblemDetail {
+            id: id.to_owned(),
+            title: problem.meta.title,
+            tags: problem.meta.tags,
+            difficulty: problem.meta.rating.map(|r| r.to_string()),
+            statement_md,
+            editorial_md,
+        }))
+    }
+}
+
+fn build_problem_export_context(ws: &Workspace, id: &str) -> Result<ExportContext, String> {
+    let problem = ws.load_problem(id).map_err(|e| e.to_string())?;
+    let lang = problem.default_language();
+    let stmt_rel = problem
+        .statement(lang)
+        .map(|s| s.file.path.clone())
+        .unwrap_or_else(|| format!("{}/statement.md", problem.dir));
+    let statement_md = ws.read_text(&stmt_rel).ok();
+    let editorial_md = ws.read_text(&format!("{}/editorial.md", problem.dir)).ok();
+    let samples = problem
+        .samples
+        .iter()
+        .map(|s| DraftSample {
+            input: s.input.clone(),
+            output: s.output.clone(),
+        })
+        .collect::<Vec<_>>();
+    let pdf_path = ws.root().join("build").join(format!("{id}.pdf"));
+    let pdf_base64 = std::fs::read(&pdf_path)
+        .ok()
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+    let metadata = serde_json::json!({
+        "tags": problem.meta.tags,
+        "rating": problem.meta.rating,
+        "author": problem.meta.author,
+        "time_limit": problem.meta.limits.time,
+        "memory_limit": problem.meta.limits.memory,
+    });
+    Ok(ExportContext {
+        kind: "problem".to_owned(),
+        id: id.to_owned(),
+        title: problem.meta.title,
+        metadata,
+        statement_md,
+        editorial_md,
+        samples: Some(samples),
+        pdf_base64,
+        problems: None,
+    })
+}
+
+fn build_export_context(ws: &Workspace, kind: &str, id: &str) -> Result<ExportContext, String> {
+    if kind.eq_ignore_ascii_case("contest") {
+        let contest = ws.load_contest(id).map_err(|e| e.to_string())?;
+        let mut problems = Vec::with_capacity(contest.meta.problems.len());
+        for item in &contest.meta.problems {
+            if let Ok(p_ctx) = build_problem_export_context(ws, &item.id) {
+                problems.push(p_ctx);
+            }
+        }
+        let pdf_path = ws.root().join("build").join(format!("{id}.pdf"));
+        let pdf_base64 = std::fs::read(&pdf_path)
+            .ok()
+            .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+        let metadata = serde_json::json!({
+            "location": contest.meta.location,
+            "date": contest.meta.date,
+            "author": contest.meta.author,
+            "frozen": contest.meta.frozen,
+        });
+        Ok(ExportContext {
+            kind: "contest".to_owned(),
+            id: id.to_owned(),
+            title: contest.meta.name,
+            metadata,
+            statement_md: None,
+            editorial_md: None,
+            samples: None,
+            pdf_base64,
+            problems: Some(problems),
+        })
+    } else {
+        build_problem_export_context(ws, id)
+    }
+}
+
+/// Atomically writes `bytes` to `path` via a sibling temporary file + rename.
+pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "output".to_owned());
+    let tmp_name = format!(".{file_name}.tmp.{}", std::process::id());
+    let tmp_path = parent.join(tmp_name);
+    std::fs::write(&tmp_path, bytes)?;
+    if let Err(err) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Ensures [`TrainingStatus::None`] is used as fallback string when training is disabled.
