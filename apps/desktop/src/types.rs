@@ -1343,8 +1343,17 @@ pub struct ToolchainStatusJs {
     #[prop(skip_none)]
     pub env_override: Option<String>,
     pub install_guide: String,
+    /// Copyable install commands for this system only (Settings → Toolchain).
+    pub install_commands: Vec<InstallCommandJs>,
     #[prop(skip_none)]
     pub error: Option<String>,
+}
+
+/// One copyable way to install a C++ compiler on this system.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct InstallCommandJs {
+    pub label: String,
+    pub command: String,
 }
 
 /// Read-only inspection result for a problem package (`inspectPackage`).
@@ -1607,6 +1616,14 @@ impl From<xcpc_judge::ToolchainStatus> for ToolchainStatusJs {
             override_path: s.override_path,
             env_override: s.env_override,
             install_guide: s.install_guide,
+            install_commands: s
+                .install_commands
+                .into_iter()
+                .map(|c| InstallCommandJs {
+                    label: c.label,
+                    command: c.command,
+                })
+                .collect(),
             error: None,
         }
     }

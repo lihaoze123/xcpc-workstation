@@ -20,9 +20,11 @@ import { locale, t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { dialog, goSpace, onExternalChange, preview, type UiError } from "../store";
+import { compilerMissing, dialog, goSettings, onExternalChange, preview, type UiError } from "../store";
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
+import { StatusSlot, type StatusModel } from "./StatusSlot";
+import { problemStatusModel } from "./statusLogic";
 import {
   buildPackageModeBadges,
   BUILTIN_CHECKERS,
@@ -42,7 +44,6 @@ import {
   groupTestRows,
   humanizeCheckText,
   isCellVerdictAnomaly,
-  isMissingCompilerError,
   isRowAnomalous,
   logicalSolutionName,
   matchSelfTestResult,
@@ -85,8 +86,9 @@ import {
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
   closePopovers(): boolean;
-  statusPill(): { label: string; bg: string; fg: string; dotColor?: string; expanded: boolean };
-  toggleChecks(): void;
+  statusModel(): StatusModel;
+  statusOpen(): boolean;
+  setStatusOpen(open: boolean): void;
   canFilter(): boolean;
   filterCount(): number;
   toggleFilter(): void;
@@ -108,7 +110,6 @@ export interface BuildConsoleController {
  * - Primary CTA: constant "验证" label (swaps in-place with outline "取消" while running)
  */
 export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController; readOnly: boolean }) {
-  const pill = () => props.ctrl.statusPill();
   const running = () => props.ctrl.running();
   const filterCount = () => props.ctrl.filterCount();
   const canFilter = () => props.ctrl.canFilter();
@@ -124,32 +125,12 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
-      {/* Single Status Pill (neutral surface + small semantic dot; green tint only when ready) */}
-      <View
-        testID="build-single-status-pill"
-        onPress={() => props.ctrl.toggleChecks()}
-        style={{
-          height: 26,
-          minWidth: 102,
-          paddingLeft: 9,
-          paddingRight: 7,
-          borderRadius: 6,
-          backgroundColor: pill().bg,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 6,
-          flexShrink: 0,
-        }}
-      >
-        <If when={!!pill().dotColor}>
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pill().dotColor, flexShrink: 0 }} />
-        </If>
-        <Text style={{ fontSize: 12, fontWeight: 500, color: pill().fg, fontVariant: ["tabular-nums"], numberOfLines: 1 }}>
-          {pill().label}
-        </Text>
-        <Icon name={pill().expanded ? "chevronDown" : "chevronRight"} size={12} tone="secondary-foreground" />
-      </View>
+      <StatusSlot
+        testID="build-status-slot"
+        model={props.ctrl.statusModel()}
+        open={props.ctrl.statusOpen()}
+        onOpenChange={(open) => props.ctrl.setStatusOpen(open)}
+      />
 
       {/* Phase 3D: UB Check button */}
       <View style={{ position: "relative", flexShrink: 0 }}>
@@ -234,7 +215,7 @@ export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController;
                 variant="primary"
                 disabled={props.readOnly}
                 tooltip={tip(t("build.action.verify"), "mod+b")}
-                onPress={() => props.ctrl.startRun("verify")}
+                onPress={() => props.ctrl.triggerPrimaryRun()}
                 style={{
                   width: 82,
                   borderTopRightRadius: 0,
@@ -317,8 +298,7 @@ export function BuildConsole(props: {
   // ── Core live state (P0-2 Single State Model) ──────────────────────────────
   const selection = signal<TreeSelection>({ kind: "results" });
   const onlyAnomalyRows = signal(false);
-  const checksExpanded = signal(false);
-  const passedChecksExpanded = signal(false);
+  const statusOpen = signal(false);
   const filterOpen = signal(false);
   const filterSolutions = signal<string[]>([]);
   const filterTests = signal<string[]>([]);
@@ -388,7 +368,7 @@ export function BuildConsole(props: {
         filterTests.set([]);
         filterOpen.set(false);
         onlyAnomalyRows.set(false);
-        checksExpanded.set(false);
+        statusOpen.set(false);
         dirtyUndoNotice.set(undefined);
         notice.set(undefined);
         finishedReport.set(undefined);
@@ -688,15 +668,21 @@ export function BuildConsole(props: {
     const grp = testGroups().find((g) => g.tests.some((t) => t.index === testIndex));
     const groupId = grp?.id ?? "samples";
     testPaneTab.set("input");
-    checksExpanded.set(false);
+    statusOpen.set(false);
     filterOpen.set(false);
     selection.set({ kind: "testGroup", groupId, testIndex });
   }
 
   function startRun(mode: "debug" | "verify" | "sanitize") {
     if (props.readOnly || isRunningThis()) return;
+    // No compiler: 「检查」 stays enabled and explains in the status popover (§6.1).
+    if (compilerMissing()) {
+      filterOpen.set(false);
+      statusOpen.set(true);
+      return;
+    }
     notice.set(undefined);
-    checksExpanded.set(false);
+    statusOpen.set(false);
     filterOpen.set(false);
     const hasFilter = mode !== "sanitize" && (filterTests().length > 0 || filterSolutions().length > 0);
     const effectiveMode = mode === "sanitize" ? "sanitize" : hasFilter ? "debug" : mode;
@@ -721,7 +707,7 @@ export function BuildConsole(props: {
   async function pickAndRunExternal() {
     if (externalRunning()) return;
     notice.set(undefined);
-    checksExpanded.set(false);
+    statusOpen.set(false);
     filterOpen.set(false);
     const picked = await preview.pickCppFiles({
       title: t("build.external.pickerTitle"),
@@ -797,8 +783,8 @@ export function BuildConsole(props: {
       selectedCell.set(undefined);
       return true;
     }
-    if (checksExpanded()) {
-      checksExpanded.set(false);
+    if (statusOpen()) {
+      statusOpen.set(false);
       return true;
     }
     if (filterOpen()) {
@@ -816,60 +802,54 @@ export function BuildConsole(props: {
     return Math.max(0.06, Math.min(1, buildStatus().completed / tot));
   });
 
-  // P1-6: Neutral surface + small semantic dot; tinted green ONLY for ready-for-contest
-  const statusPillStyle = computed(() => {
-    const st = singleStatus();
-    const dark = colorScheme() === "dark";
-    if (st.kind === "ready") {
-      return {
-        label: t("build.status.ready"),
-        bg: dark ? "rgba(34, 197, 94, 0.14)" : "rgba(22, 163, 74, 0.10)",
-        fg: dark ? "#4ade80" : "#15803d",
-        dotColor: dark ? "#4ade80" : "#16a34a",
-        expanded: checksExpanded(),
-      };
-    }
-    const neutralBg = dark ? "rgba(255, 255, 255, 0.06)" : "rgba(24, 24, 27, 0.05)";
-    const neutralFg = dark ? "#e4e4e7" : "#27272a";
-    if (st.kind === "issues") {
-      return {
-        label: t("build.status.issues", { count: st.issueCount }),
-        bg: neutralBg,
-        fg: neutralFg,
-        dotColor: dark ? "#f87171" : "#dc2626",
-        expanded: checksExpanded(),
-      };
-    }
-    if (st.kind === "needs_reverify") {
-      return {
-        label: t("build.status.needsReverify"),
-        bg: neutralBg,
-        fg: neutralFg,
-        dotColor: dark ? "#fbbf24" : "#d97706",
-        expanded: checksExpanded(),
-      };
-    }
-    return {
-      label: t("build.status.unverified"),
-      bg: neutralBg,
-      fg: dark ? "#a1a1aa" : "#52525b",
-      dotColor: dark ? "#71717a" : "#a1a1aa",
-      expanded: checksExpanded(),
-    };
-  });
+  const statusModel = computed<StatusModel>(() =>
+    problemStatusModel(
+      {
+        hasPackage: hasPackage(),
+        running: isRunningThis() && buildStatus().mode !== "sanitize",
+        progress: { done: buildStatus().completed, total: buildStatus().total },
+        compilerMissing: compilerMissing(),
+        status: singleStatus(),
+        failedGates: partitionedGates().failed,
+        warnGates: partitionedGates().warn,
+        compileFailures: compileFailures(),
+        error: notice(),
+        isZh: isZh(),
+      },
+      {
+        goForGate: (gate) => {
+          const act = nextActionForCheck(gate, activeReport(), inspection()?.files);
+          if (!act) return undefined;
+          return () => {
+            if (act.kind === "view_test") selectTestByIndex(act.testIndex);
+            else if (act.kind === "select_cell") {
+              selection.set({ kind: "results" });
+              selectedCell.set({ testIndex: act.testIndex, solution: act.solution });
+            } else if (act.kind === "open_subtasks") selection.set({ kind: "subtasks" });
+            else if (act.kind === "open_file") openFileInTree(act.relPath);
+          };
+        },
+        openFile: (rel) => openFileInTree(rel),
+        goSettings: () => goSettings("toolchain"),
+      },
+    ),
+  );
 
   props.controller?.({
     triggerPrimaryRun,
     closePopovers,
-    statusPill: () => statusPillStyle(),
-    toggleChecks: () => {
-      filterOpen.set(false);
-      checksExpanded.set(!checksExpanded());
+    statusModel: () => statusModel(),
+    statusOpen: () => statusOpen(),
+    setStatusOpen: (open: boolean) => {
+      if (open) filterOpen.set(false);
+      // An action's error has been read once the popover closes; the slot falls back to the state.
+      else if (notice()) notice.set(undefined);
+      statusOpen.set(open);
     },
     canFilter: () => selection().kind === "results",
     filterCount: () => activeFilterCount(),
     toggleFilter: () => {
-      checksExpanded.set(false);
+      statusOpen.set(false);
       filterOpen.set(!filterOpen());
     },
     running: () => isRunningThis(),
@@ -890,7 +870,7 @@ export function BuildConsole(props: {
   }
 
   function openFileInTree(relPath: string) {
-    checksExpanded.set(false);
+    statusOpen.set(false);
     filterOpen.set(false);
     if (relPath === "validator.cpp" || relPath === inspection()?.files?.validator) {
       selection.set({ kind: "validator" });
@@ -1184,36 +1164,6 @@ export function BuildConsole(props: {
           />
         }
       >
-        {/* Global error notice (when present) */}
-        <If when={notice()}>
-          <View
-            style={{
-              paddingLeft: 14,
-              paddingRight: 14,
-              paddingTop: 8,
-              paddingBottom: 8,
-              borderBottomWidth: 1,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-            class="border-b-border bg-muted/30"
-          >
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <ErrorDisplay error={notice()} onDismiss={() => notice.set(undefined)} />
-            </View>
-            <If when={isMissingCompilerError(notice()?.error)}>
-              <Btn
-                label={t("build.openToolchainSettings")}
-                icon="settings"
-                variant="outline"
-                onPress={() => goSpace("settings")}
-              />
-            </If>
-          </View>
-        </If>
-
         {/* ── Main Split: Left Object Tree (~228pt) + Right Content Area (directly under TitleBar) ── */}
         <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
           {/* Decluttered Left Object Tree */}
@@ -2115,7 +2065,7 @@ export function BuildConsole(props: {
                                             <View
                                               onPress={() => {
                                                 if (cell()) {
-                                                  checksExpanded.set(false);
+                                                  statusOpen.set(false);
                                                   filterOpen.set(false);
                                                   selectedCell.set({ testIndex: row().index, solution: spec().name });
                                                 }
@@ -3823,161 +3773,6 @@ export function BuildConsole(props: {
             </If>
           </View>
         </View>
-
-        {/* ── P0-3 Anchored Overlay Popover: Issues / Checks (NEVER pushes table down!) ── */}
-        <If when={checksExpanded()}>
-          <View
-            testID="build-checks-panel"
-            style={{
-              position: "absolute",
-              top: 6,
-              right: 14,
-              width: 440,
-              maxHeight: 380,
-              borderRadius: 10,
-              borderWidth: 1,
-              boxShadow: popoverShadow(),
-              overflow: "hidden",
-            }}
-            class="bg-popover border-border"
-          >
-            <Scroll style={{ maxHeight: 380 }} contentStyle={{ padding: 12, gap: 8 }}>
-              <If when={singleStatus().kind === "ready"}>
-                <View
-                  testID="build-checks-verified-header"
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    paddingBottom: gates().length > 0 ? 8 : 0,
-                    borderBottomWidth: gates().length > 0 ? 1 : 0,
-                  }}
-                  class="border-border"
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
-                    <Icon name="check" size={13.5} style={{ tintColor: colorScheme() === "dark" ? "#4ade80" : "#16a34a" }} />
-                    <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
-                      {t("build.verified.headline")}
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                    <If when={!!props.onSwitchToStatement}>
-                      <Text
-                        onPress={() => {
-                          checksExpanded.set(false);
-                          props.onSwitchToStatement?.();
-                        }}
-                        style={{ fontSize: 12, fontWeight: 500 }}
-                        class="text-secondary-foreground hover:text-foreground"
-                      >
-                        {t("build.verified.backToStatement")}
-                      </Text>
-                    </If>
-                    <If when={!props.readOnly}>
-                      <Text
-                        onPress={() => {
-                          checksExpanded.set(false);
-                          dialog.set({ kind: "addToContest", problemId: props.problemId });
-                        }}
-                        style={{ fontSize: 12, fontWeight: 500 }}
-                        class="text-primary"
-                      >
-                        {t("build.verified.addToContest")}
-                      </Text>
-                    </If>
-                  </View>
-                </View>
-              </If>
-              <If
-                when={gates().length > 0}
-                else={
-                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-                    {t("build.checks.noChecksYet")}
-                  </Text>
-                }
-              >
-                <Each of={partitionedGates().attention} key={(g) => g.id}>
-                  {(gate) => {
-                    const action = () => nextActionForCheck(gate(), activeReport(), inspection()?.files);
-                    return (
-                      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, paddingTop: 2, paddingBottom: 2 }}>
-                        <View style={{ paddingTop: 2 }}>
-                          <Icon
-                            name={gate().status === "fail" ? "circleAlert" : "triangleAlert"}
-                            size={13.5}
-                            tone={gate().status === "fail" ? "destructive" : "chart-4"}
-                          />
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                            <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
-                              {humanizeCheckText(gate().title, isZh())}
-                            </Text>
-                            <If when={action()}>
-                              {(act) => (
-                                <Text
-                                  onPress={() => {
-                                    checksExpanded.set(false);
-                                    const a = act();
-                                    if (a.kind === "view_test") selectTestByIndex(a.testIndex);
-                                    else if (a.kind === "select_cell") {
-                                      selection.set({ kind: "results" });
-                                      selectedCell.set({ testIndex: a.testIndex, solution: a.solution });
-                                    } else if (a.kind === "open_subtasks") {
-                                      selection.set({ kind: "subtasks" });
-                                    } else if (a.kind === "open_file") openFileInTree(a.relPath);
-                                  }}
-                                  style={{ fontSize: 12, fontWeight: 500 }}
-                                  class="text-primary"
-                                >
-                                  {t("build.check.fix")}
-                                </Text>
-                              )}
-                            </If>
-                          </View>
-                          <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
-                            {humanizeCheckText(gate().message, isZh())}
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  }}
-                </Each>
-
-                <If when={partitionedGates().passed.length > 0}>
-                  <View style={{ borderTopWidth: partitionedGates().attention.length > 0 ? 1 : 0, paddingTop: partitionedGates().attention.length > 0 ? 8 : 0, gap: 4 }} class="border-border">
-                    <View
-                      onPress={() => passedChecksExpanded.set(!passedChecksExpanded())}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
-                    >
-                      <Icon name="check" size={13} tone="secondary-foreground" />
-                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                        {t("build.checks.passedCollapsed", { count: partitionedGates().passed.length })}
-                      </Text>
-                      <Icon
-                        name={passedChecksExpanded() ? "chevronDown" : "chevronRight"}
-                        size={12}
-                        tone="muted-foreground"
-                      />
-                    </View>
-                    <If when={passedChecksExpanded()}>
-                      <View style={{ paddingLeft: 18, gap: 3 }}>
-                        <Each of={partitionedGates().passed} key={(g) => g.id}>
-                          {(gate) => (
-                            <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-                              {`${humanizeCheckText(gate().title, isZh())}  ${humanizeCheckText(gate().message, isZh())}`}
-                            </Text>
-                          )}
-                        </Each>
-                      </View>
-                    </If>
-                  </View>
-                </If>
-              </If>
-            </Scroll>
-          </View>
-        </If>
 
         {/* ── P0-3 Anchored Overlay Popover: Subset Filter (Solutions + Test Tags, NEVER pushes table!) ── */}
         <If when={filterOpen()}>

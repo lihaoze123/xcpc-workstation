@@ -179,15 +179,15 @@ describe("groupProblems dynamic grouping (§5.3)", () => {
     expect(secs[2].rows.map((r) => r.id)).toEqual(["b"]);
   });
 
-  test("package_status mode orders verified_fresh > stale > failed > unverified > none", () => {
+  test("package_status mode groups 有问题 > 未检查 (incl. stale) > 已通过 > none", () => {
     const secs = groupProblems(rows, "package_status", declared, contests);
     expect(secs.map((s) => s.key)).toEqual([
-      "pkg:verified_fresh",
-      "pkg:stale",
       "pkg:failed",
       "pkg:unverified",
+      "pkg:verified_fresh",
       "pkg:none",
     ]);
+    expect(secs[1].rows.map((r) => r.id).sort()).toEqual(["b", "e"]);
   });
 });
 

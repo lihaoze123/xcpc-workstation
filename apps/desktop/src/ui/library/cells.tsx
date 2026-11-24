@@ -9,6 +9,8 @@ import { Chip, RatingBadge, tip } from "../kit";
 import type { CheckboxTriState, LibraryColumnKey } from "../logic";
 import { colorTransition } from "../motion";
 import { MONO } from "../theme";
+import { StatusMark } from "../studio/StatusSlot";
+import { markForPackageStatus } from "../studio/statusLogic";
 
 export type LibraryRow = ProblemSummaryJs & {
   ratingText: string;
@@ -180,25 +182,21 @@ export function renderLibraryCellContent(
     const st = row.packageStatus;
     return (
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}>
-        {st === "verified_fresh" ? (
-          <StatusSlot tooltipText={t("library.status.verified")}>
-            <Icon name="shieldCheck" size={14} tone="primary" />
-          </StatusSlot>
-        ) : st === "stale" ? (
-          <StatusSlot tooltipText={t("library.status.stale")}>
-            <Icon name="circleAlert" size={14} tone="chart-4" />
-          </StatusSlot>
-        ) : st === "failed" ? (
-          <StatusSlot tooltipText={t("library.status.failed")}>
-            <Icon name="triangleAlert" size={14} tone="destructive" />
-          </StatusSlot>
-        ) : st === "unverified" ? (
-          <StatusSlot tooltipText={t("library.status.unverified")}>
-            <Icon name="database" size={13.5} tone="muted-foreground" />
-          </StatusSlot>
-        ) : (
-          <StatusSlot />
-        )}
+        <StatusSlot
+          tooltipText={
+            st === "verified_fresh"
+              ? t("library.status.verified")
+              : st === "failed"
+                ? t("library.status.failed")
+                : st === "stale"
+                  ? t("library.status.stale")
+                  : st === "unverified"
+                    ? t("library.status.unverified")
+                    : undefined
+          }
+        >
+          {st ? <StatusMark kind={markForPackageStatus(st)} /> : undefined}
+        </StatusSlot>
         {row.hasEditorial ? (
           <StatusSlot tooltipText={t("library.status.hasEditorial")}>
             <Icon name="filePenLine" size={13.5} tone="secondary-foreground" />

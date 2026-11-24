@@ -5,7 +5,6 @@ import {
   Animated,
   cleanup,
   Clipboard,
-  colorScheme,
   computed,
   createAnimatedValue,
   effect,
@@ -47,10 +46,12 @@ import {
   pickWorkspace,
   preview,
   refresh,
+  refreshToolchain,
   requestNewWorkspace,
   resetEditorTypography,
   revision,
   settingsSection,
+  toolchainState,
   updateAppearanceMode,
   updateEditorFontSize,
   updateEditorLigatures,
@@ -84,7 +85,6 @@ import {
   hasInvalidCxxOverride,
   middleTruncatePath,
   normalizeCxxOverrideInput,
-  verdictBadgeStyle,
 } from "./studio/buildLogic";
 import {
   formatUpdateSummary,
@@ -628,20 +628,22 @@ function LayoutPane() {
 }
 
 function ToolchainPane() {
-  const status = signal<ToolchainStatusJs>(preview.toolchainStatus());
+  const status = signal<ToolchainStatusJs>(toolchainState() ?? refreshToolchain());
   const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
   const draft = signal(customOverrideInputValue(status().overridePath, compilers()));
   const redetected = createTransientFlag(1400);
   const overrideApplied = createTransientFlag(1500);
+  const advancedOpen = signal(false);
 
   const syncFromStatus = (next: ToolchainStatusJs) => {
     status.set(next);
+    toolchainState.set(next);
     const deduped = dedupDetectedCompilers(next.compilers, next.active);
     draft.set(customOverrideInputValue(next.overridePath, deduped));
   };
 
   const redetect = () => {
-    syncFromStatus(preview.toolchainStatus());
+    syncFromStatus(refreshToolchain());
     redetected.trigger();
   };
 
@@ -660,14 +662,12 @@ function ToolchainPane() {
     syncFromStatus(preview.setCxxOverride(path));
   };
 
-  const dark = () => colorScheme() === "dark";
   const invalidOverride = () => hasInvalidCxxOverride(status());
   const currentCustomVal = () => customOverrideInputValue(status().overridePath, compilers());
   const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== currentCustomVal();
 
   return (
     <View testID="settings-toolchain-pane" style={{ gap: 24 }}>
-      {/* Unified Compilers card: detected list with inline Active badge + one-click Use + custom path row */}
       <Section
         title={t("settings.toolchain.title")}
         description={t("settings.toolchain.desc")}
@@ -685,16 +685,13 @@ function ToolchainPane() {
           when={compilers().length > 0}
           else={
             <SectionRow first>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Icon name="triangleAlert" size={16} tone="destructive" />
-                <View style={{ gap: 2 }}>
-                  <Text testID="toolchain-not-found" style={{ fontSize: 13.5, fontWeight: 500 }} class="text-destructive">
-                    {t("settings.toolchain.notFound")}
-                  </Text>
-                  <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                    {t("settings.toolchain.noDetected")}
-                  </Text>
-                </View>
+              <View style={{ gap: 2 }}>
+                <Text testID="toolchain-not-found" style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                  {t("settings.toolchain.notFound")}
+                </Text>
+                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                  {t("settings.toolchain.noDetected")}
+                </Text>
               </View>
             </SectionRow>
           }
@@ -702,33 +699,18 @@ function ToolchainPane() {
           <Each of={compilers()} key={(c) => c.path}>
             {(compiler, idx) => {
               const isActive = () => status().active?.path === compiler().path;
-              const badge = () => verdictBadgeStyle("AC", dark());
               return (
                 <SectionRow
                   first={idx() === 0}
                   trailing={
                     isActive() ? (
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <View
-                          style={{
-                            height: 20,
-                            paddingLeft: 7,
-                            paddingRight: 7,
-                            borderRadius: 9999,
-                            justifyContent: "center",
-                            backgroundColor: badge().bg,
-                          }}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: 600, color: badge().fg }}>
-                            {t("settings.toolchain.active")}
-                          </Text>
-                        </View>
+                        <Icon name="check" size={14} tone="secondary-foreground" />
+                        <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                          {t("settings.toolchain.active")}
+                        </Text>
                         <If when={Boolean(status().overridePath) && idx() > 0}>
-                          <Btn
-                            label={t("settings.toolchain.clearOverride")}
-                            variant="ghost"
-                            onPress={clearOverride}
-                          />
+                          <Btn label={t("settings.toolchain.clearOverride")} variant="ghost" onPress={clearOverride} />
                         </If>
                       </View>
                     ) : (
@@ -743,7 +725,7 @@ function ToolchainPane() {
                   <View style={{ minWidth: 0, gap: 2 }}>
                     <Text
                       testID={isActive() ? "toolchain-active-name" : undefined}
-                      style={{ fontSize: 13.5, fontWeight: isActive() ? 600 : 500, fontFamily: MONO }}
+                      style={{ fontSize: 14, fontWeight: isActive() ? 600 : 500 }}
                       class="text-foreground"
                     >
                       {compiler().name}
@@ -753,7 +735,7 @@ function ToolchainPane() {
                     </Text>
                     <Text
                       tooltip={tip(compiler().path)}
-                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
+                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, lineHeight: 16, fontFamily: MONO }}
                       class="text-muted-foreground"
                     >
                       {middleTruncatePath(compiler().path, 42)}
@@ -765,7 +747,6 @@ function ToolchainPane() {
           </Each>
         </If>
 
-        {/* Lightweight Custom Path row at the bottom of the unified card */}
         <SectionRow>
           <View style={{ gap: 8 }}>
             <View style={{ gap: 2 }}>
@@ -785,7 +766,7 @@ function ToolchainPane() {
                 autoCorrect={false}
                 onChange={(e) => draft.set(e.value)}
                 onSubmit={applyOverride}
-                class="flex-1 h-8 px-2.5 rounded-md border border-border bg-card text-[12.5px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
+                class="flex-1 h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
                 style={{ fontFamily: MONO }}
               />
               <Btn
@@ -798,11 +779,7 @@ function ToolchainPane() {
                 onPress={applyOverride}
               />
               <If when={Boolean(currentCustomVal())}>
-                <Btn
-                  testID="toolchain-override-clear"
-                  label={t("settings.toolchain.clearOverride")}
-                  onPress={clearOverride}
-                />
+                <Btn testID="toolchain-override-clear" label={t("settings.toolchain.clearOverride")} onPress={clearOverride} />
               </If>
             </View>
             <If when={Boolean(status().error) || invalidOverride()}>
@@ -810,24 +787,90 @@ function ToolchainPane() {
                 {status().error ?? t("settings.toolchain.overrideInvalid", { path: status().overridePath ?? "" })}
               </Text>
             </If>
-            <If when={Boolean(status().envOverride) && !status().overridePath}>
-              <Text style={{ fontSize: 12, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
-                {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
-              </Text>
-            </If>
           </View>
         </SectionRow>
       </Section>
 
       <If when={!status().active}>
-        <Section title={t("settings.toolchain.installTitle")}>
-          <SectionRow first>
-            <Text style={{ fontSize: 12.5, lineHeight: 19 }} class="text-secondary-foreground">
-              {status().installGuide}
-            </Text>
-          </SectionRow>
+        <Section title={t("settings.toolchain.installTitle")} description={t("settings.toolchain.installDesc")}>
+          <Each of={status().installCommands} key={(c) => c.label}>
+            {(c, idx) => (
+              <SectionRow first={idx() === 0}>
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                    {c().label}
+                  </Text>
+                  <CopyableCommand command={c().command} />
+                </View>
+              </SectionRow>
+            )}
+          </Each>
         </Section>
       </If>
+
+      <View style={{ gap: 8 }}>
+        <View
+          testID="toolchain-advanced-toggle"
+          onPress={() => advancedOpen.set(!advancedOpen())}
+          style={{ flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" }}
+        >
+          <Icon name={advancedOpen() ? "chevronDown" : "chevronRight"} size={13} tone="muted-foreground" />
+          <Text style={{ fontSize: 13 }} class="text-secondary-foreground hover:text-foreground">
+            {t("settings.toolchain.advanced")}
+          </Text>
+        </View>
+        <If when={advancedOpen()}>
+          <View testID="toolchain-advanced" style={{ paddingLeft: 17, gap: 6 }}>
+            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+              {t("settings.toolchain.advancedPath")}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+              {t("settings.toolchain.advancedEnv")}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+              {t("settings.toolchain.advancedFlags")}
+            </Text>
+            <If when={Boolean(status().envOverride)}>
+              <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-secondary-foreground">
+                {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
+              </Text>
+            </If>
+          </View>
+        </If>
+      </View>
+    </View>
+  );
+}
+
+/** A shell command in a code block with a copy button (Settings → Toolchain). */
+function CopyableCommand(props: { command: string }) {
+  const copied = createTransientFlag(1200);
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        paddingLeft: 10,
+        paddingRight: 4,
+        paddingTop: 6,
+        paddingBottom: 6,
+        borderRadius: 6,
+      }}
+      class="bg-muted"
+    >
+      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 20, fontFamily: MONO }} class="text-foreground">
+        {props.command}
+      </Text>
+      <IconBtn
+        icon={copied.active() ? "check" : "copy"}
+        size={26}
+        tone="secondary-foreground"
+        tooltip={tip(copied.active() ? t("common.copied") : t("settings.toolchain.copyCommand"))}
+        onPress={() => {
+          void Clipboard.writeText(props.command).then(() => copied.trigger());
+        }}
+      />
     </View>
   );
 }

@@ -810,17 +810,17 @@ export function groupProblems<
 
   // package_status
   const order: { key: string; label: string }[] = [
-    { key: "verified_fresh", label: t("build.status.verifiedFresh") },
-    { key: "stale", label: t("build.status.stale") },
+    // Three states only (authoring-ui-refactor §2): stale counts as not checked.
     { key: "failed", label: t("build.status.failed") },
     { key: "unverified", label: t("build.status.unverified") },
+    { key: "verified_fresh", label: t("build.status.verifiedFresh") },
     { key: "none", label: t("library.groupBucket.noPackage") },
   ];
   const map = new Map<string, T[]>();
   for (const r of rows) {
     const st = r.packageStatus;
     const key =
-      st === "verified_fresh" || st === "stale" || st === "failed" || st === "unverified" ? st : "none";
+      st === "stale" ? "unverified" : st === "verified_fresh" || st === "failed" || st === "unverified" ? st : "none";
     const list = map.get(key);
     if (list) list.push(r);
     else map.set(key, [r]);

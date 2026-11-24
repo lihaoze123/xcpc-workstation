@@ -55,7 +55,7 @@ import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { AuthoringTitleBarControls, BuildConsole, type BuildConsoleController } from "./BuildConsole";
 import { ContestReadinessView } from "./ContestReadinessView";
-import { problemSlugFromDiagnosticFile, shouldShowBuildTab } from "./buildLogic";
+import { shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
 import { Inspector, INSPECTOR_WIDTH } from "./Inspector";
 import { MarkdownEditor, type MarkdownEditorActions } from "./MarkdownEditor";
@@ -643,18 +643,6 @@ export function StudioView(props: { active: boolean }) {
   }
 
   function finding(d: PreviewDiagnostic) {
-    if (d.code?.startsWith("package_")) {
-      if (target()?.target === "contest") {
-        const slug = problemSlugFromDiagnosticFile(d.file);
-        if (slug) {
-          openStudio({ target: "problem", id: slug, initialTab: "build" });
-          return;
-        }
-      } else {
-        setStudioMode("authoring");
-        return;
-      }
-    }
     if (d.file && d.line != null) locate({ file: d.file, line: d.line, column: d.column ?? 1 });
     else if (d.page != null) canvas?.goPage(d.page);
   }

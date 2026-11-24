@@ -71,7 +71,8 @@ pub use sanitize::{
 };
 pub use subtask::{SubtaskValidation, validate_subtask_config};
 pub use toolchain::{
-    CompileDiagnostic, CompileFailure, CompilerKind, CppStd, DetectedCompiler, SourceLanguage,
-    ToolchainStatus, detect_toolchain, parse_compiler_diagnostics, probe_sanitizer_support,
-    resolve_active_compiler, validate_compiler_path,
+    CompileDiagnostic, CompileFailure, CompilerKind, CppStd, DetectedCompiler, InstallCommand,
+    SourceLanguage, ToolchainStatus, detect_toolchain, linux_install_commands,
+    parse_compiler_diagnostics, probe_sanitizer_support, resolve_active_compiler,
+    validate_compiler_path,
 };

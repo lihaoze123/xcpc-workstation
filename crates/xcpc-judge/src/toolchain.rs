@@ -45,6 +45,18 @@ pub struct ToolchainStatus {
     pub env_override: Option<String>,
     /// Platform-specific installation instructions when no compiler is available.
     pub install_guide: String,
+    /// Copyable install commands for this system only (the distro's package manager,
+    /// plus Nix when it is installed).
+    #[serde(default)]
+    pub install_commands: Vec<InstallCommand>,
+}
+
+/// One copyable way to install a C++ compiler on this system.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallCommand {
+    /// Where it applies: 「Arch Linux」「Nix」「macOS」.
+    pub label: String,
+    pub command: String,
 }
 
 /// Supported C++ language standards, selected by file suffix (default C++20).
@@ -263,7 +275,84 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
         override_path,
         env_override,
         install_guide: platform_install_guide().to_owned(),
+        install_commands: platform_install_commands(),
     }
+}
+
+fn platform_install_commands() -> Vec<InstallCommand> {
+    if cfg!(target_os = "macos") {
+        return vec![
+            InstallCommand {
+                label: "macOS".to_owned(),
+                command: "xcode-select --install".to_owned(),
+            },
+            InstallCommand {
+                label: "Homebrew".to_owned(),
+                command: "brew install gcc".to_owned(),
+            },
+        ];
+    }
+    if cfg!(windows) {
+        return vec![InstallCommand {
+            label: "MSYS2".to_owned(),
+            command: "winget install MSYS2.MSYS2\npacman -S mingw-w64-ucrt-x86_64-gcc".to_owned(),
+        }];
+    }
+    let os_release = fs::read_to_string("/etc/os-release").ok();
+    let has_nix = Path::new("/nix/store").is_dir();
+    linux_install_commands(os_release.as_deref(), has_nix)
+}
+
+/// The install commands for a Linux system described by `/etc/os-release` (`ID`,
+/// `ID_LIKE`, `NAME`); every common one when the distro is unknown.
+pub fn linux_install_commands(os_release: Option<&str>, has_nix: bool) -> Vec<InstallCommand> {
+    let field = |key: &str| -> String {
+        os_release
+            .unwrap_or_default()
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{key}=")))
+            .map(|v| v.trim().trim_matches('"').to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let id = field("ID");
+    let like = field("ID_LIKE");
+    let is = |names: &[&str]| {
+        names
+            .iter()
+            .any(|n| id == *n || like.split_whitespace().any(|l| l == *n))
+    };
+    let cmd = |label: &str, command: &str| InstallCommand {
+        label: label.to_owned(),
+        command: command.to_owned(),
+    };
+    let nix = cmd("Nix", "nix profile install nixpkgs#gcc");
+    let distro = if id == "nixos" {
+        return vec![nix];
+    } else if is(&["arch"]) {
+        Some(cmd("Arch Linux", "sudo pacman -S gcc"))
+    } else if is(&["debian", "ubuntu"]) {
+        Some(cmd("Debian / Ubuntu", "sudo apt install g++"))
+    } else if is(&["fedora", "rhel", "centos"]) {
+        Some(cmd("Fedora", "sudo dnf install gcc-c++"))
+    } else if is(&["opensuse", "suse", "opensuse-tumbleweed", "opensuse-leap"]) {
+        Some(cmd("openSUSE", "sudo zypper install gcc-c++"))
+    } else if is(&["alpine"]) {
+        Some(cmd("Alpine", "sudo apk add g++"))
+    } else {
+        None
+    };
+    let mut out = match distro {
+        Some(d) => vec![d],
+        None => vec![
+            cmd("Debian / Ubuntu", "sudo apt install g++"),
+            cmd("Arch Linux", "sudo pacman -S gcc"),
+            cmd("Fedora", "sudo dnf install gcc-c++"),
+        ],
+    };
+    if has_nix {
+        out.push(nix);
+    }
+    out
 }
 
 /// Validates that `path` points to an existing, runnable C++ compiler and returns its
@@ -698,4 +787,28 @@ pub fn parse_compiler_diagnostics(stderr: &str) -> Vec<CompileDiagnostic> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod install_command_tests {
+    use super::linux_install_commands;
+
+    fn labels(os: &str, nix: bool) -> Vec<String> {
+        linux_install_commands(Some(os), nix)
+            .into_iter()
+            .map(|c| c.label)
+            .collect()
+    }
+
+    #[test]
+    fn picks_the_distro_and_adds_nix_only_when_present() {
+        assert_eq!(labels("ID=cachyos\nID_LIKE=arch\n", false), ["Arch Linux"]);
+        assert_eq!(
+            labels("ID=ubuntu\nID_LIKE=debian\n", true),
+            ["Debian / Ubuntu", "Nix"]
+        );
+        assert_eq!(labels("ID=\"fedora\"\n", false), ["Fedora"]);
+        assert_eq!(labels("ID=nixos\n", true), ["Nix"]);
+        assert_eq!(linux_install_commands(None, false).len(), 3);
+    }
 }

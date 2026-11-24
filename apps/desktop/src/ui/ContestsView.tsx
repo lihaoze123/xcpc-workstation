@@ -31,6 +31,8 @@ import {
   workspaceVersion,
   type UiError,
 } from "./store";
+import { StatusMark } from "./studio/StatusSlot";
+import { markForPackageStatus } from "./studio/statusLogic";
 
 const ROW_STRIDE = 54; // 52pt row + 2pt gap
 
@@ -646,18 +648,15 @@ function ContestPanel(props: { id: string }) {
                     <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13.5 }} class={item().missing ? "text-destructive" : "text-foreground"}>
                       {item().missing ? t("contests.missingSuffix", { title: item().title }) : item().title}
                     </Text>
-                    <If when={item().packageStatus && item().packageStatus !== "verified_fresh"}>
-                      <Text
-                        style={{ fontSize: 11, flexShrink: 0 }}
-                        class={item().packageStatus === "failed" ? "text-destructive" : "text-muted-foreground"}
-                      >
-                        {item().packageStatus === "failed"
-                          ? t("library.package.failed")
-                          : item().packageStatus === "stale"
-                            ? t("library.package.stale")
-                            : t("library.package.unverified")}
-                      </Text>
-                    </If>
+                    <View
+                      tooltip={
+                        item().packageStatus && item().packageStatus !== "verified_fresh"
+                          ? tip(item().packageStatus === "failed" ? t("library.package.failed") : t("library.package.unverified"))
+                          : undefined
+                      }
+                    >
+                      <StatusMark kind={markForPackageStatus(item().packageStatus)} />
+                    </View>
                     <Text style={{ width: 110, fontSize: 12.5, textAlign: "right", fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                       {[item().limits.time, item().limits.memory].filter(Boolean).join(" / ")}
                     </Text>

@@ -35,13 +35,13 @@ use crate::types::{
     JsonReportResultJs, MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs,
     PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs,
     PackageInspectionResultJs, PdfFreshnessJs, PolygonImportResultJs, PreviewDiagnostic,
-    PreviewLocationJs, PreviewRequest, PreviewResult, PreviewView, ProblemAssetJs, ProblemDetailJs,
-    ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs, SamplePairJs,
-    SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
-    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem, diff_kind_str,
-    extract_report, first_error, limits_to_js, parse_namespaced_options_json, rating_tier_str,
-    source_to_js,
+    PreviewLocationJs, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
+    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSummaryJs, RatingBucketJs,
+    SamplePairJs, SavePackageFileResultJs, SaveResult, SourceLocationJs, TagCountJs,
+    TestCasePreviewJs, ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem, diff_kind_str, extract_report, first_error, limits_to_js,
+    parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
@@ -685,7 +685,7 @@ impl State {
                 }
             };
             let (Some(compiled), Some(doc)) = (compiled, doc) else {
-                let (error, diagnostics, starts) = extract_report(&report);
+                let (error, diagnostics, starts) = preview_report(&report);
                 return PreviewResult {
                     error,
                     diagnostics,
@@ -754,10 +754,7 @@ impl State {
         if cancelled {
             return result;
         }
-        let (error, mut diagnostics, starts) = extract_report(&cached.report);
-        if let Target::Problem(slug) = request.target() {
-            append_package_preflight_diagnostics(&ws, &slug, &mut diagnostics);
-        }
+        let (error, diagnostics, starts) = preview_report(&cached.report);
         result.error = error;
         result.diagnostics = diagnostics;
         result.starts = starts;
@@ -5356,85 +5353,27 @@ fn freshness_status_str(f: &xcpc_judge::PackageFreshness) -> &'static str {
     }
 }
 
-fn append_package_preflight_diagnostics(
-    ws: &Workspace,
-    slug: &str,
-    diagnostics: &mut Vec<PreviewDiagnostic>,
-) {
-    // Avoid duplicating package freshness findings already emitted by `xcpc-lint`.
-    if diagnostics
+/// The preview HUD only reports the statement's own problems (authoring-ui-refactor §6.6):
+/// whether the test data has been checked is the status slot's job, not a preflight error.
+/// Freezing still checks it through `xcpc-lint`.
+fn preview_report(
+    report: &publish::Report,
+) -> (Option<String>, Vec<PreviewDiagnostic>, Vec<PreviewStart>) {
+    let (_, diagnostics, starts) = extract_report(report);
+    let diagnostics: Vec<PreviewDiagnostic> = diagnostics
+        .into_iter()
+        .filter(|d| !d.code.as_deref().is_some_and(|c| c.starts_with("package_")))
+        .collect();
+    let error = report
+        .diagnostics
         .iter()
-        .any(|d| d.code.as_deref().is_some_and(|c| c.starts_with("package_")))
-    {
-        return;
-    }
-    let Ok(freshness) = xcpc_judge::check_package_freshness(ws, slug) else {
-        return;
-    };
-    match freshness {
-        xcpc_judge::PackageFreshness::NotAPackage
-        | xcpc_judge::PackageFreshness::VerifiedFresh { .. } => {}
-        xcpc_judge::PackageFreshness::Unverified { .. } => {
-            diagnostics.push(PreviewDiagnostic {
-                severity: "warning".to_owned(),
-                code: Some("package_unverified".to_owned()),
-                message: "题目包尚未通过严格验收".to_owned(),
-                file: None,
-                line: None,
-                column: None,
-                page: None,
-            });
-        }
-        xcpc_judge::PackageFreshness::Stale { .. } => {
-            diagnostics.push(PreviewDiagnostic {
-                severity: "warning".to_owned(),
-                code: Some("package_stale".to_owned()),
-                message: "题目包文件已变更，需重新严格验收".to_owned(),
-                file: None,
-                line: None,
-                column: None,
-                page: None,
-            });
-        }
-        xcpc_judge::PackageFreshness::Failed { summary, .. } => {
-            let mut emitted_gates = 0usize;
-            if let Some(report) = xcpc_judge::load_latest_report(ws, slug) {
-                for gate in report
-                    .gates
-                    .into_iter()
-                    .filter(|g| g.status == xcpc_judge::GateStatus::Fail)
-                    .take(3)
-                {
-                    diagnostics.push(PreviewDiagnostic {
-                        severity: "error".to_owned(),
-                        code: Some(format!("package_gate:{}", gate.id)),
-                        message: format!("{}：{}", gate.title, gate.message),
-                        file: None,
-                        line: None,
-                        column: None,
-                        page: None,
-                    });
-                    emitted_gates += 1;
-                }
-            }
-            if emitted_gates == 0 {
-                let message = if summary.trim().is_empty() {
-                    "题目包验收未通过".to_owned()
-                } else {
-                    format!("题目包验收未通过：{summary}")
-                };
-                diagnostics.push(PreviewDiagnostic {
-                    severity: "error".to_owned(),
-                    code: Some("package_failed".to_owned()),
-                    message,
-                    file: None,
-                    line: None,
-                    column: None,
-                    page: None,
-                });
-            }
-        }
-    }
+        .filter(|d| !d.code.as_deref().is_some_and(|c| c.starts_with("package_")))
+        .find(|d| d.is_error())
+        .map(|d| match (&d.file, d.line) {
+            (Some(f), Some(l)) => format!("{f}:{l}: {}", d.message),
+            _ => d.message.clone(),
+        });
+    (error, diagnostics, starts)
 }
 
 fn book_freshness(

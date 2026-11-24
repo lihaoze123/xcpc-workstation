@@ -11,6 +11,7 @@ import {
   type BatchExportRequestJs,
   type BatchTaskSnapshotJs,
   type PackageWarningJs,
+  type ToolchainStatusJs,
   type WorkspaceInfo,
 } from "xcpc-workstation/native";
 import type { Book, LibraryGroupBy, Space } from "./logic";
@@ -45,6 +46,28 @@ import {
 } from "./theme";
 
 export const preview = new Preview(process.dataDir);
+
+// ── The C++ compiler, detected once and on 重新检测 (authoring-ui-refactor §6.1) ──────
+// Status slots say 「没有找到 C++ 编译器」 before any check is started.
+
+export const toolchainState = signal<ToolchainStatusJs | undefined>(undefined);
+
+/** Detects the compilers again and remembers the result. */
+export function refreshToolchain(): ToolchainStatusJs {
+  const next = preview.toolchainStatus();
+  toolchainState.set(next);
+  return next;
+}
+
+/** Whether no C++ compiler is usable (unknown until the first detection). */
+export function compilerMissing(): boolean {
+  const s = toolchainState();
+  return !!s && !s.active;
+}
+
+setTimeout(() => {
+  if (toolchainState() === undefined) refreshToolchain();
+}, 0);
 
 /** What the studio shows: a problem, or a contest (and the problem of it in the editor). */
 export type StudioTarget = {
