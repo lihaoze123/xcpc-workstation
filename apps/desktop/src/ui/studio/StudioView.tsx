@@ -50,7 +50,9 @@ import {
   type StudioTarget,
   type UiError,
 } from "../store";
+import { afterNextPaint } from "../frame";
 import { panelTransition } from "../motion";
+import { traceInteraction, traceUntilPaint } from "../trace";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
@@ -656,6 +658,42 @@ export function StudioView(props: { active: boolean }) {
     if (jump) canvas?.jumpTo(next);
   }
 
+  // Outline clicks commit only the highlight with the input; the editor,
+  // inspector and preview follow once that frame is on screen. A newer click
+  // supersedes a pending one, so fast A→B→C only builds C.
+  const pendingLabel = signal<string | undefined>(undefined);
+  let pendingSelect = 0;
+  // Leaving the studio cancels a pending swap (it would reopen the studio).
+  cleanup(() => void (pendingSelect += 1));
+  function selectLabelSoon(next: string) {
+    traceInteraction("outline.select", () => {
+      if (next === (pendingLabel() ?? label())) {
+        coverActive.set(false);
+        canvas?.jumpTo(next);
+        return;
+      }
+      const token = ++pendingSelect;
+      const contestId = target()?.id;
+      batch(() => {
+        coverActive.set(false);
+        pendingLabel.set(next);
+      });
+      afterNextPaint(() => {
+        if (token !== pendingSelect) return;
+        if (target()?.id !== contestId) {
+          pendingLabel.set(undefined);
+          return;
+        }
+        traceUntilPaint("ux.content", "outline.select", () =>
+          batch(() => {
+            selectLabel(next);
+            pendingLabel.set(undefined);
+          }),
+        );
+      });
+    });
+  }
+
   /** Opens the source of `loc` in the editor: its problem, its tab, its line. */
   function locate(loc: SourceLocationJs) {
     const t = target();
@@ -1219,11 +1257,11 @@ export function StudioView(props: { active: boolean }) {
             <Outline
               detail={contest()!}
               starts={starts()}
-              current={label()}
+              current={pendingLabel() ?? label()}
               coverActive={coverActive()}
               readOnly={info().readOnly}
               markFor={outlineMark}
-              onSelect={(l) => selectLabel(l)}
+              onSelect={(l) => selectLabelSoon(l)}
               onCover={() => {
                 coverActive.set(true);
                 canvas?.goPage(0);

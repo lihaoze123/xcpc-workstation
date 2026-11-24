@@ -1146,14 +1146,12 @@ export function PreviewCanvas(props: {
     compile,
     lastCompileMs: () => lastCompileDurationMs,
     jumpTo(label: string) {
-      traceInteraction("preview.jump_problem", () => {
-        const start = lastStarts.find((x) => x.label === label);
-        if (start && shownKey === key() && zoom() > 0) {
-          goPage(start.page, true);
-          return;
-        }
-        jumpTo = label;
-      });
+      const start = lastStarts.find((x) => x.label === label);
+      if (start && shownKey === key() && zoom() > 0) {
+        goPage(start.page, true);
+        return;
+      }
+      jumpTo = label;
     },
     goPage,
     scrollToLocation,

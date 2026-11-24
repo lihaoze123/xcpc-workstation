@@ -7,6 +7,7 @@
 import { batch, computed, signal } from "nsh";
 import { describe, expect, test } from "nsh/test";
 import { Preview } from "xcpc-workstation/native";
+import { afterNextPaint } from "./frame";
 import { adaptiveCompileDelayMs, neighborPagesToPrewarm } from "./logic";
 import { matrixCellKey, type MatrixCellData } from "./studio/buildLogic";
 import { createMatrixCellStore, stepMatrixSelection } from "./studio/matrixStore";
@@ -134,6 +135,16 @@ describe("UI/UX quantitative gates (Phase 1)", () => {
     // 60Hz jank is display independent: > 1.5 x 16.67ms.
     expect(isJank60(16.8)).toBe(false);
     expect(isJank60(25.1)).toBe(true);
+  });
+
+  test("afterNextPaint defers work past the current commit and runs it exactly once", async () => {
+    let runs = 0;
+    afterNextPaint(() => {
+      runs += 1;
+    }, 30);
+    expect(runs).toBe(0);
+    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    expect(runs).toBe(1);
   });
 
   test("adaptive typing cadence fires fast on pause and coalesces cleanly during bursts", () => {

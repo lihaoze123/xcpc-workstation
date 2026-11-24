@@ -307,15 +307,28 @@ export function traceInstant(cat: string, name: string, args?: Record<string, un
  * *after* the one that applies the update starts (double rAF), i.e. once the
  * commit, layout and paint triggered by `fn()` are done. A single rAF fires
  * before NSH applies the update and would only time the handler itself.
+ * Work `fn()` defers with `afterNextPaint` runs after this span closes.
  */
 export function traceInteraction<T>(
   name: string,
   fn: () => T,
   args?: Record<string, unknown>,
 ): T {
+  return traceUntilPaint("ux.inp", `ux.inp.${name}`, fn, args);
+}
+
+/**
+ * Like `traceInteraction`, under any category: e.g. `ux.content` for the
+ * deferred half of a split interaction (how long until the content is shown).
+ */
+export function traceUntilPaint<T>(
+  cat: string,
+  name: string,
+  fn: () => T,
+  args?: Record<string, unknown>,
+): T {
   if (!recording) return fn();
   const start = nowMs();
-  const result = fn();
   let done = false;
   let fallback: ReturnType<typeof setTimeout> | undefined;
   const finish = (timedOut: boolean) => {
@@ -323,8 +336,8 @@ export function traceInteraction<T>(
     done = true;
     if (fallback !== undefined) clearTimeout(fallback);
     pushJsEvent({
-      name: `ux.inp.${name}`,
-      cat: "ux.inp",
+      name,
+      cat,
       ph: "X",
       tsMs: start,
       durMs: Math.max(0, nowMs() - start),
@@ -332,14 +345,17 @@ export function traceInteraction<T>(
       args: timedOut ? { ...args, timedOut: true } : args,
     });
   };
+  // Registered before `fn()` runs so its frame callbacks come first: a deferred
+  // content swap that `fn()` schedules for the same frame lands after the span.
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => requestAnimationFrame(() => finish(false)));
     // Only for hosts without a running frame clock (headless tests): a stalled
     // engine thread delays this timer just as much as the frames, so it never
     // cuts a real long interaction short.
     fallback = setTimeout(() => finish(true), 1000);
-  } else {
-    finish(false);
+    return fn();
   }
+  const result = fn();
+  finish(false);
   return result;
 }
