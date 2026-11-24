@@ -129,8 +129,12 @@ export function hasWorkspace(): boolean {
 
 /** Reads the workspace again after a change and tells the views. */
 export function refresh() {
+  const next = traceSpan("ipc", "workspace", () => preview.workspace());
   batch(() => {
-    info.set(traceSpan("ipc", "workspace", () => preview.workspace()));
+    info.set(next);
+    if (!next.trainingEnabled && space() === "training") {
+      space.set("problems");
+    }
     revision.set(revision() + 1);
   });
 }
@@ -221,6 +225,7 @@ export function savePrefs(patch: Partial<AppPrefsJs>) {
 
 function initialSpace(): Space {
   const s = prefs.lastSpace;
+  if (s === "training") return info().trainingEnabled ? "training" : "problems";
   return s === "problems" || s === "contests" || s === "settings" ? s : "problems";
 }
 
@@ -252,11 +257,12 @@ function restoreStudio(): StudioTarget | undefined {
 }
 
 export function goSpace(next: Space) {
+  const target: Space = next === "training" && !info().trainingEnabled ? "problems" : next;
   batch(() => {
     studio.set(undefined);
-    space.set(next);
+    space.set(target);
   });
-  savePrefs({ lastSpace: next, lastTarget: null, lastId: null, lastLabel: null });
+  savePrefs({ lastSpace: target, lastTarget: null, lastId: null, lastLabel: null });
 }
 
 /** Navigates directly to a specific settings section. */
@@ -310,6 +316,9 @@ function adopt(next: WorkspaceInfo, failContext: string) {
       workspaceVersion.set(workspaceVersion() + 1);
     }
     info.set(next);
+    if (!next.trainingEnabled && space() === "training") {
+      space.set("problems");
+    }
     revision.set(revision() + 1);
   });
   if (switched) {

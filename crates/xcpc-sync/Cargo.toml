@@ -13,3 +13,4 @@ tempfile.workspace = true
 thiserror.workspace = true
 xcpc-domain.workspace = true
 xcpc-plugin.workspace = true
+xcpc-storage.workspace = true

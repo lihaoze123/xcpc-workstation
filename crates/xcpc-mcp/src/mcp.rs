@@ -31,7 +31,8 @@ use serde_json::{Map, Value, json};
 use xcpc_convert::publish::{self, Kind, Target};
 use xcpc_domain::{
     ContestMetaPatch, GroupFilter, Language, LimitsPatch, OverridePatch, Patch, ProblemMetaPatch,
-    SearchQuery, TemplateOptionValue, TemplateOptionsPatch,
+    ProblemSource, SearchQuery, SyncedProblemStatus, TemplateOptionValue, TemplateOptionsPatch,
+    TrainingLogEntry, TrainingLogStatus,
 };
 use xcpc_engine::{Engine, FontOptions};
 use xcpc_storage::{Workspace, WorkspaceIndex};
@@ -164,6 +165,9 @@ impl Server {
             "run_external_solution" => self.tool_run_external_solution(obj),
             "import_polygon" => self.tool_import_polygon(obj),
             "export_oj_package" => self.tool_export_oj_package(obj),
+            "get_training_dashboard" => self.tool_get_training_dashboard(obj),
+            "set_training_status" => self.tool_set_training_status(obj),
+            "ingest_problem" => self.tool_ingest_problem(obj),
             _ => Err(None),
         }
     }
@@ -1324,6 +1328,210 @@ impl Server {
         value["ok"] = json!(true);
         Ok(structured(value))
     }
+
+    fn tool_get_training_dashboard(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["window", "heatmap_year", "tag_min_rating"],
+            "get_training_dashboard",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+        let window = match opt_str(args, "window").map_err(|m| fail("invalid_arguments", m))? {
+            None => xcpc_sync::TimeWindow::All,
+            Some(raw) => raw
+                .parse::<xcpc_sync::TimeWindow>()
+                .map_err(|m| fail("invalid_arguments", m))?,
+        };
+        let heatmap_year =
+            opt_i32(args, "heatmap_year").map_err(|m| fail("invalid_arguments", m))?;
+        let tag_min_rating =
+            opt_i64(args, "tag_min_rating").map_err(|m| fail("invalid_arguments", m))?;
+
+        let data_dir = mcp_data_dir()?;
+        let db = xcpc_sync::SyncDb::open(&data_dir).map_err(sync_err)?;
+        let config = xcpc_sync::SyncConfig::load(&data_dir).map_err(sync_err)?;
+        let query = xcpc_sync::TrainingDashboardQuery {
+            window,
+            heatmap_year,
+            tag_min_rating,
+            now_unix: None,
+        };
+        let dashboard = xcpc_sync::compute_training_dashboard(&db, &config, Some(&self.ws), &query)
+            .map_err(sync_err)?;
+        let mut value = serde_json::to_value(&dashboard).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_set_training_status(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &["problem_id", "status", "platform", "source_id"],
+            "set_training_status",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let problem_id = req_str(args, "problem_id").map_err(|m| fail("invalid_arguments", m))?;
+        let status_raw = req_str(args, "status").map_err(|m| fail("invalid_arguments", m))?;
+        let log_status = status_raw
+            .parse::<TrainingLogStatus>()
+            .map_err(|m| fail("invalid_arguments", m))?;
+        let platform = opt_str(args, "platform")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+        let source_id = opt_str(args, "source_id")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+
+        let problem = self
+            .ws
+            .load_problem(&problem_id)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+
+        let source = match (platform, source_id) {
+            (Some(p), Some(sid)) => {
+                let existing_url = problem
+                    .meta
+                    .sources
+                    .iter()
+                    .find(|s| s.matches(&p, &sid))
+                    .and_then(|s| s.url.clone());
+                Some(ProblemSource {
+                    platform: p,
+                    id: sid,
+                    url: existing_url,
+                })
+            }
+            (None, None) => problem.meta.sources.first().cloned(),
+            _ => {
+                return Err(fail(
+                    "invalid_arguments",
+                    "specify both `platform` and `source_id`, or omit both",
+                ));
+            }
+        };
+
+        let entry = TrainingLogEntry {
+            at: xcpc_sync::now_rfc3339_utc(),
+            problem_id: Some(problem.id.clone()),
+            source,
+            status: log_status,
+        };
+        self.ws
+            .append_training_log(&entry)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+
+        let synced = match mcp_data_dir() {
+            Ok(data_dir) if xcpc_sync::SyncDb::db_path(&data_dir).is_file() => {
+                xcpc_sync::SyncDb::open(&data_dir)
+                    .map_err(sync_err)?
+                    .get_problem_sync_status(&problem.meta.sources)
+                    .map_err(sync_err)?
+            }
+            _ => SyncedProblemStatus::default(),
+        };
+        let derived = self
+            .ws
+            .derive_problem_training_status(&problem.id, &problem.meta.sources, synced)
+            .map_err(|e| fail(e.code(), e.to_string()))?;
+
+        Ok(structured(json!({
+            "ok": true,
+            "problem_id": problem.id,
+            "recorded": log_status,
+            "status": derived,
+            "synced": {
+                "ac": synced.ac,
+                "attempted": synced.attempted,
+            },
+            "at": entry.at,
+        })))
+    }
+
+    fn tool_ingest_problem(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &[
+                "url",
+                "platform",
+                "problem_key",
+                "id",
+                "title",
+                "tags",
+                "rating",
+                "initial_status",
+            ],
+            "ingest_problem",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let url = opt_str(args, "url").map_err(|m| fail("invalid_arguments", m))?;
+        let platform = opt_str(args, "platform").map_err(|m| fail("invalid_arguments", m))?;
+        let problem_key = opt_str(args, "problem_key").map_err(|m| fail("invalid_arguments", m))?;
+        let id = opt_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
+        let title = opt_str(args, "title").map_err(|m| fail("invalid_arguments", m))?;
+        let tags = opt_str_vec_present(args, "tags").map_err(|m| fail("invalid_arguments", m))?;
+        let rating = opt_i64(args, "rating").map_err(|m| fail("invalid_arguments", m))?;
+        let initial_status =
+            match opt_str(args, "initial_status").map_err(|m| fail("invalid_arguments", m))? {
+                None => None,
+                Some(raw) => Some(
+                    raw.parse::<TrainingLogStatus>()
+                        .map_err(|m| fail("invalid_arguments", m))?,
+                ),
+            };
+
+        let data_dir = mcp_data_dir()?;
+        let req = xcpc_sync::IngestProblemRequest {
+            url,
+            platform,
+            problem_key,
+            id,
+            title,
+            tags,
+            rating,
+            initial_status,
+        };
+        let res = xcpc_sync::ingest_problem(&self.ws, &data_dir, None, &req).map_err(sync_err)?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+}
+
+fn mcp_data_dir() -> Result<PathBuf, ToolErr> {
+    xcpc_sync::default_data_dir().ok_or_else(|| {
+        fail(
+            "invalid_data_dir",
+            "could not determine XCPC data directory; set XCPC_DATA_DIR",
+        )
+    })
+}
+
+fn sync_err(e: xcpc_sync::SyncError) -> ToolErr {
+    match e {
+        xcpc_sync::SyncError::Storage(se) => fail(se.code(), se.to_string()),
+        xcpc_sync::SyncError::Plugin(pe) => fail(pe.code(), pe.to_string()),
+        xcpc_sync::SyncError::PlatformNotFound(m) => fail(
+            "platform_not_found",
+            format!("platform not found or disabled: {m}"),
+        ),
+        xcpc_sync::SyncError::InvalidDataDir(m) => {
+            fail("invalid_data_dir", format!("invalid data directory: {m}"))
+        }
+        xcpc_sync::SyncError::InvalidInput(m) => fail("invalid_arguments", m),
+        xcpc_sync::SyncError::Io(err) => fail("io", err.to_string()),
+        xcpc_sync::SyncError::Json(err) => fail("json", err.to_string()),
+        xcpc_sync::SyncError::Sqlite(err) => fail("sqlite", err.to_string()),
+    }
 }
 
 fn is_known_tool(name: &str) -> bool {
@@ -1357,6 +1565,9 @@ fn is_known_tool(name: &str) -> bool {
             | "run_external_solution"
             | "import_polygon"
             | "export_oj_package"
+            | "get_training_dashboard"
+            | "set_training_status"
+            | "ingest_problem"
     )
 }
 
@@ -1483,6 +1694,41 @@ fn opt_u32(obj: &Map<String, Value>, key: &str) -> Result<Option<u32>, String> {
                 .map(Some)
                 .map_err(|_| format!("`{key}` is out of range"))
         }
+    }
+}
+
+fn opt_i64(obj: &Map<String, Value>, key: &str) -> Result<Option<i64>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| format!("`{key}` must be an integer")),
+    }
+}
+
+fn opt_i32(obj: &Map<String, Value>, key: &str) -> Result<Option<i32>, String> {
+    match opt_i64(obj, key)? {
+        None => Ok(None),
+        Some(n) => i32::try_from(n)
+            .map(Some)
+            .map_err(|_| format!("`{key}` is out of range")),
+    }
+}
+
+fn opt_str_vec_present(obj: &Map<String, Value>, key: &str) -> Result<Option<Vec<String>>, String> {
+    match obj.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("`{key}` must be an array of strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(format!("`{key}` must be an array of strings")),
     }
 }
 
@@ -1962,7 +2208,73 @@ fn tools() -> Value {
     if let Some(pkg) = package_tools().as_array() {
         all.extend(pkg.iter().cloned());
     }
+    if let Some(tr) = training_tools().as_array() {
+        all.extend(tr.iter().cloned());
+    }
     Value::Array(all)
+}
+
+fn training_tools() -> Value {
+    json!([
+        {
+            "name": "get_training_dashboard",
+            "title": "Get training dashboard",
+            "description": "Read-only personal training analytics aggregated from synced OJ cache (`oj_sync.db`) and the workspace: \
+                per-platform ratings, KPIs (today/week/month/window/total AC & submissions, streak), dual-mode heatmap, \
+                rating trajectories, effective difficulty progression (P75/P90), unified rating buckets, tag distribution, \
+                unsolved attempted problems, and workspace backlog (`todo`/`attempted`).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window": { "type": "string", "enum": ["30d", "90d", "year", "all"], "description": "Global time window (default \"all\")." },
+                    "heatmap_year": { "type": "integer", "description": "Calendar year for the daily heatmap (default current year)." },
+                    "tag_min_rating": { "type": "integer", "description": "Optional minimum unified rating filter for tag distribution (e.g. 1600, 1900, 2200)." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
+        {
+            "name": "set_training_status",
+            "title": "Set training status",
+            "description": "Append a personal training status change (`todo`, `attempted`, `ac`, `upsolved`, or `clear`) to `training/logs.jsonl` \
+                and return the updated derived status (never writes training status into `problem.toml`). Refused under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "problem_id": { "type": "string", "description": "Workspace problem ID (slug under problems/)." },
+                    "status": { "type": "string", "enum": ["todo", "attempted", "ac", "upsolved", "clear"], "description": "Training status to record." },
+                    "platform": { "type": "string", "description": "Optional external OJ platform (must be paired with `source_id`; defaults to problem's first `[[source]]`)." },
+                    "source_id": { "type": "string", "description": "Optional external problem key/ID (must be paired with `platform`)." },
+                },
+                "required": ["problem_id", "status"],
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+        {
+            "name": "ingest_problem",
+            "title": "Ingest external OJ problem",
+            "description": "Ingest an external OJ problem (by URL or `(platform, problem_key)`) into the workspace problem library, \
+                automatically deduplicating by `[[source]]`, enriching title/rating/tags from `oj_sync.db`, and optionally recording \
+                an initial training status in `training/logs.jsonl`. Refused under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "External OJ problem URL (e.g. Codeforces or AtCoder)." },
+                    "platform": { "type": "string", "description": "External OJ platform ID (e.g. codeforces, atcoder)." },
+                    "problem_key": { "type": "string", "description": "External OJ problem key (e.g. 1999A, abc350_d)." },
+                    "id": { "type": "string", "description": "Optional explicit problem slug under `problems/<id>/`." },
+                    "title": { "type": "string", "description": "Optional explicit problem title override." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional explicit tags list." },
+                    "rating": { "type": "integer", "description": "Optional explicit unified difficulty rating." },
+                    "initial_status": { "type": "string", "enum": ["todo", "attempted", "ac", "upsolved", "clear"], "description": "Optional initial training status to append to `training/logs.jsonl`." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+        },
+    ])
 }
 
 fn package_tools() -> Value {
@@ -2220,6 +2532,9 @@ mod tests {
                 "run_external_solution",
                 "import_polygon",
                 "export_oj_package",
+                "get_training_dashboard",
+                "set_training_status",
+                "ingest_problem",
             ]
         );
         assert!(

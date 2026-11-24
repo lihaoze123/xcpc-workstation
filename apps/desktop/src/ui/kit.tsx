@@ -268,7 +268,7 @@ export function Lock(props: { closed: boolean; size?: number }) {
  * the active item changes in the frame of the press.
  */
 export function Segmented<T extends string>(props: {
-  items: readonly { value: T; label: string; keys?: string }[];
+  items: readonly { value: T; label: string; keys?: string; testID?: string }[];
   value: T;
   onChange: (value: T) => void;
   itemWidth?: number;
@@ -308,6 +308,7 @@ export function Segmented<T extends string>(props: {
           const active = () => item().value === props.value;
           return (
             <View
+              testID={item().testID}
               disabled={props.disabled}
               onPress={() => {
                 if (!props.disabled) props.onChange(item().value);

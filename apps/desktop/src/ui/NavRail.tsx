@@ -44,16 +44,23 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
   );
 }
 
-export function NavRail(props: { space: Space; onChange: (space: Space) => void }) {
-  const lastTopSpace = signal<"problems" | "contests">(props.space === "contests" ? "contests" : "problems");
+type TopSpace = "problems" | "contests" | "training";
+
+function isTopSpace(s: Space): s is TopSpace {
+  return s === "problems" || s === "contests" || s === "training";
+}
+
+export function NavRail(props: { space: Space; trainingEnabled?: boolean; onChange: (space: Space) => void }) {
+  const showTraining = () => props.trainingEnabled !== false;
+  const lastTopSpace = signal<TopSpace>(isTopSpace(props.space) ? props.space : "problems");
   const slideTop = signal(false);
   let prevSpace: Space = props.space;
 
   effect(() => {
     const cur = props.space;
-    if (cur === "problems" || cur === "contests") {
-      // Glide only between adjacent top-group items; returning from settings fades in at target.
-      slideTop.set(prevSpace === "problems" || prevSpace === "contests");
+    if (isTopSpace(cur)) {
+      // Glide smoothly between top-group items; returning from settings fades in at target.
+      slideTop.set(isTopSpace(prevSpace));
       lastTopSpace.set(cur);
     } else {
       slideTop.set(false);
@@ -61,8 +68,13 @@ export function NavRail(props: { space: Space; onChange: (space: Space) => void 
     prevSpace = cur;
   });
 
-  const inTopGroup = () => props.space === "problems" || props.space === "contests";
-  const topIndicatorY = () => (lastTopSpace() === "contests" ? ITEM_SIZE + ITEM_GAP : 0);
+  const inTopGroup = () => isTopSpace(props.space);
+  const topIndicatorY = () => {
+    const cur = lastTopSpace();
+    if (cur === "contests") return ITEM_SIZE + ITEM_GAP;
+    if (cur === "training" && showTraining()) return 2 * (ITEM_SIZE + ITEM_GAP);
+    return 0;
+  };
   const fadeTransition = (): ViewStyle => ({
     transitionProperty: "opacity",
     transitionDuration: ms(120),
@@ -109,8 +121,11 @@ export function NavRail(props: { space: Space; onChange: (space: Space) => void 
         />
         {item("problems", "libraryBig", "mod+1")}
         {item("contests", "trophy", "mod+2")}
+        <If when={showTraining()}>
+          {item("training", "crown", "mod+3")}
+        </If>
         <View style={{ flex: 1 }} />
-        {item("settings", "settings", "mod+3")}
+        {item("settings", "settings", showTraining() ? "mod+4" : "mod+3")}
       </View>
     </View>
   );

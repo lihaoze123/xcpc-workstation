@@ -207,7 +207,7 @@ export function revealState(status: ExportBookStatusJs | undefined, book: Book):
 
 // ── Titles ───────────────────────────────────────────────────────────────────
 
-export type Space = "problems" | "contests" | "settings";
+export type Space = "problems" | "contests" | "training" | "settings";
 
 /** Reactive localized display name for a top-level space. */
 export function spaceName(s: Space): string {
@@ -216,6 +216,8 @@ export function spaceName(s: Space): string {
       return t("space.problems");
     case "contests":
       return t("space.contests");
+    case "training":
+      return t("space.training");
     case "settings":
       return t("space.settings");
   }

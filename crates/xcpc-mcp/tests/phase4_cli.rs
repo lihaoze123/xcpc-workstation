@@ -645,3 +645,477 @@ fn sync_handle_get_set_clear_and_sync_without_handle() {
     assert_eq!(sj["platforms"][0]["platform"], "codeforces");
     assert_eq!(sj["platforms"][0]["ok"], false);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4B: CLI (dashboard / contests / submissions) & MCP stdio E2E tests
+// ---------------------------------------------------------------------------
+
+fn seed_phase4b_sync_db(data_dir: &Path) {
+    let mut cfg = xcpc_sync::SyncConfig::default();
+    cfg.set_handle("codeforces", "tourist");
+    cfg.set_handle("atcoder", "tourist_ac");
+    cfg.last_synced_at = Some("2026-11-24T12:00:00Z".into());
+    cfg.save(data_dir).unwrap();
+
+    let mut db = xcpc_sync::SyncDb::open(data_dir).unwrap();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let day = 86_400i64;
+
+    db.upsert_account(
+        "codeforces",
+        &xcpc_plugin::OjAccountSync {
+            handle: "tourist".into(),
+            rating: Some(3800),
+            max_rating: Some(3979),
+            rank: Some("legendary grandmaster".into()),
+            rating_history: vec![xcpc_plugin::OjRatingChange {
+                contest_id: "1990".into(),
+                contest_name: "Codeforces Round 960".into(),
+                rating_before: 3750,
+                rating_after: 3800,
+                rank: Some(1),
+                at: now_secs - 10 * day,
+            }],
+        },
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    db.upsert_submissions(
+        "codeforces",
+        &[
+            xcpc_plugin::OjSubmission {
+                submission_id: "101".into(),
+                handle: "tourist".into(),
+                contest_id: Some("1999".into()),
+                problem_index: Some("A".into()),
+                problem_key: "1999A".into(),
+                problem_title: "A+B Again?".into(),
+                problem_url: Some("https://codeforces.com/contest/1999/problem/A".into()),
+                raw_rating: Some(1600.0),
+                normalized_rating: Some(1600),
+                tags: vec!["dp".into(), "math".into()],
+                verdict: "AC".into(),
+                language: Some("GNU C++20".into()),
+                submitted_at: now_secs - 2 * day,
+            },
+            xcpc_plugin::OjSubmission {
+                submission_id: "102".into(),
+                handle: "tourist".into(),
+                contest_id: Some("2000".into()),
+                problem_index: Some("D".into()),
+                problem_key: "2000D".into(),
+                problem_title: "Hard Graph".into(),
+                problem_url: Some("https://codeforces.com/contest/2000/problem/D".into()),
+                raw_rating: Some(2100.0),
+                normalized_rating: Some(2100),
+                tags: vec!["graphs".into(), "dp".into()],
+                verdict: "WA".into(),
+                language: Some("GNU C++20".into()),
+                submitted_at: now_secs - day,
+            },
+            xcpc_plugin::OjSubmission {
+                submission_id: "103".into(),
+                handle: "tourist".into(),
+                contest_id: Some("2000".into()),
+                problem_index: Some("D".into()),
+                problem_key: "2000D".into(),
+                problem_title: "Hard Graph".into(),
+                problem_url: Some("https://codeforces.com/contest/2000/problem/D".into()),
+                raw_rating: Some(2100.0),
+                normalized_rating: Some(2100),
+                tags: vec!["graphs".into(), "dp".into()],
+                verdict: "TLE".into(),
+                language: Some("GNU C++20".into()),
+                submitted_at: now_secs - 3_600,
+            },
+        ],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    db.upsert_submissions(
+        "atcoder",
+        &[xcpc_plugin::OjSubmission {
+            submission_id: "201".into(),
+            handle: "tourist_ac".into(),
+            contest_id: Some("abc350".into()),
+            problem_index: Some("D".into()),
+            problem_key: "abc350_d".into(),
+            problem_title: "New Friends".into(),
+            problem_url: Some("https://atcoder.jp/contests/abc350/tasks/abc350_d".into()),
+            raw_rating: Some(1950.0),
+            normalized_rating: Some(1950),
+            tags: vec!["dsu".into()],
+            verdict: "AC".into(),
+            language: Some("C++20".into()),
+            submitted_at: now_secs - 1_800,
+        }],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    db.upsert_contests(
+        "codeforces",
+        &[
+            xcpc_plugin::OjContest {
+                contest_id: "1900".into(),
+                name: "Old CF Round".into(),
+                start_time: now_secs - 10 * day,
+                duration_sec: 7200,
+                format: Some("CF".into()),
+                url: Some("https://codeforces.com/contest/1900".into()),
+            },
+            xcpc_plugin::OjContest {
+                contest_id: "2050".into(),
+                name: "Upcoming CF Round".into(),
+                start_time: now_secs + 3 * day,
+                duration_sec: 7200,
+                format: Some("CF".into()),
+                url: Some("https://codeforces.com/contest/2050".into()),
+            },
+        ],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    db.upsert_contests(
+        "atcoder",
+        &[xcpc_plugin::OjContest {
+            contest_id: "abc400".into(),
+            name: "AtCoder Beginner Contest 400".into(),
+            start_time: now_secs + 5 * day,
+            duration_sec: 6000,
+            format: Some("ICPC".into()),
+            url: Some("https://atcoder.jp/contests/abc400".into()),
+        }],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+}
+
+#[test]
+fn training_dashboard_contests_and_submissions_cli() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+    seed_phase4b_sync_db(data_dir.path());
+
+    // 1. `xcpc training dashboard --json`
+    let dash_out = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "dashboard",
+            "--window",
+            "30d",
+            "--min-rating",
+            "1900",
+            "--json",
+        ],
+    );
+    assert!(
+        dash_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&dash_out.stderr)
+    );
+    let dj = parse_json_stdout(&dash_out);
+    assert_eq!(dj["ok"], true);
+    assert_eq!(dj["window"], "30d");
+    assert_eq!(dj["kpi"]["total_ac"], 2);
+    assert_eq!(dj["kpi"]["unsolved_attempted_count"], 1);
+    assert_eq!(dj["unsolved_problems"].as_array().unwrap().len(), 1);
+    assert_eq!(dj["unsolved_problems"][0]["problem_key"], "2000D");
+    assert_eq!(dj["unsolved_problems"][0]["attempt_count"], 2);
+    // Tag filter `--min-rating 1900` only keeps abc350_d (1950 -> "dsu")
+    let tags = dj["tag_distribution"].as_array().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0]["tag"], "dsu");
+
+    // Human-readable smoke check
+    let dash_human = run_xcpc(Some(ws.path()), data_dir.path(), &["training", "dashboard"]);
+    assert!(dash_human.status.success());
+    let human_txt = String::from_utf8(dash_human.stdout).unwrap();
+    assert!(human_txt.contains("Training Dashboard"));
+    assert!(human_txt.contains("tourist"));
+
+    // 2. `xcpc training contests --json` (excludes finished by default)
+    let c_out = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "contests", "--json"],
+    );
+    assert!(c_out.status.success());
+    let cj = parse_json_stdout(&c_out);
+    assert_eq!(cj["ok"], true);
+    assert_eq!(cj["count"], 2);
+    let c_ids: Vec<&str> = cj["contests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["contest_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(c_ids, vec!["2050", "abc400"]);
+
+    // `--all` includes finished, `--platform codeforces` filters
+    let c_all = parse_json_stdout(&run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "contests",
+            "--platform",
+            "codeforces",
+            "--all",
+            "--json",
+        ],
+    ));
+    assert_eq!(c_all["count"], 2);
+    assert_eq!(c_all["contests"][0]["contest_id"], "1900");
+    assert_eq!(c_all["contests"][0]["status"], "finished");
+
+    // 3. `xcpc training submissions --by-problem --unsolved --json`
+    let s_unsolved = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "submissions",
+            "--by-problem",
+            "--unsolved",
+            "--json",
+        ],
+    );
+    assert!(
+        s_unsolved.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&s_unsolved.stderr)
+    );
+    let sj = parse_json_stdout(&s_unsolved);
+    assert_eq!(sj["ok"], true);
+    assert_eq!(sj["total"], 1);
+    assert_eq!(sj["items"][0]["problem_key"], "2000D");
+    assert_eq!(sj["items"][0]["attempt_count"], 2);
+    assert_eq!(sj["items"][0]["solved"], false);
+
+    // Check `library_problem_id` annotation for problem `p1` (codeforces 1999A)
+    let s_cf = parse_json_stdout(&run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "submissions",
+            "--platform",
+            "codeforces",
+            "--verdict",
+            "AC",
+            "--json",
+        ],
+    ));
+    assert_eq!(s_cf["total"], 1);
+    assert_eq!(s_cf["items"][0]["problem_key"], "1999A");
+    assert_eq!(s_cf["items"][0]["library_problem_id"], "p1");
+}
+
+struct Phase4McpClient {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    next_id: u64,
+}
+
+impl Phase4McpClient {
+    fn spawn(workspace: &Path, data_dir: &Path, read_only: bool) -> Self {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_xcpc"));
+        cmd.env("XCPC_DATA_DIR", data_dir);
+        cmd.arg("-w").arg(workspace);
+        if read_only {
+            cmd.arg("--read-only");
+        }
+        cmd.arg("mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let mut child = cmd.spawn().expect("spawn xcpc mcp");
+        let stdin = child.stdin.take().unwrap();
+        let stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        use std::io::BufRead as _;
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        writeln!(self.stdin, "{msg}").unwrap();
+        self.stdin.flush().unwrap();
+        let mut line = String::new();
+        let n = self.stdout.read_line(&mut line).unwrap();
+        assert!(n > 0, "xcpc mcp closed stdout unexpectedly");
+        let reply: Value = serde_json::from_str(&line).expect("valid JSON-RPC reply");
+        assert_eq!(reply["id"], id);
+        reply
+    }
+
+    fn call_tool(&mut self, name: &str, arguments: Value) -> Value {
+        let reply = self.request(
+            "tools/call",
+            serde_json::json!({ "name": name, "arguments": arguments }),
+        );
+        assert!(
+            reply.get("error").is_none(),
+            "unexpected JSON-RPC error for {name}: {reply}"
+        );
+        reply["result"].clone()
+    }
+}
+
+impl Drop for Phase4McpClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn mcp_err_code(result: &Value) -> String {
+    assert_eq!(result["isError"], true, "expected isError=true: {result}");
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).expect("error content JSON");
+    parsed["code"].as_str().unwrap().to_owned()
+}
+
+#[test]
+fn mcp_training_tools_end_to_end_and_read_only_guard() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+    seed_phase4b_sync_db(data_dir.path());
+
+    // 1. Read-write MCP client
+    let mut client = Phase4McpClient::spawn(ws.path(), data_dir.path(), false);
+
+    let list = client.request("tools/list", serde_json::json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let find_tool = |name: &str| {
+        tools
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("missing tool {name}"))
+    };
+    assert_eq!(
+        find_tool("get_training_dashboard")["annotations"]["readOnlyHint"],
+        true
+    );
+    assert_eq!(
+        find_tool("set_training_status")["annotations"]["readOnlyHint"],
+        false
+    );
+    assert_eq!(
+        find_tool("ingest_problem")["annotations"]["readOnlyHint"],
+        false
+    );
+
+    // 2. `get_training_dashboard` returns full analytics
+    let dash = client.call_tool(
+        "get_training_dashboard",
+        serde_json::json!({ "window": "all" }),
+    );
+    assert_ne!(dash["isError"], true);
+    let sc = &dash["structuredContent"];
+    assert_eq!(sc["ok"], true);
+    assert_eq!(sc["kpi"]["total_ac"], 2);
+    assert_eq!(sc["kpi"]["unsolved_attempted_count"], 1);
+    assert_eq!(sc["unsolved_problems"][0]["problem_key"], "2000D");
+    assert!(!sc["difficulty_trend"].as_array().unwrap().is_empty());
+
+    // 3. `set_training_status` appends logs.jsonl and returns derived status
+    let st = client.call_tool(
+        "set_training_status",
+        serde_json::json!({
+            "problem_id": "p1",
+            "status": "upsolved",
+        }),
+    );
+    assert_ne!(st["isError"], true);
+    assert_eq!(st["structuredContent"]["ok"], true);
+    assert_eq!(st["structuredContent"]["recorded"], "upsolved");
+    assert_eq!(st["structuredContent"]["status"], "upsolved");
+    assert_eq!(st["structuredContent"]["synced"]["ac"], true);
+
+    // 4. `ingest_problem` from synced `(platform, problem_key)` enriches & creates, then deduplicates
+    let ing1 = client.call_tool(
+        "ingest_problem",
+        serde_json::json!({
+            "platform": "codeforces",
+            "problem_key": "2000D",
+            "initial_status": "todo",
+        }),
+    );
+    assert_ne!(ing1["isError"], true);
+    let i1 = &ing1["structuredContent"];
+    assert_eq!(i1["ok"], true);
+    assert_eq!(i1["created"], true);
+    assert_eq!(i1["problem_id"], "cf-2000d");
+    assert_eq!(i1["title"], "Hard Graph");
+    assert_eq!(i1["rating"], 2100);
+    assert!(ws.path().join("problems/cf-2000d/problem.toml").is_file());
+
+    // Second call with URL deduplicates cleanly (`created: false`)
+    let ing2 = client.call_tool(
+        "ingest_problem",
+        serde_json::json!({
+            "url": "https://codeforces.com/contest/2000/problem/D",
+        }),
+    );
+    assert_ne!(ing2["isError"], true);
+    assert_eq!(ing2["structuredContent"]["created"], false);
+    assert_eq!(ing2["structuredContent"]["problem_id"], "cf-2000d");
+
+    // Dashboard now reflects `cf-2000d` in `workspace_backlog` and `library_problem_id`
+    let dash2 = client.call_tool("get_training_dashboard", serde_json::json!({}));
+    let sc2 = &dash2["structuredContent"];
+    assert_eq!(
+        sc2["unsolved_problems"][0]["library_problem_id"],
+        "cf-2000d"
+    );
+    assert!(
+        sc2["workspace_backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["problem_id"] == "cf-2000d")
+    );
+
+    drop(client);
+
+    // 5. Read-only MCP client blocks writes but allows `get_training_dashboard`
+    let mut ro = Phase4McpClient::spawn(ws.path(), data_dir.path(), true);
+
+    let ro_dash = ro.call_tool("get_training_dashboard", serde_json::json!({}));
+    assert_ne!(ro_dash["isError"], true);
+    assert_eq!(ro_dash["structuredContent"]["ok"], true);
+
+    let ro_set = ro.call_tool(
+        "set_training_status",
+        serde_json::json!({ "problem_id": "p1", "status": "todo" }),
+    );
+    assert_eq!(mcp_err_code(&ro_set), "read_only");
+
+    let ro_ing = ro.call_tool(
+        "ingest_problem",
+        serde_json::json!({ "platform": "atcoder", "problem_key": "abc350_d" }),
+    );
+    assert_eq!(mcp_err_code(&ro_ing), "read_only");
+}

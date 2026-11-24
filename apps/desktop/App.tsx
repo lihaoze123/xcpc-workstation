@@ -20,6 +20,7 @@ import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/Settings
 import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
 import { StudioView } from "./src/ui/studio/StudioView";
 import { ToastHost } from "./src/ui/Toast";
+import { TrainingView } from "./src/ui/TrainingView";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
@@ -201,7 +202,18 @@ function App() {
     "mod+2": () =>
       hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("contests"), { space: "contests" }),
     "mod+3": () =>
-      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
+      hasWorkspace() &&
+      !inStudio() &&
+      traceInteraction(
+        "nav.space",
+        () => goSpace(info().trainingEnabled ? "training" : "settings"),
+        { space: info().trainingEnabled ? "training" : "settings" },
+      ),
+    "mod+4": () =>
+      hasWorkspace() &&
+      !inStudio() &&
+      info().trainingEnabled &&
+      traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 
@@ -327,6 +339,7 @@ function App() {
       <View style={{ flex: 1, flexDirection: "row" }}>
         <NavRail
           space={space()}
+          trainingEnabled={info().trainingEnabled}
           onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
         />
         <SpaceStage visible={space() === "problems"} variant="space">
@@ -335,6 +348,11 @@ function App() {
         <SpaceStage visible={space() === "contests"} variant="space">
           <ContestsView active={!inStudio() && space() === "contests"} />
         </SpaceStage>
+        <If when={info().trainingEnabled}>
+          <SpaceStage visible={space() === "training"} variant="space">
+            <TrainingView active={!inStudio() && space() === "training"} />
+          </SpaceStage>
+        </If>
         <SpaceStage visible={space() === "settings"} variant="space">
           <SettingsView />
         </SpaceStage>

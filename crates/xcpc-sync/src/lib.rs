@@ -1,17 +1,26 @@
+pub mod analytics;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod ingest;
 pub mod scheduler;
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use analytics::{
+    ContestCalendarItem, ContestsQuery, DifficultyBucket, DifficultyTrendPoint, HeatmapCell,
+    PlatformAccountMetric, PlatformRatingSeries, RatingPoint, SubmissionViewRow, SubmissionsPage,
+    SubmissionsQuery, TagStat, TimeWindow, TrainingDashboard, TrainingDashboardQuery, TrainingKpi,
+    WorkspaceBacklogItem, compute_training_dashboard, query_contests, query_submissions,
+};
 pub use config::{CONFIG_FILENAME, SyncConfig};
 pub use db::{
     CachedAccount, CachedContest, CachedProblemMeta, CachedRatingChange, CachedSubmission,
     CachedSummary, DB_FILENAME, SyncDb,
 };
 pub use error::{Result, SyncError};
+pub use ingest::{IngestProblemRequest, IngestProblemResult, ingest_problem};
 pub use scheduler::{
     PlatformSyncReport, ResolvedProblemUrl, SyncEngine, SyncOptions, SyncReport,
     suggest_problem_slug,
@@ -84,5 +93,7 @@ pub fn unix_secs_to_rfc3339_utc(secs: i64) -> String {
     format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
+#[cfg(test)]
+mod analytics_tests;
 #[cfg(test)]
 mod tests;

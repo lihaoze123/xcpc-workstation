@@ -300,119 +300,135 @@ impl SyncEngine {
     /// cached metadata from `oj_sync.db` (and optionally `fetchProblem` if title is missing),
     /// and suggests a clean valid problem slug.
     pub fn resolve_problem_url(&self, url: &str) -> Result<Option<ResolvedProblemUrl>> {
-        let trimmed = url.trim();
-        if trimmed.is_empty() {
-            return Ok(None);
-        }
-
         let pm = self.plugin_manager();
-        let config = SyncConfig::load(&self.data_dir)?;
-        let plugins = pm.list_plugins()?;
+        resolve_problem_url_with_manager(
+            &pm,
+            &self.data_dir,
+            &self.http_client,
+            &self.credentials,
+            url,
+        )
+    }
+}
 
-        for plugin in plugins {
-            if !plugin.enabled
-                || !plugin
-                    .manifest
-                    .capabilities
-                    .contains(&PluginCapability::OjSource)
-            {
-                continue;
-            }
-            let platform_id = plugin.manifest.id.clone();
-            let loaded = pm.load_plugin(&platform_id)?;
-            let kv = Arc::new(pm.kv_store(&platform_id)?);
-            let host_ctx = HostContext {
-                manifest: loaded.info.manifest.clone(),
-                http_client: Arc::clone(&self.http_client),
-                credentials: Arc::clone(&self.credentials),
-                kv,
-                workspace: None,
-                limits: SandboxLimits::default(),
+pub(crate) fn resolve_problem_url_with_manager(
+    pm: &PluginManager,
+    data_dir: &Path,
+    http_client: &Arc<dyn HttpClient>,
+    credentials: &Arc<dyn CredentialStore>,
+    url: &str,
+) -> Result<Option<ResolvedProblemUrl>> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let config = SyncConfig::load(data_dir)?;
+    let plugins = pm.list_plugins()?;
+
+    for plugin in plugins {
+        if !plugin.enabled
+            || !plugin
+                .manifest
+                .capabilities
+                .contains(&PluginCapability::OjSource)
+        {
+            continue;
+        }
+        let platform_id = plugin.manifest.id.clone();
+        let loaded = pm.load_plugin(&platform_id)?;
+        let kv = Arc::new(pm.kv_store(&platform_id)?);
+        let host_ctx = HostContext {
+            manifest: loaded.info.manifest.clone(),
+            http_client: Arc::clone(http_client),
+            credentials: Arc::clone(credentials),
+            kv,
+            workspace: None,
+            limits: SandboxLimits::default(),
+        };
+        let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
+        if !client.supports("parseProblemUrl")? {
+            continue;
+        }
+        let Some(parsed) = client.parse_problem_url(trimmed)? else {
+            continue;
+        };
+
+        let mut db = SyncDb::open(data_dir)?;
+        let cached = db.lookup_problem_meta(&parsed.platform, &parsed.problem_id)?;
+
+        let mut title = cached.as_ref().and_then(|m| m.title.clone());
+        let mut raw_rating = cached.as_ref().and_then(|m| m.raw_rating);
+        let mut normalized_rating = cached.as_ref().and_then(|m| m.normalized_rating);
+        let mut tags = cached.as_ref().map(|m| m.tags.clone()).unwrap_or_default();
+        let mut statement_md = None;
+        let mut samples = Vec::new();
+
+        if title.is_none() && client.supports("fetchProblem")? {
+            let oj_ctx = OjContext {
+                handle: config
+                    .handle_for(&parsed.platform)
+                    .unwrap_or("")
+                    .to_string(),
             };
-            let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
-            if !client.supports("parseProblemUrl")? {
-                continue;
-            }
-            let Some(parsed) = client.parse_problem_url(trimmed)? else {
-                continue;
-            };
-
-            let mut db = SyncDb::open(&self.data_dir)?;
-            let cached = db.lookup_problem_meta(&parsed.platform, &parsed.problem_id)?;
-
-            let mut title = cached.as_ref().and_then(|m| m.title.clone());
-            let mut raw_rating = cached.as_ref().and_then(|m| m.raw_rating);
-            let mut normalized_rating = cached.as_ref().and_then(|m| m.normalized_rating);
-            let mut tags = cached.as_ref().map(|m| m.tags.clone()).unwrap_or_default();
-            let mut statement_md = None;
-            let mut samples = Vec::new();
-
-            if title.is_none() && client.supports("fetchProblem")? {
-                let oj_ctx = OjContext {
-                    handle: config
-                        .handle_for(&parsed.platform)
-                        .unwrap_or("")
-                        .to_string(),
-                };
-                if let Ok(Some(detail)) = client.fetch_problem(&oj_ctx, &parsed.problem_id) {
-                    if !detail.title.trim().is_empty() {
-                        title = Some(detail.title);
-                    }
-                    if raw_rating.is_none() {
-                        raw_rating = detail
-                            .raw_rating
-                            .filter(|v| v.is_finite())
-                            .map(|v| v.round() as i64);
-                    }
-                    if normalized_rating.is_none() {
-                        normalized_rating = detail.normalized_rating;
-                    }
-                    if normalized_rating.is_none()
-                        && let Some(raw) = detail.raw_rating
-                        && client.supports("normalizeRating")?
-                    {
-                        normalized_rating = client.normalize_rating(raw).ok().flatten();
-                    }
-                    if tags.is_empty() && !detail.tags.is_empty() {
-                        tags = detail.tags;
-                    }
-                    statement_md = detail.statement_md;
-                    samples = detail.samples;
-
-                    // Cache newly fetched metadata for subsequent lookups.
-                    let _ = db.upsert_problem_meta(&CachedProblemMeta {
-                        platform: parsed.platform.clone(),
-                        problem_key: parsed.problem_id.clone(),
-                        title: title.clone(),
-                        url: detail.url.or_else(|| Some(parsed.url.clone())),
-                        raw_rating,
-                        normalized_rating,
-                        tags: tags.clone(),
-                        updated_at: now_rfc3339_utc(),
-                    });
+            if let Ok(Some(detail)) = client.fetch_problem(&oj_ctx, &parsed.problem_id) {
+                if !detail.title.trim().is_empty() {
+                    title = Some(detail.title);
                 }
+                if raw_rating.is_none() {
+                    raw_rating = detail
+                        .raw_rating
+                        .filter(|v| v.is_finite())
+                        .map(|v| v.round() as i64);
+                }
+                if normalized_rating.is_none() {
+                    normalized_rating = detail.normalized_rating;
+                }
+                if normalized_rating.is_none()
+                    && let Some(raw) = detail.raw_rating
+                    && client.supports("normalizeRating")?
+                {
+                    normalized_rating = client.normalize_rating(raw).ok().flatten();
+                }
+                if tags.is_empty() && !detail.tags.is_empty() {
+                    tags = detail.tags;
+                }
+                statement_md = detail.statement_md;
+                samples = detail.samples;
+
+                // Cache newly fetched metadata for subsequent lookups.
+                let _ = db.upsert_problem_meta(&CachedProblemMeta {
+                    platform: parsed.platform.clone(),
+                    problem_key: parsed.problem_id.clone(),
+                    title: title.clone(),
+                    url: detail.url.or_else(|| Some(parsed.url.clone())),
+                    raw_rating,
+                    normalized_rating,
+                    tags: tags.clone(),
+                    updated_at: now_rfc3339_utc(),
+                });
             }
-
-            let suggested_slug = suggest_problem_slug(&parsed.platform, &parsed.problem_id);
-
-            return Ok(Some(ResolvedProblemUrl {
-                platform: parsed.platform,
-                problem_key: parsed.problem_id,
-                contest_id: parsed.contest_id,
-                problem_index: parsed.problem_index,
-                url: parsed.url,
-                suggested_slug,
-                title,
-                raw_rating,
-                normalized_rating,
-                tags,
-                statement_md,
-                samples,
-            }));
         }
 
-        Ok(None)
+        let suggested_slug = suggest_problem_slug(&parsed.platform, &parsed.problem_id);
+
+        return Ok(Some(ResolvedProblemUrl {
+            platform: parsed.platform,
+            problem_key: parsed.problem_id,
+            contest_id: parsed.contest_id,
+            problem_index: parsed.problem_index,
+            url: parsed.url,
+            suggested_slug,
+            title,
+            raw_rating,
+            normalized_rating,
+            tags,
+            statement_md,
+            samples,
+        }));
     }
+
+    Ok(None)
 }
 
 /// Suggests a clean problem directory slug (always satisfying [`xcpc_domain::check_id`]).

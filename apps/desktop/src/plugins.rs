@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use std::str::FromStr;
+
 use xcpc_domain::{
     ProblemSource, SyncedProblemStatus, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
 };
@@ -14,14 +16,19 @@ use xcpc_plugin::{
     SandboxLimits, UreqHttpClient,
 };
 use xcpc_storage::{CreateProblemOptions, Workspace};
-use xcpc_sync::{DB_FILENAME, SyncConfig, SyncDb, SyncEngine, SyncOptions, now_rfc3339_utc};
+use xcpc_sync::{
+    ContestsQuery, DB_FILENAME, IngestProblemRequest, SubmissionsQuery, SyncConfig, SyncDb,
+    SyncEngine, SyncOptions, TimeWindow, TrainingDashboardQuery, compute_training_dashboard,
+    ingest_problem, now_rfc3339_utc, query_contests, query_submissions,
+};
 
 use crate::state::State;
 use crate::types::{
-    ActionResult, CreateProblemFromUrlResultJs, ExportPluginResultJs, InstallPluginResultJs,
-    PlatformSyncReportJs, PluginCredentialFieldJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginsOverviewJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
-    ResolvedProblemUrlJs, SyncReportJs, VerifyPluginResultJs,
+    ActionResult, CreateProblemFromUrlResultJs, ExportPluginResultJs, IngestProblemRequestJs,
+    IngestProblemResultJs, InstallPluginResultJs, JsonReportResultJs, PlatformSyncReportJs,
+    PluginCredentialFieldJs, PluginRepoConfigJs, PluginSummaryJs, PluginsOverviewJs,
+    RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs,
+    SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
 };
 
 fn origin_str(origin: PluginOrigin) -> &'static str {
@@ -815,6 +822,230 @@ impl State {
         }
         let report = self.sync_oj(None, false);
         !report.platforms.is_empty()
+    }
+
+    // ---- Phase 4B: Training Dashboard, Contests Calendar, Submissions & Ingest ---------
+
+    pub(crate) fn training_dashboard(
+        &self,
+        window: Option<String>,
+        heatmap_year: Option<i32>,
+        tag_min_rating: Option<i32>,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let parsed_window = match window.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(raw) => match TimeWindow::from_str(raw) {
+                Ok(w) => w,
+                Err(err) => return JsonReportResultJs::err("invalid", err),
+            },
+            None => TimeWindow::All,
+        };
+        let db = match SyncDb::open(&dir) {
+            Ok(db) => db,
+            Err(err) => return JsonReportResultJs::err("sync_error", err.to_string()),
+        };
+        let config = SyncConfig::load(&dir).unwrap_or_default();
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let query = TrainingDashboardQuery {
+            window: parsed_window,
+            heatmap_year,
+            tag_min_rating: tag_min_rating.map(i64::from),
+            now_unix: None,
+        };
+        match compute_training_dashboard(&db, &config, ws.as_ref(), &query) {
+            Ok(dashboard) => match serde_json::to_string(&dashboard) {
+                Ok(json) => JsonReportResultJs {
+                    ok: true,
+                    report_json: Some(json),
+                    markdown: None,
+                    error: None,
+                    code: None,
+                },
+                Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+            },
+            Err(err) => JsonReportResultJs::err("sync_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn training_contests(
+        &self,
+        platform: Option<String>,
+        include_finished: bool,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let db = match SyncDb::open(&dir) {
+            Ok(db) => db,
+            Err(err) => return JsonReportResultJs::err("sync_error", err.to_string()),
+        };
+        let query = ContestsQuery {
+            platform: platform
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
+            include_finished,
+            now_unix: None,
+        };
+        match query_contests(&db, &query) {
+            Ok(contests) => match serde_json::to_string(&contests) {
+                Ok(json) => JsonReportResultJs {
+                    ok: true,
+                    report_json: Some(json),
+                    markdown: None,
+                    error: None,
+                    code: None,
+                },
+                Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+            },
+            Err(err) => JsonReportResultJs::err("sync_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn training_submissions(
+        &self,
+        query: TrainingSubmissionsQueryJs,
+    ) -> JsonReportResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return JsonReportResultJs::err("data_dir", err),
+        };
+        let db = match SyncDb::open(&dir) {
+            Ok(db) => db,
+            Err(err) => return JsonReportResultJs::err("sync_error", err.to_string()),
+        };
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let core_query = SubmissionsQuery {
+            by_problem: query.by_problem,
+            platform: query.platform,
+            verdict: query.verdict,
+            unsolved_only: query.unsolved_only,
+            min_rating: query.min_rating.map(i64::from),
+            max_rating: query.max_rating.map(i64::from),
+            tag: query.tag,
+            search: query.search,
+            limit: query.limit.map(|v| v as usize),
+            offset: query.offset.map(|v| v as usize),
+        };
+        match query_submissions(&db, ws.as_ref(), &core_query) {
+            Ok(page) => match serde_json::to_string(&page) {
+                Ok(json) => JsonReportResultJs {
+                    ok: true,
+                    report_json: Some(json),
+                    markdown: None,
+                    error: None,
+                    code: None,
+                },
+                Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
+            },
+            Err(err) => JsonReportResultJs::err("sync_error", err.to_string()),
+        }
+    }
+
+    pub(crate) fn training_ingest_problem(
+        &self,
+        req: IngestProblemRequestJs,
+    ) -> IngestProblemResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return IngestProblemResultJs {
+                    ok: false,
+                    code: Some("data_dir".to_owned()),
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return IngestProblemResultJs {
+                ok: false,
+                code: Some("no_workspace".to_owned()),
+                error: Some("no workspace is open".to_owned()),
+                ..Default::default()
+            };
+        };
+        let initial_status = match req
+            .initial_status
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(raw) => match TrainingLogStatus::parse(raw) {
+                Some(st) => Some(st),
+                None => {
+                    return IngestProblemResultJs {
+                        ok: false,
+                        code: Some("invalid".to_owned()),
+                        error: Some(format!(
+                            "invalid training status '{raw}' (expected todo|attempted|ac|upsolved|clear)"
+                        )),
+                        ..Default::default()
+                    };
+                }
+            },
+            None => None,
+        };
+        let core_req = IngestProblemRequest {
+            url: req.url,
+            platform: req.platform,
+            problem_key: req.problem_key,
+            id: req.id,
+            title: req.title,
+            tags: req.tags,
+            rating: req.rating.map(i64::from),
+            initial_status,
+        };
+        let pm = PluginManager::new(&dir);
+        match ingest_problem(&ws, &dir, Some(&pm), &core_req) {
+            Ok(res) => {
+                if res.created {
+                    let _ = self
+                        .core
+                        .lock()
+                        .unwrap()
+                        .index
+                        .refresh_problem(&ws, &res.problem_id);
+                    self.invalidate_cache();
+                } else if initial_status.is_some() {
+                    self.revision.fetch_add(1, Ordering::AcqRel);
+                }
+                IngestProblemResultJs {
+                    ok: true,
+                    problem_id: res.problem_id,
+                    created: res.created,
+                    title: res.title,
+                    code: None,
+                    error: None,
+                }
+            }
+            Err(err) => {
+                let code = match &err {
+                    xcpc_sync::SyncError::Storage(se) => se.code().to_owned(),
+                    xcpc_sync::SyncError::InvalidInput(_) => "invalid".to_owned(),
+                    _ => "sync_error".to_owned(),
+                };
+                IngestProblemResultJs {
+                    ok: false,
+                    code: Some(code),
+                    error: Some(err.to_string()),
+                    ..Default::default()
+                }
+            }
+        }
     }
 }
 

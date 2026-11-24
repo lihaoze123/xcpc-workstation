@@ -586,6 +586,83 @@ enum TrainingCommand {
         /// Status to record (`todo`, `attempted`, `ac`, `upsolved`, or `clear`).
         status: TrainingStatusArg,
     },
+    /// Show personal training dashboard metrics, streaks, rating curves, difficulty buckets, and tags.
+    Dashboard {
+        /// Global time window (`30d`, `90d`, `year`, or `all`).
+        #[arg(long, default_value = "all")]
+        window: TimeWindowArg,
+        /// Heatmap calendar year (defaults to current year).
+        #[arg(long)]
+        year: Option<i32>,
+        /// Minimum unified rating filter for tag distribution (e.g. 1600, 1900, 2200).
+        #[arg(long)]
+        min_rating: Option<i64>,
+    },
+    /// Show aggregated upcoming/running contests from synced OJ platforms.
+    Contests {
+        /// Filter by platform ID (e.g. codeforces, atcoder).
+        #[arg(long)]
+        platform: Option<String>,
+        /// Include already finished contests.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Query synced OJ submissions with optional per-problem deduplication and filters.
+    Submissions {
+        /// Deduplicate by problem (show latest attempt, total attempts, and solved status).
+        #[arg(long)]
+        by_problem: bool,
+        /// Only show problems not yet solved (typically combined with `--by-problem`).
+        #[arg(long)]
+        unsolved: bool,
+        /// Filter by platform ID (e.g. codeforces, atcoder).
+        #[arg(long)]
+        platform: Option<String>,
+        /// Filter by normalized verdict (e.g. AC, WA, TLE).
+        #[arg(long)]
+        verdict: Option<String>,
+        /// Minimum unified rating (inclusive).
+        #[arg(long)]
+        min_rating: Option<i64>,
+        /// Maximum unified rating (inclusive).
+        #[arg(long)]
+        max_rating: Option<i64>,
+        /// Filter by problem tag (case-insensitive).
+        #[arg(long)]
+        tag: Option<String>,
+        /// Free-text search against problem key, title, and contest ID.
+        #[arg(long)]
+        search: Option<String>,
+        /// Maximum number of rows to return (default 100).
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Number of rows to skip for pagination (default 0).
+        #[arg(long)]
+        offset: Option<usize>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TimeWindowArg {
+    #[value(name = "30d")]
+    Days30,
+    #[value(name = "90d")]
+    Days90,
+    #[value(name = "year")]
+    Year,
+    #[value(name = "all")]
+    All,
+}
+
+impl TimeWindowArg {
+    fn into_time_window(self) -> xcpc_sync::TimeWindow {
+        match self {
+            TimeWindowArg::Days30 => xcpc_sync::TimeWindow::Days30,
+            TimeWindowArg::Days90 => xcpc_sync::TimeWindow::Days90,
+            TimeWindowArg::Year => xcpc_sync::TimeWindow::Year,
+            TimeWindowArg::All => xcpc_sync::TimeWindow::All,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -869,6 +946,7 @@ impl From<xcpc_sync::SyncError> for Fatal {
     fn from(e: xcpc_sync::SyncError) -> Self {
         match e {
             xcpc_sync::SyncError::Plugin(p) => p.into(),
+            xcpc_sync::SyncError::Storage(s) => s.into(),
             xcpc_sync::SyncError::PlatformNotFound(msg) => Fatal {
                 code: "platform_not_found",
                 message: format!("platform not found or disabled: {msg}"),
@@ -879,6 +957,12 @@ impl From<xcpc_sync::SyncError> for Fatal {
                 code: "invalid_data_dir",
                 message: format!("invalid data directory: {msg}"),
                 human: Some(format!("无法定位全局数据目录：{msg}")),
+                exit_code: 2,
+            },
+            xcpc_sync::SyncError::InvalidInput(msg) => Fatal {
+                code: "invalid_input",
+                message: msg,
+                human: None,
                 exit_code: 2,
             },
             xcpc_sync::SyncError::Io(err) => Fatal {
@@ -964,6 +1048,14 @@ fn open_workspace(cli: &Cli) -> Result<Workspace, Fatal> {
         (None, None) => Workspace::discover(".", cli.read_only)?,
     };
     Ok(ws)
+}
+
+fn open_workspace_optional(cli: &Cli) -> Result<Option<Workspace>, Fatal> {
+    match (&cli.workspace, std::env::var_os("XCPC_WORKSPACE")) {
+        (Some(dir), _) => Ok(Some(Workspace::open(dir, cli.read_only)?)),
+        (None, Some(dir)) => Ok(Some(Workspace::open(dir, cli.read_only)?)),
+        (None, None) => Ok(Workspace::discover(".", cli.read_only).ok()),
+    }
 }
 
 fn flag_patch<T>(set: Option<T>, clear: bool) -> Patch<T> {
@@ -3552,9 +3644,9 @@ fn run_sync(
 }
 
 fn run_training(cli: &Cli, action: &TrainingCommand) -> Result<ExitCode, Fatal> {
-    let ws = open_workspace(cli)?;
     match action {
         TrainingCommand::Status { problem_id, status } => {
+            let ws = open_workspace(cli)?;
             if ws.is_read_only() {
                 return Err(xcpc_storage::Error::ReadOnly.into());
             }
@@ -3601,6 +3693,256 @@ fn run_training(cli: &Cli, action: &TrainingCommand) -> Result<ExitCode, Fatal> 
                 );
             }
             Ok(ExitCode::SUCCESS)
+        }
+        TrainingCommand::Dashboard {
+            window,
+            year,
+            min_rating,
+        } => {
+            let data_dir = resolve_data_dir()?;
+            let db = xcpc_sync::SyncDb::open(&data_dir)?;
+            let config = xcpc_sync::SyncConfig::load(&data_dir)?;
+            let ws = open_workspace_optional(cli)?;
+            let query = xcpc_sync::TrainingDashboardQuery {
+                window: window.into_time_window(),
+                heatmap_year: *year,
+                tag_min_rating: *min_rating,
+                now_unix: None,
+            };
+            let dashboard =
+                xcpc_sync::compute_training_dashboard(&db, &config, ws.as_ref(), &query)?;
+
+            if cli.json {
+                let mut value = serde_json::to_value(&dashboard).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_training_dashboard(&dashboard);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TrainingCommand::Contests { platform, all } => {
+            let data_dir = resolve_data_dir()?;
+            let db = xcpc_sync::SyncDb::open(&data_dir)?;
+            let query = xcpc_sync::ContestsQuery {
+                platform: platform.clone(),
+                include_finished: *all,
+                now_unix: None,
+            };
+            let contests = xcpc_sync::query_contests(&db, &query)?;
+
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "count": contests.len(),
+                        "contests": contests,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                print_training_contests(&contests);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TrainingCommand::Submissions {
+            by_problem,
+            unsolved,
+            platform,
+            verdict,
+            min_rating,
+            max_rating,
+            tag,
+            search,
+            limit,
+            offset,
+        } => {
+            let data_dir = resolve_data_dir()?;
+            let db = xcpc_sync::SyncDb::open(&data_dir)?;
+            let ws = open_workspace_optional(cli)?;
+            let query = xcpc_sync::SubmissionsQuery {
+                by_problem: *by_problem,
+                platform: platform.clone(),
+                verdict: verdict.clone(),
+                unsolved_only: *unsolved,
+                min_rating: *min_rating,
+                max_rating: *max_rating,
+                tag: tag.clone(),
+                search: search.clone(),
+                limit: *limit,
+                offset: *offset,
+            };
+            let page = xcpc_sync::query_submissions(&db, ws.as_ref(), &query)?;
+
+            if cli.json {
+                let mut value = serde_json::to_value(&page).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_training_submissions(&page, *by_problem);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn print_training_dashboard(d: &xcpc_sync::TrainingDashboard) {
+    let synced = d.last_synced_at.as_deref().unwrap_or("never");
+    println!(
+        "Training Dashboard (window={}, heatmap={}, last_sync={})",
+        d.window, d.heatmap_year, synced
+    );
+
+    if !d.accounts.is_empty() {
+        println!("\nAccounts:");
+        for acc in &d.accounts {
+            let rating_str = match (acc.rating, acc.max_rating) {
+                (Some(r), Some(m)) if m != r => format!("{r} (max {m})"),
+                (Some(r), _) => format!("{r}"),
+                (None, _) => "-".to_owned(),
+            };
+            let rank_str = acc
+                .rank
+                .as_deref()
+                .map(|r| format!(" [{r}]"))
+                .unwrap_or_default();
+            println!(
+                "  {:<12} {:<16} rating={:<16} ac={:<6} sub={}{}",
+                acc.platform,
+                acc.handle,
+                rating_str,
+                acc.solved_count,
+                acc.submission_count,
+                rank_str
+            );
+        }
+    }
+
+    let k = &d.kpi;
+    println!("\nSummary:");
+    println!(
+        "  Today: {} AC / {} sub | Week: {} AC / {} sub | Month: {} AC / {} sub",
+        k.today_ac,
+        k.today_submissions,
+        k.week_ac,
+        k.week_submissions,
+        k.month_ac,
+        k.month_submissions
+    );
+    println!(
+        "  Window ({}): {} AC / {} sub | Total: {} AC / {} sub",
+        d.window, k.window_ac, k.window_submissions, k.total_ac, k.total_submissions
+    );
+    println!(
+        "  Streak: {}d (longest {}d) | Unsolved attempted: {} | Library backlog: {} todo, {} attempted",
+        k.streak_days,
+        k.longest_streak_days,
+        k.unsolved_attempted_count,
+        k.library_todo_count,
+        k.library_attempted_count
+    );
+
+    let non_empty_buckets: Vec<String> = d
+        .difficulty_buckets
+        .iter()
+        .filter(|b| b.ac_count > 0)
+        .map(|b| format!("{}={}", b.label, b.ac_count))
+        .collect();
+    if !non_empty_buckets.is_empty() {
+        println!("\nDifficulty Buckets:");
+        println!("  {}", non_empty_buckets.join(", "));
+    }
+
+    if !d.tag_distribution.is_empty() {
+        println!("\nTop Tags:");
+        for t in d.tag_distribution.iter().take(10) {
+            let avg = t
+                .avg_rating
+                .map(|r| format!(" (avg {r})"))
+                .unwrap_or_default();
+            println!("  {:<24} {}{}", t.tag, t.ac_count, avg);
+        }
+    }
+
+    if !d.difficulty_trend.is_empty() {
+        println!("\nRecent Difficulty Trend:");
+        let start = d.difficulty_trend.len().saturating_sub(6);
+        for pt in &d.difficulty_trend[start..] {
+            let p75 = pt
+                .p75
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_owned());
+            let p90 = pt
+                .p90
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_owned());
+            println!(
+                "  {:<10} ac={:<4} rated={:<4} P75={:<5} P90={}",
+                pt.period, pt.ac_count, pt.rated_ac_count, p75, p90
+            );
+        }
+    }
+}
+
+fn print_training_contests(contests: &[xcpc_sync::ContestCalendarItem]) {
+    if contests.is_empty() {
+        println!("no contests found");
+        return;
+    }
+    for c in contests {
+        let start = xcpc_sync::unix_secs_to_rfc3339_utc(c.start_time);
+        let dur_min = c.duration_sec.max(0) / 60;
+        let dur = if dur_min % 60 == 0 {
+            format!("{}h", dur_min / 60)
+        } else {
+            format!("{}h{}m", dur_min / 60, dur_min % 60)
+        };
+        let url = c.url.as_deref().unwrap_or("");
+        println!(
+            "{:<9} {:<11} {} ({:<6}) {}\t{}",
+            c.status, c.platform, start, dur, c.name, url
+        );
+    }
+}
+
+fn print_training_submissions(page: &xcpc_sync::SubmissionsPage, by_problem: bool) {
+    if page.items.is_empty() {
+        println!("no submissions found (total=0)");
+        return;
+    }
+    let from = page.offset + 1;
+    let to = page.offset + page.items.len();
+    println!("showing {from}-{to} of {}", page.total);
+    for row in &page.items {
+        let ts = xcpc_sync::unix_secs_to_rfc3339_utc(row.submitted_at);
+        let rating = row
+            .normalized_rating
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let title = row.problem_title.as_deref().unwrap_or("");
+        let lib = row
+            .library_problem_id
+            .as_deref()
+            .map(|id| format!(" [lib:{id}]"))
+            .unwrap_or_default();
+        if by_problem {
+            let state = if row.solved { "SOLVED" } else { &row.verdict };
+            println!(
+                "{}  {:<10} {:<12} {:<5} {:<7} ({} tries) {}{}",
+                ts, row.platform, row.problem_key, rating, state, row.attempt_count, title, lib
+            );
+        } else {
+            println!(
+                "{}  {:<10} {:<12} {:<5} {:<7} {}{}",
+                ts, row.platform, row.problem_key, rating, row.verdict, title, lib
+            );
         }
     }
 }

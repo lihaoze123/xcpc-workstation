@@ -3464,3 +3464,176 @@ fn phase4a_plugins_overview_handles_repos_and_export() {
     );
     assert!(preview.get_plugins_overview().repos.is_empty());
 }
+
+// ---- Phase 4B: Training Dashboard, Contests, Submissions & Ingest bridge tests ---------
+
+#[test]
+fn phase4b_training_dashboard_contests_submissions_and_ingest() {
+    let ws_dir = TempDir::new("p4b-train-ws");
+    let data_dir = TempDir::new("p4b-train-data");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let info = preview.init_workspace(ws_dir.0.display().to_string(), None);
+    assert!(info.error.is_none());
+    assert!(info.training_enabled);
+
+    // Seed oj_sync.db with account, rating history, submissions, and contests.
+    let mut db = xcpc_sync::SyncDb::open(&data_dir.0).unwrap();
+    db.upsert_account(
+        "codeforces",
+        &xcpc_plugin::OjAccountSync {
+            handle: "alice".into(),
+            rating: Some(1950),
+            max_rating: Some(2010),
+            rank: Some("candidate master".into()),
+            rating_history: vec![xcpc_plugin::OjRatingChange {
+                contest_id: "2000".into(),
+                contest_name: "Codeforces Round 1000".into(),
+                rating_before: 1890,
+                rating_after: 1950,
+                rank: Some(320),
+                at: 1_760_000_000,
+            }],
+        },
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+    db.upsert_submissions(
+        "codeforces",
+        &[
+            xcpc_plugin::OjSubmission {
+                submission_id: "s1".into(),
+                handle: "alice".into(),
+                contest_id: Some("2000".into()),
+                problem_index: Some("C".into()),
+                problem_key: "2000C".into(),
+                problem_title: "Graph Paths".into(),
+                problem_url: Some("https://codeforces.com/problemset/problem/2000/C".into()),
+                raw_rating: Some(1900.0),
+                normalized_rating: Some(1900),
+                tags: vec!["graphs".into(), "dp".into()],
+                verdict: "WA".into(),
+                language: Some("C++20".into()),
+                submitted_at: 1_760_000_100,
+            },
+            xcpc_plugin::OjSubmission {
+                submission_id: "s2".into(),
+                handle: "alice".into(),
+                contest_id: Some("2000".into()),
+                problem_index: Some("C".into()),
+                problem_key: "2000C".into(),
+                problem_title: "Graph Paths".into(),
+                problem_url: Some("https://codeforces.com/problemset/problem/2000/C".into()),
+                raw_rating: Some(1900.0),
+                normalized_rating: Some(1900),
+                tags: vec!["graphs".into(), "dp".into()],
+                verdict: "AC".into(),
+                language: Some("C++20".into()),
+                submitted_at: 1_760_000_200,
+            },
+            xcpc_plugin::OjSubmission {
+                submission_id: "s3".into(),
+                handle: "alice".into(),
+                contest_id: Some("2000".into()),
+                problem_index: Some("D".into()),
+                problem_key: "2000D".into(),
+                problem_title: "Hard Tree".into(),
+                problem_url: Some("https://codeforces.com/problemset/problem/2000/D".into()),
+                raw_rating: Some(2200.0),
+                normalized_rating: Some(2200),
+                tags: vec!["trees".into()],
+                verdict: "TLE".into(),
+                language: Some("C++20".into()),
+                submitted_at: 1_760_000_300,
+            },
+        ],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+    db.upsert_contests(
+        "codeforces",
+        &[xcpc_plugin::OjContest {
+            contest_id: "2100".into(),
+            name: "Codeforces Round 1050".into(),
+            start_time: 4_000_000_000,
+            duration_sec: 7200,
+            format: Some("CF".into()),
+            url: Some("https://codeforces.com/contest/2100".into()),
+        }],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    // 1. Dashboard query.
+    let dash_res = preview.training_dashboard(Some("all".into()), Some(2025), Some(1600));
+    assert!(dash_res.ok, "dashboard error: {:?}", dash_res.error);
+    let dash: JsonValue = dash_res.report_json.unwrap().parse().unwrap();
+    assert_eq!(dash["accounts"][0]["handle"], "alice");
+    assert_eq!(dash["accounts"][0]["rating"], 1950);
+    assert_eq!(dash["kpi"]["total_ac"], 1);
+    assert_eq!(dash["kpi"]["total_submissions"], 3);
+    assert_eq!(dash["rating_series"][0]["platform"], "codeforces");
+    assert_eq!(dash["rating_series"][0]["points"][0]["delta"], 60);
+
+    // 2. Contests query.
+    let contests_res = preview.training_contests(Some("codeforces".into()), false);
+    assert!(contests_res.ok, "contests error: {:?}", contests_res.error);
+    let contests: JsonValue = contests_res.report_json.unwrap().parse().unwrap();
+    assert_eq!(contests.as_array().unwrap().len(), 1);
+    assert_eq!(contests[0]["contest_id"], "2100");
+    assert_eq!(contests[0]["status"], "upcoming");
+
+    // 3. Submissions query (by_problem + unsolved_only).
+    let subs_res = preview.training_submissions(crate::TrainingSubmissionsQueryJs {
+        by_problem: true,
+        unsolved_only: true,
+        ..Default::default()
+    });
+    assert!(subs_res.ok, "submissions error: {:?}", subs_res.error);
+    let subs: JsonValue = subs_res.report_json.unwrap().parse().unwrap();
+    assert_eq!(subs["total"], 1);
+    assert_eq!(subs["items"][0]["problem_key"], "2000D");
+    assert!(subs["items"][0]["library_problem_id"].is_null());
+
+    // 4. Ingest problem from submission, verify dedup and workspace refresh.
+    let ingested = preview.training_ingest_problem(crate::IngestProblemRequestJs {
+        platform: Some("codeforces".into()),
+        problem_key: Some("2000D".into()),
+        title: Some("Hard Tree".into()),
+        rating: Some(2200),
+        tags: Some(vec!["trees".into()]),
+        ..Default::default()
+    });
+    assert!(ingested.ok, "ingest error: {:?}", ingested.error);
+    assert!(ingested.created);
+    assert_eq!(ingested.problem_id, "cf-2000d");
+    assert_eq!(ingested.title, "Hard Tree");
+
+    // Workspace index & submissions query now reflect `library_problem_id`.
+    let ws_info = preview.workspace();
+    assert!(ws_info.problems.iter().any(|p| p.id == "cf-2000d"));
+    let subs_after = preview.training_submissions(crate::TrainingSubmissionsQueryJs {
+        by_problem: true,
+        unsolved_only: true,
+        ..Default::default()
+    });
+    let subs_after_json: JsonValue = subs_after.report_json.unwrap().parse().unwrap();
+    assert_eq!(
+        subs_after_json["items"][0]["library_problem_id"],
+        "cf-2000d"
+    );
+
+    // Second ingest deduplicates cleanly.
+    let ingested2 = preview.training_ingest_problem(crate::IngestProblemRequestJs {
+        platform: Some("codeforces".into()),
+        problem_key: Some("2000D".into()),
+        ..Default::default()
+    });
+    assert!(ingested2.ok);
+    assert!(!ingested2.created);
+    assert_eq!(ingested2.problem_id, "cf-2000d");
+
+    // 5. External URL validation rejects non-http(s) schemes.
+    let bad_url = Preview::open_external_url("javascript:alert(1)".into());
+    assert!(!bad_url.ok);
+    assert_eq!(bad_url.code.as_deref(), Some("invalid_url"));
+}

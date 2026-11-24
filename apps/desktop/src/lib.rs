@@ -46,20 +46,20 @@ pub use crate::types::{
     ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
     CreateProblemFromUrlResultJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
     ExportOjResultJs, ExportPluginResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs,
-    InstallPluginResultJs, JsonReportResultJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
-    NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
-    PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PackageWarningJs,
-    PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs, PluginCredentialFieldJs,
-    PluginRepoConfigJs, PluginSummaryJs, PluginsOverviewJs, PolygonImportResultJs,
-    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
-    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
-    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs,
-    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
-    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
-    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
-    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem,
+    IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs, JsonReportResultJs,
+    LimitsJs, MarkdownSpanJs, MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs,
+    PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs,
+    PackageInspectionResultJs, PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs,
+    PlatformSyncReportJs, PluginCredentialFieldJs, PluginRepoConfigJs, PluginSummaryJs,
+    PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer, PreviewLocationJs,
+    PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
+    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
+    RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
+    ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs, SaveReportResultJs, SaveResult,
+    SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
+    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -2402,6 +2402,84 @@ impl Preview {
         blocking(move || state.startup_sync_if_enabled())
             .await
             .unwrap_or(false)
+    }
+
+    // ---- Phase 4B: Training Dashboard, Contests Calendar, Submissions & Ingest ---------
+
+    /// Computes the training dashboard analytics payload (returned as JSON in `reportJson`).
+    pub fn training_dashboard(
+        &self,
+        window: Option<String>,
+        heatmap_year: Option<i32>,
+        tag_min_rating: Option<i32>,
+    ) -> JsonReportResultJs {
+        self.state
+            .training_dashboard(window, heatmap_year, tag_min_rating)
+    }
+
+    /// Queries aggregated upcoming / running (and optional finished) OJ contests as JSON.
+    pub fn training_contests(
+        &self,
+        platform: Option<String>,
+        include_finished: bool,
+    ) -> JsonReportResultJs {
+        self.state.training_contests(platform, include_finished)
+    }
+
+    /// Queries synced submissions (raw or deduplicated per problem) as JSON, enriched with
+    /// `library_problem_id` from the open workspace.
+    pub fn training_submissions(&self, query: TrainingSubmissionsQueryJs) -> JsonReportResultJs {
+        self.state.training_submissions(query)
+    }
+
+    /// Ingests an external OJ problem (by URL or `(platform, problemKey)`) into the open
+    /// workspace, deduplicating by `[[source]]` and refreshing the workspace index.
+    pub fn training_ingest_problem(&self, req: IngestProblemRequestJs) -> IngestProblemResultJs {
+        self.state.training_ingest_problem(req)
+    }
+
+    /// Opens an external `http://` or `https://` URL in the user's default browser.
+    pub fn open_external_url(url: String) -> ActionResult {
+        let trimmed = url.trim();
+        if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+            return ActionResult::err(
+                "invalid_url",
+                "only http:// and https:// URLs are supported",
+            );
+        }
+        let spawned = {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(trimmed)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", trimmed])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                std::process::Command::new("xdg-open")
+                    .arg(trimmed)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+            }
+        };
+        match spawned {
+            Ok(_) => ActionResult::ok(),
+            Err(err) => ActionResult::err("io", err.to_string()),
+        }
     }
 }
 

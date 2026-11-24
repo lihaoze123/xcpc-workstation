@@ -2209,3 +2209,66 @@ pub struct SyncReportJs {
     #[prop(skip_none)]
     pub error: Option<String>,
 }
+
+// ---- Phase 4B: Training Dashboard, Contests Calendar, Submissions & Ingest -------------
+
+/// Query parameters for `trainingSubmissions(query)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct TrainingSubmissionsQueryJs {
+    #[prop(default)]
+    pub by_problem: bool,
+    #[prop(skip_none)]
+    pub platform: Option<String>,
+    #[prop(skip_none)]
+    pub verdict: Option<String>,
+    #[prop(default)]
+    pub unsolved_only: bool,
+    #[prop(skip_none)]
+    pub min_rating: Option<i32>,
+    #[prop(skip_none)]
+    pub max_rating: Option<i32>,
+    #[prop(skip_none)]
+    pub tag: Option<String>,
+    #[prop(skip_none)]
+    pub search: Option<String>,
+    #[prop(skip_none)]
+    pub limit: Option<u32>,
+    #[prop(skip_none)]
+    pub offset: Option<u32>,
+}
+
+/// Request payload for `trainingIngestProblem(req)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct IngestProblemRequestJs {
+    #[prop(skip_none)]
+    pub url: Option<String>,
+    #[prop(skip_none)]
+    pub platform: Option<String>,
+    #[prop(skip_none)]
+    pub problem_key: Option<String>,
+    #[prop(skip_none)]
+    pub id: Option<String>,
+    #[prop(skip_none)]
+    pub title: Option<String>,
+    #[prop(skip_none)]
+    pub tags: Option<Vec<String>>,
+    #[prop(skip_none)]
+    pub rating: Option<i32>,
+    #[prop(skip_none)]
+    pub initial_status: Option<String>,
+}
+
+/// Result of `trainingIngestProblem(req)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct IngestProblemResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub problem_id: String,
+    pub created: bool,
+    #[prop(default)]
+    pub title: String,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
