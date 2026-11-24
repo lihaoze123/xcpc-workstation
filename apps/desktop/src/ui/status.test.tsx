@@ -1,6 +1,6 @@
 import { describe, expect, test } from "nsh/test";
 import { languagePref, systemLocale, t } from "./i18n";
-import { markForPackageStatus, problemStatusModel, type ProblemStatusInput } from "./studio/statusLogic";
+import { markForPackageStatus, problemStatusModel, problemTypeSummary, type ProblemStatusInput } from "./studio/statusLogic";
 
 function input(over: Partial<ProblemStatusInput> = {}): ProblemStatusInput {
   return {
@@ -84,5 +84,15 @@ describe("Problem status slot (authoring-ui-refactor §3, §6)", () => {
       "unchecked",
       "none",
     ]);
+  });
+});
+
+describe("题型 summary uses spacing, never `·` (design-system §1.4)", () => {
+  test("joins parts with a full-width space", () => {
+    systemLocale.set("zh-CN");
+    languagePref.set("system");
+    const s = problemTypeSummary({ interactive: true, runs: 2, subtaskScore: 100 });
+    expect(s).toBe("交互　两轮　子任务 100 分");
+    expect(s.includes("·")).toBe(false);
   });
 });

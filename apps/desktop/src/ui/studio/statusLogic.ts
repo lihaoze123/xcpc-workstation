@@ -136,12 +136,12 @@ export function judgeModeOf(interactive: boolean, checker: string | null | undef
   return checker === "checker.cpp" ? "custom" : "standard";
 }
 
-/** The 题型 summary next to the sidebar entry: 「传统」「交互 · 两轮 · 子任务 100 分」. */
+/** The 题型 summary next to the sidebar entry: 「传统」「交互　两轮　子任务 100 分」 (spaced, no separators; design-system §1.4). */
 export function problemTypeSummary(input: { interactive: boolean; runs: number; subtaskScore: number | null }): string {
   const parts = [input.interactive ? t("build.type.interactive") : t("build.type.standard")];
   if (input.runs >= 2) parts.push(runsLabel(input.runs));
   if (input.subtaskScore != null) parts.push(t("build.type.subtasksScore", { score: input.subtaskScore }));
-  return parts.join(" · ");
+  return parts.join(locale() === "zh-CN" ? "　" : "  ");
 }
 
 /** 「一轮」「两轮」「三轮」… */
