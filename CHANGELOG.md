@@ -2,6 +2,41 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0-beta.1] - 2026-11-24
+
+Phase 3「本地 Polygon」首个预览版：在出版工作台之上补齐出题、验题与 OJ 数据包流转，并完成一轮以 release 实测为准的流畅性优化。
+
+### 新增
+
+- **本地题目包与检查引擎**（`xcpc-judge`）：
+  - 原生题目包：`solutions/`、`generators/`、`tests/`、`validator.cpp`、`checker.cpp`、`interactor.cpp` 与 `problem.toml` 声明式 `[[test]]`（生成器 + 参数、`repeat`、标签）和 `[solutions.*]`（标程与预期结论）。
+  - 一键检查：编译 → 校验器自测 → 生成数据 → 校验 → 标程出答案 → 全解法评测，结论按预期核对（AC / WA / TLE / MLE / RE），附安全边际摘要与单步复现命令；支持逐格流式进度、按测试点 / 解法子集局部运行与严格验收（`--strict`）。
+  - 交互题与多轮通信、OI 子任务计分与子任务自测；对拍（`xcpc package stress`）自动保存反例；ASan/UBSan 未定义行为体检（`--sanitize`）。
+  - 整场就绪审计（`xcpc contest audit`）与外部验题者提交试跑（`verify-external`，不改动工作区），以及按比赛覆写的时限检查（`--contest`）。
+- **Polygon 导入与 OJ 数据包导出**（`xcpc-packages`）：
+  - Polygon ZIP 单题与整场导入（`contest.xml` 展开子题并自动归组），题面一次性转为 Markdown，样例、配图、校验器、检查器、生成器与解法全量导入；含 Zip Slip 防护与原子暂存。
+  - DOMjudge / Hydro 单题与整场批量导出，严格剔除解法、生成器与题解，并以最新严格检查通过作为导出门禁。
+- **桌面端出题工作室**：
+  - 「题面 / 出题」并列模式：左侧对象树（解法、生成器、测试数据、校验与评测），右侧测试点 × 解法结果矩阵，可用键盘浏览用例并查看输入、答案与实际输出；支持轻量单文件快编与数据增删。
+  - 比赛工作室内就地出题与检查，大纲同步显示每题状态；统一状态标记，出错时原位说明，并提前告知缺少编译器。
+- **题库升级**：持久化分组、多选与批量操作（归组、标签、难度、加入比赛、删除、构建、导出），表格重构与 `Ctrl+K` 命令面板配额。
+- **CLI 与 MCP**：新增 `xcpc package`（`init` / `inspect` / `build` / `stress` / `verify-external` / `adopt`）、`xcpc import` / `xcpc export`、`xcpc group`、`xcpc search` / `show` 与批量子命令，对应 MCP 工具同步补齐；内建出题工作流 Skill `xcpc-problem-creator`；CLI 输出与检查报告统一中文词表。
+- **离线性能 Trace**：「设置 → 关于 → 性能 Trace」或 `XCPC_TRACE=1` 录制 Rust + 界面统一时间轴并导出 Chrome Trace（可拖入 Perfetto），配套 `scripts/trace-analyze.py`、`scripts/nsh-perf.sh` 卡顿归因与 `scripts/perf-gate.sh` 渲染性能门禁。
+
+### 变更
+
+- **流畅性（release 实测，15 题比赛）**：
+  - 大纲切题拆成两次提交，点击到高亮 < 1ms；编辑器按文件保留最近 8 个实例，切回已打开的题约 2ms，并保留各自的撤销、光标与滚动。
+  - 预览改为视口页优先 + 相邻页后台预热，并在输入期间按节奏合并编译、取消过期结果。
+  - 检查结束时结果先上屏，包刷新合批并延后一帧（结果帧 48ms → 16ms）。
+- **反馈规范**：后台行为成功静默；用户主动触发的短动作原位瞬态确认，长耗时的检查与导出改为单槽右下角提示。
+
+### 修复
+
+- 单题预览与导出不再出现题号前缀与「题面预览」页眉。
+- 修复大数据单行预览、错解校验过滤与 MLE 归类；Linux 上子进程内存按进程隔离计量。
+- 按 URL 解析 Polygon 比赛子题；Hydro 导出改为内嵌 PDF 题面。
+
 ## [0.2.0] - 2026-11-23
 
 首个正式版本，整合完整 Phase 2（组卷、出版工作室、题库中心、校验与 MCP 工具集）与 Phase 2.5（产品化打磨、开放模板体系、国际化与多人协同工作区）。
