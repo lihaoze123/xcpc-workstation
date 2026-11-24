@@ -404,7 +404,9 @@ export function MarkdownEditor(props: {
   // delimiter highlights and overview ruler marks. Backend `markdownSpans` emits outer containers
   // (`inlineMath`, `displayMath`, `codeBlock`) before inner tokens (`mathCommand`, `mathOperator`,
   // `codeKeyword`, ...), so fine-grained ink colors naturally override outer text classes.
-  const allDecorations = computed<EditorDecoration[]>(() => {
+  // Split static markdown span decorations from caret-driven math delimiter highlights
+  // so moving the cursor never rebuilds O(N) decorations for the whole document.
+  const baseDecorations = computed<EditorDecoration[]>(() => {
     const ink = editorInk();
     const spans = mdSpans();
     const base: EditorDecoration[] = [];
@@ -412,26 +414,35 @@ export function MarkdownEditor(props: {
       const d = decoration(s, ink);
       if (d) base.push(d);
     }
+    return base;
+  });
+
+  const allDecorations = computed<EditorDecoration[]>(() => {
+    const base = baseDecorations();
+    const ink = editorInk();
+    const spans = mdSpans();
+    const extra: EditorDecoration[] = [];
     const pos = focused() && !props.hidden ? caret() : undefined;
     if (pos) {
       const pair = matchedMathDelimiters(text, spans, pos);
       if (pair) {
-        base.push(
+        extra.push(
           { range: pair[0], class: ink.mathDelimiterMatch },
           { range: pair[1], class: ink.mathDelimiterMatch },
         );
       }
     }
     const diags = props.diagnostics;
-    if (diags.length === 0) return base;
-    const marks: EditorDecoration[] = diags.map((d) => ({
-      range: d.range,
-      overviewRuler: {
-        lane: "right",
-        class: d.severity === "error" ? "bg-destructive" : "bg-chart-4",
-      },
-    }));
-    return [...base, ...marks];
+    for (const d of diags) {
+      extra.push({
+        range: d.range,
+        overviewRuler: {
+          lane: "right",
+          class: d.severity === "error" ? "bg-destructive" : "bg-chart-4",
+        },
+      });
+    }
+    return extra.length === 0 ? base : [...base, ...extra];
   });
 
   // Clear hover tooltip, slash popover, and empty-line hint when hidden, read-only, or unfocused.
@@ -491,6 +502,8 @@ export function MarkdownEditor(props: {
     // Suppress slash popover inside math formulas and inline/fenced code blocks.
     let spans = untracked(mdSpans);
     if (frame !== undefined) {
+      cancelAnimationFrame(frame);
+      frame = undefined;
       spans = Preview.markdownSpans(text);
       mdSpans.set(spans);
     }
@@ -1338,7 +1351,7 @@ export function MarkdownEditor(props: {
             <View
               onPress={() => caseSensitive.set(!caseSensitive())}
               tooltip={tip(t("editor.find.caseSensitive"))}
-              class={caseSensitive() ? "bg-accent border border-border" : "hover:bg-muted"}
+              class={caseSensitive() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
               style={{
                 width: 24,
                 height: 24,

@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 xcpc-domain = { path = "crates/xcpc-domain" }
+xcpc-trace = { path = "crates/xcpc-trace" }
 xcpc-storage = { path = "crates/xcpc-storage" }
 xcpc-lint = { path = "crates/xcpc-lint" }
 xcpc-convert = { path = "crates/xcpc-convert" }

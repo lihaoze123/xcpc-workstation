@@ -101,7 +101,7 @@ export function Outline(props: {
                     borderRadius: 6,
                     cursor: canDrag() ? "grab" : "default",
                   }}
-                  class={dragging() ? "bg-card border border-border" : ""}
+                  class={dragging() ? "bg-card border border-border" : "border border-transparent"}
                 >
                   <Row
                     label={x().label}

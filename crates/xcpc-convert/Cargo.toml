@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 xcpc-domain.workspace = true
+xcpc-trace.workspace = true
+serde_json.workspace = true
 pulldown-cmark.workspace = true
 mitex.workspace = true
 xcpc-storage.workspace = true

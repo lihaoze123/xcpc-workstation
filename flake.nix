@@ -202,6 +202,9 @@
                 ]
               }''${GST_PLUGIN_SYSTEM_PATH_1_0:+:$GST_PLUGIN_SYSTEM_PATH_1_0}"
               export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+              # Use lld for much faster Linux incremental linking while keeping Nix's
+              # wrapped `cc` so all Nix library rpaths (GTK4, OpenSSL, etc.) are preserved.
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
             '';
           };
         }

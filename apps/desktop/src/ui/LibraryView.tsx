@@ -78,7 +78,7 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           class={
             props.active
               ? "bg-accent border border-border hover:bg-accent/80 active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              : "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              : "border border-transparent hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           }
           style={{
             height: 28,
@@ -601,10 +601,11 @@ export function LibraryView(props: { active: boolean }) {
                     gap: 6,
                   }}
                   class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
-                  captureKeys={["up", "down", "escape"]}
+                  captureKeys={["up", "down", "enter", "escape"]}
                   onKeyDown={(e) => {
                     if (e.key === "ArrowDown") move(1);
                     else if (e.key === "ArrowUp") move(-1);
+                    else if (e.key === "Enter") open();
                     else if (e.key === "Escape") {
                       if (selection().selectedIds.size > 0) applySel({ kind: "clear" });
                       else if (inputText().length > 0) setSearch("");

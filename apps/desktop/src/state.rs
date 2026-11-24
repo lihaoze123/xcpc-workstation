@@ -82,6 +82,7 @@ pub(crate) struct CoreState {
 pub(crate) struct CompilerState {
     pub(crate) engine: Engine,
     engine_root: Option<PathBuf>,
+    last_files_rev: u64,
     pub(crate) cached: Option<CachedCompile>,
     /// Layer keys of the latest committed preview result, protected from LRU eviction.
     pub(crate) active: HashSet<String>,
@@ -136,6 +137,8 @@ pub(crate) struct PackageBuildSlot {
     pub(crate) completed: u32,
     pub(crate) total: u32,
     pub(crate) live_cells: Vec<xcpc_judge::MatrixCell>,
+    pub(crate) live_cells_index: HashMap<(u32, String), usize>,
+    pub(crate) live_cells_json_cache: Option<String>,
     pub(crate) report_json: Option<String>,
     pub(crate) error: Option<String>,
 }
@@ -197,6 +200,7 @@ impl Drop for State {
             build.cancelled = true;
         }
         self.stop_batch_task();
+        xcpc_trace::flush_if_env_configured();
         if let Ok(mut core) = self.core.lock() {
             core.watch_session = None;
             drop(core.watcher.take());
@@ -257,6 +261,7 @@ impl State {
             compiler: Mutex::new(CompilerState {
                 engine: Engine::new(&FontOptions::from_env(), None),
                 engine_root: None,
+                last_files_rev: 0,
                 cached: None,
                 active: HashSet::new(),
             }),
@@ -323,6 +328,7 @@ impl State {
                 };
             }
             self.stop_batch_task();
+            xcpc_trace::flush_if_env_configured();
             let mut core = self.core.lock().unwrap();
             let new_session = new_session_rx.map(|rx| {
                 core.watch_seq = core.watch_seq.wrapping_add(1);
@@ -634,6 +640,30 @@ impl State {
 
     // ---- Preview compilation, rasterization, export & bidirectional lookup -------------
 
+    /// Speculatively pre-warms adjacent pages in the background without blocking any
+    /// active or incoming `run()` compile (uses `try_lock` on `compiler`).
+    pub(crate) fn prewarm_neighbors(
+        &self,
+        scale: f32,
+        neighbor_pages: &[u32],
+        cancel: CancelToken<'_>,
+    ) -> u32 {
+        if cancel.is_cancelled() || neighbor_pages.is_empty() {
+            return 0;
+        }
+        let Ok(mut compiler) = self.compiler.try_lock() else {
+            return 0;
+        };
+        if cancel.is_cancelled() {
+            return 0;
+        }
+        let CompilerState { cached, active, .. } = &mut *compiler;
+        let Some(cached) = cached.as_mut() else {
+            return 0;
+        };
+        crate::cache::prewarm_cached(self.id, active, cached, scale, neighbor_pages, cancel)
+    }
+
     pub(crate) fn run(
         &self,
         request: &PreviewRequest,
@@ -659,10 +689,22 @@ impl State {
         compiler.sync_root(&ws);
 
         let rev = self.revision();
+        if compiler.last_files_rev != rev {
+            compiler.engine.reset_files();
+            compiler.last_files_rev = rev;
+        }
         let cache_hit = compiler
             .cached
             .as_ref()
             .is_some_and(|c| c.matches_request(request, rev));
+        let _preview_span = xcpc_trace::span_with("desktop", "preview_request", || {
+            serde_json::json!({
+                "kind": format!("{:?}", request.kind()),
+                "id": request.id,
+                "cacheHit": cache_hit,
+                "scale": scale,
+            })
+        });
         let compile_ms = if cache_hit {
             0.0
         } else {
@@ -698,30 +740,15 @@ impl State {
             let page_count = compiled.page_count();
             let matches_disk = Arc::new(AtomicBool::new(request.path.is_empty()));
 
-            // Pre-index forward-locate anchors for the currently edited file on this
-            // background thread so UI-thread `locateSource` never touches `compiler`.
-            let mut initial_anchors = HashMap::new();
-            if !request.path.is_empty() && !cancel.is_cancelled() {
-                let norm = normalize_ws_rel(&request.path);
-                if file_matches_book_kind(&norm, request.kind()) {
-                    let anchors = sample_file_anchors(
-                        &compiler.engine,
-                        &compiled,
-                        &doc,
-                        &report.problems,
-                        &norm,
-                    );
-                    initial_anchors.insert(norm, anchors);
-                }
-            }
-
+            // Forward-locate anchors (`Mod+Shift+L`) are indexed lazily on demand in
+            // `locate_source` rather than walking every page 38-114x on each keystroke.
             let snap = Arc::new(CachedSnapshot {
                 request: request.clone(),
                 revision: rev,
                 matches_disk: matches_disk.clone(),
                 doc_source: doc.source.clone(),
                 problems: report.problems.clone(),
-                anchors: Mutex::new(initial_anchors),
+                anchors: Mutex::new(HashMap::new()),
             });
 
             compiler.cached = Some(CachedCompile {
@@ -3067,6 +3094,8 @@ impl State {
                 completed: 0,
                 total: 0,
                 live_cells: Vec::new(),
+                live_cells_index: HashMap::new(),
+                live_cells_json_cache: None,
                 report_json: None,
                 error: None,
             };
@@ -3159,13 +3188,15 @@ impl State {
                             slot.total = total as u32;
                             if let Some(c) = cell {
                                 let c = *c;
-                                if let Some(existing) = slot.live_cells.iter_mut().find(|x| {
-                                    x.test_index == c.test_index && x.solution == c.solution
-                                }) {
-                                    *existing = c;
+                                let key = (c.test_index as u32, c.solution.clone());
+                                if let Some(&idx) = slot.live_cells_index.get(&key) {
+                                    slot.live_cells[idx] = c;
                                 } else {
+                                    let idx = slot.live_cells.len();
                                     slot.live_cells.push(c);
+                                    slot.live_cells_index.insert(key, idx);
                                 }
+                                slot.live_cells_json_cache = None;
                             }
                         }
                         xcpc_judge::ProgressEvent::Finished { .. } => {
@@ -3255,11 +3286,14 @@ impl State {
     }
 
     pub(crate) fn package_build_status(&self) -> PackageBuildStatusJs {
-        let slot = self.package_build.lock().unwrap();
+        let mut slot = self.package_build.lock().unwrap();
         let live_cells_json = if slot.live_cells.is_empty() {
             None
         } else {
-            serde_json::to_string(&slot.live_cells).ok()
+            if slot.live_cells_json_cache.is_none() {
+                slot.live_cells_json_cache = serde_json::to_string(&slot.live_cells).ok();
+            }
+            slot.live_cells_json_cache.clone()
         };
         PackageBuildStatusJs {
             seq: slot.seq,

@@ -42,6 +42,7 @@ import {
   leftFor,
   MAX_ZOOM,
   MIN_ZOOM,
+  neighborPagesToPrewarm,
   scaleFor,
   TILE,
   type PageSize,
@@ -49,6 +50,7 @@ import {
 import { info, preview } from "../store";
 import { panelTransition } from "../motion";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
+import { traceAsyncSpan, traceInteraction } from "../trace";
 
 type ViewportMemory = { zoom: number; scrollY: number; panX: number; autoFit: boolean; pageSizes: PageSize[] };
 
@@ -209,6 +211,8 @@ function hitPage(
 export interface CanvasController {
   /** Typesets the request again (its text changed). */
   compile(): void;
+  /** Last completed compile+render duration in ms (feeds adaptive typing debounce). */
+  lastCompileMs(): number;
   /** Scrolls to `label`'s first page: smoothly when it is in the pages shown, else once the next result says where. */
   jumpTo(label: string): void;
   /** Scrolls to page `index` (0-based). */
@@ -394,6 +398,28 @@ export function PreviewCanvas(props: {
   let compileSeq = 0;
   let inFlight = 0;
   let again = false;
+  let lastCompileDurationMs = 0;
+  let prewarmTimer: number | undefined;
+
+  function cancelPrewarm() {
+    if (prewarmTimer !== undefined) {
+      clearTimeout(prewarmTimer);
+      prewarmTimer = undefined;
+    }
+  }
+
+  function schedulePrewarm(reqKey: string, s: number, viewPages: number[], totalPages: number) {
+    cancelPrewarm();
+    const neighbors = neighborPagesToPrewarm(viewPages, totalPages);
+    if (neighbors.length === 0) return;
+    const seq = compileSeq;
+    prewarmTimer = setTimeout(() => {
+      prewarmTimer = undefined;
+      if (seq !== compileSeq || reqKey !== untracked(key) || !untracked(isActive)) return;
+      if (untracked(dragging) || untracked(resizing) || untracked(live).k !== 1) return;
+      void preview.prewarmNeighbors(s, neighbors);
+    }, 40);
+  }
 
   function tryHydrateColdStart(req: PreviewRequest, reqKey: string): boolean {
     if (!hasHud() || coldStartTried || untracked(pages).length > 0 || shownKey) return false;
@@ -634,10 +660,28 @@ export function PreviewCanvas(props: {
       tiles: new Map(list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)])),
     };
 
-    void preview.compile(req, s, list).then((result) => {
+    cancelPrewarm();
+    void traceAsyncSpan(
+      "ipc",
+      "preview.compile",
+      () => preview.compile(req, s, list),
+      { kind: req.target, id: req.id, scale: Math.round(s * 100) / 100, viewPages: list.length },
+      true,
+    ).then((result) => {
       inFlight -= 1;
       const stale = seq !== compileSeq || reqKey !== untracked(key);
-      if (!stale) applyResult(reqKey, result);
+      if (!stale) {
+        lastCompileDurationMs = (result.compileMs ?? 0) + (result.renderMs ?? 0);
+        applyResult(reqKey, result);
+        if (result.pages.length > 1) {
+          schedulePrewarm(
+            reqKey,
+            s,
+            list.map((v) => v.page),
+            result.pages.length,
+          );
+        }
+      }
       if (again) {
         again = false;
         compile();
@@ -729,6 +773,7 @@ export function PreviewCanvas(props: {
     clearTimeout(resizeTimer);
     clearTimeout(pinchCommitTimer);
     clearTimeout(snapshotTimer);
+    cancelPrewarm();
     if (zoomRaf !== undefined) cancelAnimationFrame(zoomRaf);
     cancelPendingScroll();
   });
@@ -1099,17 +1144,23 @@ export function PreviewCanvas(props: {
 
   props.controller({
     compile,
+    lastCompileMs: () => lastCompileDurationMs,
     jumpTo(label: string) {
-      const start = lastStarts.find((x) => x.label === label);
-      if (start && shownKey === key() && zoom() > 0) {
-        goPage(start.page, true);
-        return;
-      }
-      jumpTo = label;
+      traceInteraction("preview.jump_problem", () => {
+        const start = lastStarts.find((x) => x.label === label);
+        if (start && shownKey === key() && zoom() > 0) {
+          goPage(start.page, true);
+          return;
+        }
+        jumpTo = label;
+      });
     },
     goPage,
     scrollToLocation,
-    zoomBy: (factor: number) => zoomWheel(factor, { x: effectiveWidth() / 2, y: pane().height / 2 }),
+    zoomBy: (factor: number) =>
+      traceInteraction("preview.zoom_step", () =>
+        zoomWheel(factor, { x: effectiveWidth() / 2, y: pane().height / 2 }),
+      ),
     fitWidth,
     closeHud() {
       if (!hudOpen()) return false;

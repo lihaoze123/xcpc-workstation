@@ -5,7 +5,7 @@
 //   from the active template's `#let schema = (...)` (with override bars & one-click restore),
 //   plus lightweight bridges to fork a custom template or open external style files.
 
-import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
+import { cleanup, computed, effect, reduceMotion, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
 import { Input } from "nsh/base";
 import type { ContestDetailJs, ContestItemDetailJs, PreviewDiagnostic } from "xcpc-workstation/native";
 import { freezeBlockedCopy, type Freeze } from "../Contest";
@@ -103,6 +103,31 @@ export function Inspector(props: {
     props.onChanged();
   };
 
+  // Hide closed drawer with `display: "none"` after the slide-out spring settles so
+  // off-screen `<Input>` controls never leak into Studio's Tab focus chain.
+  const displayed = signal(props.open);
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  effect(() => {
+    const isOpen = props.open;
+    if (hideTimer !== undefined) {
+      clearTimeout(hideTimer);
+      hideTimer = undefined;
+    }
+    if (isOpen) {
+      displayed.set(true);
+    } else if (reduceMotion()) {
+      displayed.set(false);
+    } else {
+      hideTimer = setTimeout(() => {
+        hideTimer = undefined;
+        displayed.set(false);
+      }, 240);
+    }
+  });
+  cleanup(() => {
+    if (hideTimer !== undefined) clearTimeout(hideTimer);
+  });
+
   return (
     <View
       testID="inspector"
@@ -113,6 +138,7 @@ export function Inspector(props: {
         bottom: 0,
         width: INSPECTOR_WIDTH,
         borderLeftWidth: 1,
+        display: displayed() ? "flex" : "none",
         opacity: props.open ? 1 : 0,
         transform: props.open ? "translateX(0px)" : `translateX(${INSPECTOR_WIDTH + 1}px)`,
         ...panelTransition(),

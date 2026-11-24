@@ -77,6 +77,13 @@ pub fn document_with(
     language: Option<Language>,
     unsaved: Option<(&str, &str)>,
 ) -> Result<Document, Error> {
+    let _span = xcpc_trace::span_with("convert", "build_document", || {
+        serde_json::json!({
+            "kind": target.kind(),
+            "id": target.id(),
+            "hasUnsaved": unsaved.is_some(),
+        })
+    });
     let overlay = |problem: &mut xcpc_domain::Problem| {
         let Some((path, text)) = unsaved else { return };
         let mut matched = false;
@@ -629,6 +636,11 @@ pub fn export_merged_pdf(
 
 /// Typesets `doc` with `engine` (rooted at the workspace).
 pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report) {
+    let _span = xcpc_trace::span_with(
+        "convert",
+        "publish_compile",
+        || serde_json::json!({ "sourceBytes": doc.source.len() }),
+    );
     let mut diagnostics: Vec<Diagnostic> = doc
         .diagnostics
         .iter()
@@ -787,7 +799,11 @@ fn check_inner(
     }
 
     let doc = document_with(ws, target, kind, language, unsaved)?;
-    engine.reset_files();
+    // Preserve cached workspace templates & asset bytes during pure in-memory edits
+    // (disk/watcher mutations reset via workspace revision or `unsaved.is_none()`).
+    if unsaved.is_none() {
+        engine.reset_files();
+    }
     let (compiled, mut report) = compile(engine, &doc);
     merge_diagnostics(
         &mut report.diagnostics,

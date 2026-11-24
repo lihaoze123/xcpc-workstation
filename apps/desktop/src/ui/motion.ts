@@ -86,11 +86,13 @@ export function pageTransition(_duration?: number): ViewStyle {
 }
 
 /** Page / studio container transform states, disabled under `prefers-reduced-motion`.
- *  Full-window studio switches skip `scale(...)` to avoid full-screen FBO resampling on GTK4. */
+ *  Uses pure GPU pixel translation (no `scale(...)`) so GTK4 avoids full-screen FBO
+ *  resampling while still conveying spatial depth: spaces lift softly on Y (`6px -> 0`),
+ *  and entering the studio glides forward on X (`14px -> 0`). */
 export function pageTransform(visible: boolean, variant: "space" | "studio" = "space"): string | undefined {
   if (reduceMotion()) return undefined;
   if (variant === "studio") {
-    return undefined;
+    return visible ? "translateX(0px)" : "translateX(14px)";
   }
   return visible ? "translateY(0px)" : "translateY(6px)";
 }

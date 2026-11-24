@@ -342,6 +342,11 @@ impl Compiled {
 
     /// Renders one page (0-based) at `pixel_per_pt` (2.0 ≈ 144 dpi).
     pub fn render(&self, page: usize, pixel_per_pt: f32) -> Option<tiny_skia::Pixmap> {
+        let _span = xcpc_trace::span_with(
+            "engine",
+            "render_page",
+            || serde_json::json!({ "page": page, "scale": pixel_per_pt }),
+        );
         let page = self.document.pages().get(page)?;
         let options = typst_render::RenderOptions {
             pixel_per_pt: (pixel_per_pt as f64).into(),
@@ -358,6 +363,11 @@ impl Compiled {
         pixel_per_pt: f32,
         [x, y, width, height]: [u32; 4],
     ) -> Option<tiny_skia::Pixmap> {
+        let _span = xcpc_trace::span_with(
+            "engine",
+            "render_region",
+            || serde_json::json!({ "page": page, "scale": pixel_per_pt, "w": width, "h": height }),
+        );
         let page = self.document.pages().get(page)?;
         let pt = |px: u32| typst::layout::Abs::pt(f64::from(px) / f64::from(pixel_per_pt));
         let mut frame = typst::layout::Frame::hard(typst::layout::Size::new(pt(width), pt(height)));
@@ -379,11 +389,22 @@ impl Compiled {
 
     /// Renders one page as PNG bytes.
     pub fn render_png(&self, page: usize, pixel_per_pt: f32) -> Option<Vec<u8>> {
-        self.render(page, pixel_per_pt)?.encode_png().ok()
+        let pix = self.render(page, pixel_per_pt)?;
+        let _span = xcpc_trace::span_with(
+            "engine",
+            "encode_png",
+            || serde_json::json!({ "page": page, "w": pix.width(), "h": pix.height() }),
+        );
+        pix.encode_png().ok()
     }
 
     /// Exports the whole document as PDF.
     pub fn pdf(&self) -> Result<Vec<u8>, Vec<Diagnostic>> {
+        let _span = xcpc_trace::span_with(
+            "engine",
+            "export_pdf",
+            || serde_json::json!({ "pages": self.document.pages().len() }),
+        );
         let options = typst_pdf::PdfOptions {
             creator: typst::foundations::Smart::Custom(Some(format!(
                 "XCPC Workstation {}",
@@ -415,6 +436,8 @@ pub struct Engine {
     font_fallback_warning: Option<String>,
     /// Disk files read so far, keyed by their virtual id.
     files: Mutex<HashMap<FileId, FileResult<Bytes>>>,
+    /// Parsed workspace `.typ` sources cached across compiles until `reset_files()`.
+    sources: Mutex<HashMap<FileId, FileResult<Source>>>,
 }
 
 impl Engine {
@@ -439,6 +462,7 @@ impl Engine {
             fonts_used: AtomicBool::new(false),
             font_fallback_warning,
             files: Mutex::new(HashMap::new()),
+            sources: Mutex::new(HashMap::new()),
         }
     }
 
@@ -467,15 +491,25 @@ impl Engine {
     /// Forgets cached disk files (call after they change on disk).
     pub fn reset_files(&mut self) {
         self.files.lock().unwrap().clear();
+        self.sources.lock().unwrap().clear();
     }
 
     /// Compiles the main source. The warnings include content that overflows the text
     /// area the template declares.
     pub fn compile(&self) -> Result<Compiled, CompileError> {
+        let _span = xcpc_trace::span("engine", "compile");
         let start = Instant::now();
-        let warned = typst::compile::<PagedDocument>(self);
+        let warned = {
+            let _typst = xcpc_trace::span("engine", "typst_compile");
+            let out = typst::compile::<PagedDocument>(self);
+            // Evict stale comemo memo entries (older than 10 compiles) so long editing
+            // sessions never leak old ASTs, frames, and shaped glyphs indefinitely.
+            comemo::evict(10);
+            out
+        };
         let mut warnings = self.diagnostics(&warned.warnings);
         if let Ok(document) = &warned.output {
+            let _overflow = xcpc_trace::span("engine", "overflow_check");
             warnings.extend(overflow::check(document).into_iter().map(|o| {
                 let mut d = self.locate(o.span);
                 d.message = o.message;
@@ -715,9 +749,15 @@ impl World for Engine {
         if let VirtualRoot::Package(spec) = id.root() {
             return packages::load_package_source(id, spec);
         }
-        let bytes = self.file(id)?;
-        let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
-        Ok(Source::new(id, text.into()))
+        if let Some(cached) = self.sources.lock().unwrap().get(&id).cloned() {
+            return cached;
+        }
+        let loaded = self.file(id).and_then(|bytes| {
+            let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
+            Ok(Source::new(id, text.into()))
+        });
+        self.sources.lock().unwrap().insert(id, loaded.clone());
+        loaded
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {

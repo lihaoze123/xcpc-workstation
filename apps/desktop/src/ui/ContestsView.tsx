@@ -3,7 +3,7 @@
 // on the right the selected one's head (language, date, place; 编辑/查看, 定稿 / 重新编辑 / 取消归档, ⋯),
 // its overview (the difficulty bar and tags) and its problems.
 
-import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef } from "nsh";
+import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef, type ViewRef } from "nsh";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { WorkspaceContest } from "xcpc-workstation/native";
 import { Btn, DelayedSpinner, Lock, RatingBadge, tip } from "./kit";
@@ -224,8 +224,17 @@ export function ContestsView(props: { active: boolean }) {
     );
   };
 
+  let rootRef: ViewRef | undefined;
+  effect(() => {
+    if (props.active) {
+      rootRef?.focus();
+    }
+  });
+
   return (
     <View
+      ref={(r) => (rootRef = r)}
+      focusable
       style={{ flex: 1, flexDirection: "row" }}
       class="bg-background"
       captureKeys={["up", "down", "enter"]}

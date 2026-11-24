@@ -1059,3 +1059,56 @@ export function buildPaletteItems(
     items: promoteActions ? [...actionItems, ...jumpItems] : [...jumpItems, ...actionItems],
   };
 }
+
+/**
+ * Adaptive preview compile debounce (Phase 2):
+ * - Single edits / slow pauses (`interKeystrokeMs >= 200`): fire rapidly (35ms problem / 65ms contest).
+ * - Rapid typing bursts (`interKeystrokeMs < 110`): coalesce proportionally to `lastCompileMs`
+ *   so fast bursts never flood the worker, yet pausing lands a fresh frame immediately.
+ */
+export function adaptiveCompileDelayMs(
+  isContest: boolean,
+  interKeystrokeMs: number,
+  lastCompileMs: number,
+): number {
+  const safeCompile = Number.isFinite(lastCompileMs) && lastCompileMs > 0 ? lastCompileMs : 0;
+  if (interKeystrokeMs >= 200) {
+    return isContest ? 65 : 35;
+  }
+  const minBurst = isContest ? 90 : 55;
+  const maxBurst = isContest ? 160 : 110;
+  if (interKeystrokeMs < 110) {
+    return Math.min(maxBurst, Math.max(minBurst, Math.round(safeCompile * 1.5)));
+  }
+  // Intermediate cadence: linear blend between pause and burst.
+  const t = (200 - interKeystrokeMs) / 90;
+  const pause = isContest ? 65 : 35;
+  const burst = Math.min(maxBurst, Math.max(minBurst, Math.round(safeCompile * 1.5)));
+  return Math.round(pause + (burst - pause) * t);
+}
+
+/**
+ * Computes adjacent pages (`[min - 1, max + 1, max + 2]`) outside the current viewport
+ * to speculatively pre-warm in the background PIXELS cache.
+ */
+export function neighborPagesToPrewarm(
+  viewPages: readonly number[],
+  totalPages: number,
+): number[] {
+  if (totalPages <= 1 || viewPages.length === 0) return [];
+  const inView = new Set(viewPages);
+  let minP = totalPages;
+  let maxP = -1;
+  for (const p of viewPages) {
+    if (p < minP) minP = p;
+    if (p > maxP) maxP = p;
+  }
+  const candidates = [maxP + 1, minP - 1, maxP + 2];
+  const out: number[] = [];
+  for (const p of candidates) {
+    if (p >= 0 && p < totalPages && !inView.has(p) && !out.includes(p)) {
+      out.push(p);
+    }
+  }
+  return out;
+}

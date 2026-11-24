@@ -6,7 +6,7 @@
 // - P1-4 Unified Detail Page Grammar across all objects + inline generator batch editor + dropdown test selector
 // - P1-5 State consistency: preserves untouched summaries (`旧`) and full-run safety margin across subset runs
 
-import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ContextMenuEvent, type JSX } from "nsh";
+import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ContextMenuEvent, type JSX, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type {
@@ -23,7 +23,10 @@ import { AppMenu, type MenuEntry } from "../Menu";
 import { compilerMissing, dialog, goSettings, onExternalChange, preview, type UiError } from "../store";
 import { showToast } from "../Toast";
 import { MONO, popoverShadow, token } from "../theme";
+import { traceInteraction, traceSpan } from "../trace";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
+import { MatrixCellView } from "./MatrixCell";
+import { createMatrixCellStore, stepMatrixSelection } from "./matrixStore";
 import { StatusSlot, type StatusModel } from "./StatusSlot";
 import { testerResults } from "./contestCheck";
 import { judgeModeOf, problemStatusModel, sanitizerTargetName, stdRatioWords, verdictWords, problemTypeSummary, runsLabel, solutionExpectLabel, type JudgeMode } from "./statusLogic";
@@ -305,6 +308,9 @@ export function BuildConsole(props: {
   const buildStatus = signal<PackageBuildStatusJs>(preview.packageBuildStatus());
   const finishedReport = signal<BuildReportData | undefined>(undefined);
   const liveCells = signal<MatrixCellData[]>([]);
+  const cellStore = createMatrixCellStore();
+  let lastLiveCellsJson = "";
+  let matrixRef: ViewRef | undefined;
 
   // Phase 3D: Isolated Sanitizer (UB Check) & External Trial Run state
   const sanitizerReport = signal<SanitizerReportData | undefined>(undefined);
@@ -346,6 +352,8 @@ export function BuildConsole(props: {
         notice.set(undefined);
         finishedReport.set(undefined);
         liveCells.set([]);
+        lastLiveCellsJson = "";
+        cellStore.dispose();
         lastFullSummaries.set(new Map());
         lastFullMargin.set(undefined);
         batchEditRuleIdx.set(undefined);
@@ -424,7 +432,8 @@ export function BuildConsole(props: {
     () => buildStatus().running && buildStatus().slug === props.problemId,
   );
 
-  // Poll background build runner at 120ms while active, streaming liveCells in real time (P1-8)
+  // Poll background build runner at 60ms while active, deduplicating unchanged JSON
+  // snapshots so idle ticks cost ~0ms and only changed cells update via `cellStore`.
   let pollTimer: number | undefined;
   let lastSeenSeq = buildStatus().seq;
   function stopPolling() {
@@ -437,21 +446,41 @@ export function BuildConsole(props: {
     if (pollTimer !== undefined) return;
     pollTimer = setInterval(() => {
       const next = preview.packageBuildStatus();
-      buildStatus.set(next);
+      const prev = untracked(buildStatus);
+      // Skip signal writes on idle ticks where scalar progress did not change so
+      // `statusModel` and footer text are not invalidated 16.7x/sec unnecessarily.
+      if (
+        prev.seq !== next.seq ||
+        prev.running !== next.running ||
+        prev.slug !== next.slug ||
+        prev.mode !== next.mode ||
+        prev.cancelled !== next.cancelled ||
+        prev.phase !== next.phase ||
+        prev.detail !== next.detail ||
+        prev.completed !== next.completed ||
+        prev.total !== next.total ||
+        prev.error !== next.error
+      ) {
+        buildStatus.set(next);
+      }
       if (next.liveCellsJson && next.slug === untracked(() => props.problemId)) {
-        try {
-          liveCells.set(JSON.parse(next.liveCellsJson) as MatrixCellData[]);
-        } catch {
-          // ignore
+        if (next.liveCellsJson !== lastLiveCellsJson) {
+          lastLiveCellsJson = next.liveCellsJson;
+          try {
+            liveCells.set(JSON.parse(next.liveCellsJson) as MatrixCellData[]);
+          } catch {
+            // ignore
+          }
         }
       }
       if (!next.running) {
         stopPolling();
         if (next.seq !== lastSeenSeq || next.reportJson || next.error) {
           lastSeenSeq = next.seq;
-          liveCells.set([]);
+          lastLiveCellsJson = "";
           if (next.reportJson && next.slug === untracked(() => props.problemId)) {
             if (next.mode === "sanitize") {
+              liveCells.set([]);
               const san = parseSanitizerReport(next.reportJson);
               if (san) {
                 sanitizerReport.set(san);
@@ -470,7 +499,12 @@ export function BuildConsole(props: {
             } else {
               try {
                 const rep = JSON.parse(next.reportJson) as BuildReportData;
-                finishedReport.set(rep);
+                // Commit finishedReport + clear liveCells atomically so cells reconcile
+                // in-place without an empty-matrix flash.
+                batch(() => {
+                  finishedReport.set(rep);
+                  liveCells.set([]);
+                });
                 if (!next.cancelled && !next.error) {
                   if (rep.mode === "debug" || rep.subset) {
                     // Tier 2 (§6.5): brief in-place confirmation for partial / quick runs without claiming full verification.
@@ -502,12 +536,15 @@ export function BuildConsole(props: {
           }
         }
       }
-    }, 120) as unknown as number;
+    }, 60) as unknown as number;
   }
   effect(() => {
     if (buildStatus().running) startPolling();
   });
-  cleanup(stopPolling);
+  cleanup(() => {
+    stopPolling();
+    cellStore.dispose();
+  });
 
   // ── P0-2 Single State Model derivations ────────────────────────────────────
   const solutionSpecs = computed(() => resolveSolutionHeaderSpecs(inspection(), activeReport()));
@@ -554,6 +591,17 @@ export function BuildConsole(props: {
   const matrixLookup = computed(() =>
     mergeLiveMatrixCells(activeReport()?.matrix, isRunningThis() ? liveCells() : undefined),
   );
+
+  // Reconcile the merged matrix into per-cell signals inside a single batch so each
+  // `MatrixCellView` and `selectedCellData` only re-evaluates when its own cell changes.
+  effect(() => {
+    const map = matrixLookup();
+    const streaming = untracked(isRunningThis);
+    traceSpan("build", "matrix_reconcile", () => cellStore.reconcile(map, streaming), {
+      cells: map.size,
+      streaming,
+    });
+  });
 
   const summaryBySolution = computed(() => {
     const rep = activeReport();
@@ -657,7 +705,7 @@ export function BuildConsole(props: {
   const selectedCellData = computed(() => {
     const sel = selectedCell();
     if (!sel) return undefined;
-    return matrixLookup().get(matrixCellKey(sel.testIndex, sel.solution));
+    return cellStore.cell(sel.testIndex, sel.solution)();
   });
 
   // Refresh test case preview & batch edit defaults whenever selection changes
@@ -1808,7 +1856,40 @@ export function BuildConsole(props: {
 
                 {/* P0-2 Quiet Results Table with P1-1 fluid column widths (min 120, max 180) */}
                 <Scroll horizontal style={{ flex: 1, minHeight: 0 }} contentStyle={{ flexGrow: 1 }}>
-                  <View style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * 120 + 32 }}>
+                  <View
+                    ref={(r) => (matrixRef = r)}
+                    focusable
+                    captureKeys={["up", "down", "left", "right", "j", "k"]}
+                    onKeyDown={(e) => {
+                      const dir =
+                        e.key === "ArrowDown" || e.key === "j"
+                          ? "down"
+                          : e.key === "ArrowUp" || e.key === "k"
+                            ? "up"
+                            : e.key === "ArrowLeft"
+                              ? "left"
+                              : e.key === "ArrowRight"
+                                ? "right"
+                                : undefined;
+                      if (!dir) return;
+                      const rows = displayedTableRows().map((r) => r.index);
+                      const sols = solutionSpecs().map((s) => s.name);
+                      const next = stepMatrixSelection(
+                        selectedCell(),
+                        rows,
+                        sols,
+                        dir,
+                        (ti, sol) => Boolean(untracked(cellStore.cell(ti, sol))),
+                      );
+                      if (next) {
+                        traceInteraction("build.select_cell", () => {
+                          statusOpen.set(false);
+                          selectedCell.set(next);
+                        });
+                      }
+                    }}
+                    style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * 120 + 32 }}
+                  >
                     {/* Header: one column per solution. Its verdict lives here (red dot when it does not
                         match the expectation); subtask problems add the total score as a second line.
                         Pressing a header selects it for 「运行选中」 (§5.1, §5.3). */}
@@ -2028,75 +2109,30 @@ export function BuildConsole(props: {
                                         </If>
                                       </View>
 
-                                      {/* P0-2 Quiet Solution Verdict Cells (fluid 120–180px, only anomalies have solid fill!) */}
+                                      {/* P0-2 Quiet Solution Verdict Cells (isolated per-cell signals via MatrixCellView) */}
                                       <Each of={solutionSpecs()} key={(s) => s.name}>
-                                        {(spec) => {
-                                          const cell = () => matrixLookup().get(matrixCellKey(row().index, spec().name));
-                                          const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
-                                          const isAnom = () => {
-                                            const c = cell();
-                                            if (!c) return false;
-                                            return isMatrixCellAnomaly(c.verdict, spec(), row().subtask, sum()?.matched);
-                                          };
-                                          const isPicked = () => {
-                                            const s = selectedCell();
-                                            return s?.testIndex === row().index && s?.solution === spec().name;
-                                          };
-                                          return (
-                                            <View
-                                              onPress={() => {
-                                                if (cell()) {
-                                                  statusOpen.set(false);
-                                                  selectedCell.set({ testIndex: row().index, solution: spec().name });
-                                                }
-                                              }}
-                                              style={{
-                                                flex: 1,
-                                                minWidth: 120,
-                                                maxWidth: 180,
-                                                paddingRight: 10,
-                                                justifyContent: "center",
-                                              }}
-                                            >
-                                              <If
-                                                when={cell()}
-                                                else={
-                                                  <Text style={{ fontSize: 12, paddingLeft: 6 }} class="text-muted-foreground">
-                                                    {"-"}
-                                                  </Text>
-                                                }
-                                              >
-                                                {(c) => {
-                                                  const st = () => cellVisualStyle(c().verdict, isAnom());
-                                                  const partial = () => formatScoreRatioPercent(c().score_ratio, false);
-                                                  return (
-                                                    <View
-                                                      class={`${st().cellClass} ${isPicked() ? "ring-2 ring-inset ring-primary" : ""}`}
-                                                      style={{
-                                                        height: 26,
-                                                        paddingLeft: 7,
-                                                        paddingRight: 7,
-                                                        borderRadius: 5,
-                                                        opacity: c().stale ? 0.5 : 1,
-                                                        flexDirection: "row",
-                                                        alignItems: "center",
-                                                        justifyContent: "space-between",
-                                                        gap: 6,
-                                                      }}
-                                                    >
-                                                      <Text style={{ fontSize: 12, fontWeight: isAnom() ? 600 : 400, fontVariant: ["tabular-nums"] }} class={st().textClass}>
-                                                        {partial() ? `${c().verdict} ${partial()!}` : c().verdict}
-                                                      </Text>
-                                                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], textAlign: "right" }} class={isAnom() ? "text-destructive" : "text-muted-foreground"}>
-                                                        {`${cellTimeMs(c())} ms`}
-                                                      </Text>
-                                                    </View>
-                                                  );
-                                                }}
-                                              </If>
-                                            </View>
-                                          );
-                                        }}
+                                        {(spec) => (
+                                          <MatrixCellView
+                                            store={cellStore}
+                                            testIndex={() => row().index}
+                                            subtask={() => row().subtask}
+                                            spec={spec}
+                                            matched={() =>
+                                              (summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name))?.matched
+                                            }
+                                            isPicked={() => {
+                                              const s = selectedCell();
+                                              return s?.testIndex === row().index && s?.solution === spec().name;
+                                            }}
+                                            onPick={() => {
+                                              matrixRef?.focus();
+                                              traceInteraction("build.select_cell", () => {
+                                                statusOpen.set(false);
+                                                selectedCell.set({ testIndex: row().index, solution: spec().name });
+                                              });
+                                            }}
+                                          />
+                                        )}
                                       </Each>
                                     </View>
                                   )}

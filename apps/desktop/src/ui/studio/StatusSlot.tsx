@@ -11,7 +11,7 @@ import { Popover } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { DelayedSpinner } from "../kit";
-import { overlayTransform, overlayTransition } from "../motion";
+import { colorTransition, overlayTransform, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
 export type StatusMarkKind = "unchecked" | "issues" | "passed" | "running" | "none";
@@ -127,8 +127,13 @@ export function StatusSlot(props: {
             alignItems: "center",
             gap: 6,
             flexShrink: 0,
+            ...colorTransition(120),
           }}
-          class="hover:bg-muted active:bg-accent"
+          class={
+            hasBody()
+              ? "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              : ""
+          }
         >
           <StatusMark kind={props.model.mark} emphasis="slot" />
           <Text

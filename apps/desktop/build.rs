@@ -8,18 +8,34 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn main() {
     println!("cargo:rerun-if-env-changed=XCPC_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=XCPC_BUILD_DATE");
-    emit_git_rerun_hints();
 
-    let commit = std::env::var("XCPC_GIT_COMMIT")
+    let is_release = std::env::var("PROFILE").as_deref() == Ok("release");
+    let explicit_commit = std::env::var("XCPC_GIT_COMMIT")
         .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(git_short_commit)
-        .unwrap_or_else(|| "unknown".to_owned());
+        .filter(|s| !s.trim().is_empty());
+
+    // In dev/test profiles (especially under colocated jj), watching `.git/HEAD`
+    // invalidates `xcpc-desktop` and its NSH host on every commit/bookmark edit.
+    // Only watch git refs for release builds when `XCPC_GIT_COMMIT` is not provided.
+    let commit = if let Some(commit) = explicit_commit {
+        commit
+    } else if is_release {
+        emit_git_rerun_hints();
+        git_short_commit().unwrap_or_else(|| "unknown".to_owned())
+    } else {
+        "dev".to_owned()
+    };
 
     let build_date = std::env::var("XCPC_BUILD_DATE")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(utc_today);
+        .unwrap_or_else(|| {
+            if is_release {
+                utc_today()
+            } else {
+                "dev".to_owned()
+            }
+        });
 
     println!("cargo:rustc-env=XCPC_GIT_COMMIT={commit}");
     println!("cargo:rustc-env=XCPC_BUILD_DATE={build_date}");

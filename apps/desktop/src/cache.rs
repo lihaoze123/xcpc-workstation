@@ -284,6 +284,13 @@ pub(crate) fn rasterize_cached(
     view: &[PreviewView],
     cancel: CancelToken<'_>,
 ) -> (PreviewResult, bool) {
+    let _span = xcpc_trace::span_with("desktop", "rasterize_cached", || {
+        serde_json::json!({
+            "scale": scale,
+            "viewPages": view.len(),
+            "totalPages": cached.compiled.page_count(),
+        })
+    });
     let start = Instant::now();
     let compiled = &cached.compiled;
     let fingerprints = &mut cached.fingerprints;
@@ -402,9 +409,13 @@ pub(crate) fn rasterize_cached(
     let current_keys: HashSet<String> = if cancelled {
         HashSet::new()
     } else {
+        // Protect only currently in-view pages so offscreen visited pages stay eligible
+        // for LRU eviction and never pin the 96 MiB budget across 22+ page contests.
         pages
             .iter()
-            .flat_map(|p| p.layers.iter().map(|l| l.key.clone()))
+            .enumerate()
+            .filter(|(i, _)| in_view.contains(i))
+            .flat_map(|(_, p)| p.layers.iter().map(|l| l.key.clone()))
             .collect()
     };
 
@@ -441,6 +452,76 @@ pub(crate) fn rasterize_cached(
         },
         false,
     )
+}
+
+/// Speculatively rasterizes adjacent pages at base scale into the shared `PIXELS` cache
+/// so scrolling into `current ± 1` hits warm pixels immediately. Checks `cancel` before
+/// every page and never mutates `active` so visible layers are never disturbed.
+pub(crate) fn prewarm_cached(
+    owner: u64,
+    active: &HashSet<String>,
+    cached: &mut CachedCompile,
+    scale: f32,
+    neighbor_pages: &[u32],
+    cancel: CancelToken<'_>,
+) -> u32 {
+    if cancel.is_cancelled() || neighbor_pages.is_empty() {
+        return 0;
+    }
+    let _span = xcpc_trace::span_with("desktop", "prewarm_neighbors", || {
+        serde_json::json!({
+            "scale": scale,
+            "requested": neighbor_pages.len(),
+        })
+    });
+    let compiled = &cached.compiled;
+    let fingerprints = &mut cached.fingerprints;
+    let page_count = compiled.page_count();
+    let base = scale.min(BASE_SCALE);
+
+    let mut jobs = Vec::new();
+    let mut queued = HashSet::new();
+    for &p in neighbor_pages {
+        if cancel.is_cancelled() {
+            return 0;
+        }
+        let i = p as usize;
+        if i >= page_count {
+            continue;
+        }
+        let fingerprint = *fingerprints[i]
+            .get_or_insert_with(|| compiled.page_fingerprint(i).unwrap_or_default());
+        let key = format!("{owner}:{fingerprint:032x}@{base}");
+        let cached_hit = {
+            let mut pixels = PIXELS.lock().unwrap();
+            pixels.contains_and_touch(&key)
+        };
+        if !cached_hit && queued.insert(key.clone()) {
+            jobs.push(Job {
+                page: i,
+                scale: base,
+                region: None,
+                key,
+                kind: LayerKind::Base,
+            });
+        }
+    }
+    if jobs.is_empty() || cancel.is_cancelled() {
+        return 0;
+    }
+
+    let rendered = render(compiled, &jobs, cancel);
+    let count = rendered.len() as u32;
+    if count > 0 {
+        let mut protected = active.clone();
+        let mut pixels = PIXELS.lock().unwrap();
+        for item in rendered {
+            protected.insert(item.key.clone());
+            pixels.insert(item.key, item.src, item.bytes, item.kind, owner);
+        }
+        pixels.evict(&protected);
+    }
+    count
 }
 
 /// The tiles (pixel regions `[x, y, width, height]`) of a page of `size` points at

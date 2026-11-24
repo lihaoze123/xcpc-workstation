@@ -1320,6 +1320,25 @@ pub struct AboutInfoJs {
     pub font_source: String,
 }
 
+/// Offline performance trace recorder status (`Preview.traceStatus()`).
+#[derive(Debug, Clone, Default, JsObject)]
+pub struct TraceStatusJs {
+    pub enabled: bool,
+    pub event_count: u32,
+    pub dropped_count: u32,
+    pub rust_now_us: f64,
+}
+
+/// Result of exporting a merged Rust + JS Chrome Trace JSON file.
+#[derive(Debug, Clone, Default, JsObject)]
+pub struct TraceExportResultJs {
+    pub ok: bool,
+    pub cancelled: bool,
+    pub path: Option<String>,
+    pub bytes: u32,
+    pub error: Option<String>,
+}
+
 // ---- Phase 3A: Local Polygon toolchain & package build ---------------------------------
 
 /// One detected C++ compiler binary on the host.

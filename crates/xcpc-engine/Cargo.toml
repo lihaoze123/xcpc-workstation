@@ -10,6 +10,8 @@ bundled-fonts = []
 
 [dependencies]
 xcpc-domain.workspace = true
+xcpc-trace.workspace = true
+serde_json.workspace = true
 typst.workspace = true
 typst-layout.workspace = true
 typst-render.workspace = true

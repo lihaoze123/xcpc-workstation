@@ -5,8 +5,8 @@
 import { cleanup, effect, Overlay, reduceMotion, signal, Text, View, type JSX } from "nsh";
 import { Icon, type IconName, type IconTone } from "./Icon";
 import { TITLE_BAR } from "./TitleBar";
-import { backdropTransition } from "./motion";
-import { EASE_STANDARD, modalBackdrop, modalShadow, ms } from "./theme";
+import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
+import { modalBackdrop, modalShadow, ms } from "./theme";
 
 export function Modal(props: {
   open: boolean;
@@ -101,10 +101,9 @@ export function Modal(props: {
               overflow: "hidden",
               boxShadow: modalShadow(),
               opacity: shown() ? 1 : 0,
-              transform: reduceMotion() ? undefined : shown() ? "translateY(0px)" : "translateY(-4px)",
-              transitionProperty: "opacity, transform",
-              transitionDuration: ms(140),
-              transitionTimingFunction: EASE_STANDARD,
+              transform: overlayTransform(shown()),
+              ...overlayTransition(),
+              pointerEvents: props.open ? "auto" : "none",
             }}
             class="bg-card border-border"
           >

@@ -52,8 +52,9 @@ pub use crate::types::{
     PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
     ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs,
     SaveReportResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest,
-    WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
+    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -157,6 +158,93 @@ impl Preview {
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
             font_source,
+        }
+    }
+
+    /// Returns current offline performance trace status and Rust monotonic clock reading.
+    pub fn trace_status() -> TraceStatusJs {
+        let s = xcpc_trace::status();
+        TraceStatusJs {
+            enabled: s.enabled,
+            event_count: s.event_count as u32,
+            dropped_count: s.dropped_count as u32,
+            rust_now_us: s.rust_now_us,
+        }
+    }
+
+    /// Starts (or restarts) an offline performance trace recording session.
+    pub fn trace_start() -> TraceStatusJs {
+        let s = xcpc_trace::start();
+        TraceStatusJs {
+            enabled: s.enabled,
+            event_count: s.event_count as u32,
+            dropped_count: s.dropped_count as u32,
+            rust_now_us: s.rust_now_us,
+        }
+    }
+
+    /// Stops offline performance trace recording while keeping buffered events for export.
+    pub fn trace_stop() -> TraceStatusJs {
+        let s = xcpc_trace::stop();
+        TraceStatusJs {
+            enabled: s.enabled,
+            event_count: s.event_count as u32,
+            dropped_count: s.dropped_count as u32,
+            rust_now_us: s.rust_now_us,
+        }
+    }
+
+    /// Prompts for a save location and writes a merged Rust + JS Chrome Trace JSON file
+    /// (compatible with Perfetto UI and `chrome://tracing`).
+    pub async fn trace_export_dialog(
+        js_events_json: String,
+        js_clock_offset_us: f64,
+        title: String,
+        button: String,
+    ) -> TraceExportResultJs {
+        let js_events: Vec<xcpc_trace::JsTraceEvent> =
+            serde_json::from_str(&js_events_json).unwrap_or_default();
+        let dialog = SaveDialog::new()
+            .title(title)
+            .button_label(button)
+            .file_name("xcpc-trace.json")
+            .filter(FileFilter::new("Chrome Trace JSON", ["json"]));
+        let picked = match pick_save_path(dialog).await {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                return TraceExportResultJs {
+                    ok: false,
+                    cancelled: true,
+                    path: None,
+                    bytes: 0,
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return TraceExportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    bytes: 0,
+                    error: Some(err),
+                };
+            }
+        };
+        match xcpc_trace::export_to_file(&picked, &js_events, js_clock_offset_us) {
+            Ok(bytes) => TraceExportResultJs {
+                ok: true,
+                cancelled: false,
+                path: Some(picked.display().to_string()),
+                bytes: bytes as u32,
+                error: None,
+            },
+            Err(err) => TraceExportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                bytes: 0,
+                error: Some(err.to_string()),
+            },
         }
     }
 
@@ -506,6 +594,26 @@ impl Preview {
             error: Some(format!("preview task failed: {e}")),
             ..Default::default()
         })
+    }
+
+    /// Speculatively pre-warms adjacent pages at base scale into the pixel cache.
+    /// Does not increment `generation` (never cancels an active compile) and yields
+    /// immediately whenever any new compile supersedes `expected_gen`.
+    pub async fn prewarm_neighbors(this: Instance<Self>, scale: f64, pages: Vec<u32>) -> u32 {
+        if this.is_disposed() || pages.is_empty() {
+            return 0;
+        }
+        let (state, generation) = this.with(|p| (p.state.clone(), p.generation.clone()));
+        let expected_gen = generation.load(Ordering::Acquire);
+        blocking(move || {
+            let cancel = CancelToken {
+                generation: expected_gen,
+                latest: &generation,
+            };
+            state.prewarm_neighbors(scale as f32, &pages, cancel)
+        })
+        .await
+        .unwrap_or(0)
     }
 
     /// Compiles and rasterizes a single LaTeX math expression off the UI thread for the

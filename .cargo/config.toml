@@ -1,7 +1,62 @@
-# Typst's layout and rasterizer are unusably slow unoptimized; our own crates stay
-# debuggable. Here rather than in `Cargo.toml` so it also reaches the workspace `nsh`
+# Dev builds keep workspace crates debuggable with compact line tables while only
+# optimizing hot Typst/rendering dependencies (avoiding O2 across hundreds of cold
+# crates). Here rather than in `Cargo.toml` so it also reaches the workspace `nsh`
 # generates for the desktop hosts (`apps/desktop/.nsh/rust`), whose profiles are its own.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
+debug = 0
+
+[profile.dev.package.typst]
+opt-level = 2
+
+[profile.dev.package.typst-eval]
+opt-level = 2
+
+[profile.dev.package.typst-layout]
+opt-level = 2
+
+[profile.dev.package.typst-library]
+opt-level = 2
+
+[profile.dev.package.typst-pdf]
+opt-level = 2
+
+[profile.dev.package.typst-realize]
+opt-level = 2
+
+[profile.dev.package.typst-render]
+opt-level = 2
+
+[profile.dev.package.typst-svg]
+opt-level = 2
+
+[profile.dev.package.typst-syntax]
+opt-level = 2
+
+[profile.dev.package.comemo]
+opt-level = 2
+
+[profile.dev.package.tiny-skia]
+opt-level = 2
+
+[profile.dev.package.resvg]
+opt-level = 2
+
+[profile.dev.package.ttf-parser]
+opt-level = 2
+
+[profile.dev.package.mitex]
+opt-level = 2
+
+[profile.dev.package.flate2]
+opt-level = 2
+
+[profile.dev.package.png]
+opt-level = 2
+
+[profile.dev.package.image]
 opt-level = 2
 
 # Applies to both the root workspace (`xcpc`) and `apps/desktop/.nsh/rust`
@@ -12,6 +67,16 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Fast optimized profile for local performance benchmarks & regression gates
+# without paying full fat-LTO / single-CGU release link times.
+[profile.bench-fast]
+inherits = "release"
+opt-level = 2
+lto = "thin"
+codegen-units = 16
+strip = false
+panic = "unwind"
 
 # Match `nsh package --target windows` so `xcpc.exe` also ships without a
 # runtime dependency on VCRUNTIME140.dll.

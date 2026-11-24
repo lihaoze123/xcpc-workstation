@@ -38,6 +38,12 @@ import { abbreviateHome, pathBase } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
 import { ShortcutsList } from "./ShortcutsModal";
 import {
+  exportTraceDialog,
+  startTraceRecording,
+  syncTraceStatus,
+  traceRecording,
+} from "./trace";
+import {
   brandReplayOpen,
   errorOf,
   info,
@@ -1134,11 +1140,34 @@ export function AboutPane() {
   const about = readAboutInfo();
   const devShell = isDevShell();
   const copiedDiag = signal(false);
+  const traceExported = createTransientFlag(1800);
+  const traceBusy = signal(false);
+  syncTraceStatus();
   const updateState = signal<UpdateState>({ kind: "idle" });
   const installing = signal(false);
 
   let diagTimer: number | undefined;
   cleanup(() => clearTimeout(diagTimer));
+
+  const toggleTrace = async () => {
+    if (traceBusy()) return;
+    if (!traceRecording()) {
+      startTraceRecording();
+      return;
+    }
+    traceBusy.set(true);
+    try {
+      const res = await exportTraceDialog(
+        t("settings.about.traceExportTitle"),
+        t("settings.about.traceExportBtn"),
+      );
+      if (res.ok) {
+        traceExported.trigger();
+      }
+    } finally {
+      traceBusy.set(false);
+    }
+  };
 
   const copyDiagnostics = () => {
     void Clipboard.writeText(formatDiagnostics(about)).then(() => {
@@ -1399,6 +1428,35 @@ export function AboutPane() {
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
               {t("settings.about.diagnosticsDesc")}
+            </Text>
+          </View>
+        </SectionRow>
+
+        <SectionRow
+          trailing={
+            <Btn
+              testID="about-perf-trace"
+              variant={traceRecording() ? "primary" : undefined}
+              label={
+                traceExported.active()
+                  ? t("settings.about.traceExported")
+                  : traceRecording()
+                    ? t("settings.about.traceStopExport")
+                    : t("settings.about.traceStart")
+              }
+              icon={traceExported.active() ? "check" : undefined}
+              disabled={traceBusy()}
+              onPress={() => void toggleTrace()}
+              style={{ minWidth: 124 }}
+            />
+          }
+        >
+          <View style={{ gap: 2 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              {t("settings.about.trace")}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              {t("settings.about.traceDesc")}
             </Text>
           </View>
         </SectionRow>

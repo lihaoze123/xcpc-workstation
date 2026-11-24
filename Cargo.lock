@@ -5195,6 +5195,7 @@ dependencies = [
  "xcpc-judge",
  "xcpc-lint",
  "xcpc-storage",
+ "xcpc-trace",
 ]
 
 [[package]]
@@ -5213,6 +5214,7 @@ dependencies = [
  "xcpc-lint",
  "xcpc-packages",
  "xcpc-storage",
+ "xcpc-trace",
 ]
 
 [[package]]
@@ -5231,6 +5233,7 @@ version = "0.2.0"
 dependencies = [
  "comemo",
  "flate2",
+ "serde_json",
  "siphasher",
  "tar",
  "tempfile",
@@ -5243,6 +5246,7 @@ dependencies = [
  "typst-pdf",
  "typst-render",
  "xcpc-domain",
+ "xcpc-trace",
 ]
 
 [[package]]
@@ -5336,6 +5340,14 @@ dependencies = [
  "toml_edit",
  "xcpc-domain",
  "xcpc-engine",
+]
+
+[[package]]
+name = "xcpc-trace"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

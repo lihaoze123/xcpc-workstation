@@ -420,8 +420,7 @@ pub(crate) fn load_cold_start_snapshot(
     }
 
     let rendered = obj.get("rendered").and_then(JsonValue::as_array)?;
-    let mut loaded_any = false;
-    let mut pixels = PIXELS.lock().unwrap();
+    let mut decoded: Vec<(usize, String, ImageSrc, usize)> = Vec::new();
     for item in rendered.iter().take(MAX_SNAPSHOT_PAGES) {
         let Some(item_obj) = item.as_object() else {
             continue;
@@ -443,26 +442,32 @@ pub(crate) fn load_cold_start_snapshot(
         {
             continue;
         }
+        // Decode PNGs off the global PIXELS lock so we only hold the mutex for fast inserts.
         let Some((w, h, rgba)) = decode_page_png(&dir.join(file_name)) else {
             continue;
         };
         let byte_len = rgba.len();
-
         let key = format!("{owner_id}:snapshot:p{page_idx}");
         let src = ImageSrc::rgba(w, h, rgba);
-        pixels.insert(key.clone(), src, byte_len, LayerKind::Base, owner_id);
-        pages[page_idx].layers.push(PreviewLayer {
-            key,
-            left: 0.0,
-            top: 0.0,
-            width: 1.0,
-            height: 1.0,
-        });
-        loaded_any = true;
+        decoded.push((page_idx, key, src, byte_len));
     }
 
-    if !loaded_any {
+    if decoded.is_empty() {
         return None;
+    }
+
+    {
+        let mut pixels = PIXELS.lock().unwrap();
+        for (page_idx, key, src, byte_len) in decoded {
+            pixels.insert(key.clone(), src, byte_len, LayerKind::Base, owner_id);
+            pages[page_idx].layers.push(PreviewLayer {
+                key,
+                left: 0.0,
+                top: 0.0,
+                width: 1.0,
+                height: 1.0,
+            });
+        }
     }
 
     Some(ColdStartSnapshotJs {

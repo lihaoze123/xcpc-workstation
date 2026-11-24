@@ -12,6 +12,7 @@ import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
+import { pageTransform, pageTransition } from "./src/ui/motion";
 import { NavRail } from "./src/ui/NavRail";
 import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
@@ -21,6 +22,7 @@ import { StudioView } from "./src/ui/studio/StudioView";
 import { ToastHost } from "./src/ui/Toast";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
+import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
 import {
   brandReplayOpen,
   flushPrefs,
@@ -59,10 +61,12 @@ function SpaceStage(props: {
   direction?: "row" | "column";
   children?: JSX.Element;
 }) {
-  const isStudioStage = props.variant === "studio";
-  const revealed = signal(props.visible && (!isStudioStage || !props.animateOnMount));
+  const isStudio = props.variant === "studio";
+  const revealed = signal(props.visible && (!isStudio || !props.animateOnMount));
+  const displayed = signal(props.visible);
   let initialized = false;
   let raf: number | undefined;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   effect(() => {
     const isVisible = props.visible;
@@ -72,38 +76,59 @@ function SpaceStage(props: {
       cancelAnimationFrame(raf);
       raf = undefined;
     }
-    if (!isStudioStage) {
+    if (hideTimer !== undefined) {
+      clearTimeout(hideTimer);
+      hideTimer = undefined;
+    }
+    if (!isStudio) {
+      // Peer spaces swap synchronously in 1 frame (zero blank frame, no full-screen FBO);
+      // NavRail's spring indicator carries the spatial cue cleanly.
+      displayed.set(isVisible);
       revealed.set(isVisible);
       return;
     }
-    if (!isVisible) {
-      revealed.set(false);
-    } else if (reduceMotion() || (first && !props.animateOnMount)) {
-      revealed.set(true);
+    if (isVisible) {
+      displayed.set(true);
+      if (reduceMotion() || (first && !props.animateOnMount)) {
+        revealed.set(true);
+      } else {
+        revealed.set(false);
+        raf = requestAnimationFrame(() => {
+          raf = undefined;
+          revealed.set(true);
+        });
+      }
     } else {
       revealed.set(false);
-      raf = requestAnimationFrame(() => {
-        raf = undefined;
-        revealed.set(true);
-      });
+      if (reduceMotion()) {
+        displayed.set(false);
+      } else {
+        hideTimer = setTimeout(() => {
+          hideTimer = undefined;
+          displayed.set(false);
+        }, 240);
+      }
     }
   });
   cleanup(() => {
     if (raf !== undefined) cancelAnimationFrame(raf);
+    if (hideTimer !== undefined) clearTimeout(hideTimer);
   });
 
   return (
     <View
+      class={isStudio ? "bg-background" : undefined}
       style={{
-        flex: 1,
+        flex: isStudio ? undefined : 1,
+        ...(isStudio ? { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } : undefined),
         flexDirection: props.direction,
-        display: props.visible ? "flex" : "none",
-        ...(isStudioStage
+        display: displayed() ? "flex" : "none",
+        pointerEvents: props.visible ? "auto" : "none",
+        ...(isStudio
           ? {
               opacity: revealed() ? 1 : 0,
-              transitionProperty: "opacity",
-              transitionDuration: ms(120),
-              transitionTimingFunction: EASE_STANDARD,
+              transform: pageTransform(revealed(), "studio"),
+              ...pageTransition(),
             }
           : undefined),
       }}
@@ -168,11 +193,15 @@ function App() {
   });
 
   keymap.bind({
-    "mod+k": () => hasWorkspace() && paletteOpen.set(!paletteOpen()),
+    "mod+k": () =>
+      hasWorkspace() && traceInteraction("palette.toggle", () => paletteOpen.set(!paletteOpen())),
     "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
-    "mod+1": () => hasWorkspace() && !inStudio() && goSpace("problems"),
-    "mod+2": () => hasWorkspace() && !inStudio() && goSpace("contests"),
-    "mod+3": () => hasWorkspace() && !inStudio() && goSpace("settings"),
+    "mod+1": () =>
+      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("problems"), { space: "problems" }),
+    "mod+2": () =>
+      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("contests"), { space: "contests" }),
+    "mod+3": () =>
+      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 
@@ -199,7 +228,13 @@ function App() {
   };
 
   const shell = (
-    <SpaceStage visible={!inStudio()} variant="studio" direction="column">
+    <View
+      style={{
+        flex: 1,
+        flexDirection: "column",
+        pointerEvents: inStudio() ? "none" : "auto",
+      }}
+    >
       <TitleBar
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0, maxWidth: 224 }}>
@@ -290,7 +325,10 @@ function App() {
         }
       />
       <View style={{ flex: 1, flexDirection: "row" }}>
-        <NavRail space={space()} onChange={goSpace} />
+        <NavRail
+          space={space()}
+          onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
+        />
         <SpaceStage visible={space() === "problems"} variant="space">
           <LibraryView active={!inStudio() && space() === "problems"} />
         </SpaceStage>
@@ -301,7 +339,7 @@ function App() {
           <SettingsView />
         </SpaceStage>
       </View>
-    </SpaceStage>
+    </View>
   );
 
   return (
@@ -409,6 +447,9 @@ function App() {
     </View>
   );
 }
+
+// Sync JS trace collector at startup when launched with `XCPC_TRACE=1`.
+syncTraceStatus();
 
 // Register bundled JetBrains Mono faces into the GUI text engine and flip `fontsReady`
 // once all faces are installed so mounted `Editor`s re-measure glyph widths with real JetBrains Mono.

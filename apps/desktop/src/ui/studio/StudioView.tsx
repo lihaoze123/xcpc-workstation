@@ -25,7 +25,7 @@ import { locale, t, type MessageKey } from "../i18n";
 import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { minimalEdit, ratioOf, type Book } from "../logic";
+import { adaptiveCompileDelayMs, minimalEdit, ratioOf, type Book } from "../logic";
 import { setToastBottomLift } from "../Toast";
 import {
   book as storeBook,
@@ -315,9 +315,15 @@ export function StudioView(props: { active: boolean }) {
   let pendingCursor: { path: string; line: number; column: number } | undefined;
   let compileImmediate = false;
 
+  let lastKeystrokeAt = 0;
+
   function scheduleCompile() {
     clearTimeout(compileTimer);
-    const delay = untracked(target)?.target === "contest" ? 200 : 100;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const interKeystrokeMs = lastKeystrokeAt > 0 ? now - lastKeystrokeAt : 1000;
+    lastKeystrokeAt = now;
+    const isContest = untracked(target)?.target === "contest";
+    const delay = adaptiveCompileDelayMs(isContest, interKeystrokeMs, canvas?.lastCompileMs() ?? 0);
     compileTimer = setTimeout(() => {
       compileTimer = undefined;
       canvas?.compile();
@@ -1542,6 +1548,10 @@ export function StudioView(props: { active: boolean }) {
                   request={request}
                   controller={(c) => (canvas = c)}
                   onResult={(r) => {
+                    // Cache-hit scroll/zoom updates (`compileMs === 0` with existing starts)
+                    // do not change diagnostics or export status — skip redundant churn.
+                    const isCompiled = r.compileMs > 0 || Boolean(r.error) || untracked(starts).length === 0;
+                    if (!isCompiled) return;
                     batch(() => {
                       diagnostics.set(r.diagnostics);
                       if (r.pages.length > 0) starts.set(r.starts);

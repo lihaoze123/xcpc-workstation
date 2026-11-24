@@ -5,7 +5,8 @@
 
 import { cleanup, effect, reduceMotion, signal, Text, View } from "nsh";
 import { Icon } from "./Icon";
-import { EASE_STANDARD, ms, popoverShadow } from "./theme";
+import { overlayTransition } from "./motion";
+import { ms, popoverShadow } from "./theme";
 
 export type ToastTone = "success" | "issues" | "info";
 
@@ -91,10 +92,14 @@ export function ToastHost() {
     clearTimeout(unmountTimer);
     if (next) {
       rendered.set(next);
-      raf = requestAnimationFrame(() => {
-        raf = undefined;
+      if (reduceMotion()) {
         shown.set(true);
-      });
+      } else {
+        raf = requestAnimationFrame(() => {
+          raf = undefined;
+          shown.set(true);
+        });
+      }
     } else if (rendered()) {
       shown.set(false);
       const dur = ms(150);
@@ -126,7 +131,7 @@ export function ToastHost() {
           style={{
             position: "absolute",
             right: 20,
-            bottom: toastBottomLift() ? 68 : 20,
+            bottom: 20,
             maxWidth: 420,
             minHeight: 36,
             paddingLeft: 12,
@@ -139,10 +144,12 @@ export function ToastHost() {
             gap: 8,
             boxShadow: popoverShadow(),
             opacity: shown() ? 1 : 0,
-            transform: reduceMotion() ? undefined : shown() ? "translateY(0px)" : "translateY(6px)",
-            transitionProperty: "opacity, transform",
-            transitionDuration: ms(150),
-            transitionTimingFunction: EASE_STANDARD,
+            transform: (() => {
+              const lift = toastBottomLift() ? -48 : 0;
+              const entry = reduceMotion() || shown() ? 0 : 6;
+              return `translateY(${lift + entry}px)`;
+            })(),
+            ...overlayTransition(),
           }}
         >
           <If when={item().tone === "success"}>
