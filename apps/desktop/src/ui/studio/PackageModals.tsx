@@ -24,7 +24,7 @@ import {
 
 const SAFE_STEM_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
-function ModalHeader(props: { icon: IconName; title: string; subtitle: string }) {
+function ModalHeader(props: { icon: IconName; title: string; subtitle?: string }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
       <View
@@ -37,9 +37,11 @@ function ModalHeader(props: { icon: IconName; title: string; subtitle: string })
         <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
           {props.title}
         </Text>
-        <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-          {props.subtitle}
-        </Text>
+        <If when={props.subtitle}>
+          <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            {props.subtitle}
+          </Text>
+        </If>
       </View>
     </View>
   );
@@ -518,7 +520,6 @@ export function SubtaskModal(props: {
               ? t("build.subtasks.modalEditTitle", { id: props.editing.id })
               : t("build.subtasks.modalAddTitle")
           }
-          subtitle={t("build.subtasks.modalSubtitle")}
         />
 
         <View style={{ flexDirection: "row", gap: 10 }}>
@@ -565,7 +566,7 @@ export function SubtaskModal(props: {
             {(["min", "sum"] as const).map((mode) => (
               <View
                 onPress={() => scoring.set(mode)}
-                class={scoring() === mode ? "bg-muted border border-border" : "border border-border/60 hover:bg-muted/50"}
+                class={scoring() === mode ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
                 style={{
                   flex: 1,
                   height: 30,
@@ -595,12 +596,12 @@ export function SubtaskModal(props: {
                   return (
                     <View
                       onPress={() => toggleDep(s().id)}
-                      class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
-                      style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
+                      class={active() ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
+                      style={{ height: 26, paddingLeft: 8, paddingRight: 8, borderRadius: 6, justifyContent: "center" }}
                     >
                       <Text
                         style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                        class={active() ? "text-primary-foreground" : "text-foreground"}
+                        class={active() ? "text-foreground" : "text-secondary-foreground"}
                       >
                         {t("build.table.subtaskHeader", { id: s().id })}
                       </Text>
@@ -746,7 +747,7 @@ export function SolutionScoringModal(props: {
                   const curLabel = () => (cur() && cur()!.length > 0 ? cur()!.join(" / ") : t("build.scoring.anyVerdict"));
                   return (
                     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                      <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"] }} class="text-foreground">
                         {`${t("build.table.subtaskHeader", { id: s().id })}  (${s().score})`}
                       </Text>
                       <AppMenu
@@ -843,7 +844,7 @@ export function InitPackageModal(props: {
               <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
                 {t("build.initModal.interactive")}
               </Text>
-              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
                 {t("build.initModal.interactiveDesc")}
               </Text>
             </View>
@@ -855,7 +856,7 @@ export function InitPackageModal(props: {
               <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
                 {t("build.initModal.subtasks")}
               </Text>
-              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
                 {t("build.initModal.subtasksDesc")}
               </Text>
             </View>

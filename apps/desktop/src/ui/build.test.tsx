@@ -3,6 +3,7 @@ import {
   buildMatrixLookup,
   buildPackageModeBadges,
   canInlineEditTest,
+  cellTimeMs,
   cellVisualStyle,
   computeOnboardingChecklist,
   countTestsInRule,
@@ -522,19 +523,13 @@ describe("Pre-build solution headers & restrained gate partitioning", () => {
     expect(merged.get(matrixCellKey(1, "std"))?.stale).toBe(false);
     expect(merged.get(matrixCellKey(2, "std"))?.stale).toBe(true);
 
-    // P0-2 Quiet Results Table: expected cells are borderless/transparent; ONLY anomalies get solid fill (amber for unexpected AC, red for unexpected fail).
-    const quietAc = cellVisualStyle("AC", false, false);
-    expect(quietAc.bg).toBe("transparent");
-    expect(quietAc.bold).toBe(false);
-    const expectedWa = cellVisualStyle("WA", false, false);
-    expect(expectedWa.bg).toBe("transparent");
-    expect(expectedWa.bold).toBe(true);
-    const unexpectedAc = cellVisualStyle("AC", true, false);
-    expect(unexpectedAc.solid).toBe(true);
-    expect(unexpectedAc.bg).toBe("#d97706"); // amber, NEVER green
-    const unexpectedWa = cellVisualStyle("WA", true, false);
-    expect(unexpectedWa.solid).toBe(true);
-    expect(unexpectedWa.bg).toBe("#dc2626"); // vivid red
+    // §5.3: color only says 「不符合预期」 — rose tint + red text; expected cells have no fill.
+    expect(cellVisualStyle("AC", false)).toEqual({ cellClass: "", textClass: "text-foreground" });
+    expect(cellVisualStyle("WA", false)).toEqual({ cellClass: "", textClass: "text-secondary-foreground" });
+    expect(cellVisualStyle("AC", true)).toEqual({ cellClass: "bg-destructive/12", textClass: "text-destructive" });
+    expect(cellVisualStyle("WA", true).cellClass).toBe("bg-destructive/12");
+    expect(cellTimeMs({ verdict: "TLE", cpu_time_ms: 990, wall_time_ms: 2000 })).toBe(2000);
+    expect(cellTimeMs({ verdict: "AC", cpu_time_ms: 12, wall_time_ms: 30 })).toBe(12);
 
     // P1-3 Conclusion-first diagnostic headline.
     expect(formatCellConclusion("AC", ["WA"], true, true)).toEqual({ text: "应为 WA，实际通过", tone: "amber" });
@@ -691,6 +686,7 @@ describe("Phase 3C interactive, multi-run, and OI subtask helpers", () => {
       { index: 2, name: "s2", is_sample: false, size_bytes: 10, subtask: "2" },
       { index: 3, name: "s3", is_sample: false, size_bytes: 10, subtask: "1" },
       { index: 4, name: "orphan", is_sample: false, size_bytes: 10, subtask: null },
+      { index: 5, name: "sample-01", is_sample: true, size_bytes: 4, subtask: null },
     ];
     const subtasks = [
       { id: "1", score: 30, scoring: "min" as const, test_count: 2 },
@@ -698,6 +694,7 @@ describe("Phase 3C interactive, multi-run, and OI subtask helpers", () => {
     ];
     const grouped = groupMatrixRowsBySubtask(rows, subtasks);
     expect(grouped.map((g) => ({ key: g.key, ids: g.rows.map((r) => r.index) }))).toEqual([
+      { key: "__samples__", ids: [5] },
       { key: "subtask:1", ids: [1, 3] },
       { key: "subtask:2", ids: [2] },
       { key: "__unassigned__", ids: [4] },

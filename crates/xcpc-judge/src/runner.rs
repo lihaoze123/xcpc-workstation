@@ -1610,7 +1610,7 @@ fn run_interactive_unix(
             Verdict::TLE,
             0.0,
             format!(
-                "time limit exceeded (cpu {}ms > {}ms)",
+                "CPU 用时 {}ms，超过时限 {}ms",
                 cpu_time_ms, limits.time_limit_ms
             ),
         )
@@ -1619,20 +1619,20 @@ fn run_interactive_unix(
             Verdict::ILE,
             0.0,
             format!(
-                "idleness limit exceeded (cpu {}ms, wall {}ms; check flush / protocol deadlock)",
+                "卡住了：CPU 只用了 {}ms，等待了 {}ms。检查是否刷新了输出，或双方是否都在等对方",
                 cpu_time_ms, wall_time_ms
             ),
         )
     } else if (limits.memory_limit_kib > 0 && peak_memory_kib > limits.memory_limit_kib)
         || ((sol_signal.is_some() || sol_exit != Some(0)) && is_bad_alloc)
     {
-        (Verdict::MLE, 0.0, "memory limit exceeded".to_owned())
+        (Verdict::MLE, 0.0, "内存超过限制".to_owned())
     } else {
         let sol_crashed = !killed_sol_after_inter
             && sol_signal != Some(libc::SIGPIPE)
             && (sol_signal.is_some() || sol_exit != Some(0));
         if sol_crashed && inter_outcome.verdict == Verdict::AC {
-            (Verdict::RE, 0.0, "solution exited abnormally".to_owned())
+            (Verdict::RE, 0.0, "解法异常退出".to_owned())
         } else if sol_crashed
             && matches!(inter_outcome.verdict, Verdict::WA | Verdict::PE)
             && sol_signal.is_some()
@@ -1641,7 +1641,7 @@ fn run_interactive_unix(
             (
                 Verdict::RE,
                 0.0,
-                format!("solution crashed with signal {:?}", sol_signal),
+                format!("解法崩溃（信号 {:?}）", sol_signal),
             )
         } else {
             (
@@ -1846,11 +1846,15 @@ fn run_interactive_windows(
 
     let inter_outcome = parse_testlib_verdict(inter_status.code(), &inter_stderr);
     let (verdict, score_ratio, checker_message) = if cpu_time_ms > limits.time_limit_ms {
-        (Verdict::TLE, 0.0, "time limit exceeded".to_owned())
+        (Verdict::TLE, 0.0, "超过时限".to_owned())
     } else if killed_by_timeout {
-        (Verdict::ILE, 0.0, "idleness limit exceeded".to_owned())
+        (
+            Verdict::ILE,
+            0.0,
+            "卡住了：等待超时，检查是否刷新了输出".to_owned(),
+        )
     } else if sol_status.code() != Some(0) && inter_outcome.verdict == Verdict::AC {
-        (Verdict::RE, 0.0, "solution exited abnormally".to_owned())
+        (Verdict::RE, 0.0, "解法异常退出".to_owned())
     } else {
         (
             inter_outcome.verdict,
@@ -1966,9 +1970,9 @@ pub fn run_multi_run_interactive(
 
         if res.verdict != Verdict::AC {
             let msg = if res.checker_message.is_empty() {
-                format!("run {pass}/{runs} failed with {}", res.verdict)
+                format!("第 {pass} 轮（共 {runs} 轮）：{}", res.verdict)
             } else {
-                format!("[run {pass}/{runs}] {}", res.checker_message)
+                format!("第 {pass} 轮（共 {runs} 轮）：{}", res.checker_message)
             };
             return Ok(InteractiveOutcome {
                 verdict: res.verdict,

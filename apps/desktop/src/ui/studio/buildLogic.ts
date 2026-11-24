@@ -666,9 +666,30 @@ export const EXPECT_PRESETS: readonly (readonly string[])[] = [
 
 export const MAX_INLINE_TEST_EDIT_BYTES = 64 * 1024;
 
+/**
+ * Whether one matrix cell breaks its solution's expectation (§5.3). A partial-score solution
+ * (`score` / per-subtask expectations) asserts per subtask, not per test: its cells only
+ * mismatch against that subtask's expected verdicts; otherwise the column header says it.
+ */
+export function isMatrixCellAnomaly(
+  verdict: string,
+  col: Pick<SolutionHeaderSpec, "expected" | "is_main" | "score" | "subtasks">,
+  subtaskId: string | null | undefined,
+  solutionMatched?: boolean,
+): boolean {
+  const subtaskExpect = col.subtasks && subtaskId ? col.subtasks[subtaskId] : undefined;
+  if (subtaskExpect != null) {
+    const exp = (Array.isArray(subtaskExpect) ? subtaskExpect : [subtaskExpect]).map((e) => e.toUpperCase());
+    return !exp.includes(verdict.toUpperCase());
+  }
+  const partial = col.score != null || (col.subtasks != null && Object.keys(col.subtasks).length > 0);
+  if (partial && !col.is_main) return false;
+  return isCellVerdictAnomaly(verdict, col.expected, col.is_main, solutionMatched);
+}
+
 /** True when a test row has a validator failure or at least one expectation-violating cell. */
 export function isRowAnomalous(
-  row: Pick<TestSummaryData, "index" | "validator_ok">,
+  row: Pick<TestSummaryData, "index" | "validator_ok" | "subtask">,
   cols: readonly SolutionHeaderSpec[],
   matrixLookup: ReadonlyMap<string, MatrixCellData>,
   summaryByName: ReadonlyMap<string, SolutionSummaryData>,
@@ -678,7 +699,7 @@ export function isRowAnomalous(
     const cell = matrixLookup.get(matrixCellKey(row.index, col.name));
     if (!cell) continue;
     const sum = summaryByName.get(col.name);
-    if (isCellVerdictAnomaly(cell.verdict, col.expected, col.is_main, sum?.matched)) {
+    if (isMatrixCellAnomaly(cell.verdict, col, row.subtask, sum?.matched)) {
       return true;
     }
   }
@@ -789,32 +810,23 @@ export function mergeLiveMatrixCells(
  * - Expected non-AC (wrong solution getting expected WA/TLE): transparent bg, no border, bold neutral foreground.
  * - Unexpected / mismatch ONLY: solid semantic fill (red for should-pass-but-failed, amber for should-fail-but-passed; NEVER green!).
  */
-export function cellVisualStyle(
-  verdict: string,
-  isAnomaly: boolean,
-  dark: boolean,
-): { bg: string; fg: string; border: string; bold: boolean; solid: boolean } {
-  const upper = verdict.toUpperCase();
-  if (!isAnomaly) {
-    if (upper === "AC") {
-      return dark
-        ? { bg: "transparent", fg: "#a1a1aa", border: "transparent", bold: false, solid: false }
-        : { bg: "transparent", fg: "#71717a", border: "transparent", bold: false, solid: false };
-    }
-    return dark
-      ? { bg: "transparent", fg: "#f4f4f5", border: "transparent", bold: true, solid: false }
-      : { bg: "transparent", fg: "#18181b", border: "transparent", bold: true, solid: false };
-  }
-  // Unexpected AC (wrong solution passed!) -> solid vivid amber, NEVER green.
-  if (upper === "AC") {
-    return dark
-      ? { bg: "#d97706", fg: "#ffffff", border: "transparent", bold: true, solid: true }
-      : { bg: "#d97706", fg: "#ffffff", border: "transparent", bold: true, solid: true };
-  }
-  // Unexpected failure -> solid vivid red.
-  return dark
-    ? { bg: "#dc2626", fg: "#ffffff", border: "transparent", bold: true, solid: true }
-    : { bg: "#dc2626", fg: "#ffffff", border: "transparent", bold: true, solid: true };
+/**
+ * A matrix cell's look (authoring-ui-refactor §5.3): color only says 「不符合预期」.
+ * Expected AC in the primary text, other expected verdicts in secondary text, no fill;
+ * a mismatch is rose at 12% with red text. Classes only, so both themes follow the tokens.
+ */
+export function cellVisualStyle(verdict: string, isAnomaly: boolean): { cellClass: string; textClass: string } {
+  if (isAnomaly) return { cellClass: "bg-destructive/12", textClass: "text-destructive" };
+  return {
+    cellClass: "",
+    textClass: verdict.toUpperCase() === "AC" ? "text-foreground" : "text-secondary-foreground",
+  };
+}
+
+/** TLE / ILE show wall-clock time (what ran out); every other verdict shows CPU time. */
+export function cellTimeMs(cell: { verdict: string; cpu_time_ms: number; wall_time_ms: number }): number {
+  const v = cell.verdict.toUpperCase();
+  return v === "TLE" || v === "ILE" ? cell.wall_time_ms : cell.cpu_time_ms;
 }
 
 /**
@@ -1188,6 +1200,8 @@ export interface SubtaskMatrixGroup {
   subtaskId: string | null;
   summary?: SubtaskSummaryData;
   rows: TestSummaryData[];
+  /** The unassigned samples (「样例」). */
+  samples?: boolean;
 }
 
 /**
@@ -1224,11 +1238,17 @@ export function groupMatrixRowsBySubtask(
       rows: byId.get(s.id) ?? [],
     });
   }
-  if (unassigned.length > 0) {
+  // Unassigned samples read as 「样例」 (§5.3), before the subtasks like the tests themselves.
+  const samples = unassigned.filter((r) => r.is_sample);
+  const rest = unassigned.filter((r) => !r.is_sample);
+  if (samples.length > 0) {
+    groups.unshift({ key: "__samples__", subtaskId: null, samples: true, rows: samples });
+  }
+  if (rest.length > 0) {
     groups.push({
       key: "__unassigned__",
       subtaskId: null,
-      rows: unassigned,
+      rows: rest,
     });
   }
   return groups;

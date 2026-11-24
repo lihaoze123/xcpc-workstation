@@ -53,7 +53,7 @@ import { panelTransition } from "../motion";
 import { ms, popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
-import { AuthoringTitleBarControls, BuildConsole, type BuildConsoleController } from "./BuildConsole";
+import { BuildConsole, type BuildConsoleController } from "./BuildConsole";
 import { ContestReadinessView } from "./ContestReadinessView";
 import { shouldShowBuildTab } from "./buildLogic";
 import { ExportButton } from "./ExportButton";
@@ -1105,9 +1105,6 @@ export function StudioView(props: { active: boolean }) {
                 onExportOj={(fmt) => void exportOjPackage(fmt)}
                 onReveal={(b) => void reveal(b)}
               />
-            </If>
-            <If when={isAuthoring() && hasPackage() ? buildConsole() : undefined}>
-              {(ctrl) => <AuthoringTitleBarControls ctrl={ctrl()} readOnly={info().readOnly} />}
             </If>
             <IconBtn
               icon="panelRight"

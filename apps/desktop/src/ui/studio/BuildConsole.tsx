@@ -6,7 +6,7 @@
 // - P1-4 Unified Detail Page Grammar across all objects + inline generator batch editor + dropdown test selector
 // - P1-5 State consistency: preserves untouched summaries (`旧`) and full-run safety margin across subset runs
 
-import { cleanup, colorScheme, computed, effect, Scroll, signal, Text, untracked, View, type ContextMenuEvent } from "nsh";
+import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ContextMenuEvent, type JSX } from "nsh";
 import { Input } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type {
@@ -24,11 +24,11 @@ import { compilerMissing, dialog, goSettings, onExternalChange, preview, type Ui
 import { MONO, popoverShadow, token } from "../theme";
 import { CellDiagnosticDrawer, InlineFileEditor } from "./BuildDetailPane";
 import { StatusSlot, type StatusModel } from "./StatusSlot";
-import { problemStatusModel } from "./statusLogic";
+import { judgeModeOf, problemStatusModel, sanitizerTargetName, stdRatioWords, verdictWords, problemTypeSummary, runsLabel, solutionExpectLabel, type JudgeMode } from "./statusLogic";
 import {
-  buildPackageModeBadges,
   BUILTIN_CHECKERS,
   canInlineEditTest,
+  cellTimeMs,
   cellVisualStyle,
   countTestsInRule,
   EXPECT_PRESETS,
@@ -37,13 +37,13 @@ import {
   formatScoreExpect,
   formatScoreRatioPercent,
   formatScoreValue,
-  formatSolutionConclusion,
   formatSolutionScoreSummary,
   formatStdTimeRatio,
   groupMatrixRowsBySubtask,
   groupTestRows,
   humanizeCheckText,
   isCellVerdictAnomaly,
+  isMatrixCellAnomaly,
   isRowAnomalous,
   logicalSolutionName,
   matchSelfTestResult,
@@ -60,6 +60,7 @@ import {
   type MatrixCellData,
   type PackageInspectionData,
   type SafetyMarginData,
+  type SolutionHeaderSpec,
   type SolutionSummaryData,
   type SubtaskSummaryData,
   type TestSummaryData,
@@ -86,16 +87,17 @@ import {
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
   closePopovers(): boolean;
+  startRun(mode: "debug" | "verify" | "sanitize"): void;
+}
+
+interface ToolbarCtrl {
   statusModel(): StatusModel;
   statusOpen(): boolean;
   setStatusOpen(open: boolean): void;
-  canFilter(): boolean;
-  filterCount(): number;
-  toggleFilter(): void;
+  selectionCount(): number;
+  clearSelection(): void;
   running(): boolean;
-  runningSanitize(): boolean;
   runningExternal(): boolean;
-  sanitizerStatus(): "passed" | "failed" | "unsupported" | "not_run";
   quickRunDone(): boolean;
   startRun(mode: "debug" | "verify" | "sanitize"): void;
   pickAndRunExternal(): void;
@@ -103,170 +105,133 @@ export interface BuildConsoleController {
 }
 
 /**
- * Authoring actions rendered directly in StudioView's TitleBar trailing slot:
- * - Status pill: neutral surface + small semantic dot (green tint ONLY when ready for contest)
- * - Phase 3D: UB Check & Trial Run External buttons (fixed slots, zero layout shift)
- * - Filter button: stays present in fixed slot (disabled when not on Results view)
- * - Primary CTA: constant "验证" label (swaps in-place with outline "取消" while running)
+ * The authoring panel's 38pt toolbar (authoring-ui-refactor §5.1), same height and grammar as
+ * the editor's 题面 / 样例 / 题解 row: the problem's status slot on the left, 「检查 ▾」 on the
+ * right. Selecting matrix headers turns the primary into 「运行选中」; running swaps it in place
+ * for 「取消」; a partial run ends with the brief 「✓ 完成」 (§6.5 tier 3).
  */
-export function AuthoringTitleBarControls(props: { ctrl: BuildConsoleController; readOnly: boolean }) {
+function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
   const running = () => props.ctrl.running();
-  const filterCount = () => props.ctrl.filterCount();
-  const canFilter = () => props.ctrl.canFilter();
-  const sanStatus = () => props.ctrl.sanitizerStatus();
-  const sanDotColor = () => {
-    const dark = colorScheme() === "dark";
-    const s = sanStatus();
-    if (s === "passed") return dark ? "#4ade80" : "#16a34a";
-    if (s === "failed") return dark ? "#f87171" : "#dc2626";
-    if (s === "unsupported") return dark ? "#fbbf24" : "#d97706";
-    return undefined;
+  const selected = () => props.ctrl.selectionCount();
+  const primaryLabel = () => {
+    if (props.ctrl.runningExternal()) return t("build.action.externalRunning");
+    return selected() > 0 ? t("build.action.runSelected", { count: selected() }) : t("build.action.check");
   };
-
+  const W = 132;
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+    <View
+      testID="authoring-toolbar"
+      style={{
+        height: 38,
+        flexShrink: 0,
+        paddingLeft: 8,
+        paddingRight: 8,
+        borderBottomWidth: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+      class="border-border"
+    >
       <StatusSlot
         testID="build-status-slot"
+        width={260}
         model={props.ctrl.statusModel()}
         open={props.ctrl.statusOpen()}
         onOpenChange={(open) => props.ctrl.setStatusOpen(open)}
       />
-
-      {/* Phase 3D: UB Check button */}
-      <View style={{ position: "relative", flexShrink: 0 }}>
-        <Btn
-          testID="build-sanitize-btn"
-          label={t("build.sanitize.button")}
-          icon="shieldCheck"
-          variant="outline"
-          disabled={props.readOnly || running()}
-          tooltip={tip(t("build.sanitize.tooltip"))}
-          onPress={() => props.ctrl.startRun("sanitize")}
-        />
-        <If when={!!sanDotColor()}>
-          <View
-            style={{
-              position: "absolute",
-              top: 3,
-              right: 3,
-              width: 6,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: sanDotColor(),
-            }}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <If when={selected() > 0 && !running()}>
+          <IconBtn
+            testID="build-clear-selection"
+            icon="x"
+            size={26}
+            tone="muted-foreground"
+            tooltip={tip(t("build.action.clearSelection"))}
+            onPress={() => props.ctrl.clearSelection()}
           />
         </If>
-      </View>
-
-      {/* Phase 3D: Trial Run External Solutions button */}
-      <Btn
-        testID="build-external-btn"
-        label={t("build.external.button")}
-        icon="play"
-        variant="outline"
-        disabled={props.ctrl.runningExternal()}
-        tooltip={tip(t("build.external.tooltip"))}
-        onPress={() => props.ctrl.pickAndRunExternal()}
-      />
-
-      {/* Filter button — stays in place (disabled when on detail view so status pill never shifts!) */}
-      <Btn
-        testID="build-filter-toggle"
-        label={filterCount() > 0 ? `${t("build.filter.button")} ${filterCount()}` : t("build.filter.button")}
-        icon="list"
-        variant={filterCount() > 0 ? "outline" : "ghost"}
-        disabled={!canFilter()}
-        onPress={() => props.ctrl.toggleFilter()}
-      />
-
-      {/* Fixed-width primary CTA slot: constant "验证" <-> outline "取消" / Tier 3 "✓ 完成" in-place */}
-      <View style={{ width: 108, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
-        <If
-          when={!running()}
-          else={
-            <Btn
-              testID="build-cancel-btn"
-              label={t("common.cancel")}
-              icon="x"
-              variant="outline"
-              onPress={() => props.ctrl.cancelRun()}
-              style={{ width: 108 }}
-            />
-          }
-        >
+        <View style={{ width: W, flexDirection: "row", justifyContent: "flex-end", alignItems: "center" }}>
           <If
-            when={!props.ctrl.quickRunDone()}
+            when={!running()}
             else={
               <Btn
-                testID="build-quick-run-done-btn"
-                label={t("build.action.done")}
-                icon="check"
+                testID="build-cancel-btn"
+                label={t("common.cancel")}
+                icon="x"
                 variant="outline"
-                onPress={() => props.ctrl.startRun("verify")}
-                style={{ width: 108 }}
+                onPress={() => props.ctrl.cancelRun()}
+                style={{ width: W }}
               />
             }
           >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Btn
-                testID="build-verify-btn"
-                label={t("build.action.verify")}
-                icon="play"
-                variant="primary"
-                disabled={props.readOnly}
-                tooltip={tip(t("build.action.verify"), "mod+b")}
-                onPress={() => props.ctrl.triggerPrimaryRun()}
-                style={{
-                  width: 82,
-                  borderTopRightRadius: 0,
-                  borderBottomRightRadius: 0,
-                }}
-              />
-              <AppMenu
-                align="end"
-                minWidth={184}
-                entries={[
-                  {
-                    id: "debug",
-                    label:
-                      filterCount() > 0
-                        ? t("build.action.verifySelected", { count: filterCount() })
-                        : t("build.action.quickRun"),
-                    icon: "play",
-                  },
-                ]}
-                onSelect={(id) => {
-                  if (id === "debug") props.ctrl.startRun("debug");
-                }}
-                trigger={
-                  <View
-                    testID="build-verify-menu-trigger"
-                    class="bg-primary hover:bg-sidebar-primary"
-                    style={{
-                      width: 26,
-                      height: 28,
-                      borderTopRightRadius: 6,
-                      borderBottomRightRadius: 6,
-                      borderLeftWidth: 1,
-                      borderLeftColor: "rgba(255,255,255,0.18)",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      opacity: props.readOnly ? 0.5 : 1,
-                    }}
-                  >
-                    <Icon name="chevronDown" size={13} tone="primary-foreground" />
-                  </View>
-                }
-              />
-            </View>
+            <If
+              when={!props.ctrl.quickRunDone()}
+              else={
+                <Btn
+                  testID="build-quick-run-done-btn"
+                  label={t("build.action.done")}
+                  icon="check"
+                  variant="outline"
+                  onPress={() => props.ctrl.startRun("verify")}
+                  style={{ width: W }}
+                />
+              }
+            >
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Btn
+                  testID="build-verify-btn"
+                  label={primaryLabel()}
+                  variant="primary"
+                  disabled={props.readOnly || props.ctrl.runningExternal()}
+                  tooltip={selected() > 0 ? undefined : tip(t("build.action.check"), "mod+b")}
+                  onPress={() => props.ctrl.startRun(selected() > 0 ? "debug" : "verify")}
+                  style={{ width: W - 26, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                />
+                <AppMenu
+                  align="end"
+                  minWidth={200}
+                  entries={[
+                    { id: "debug", label: t("build.action.runSelectedOnly"), icon: "play", disabled: selected() === 0 },
+                    { id: "sanitize", label: t("build.action.memoryCheck"), icon: "shieldCheck" },
+                    { separator: true, id: "sep" },
+                    { id: "external", label: t("build.action.tryExternal"), icon: "folderOpen", disabled: props.ctrl.runningExternal() },
+                  ]}
+                  onSelect={(id) => {
+                    if (id === "debug") props.ctrl.startRun("debug");
+                    else if (id === "sanitize") props.ctrl.startRun("sanitize");
+                    else if (id === "external") props.ctrl.pickAndRunExternal();
+                  }}
+                  trigger={
+                    <View
+                      testID="build-verify-menu-trigger"
+                      class="bg-primary hover:bg-sidebar-primary border-l border-primary-foreground/20"
+                      style={{
+                        width: 26,
+                        height: 28,
+                        borderTopRightRadius: 6,
+                        borderBottomRightRadius: 6,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        opacity: props.readOnly ? 0.5 : 1,
+                      }}
+                    >
+                      <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                    </View>
+                  }
+                />
+              </View>
+            </If>
           </If>
-        </If>
+        </View>
       </View>
     </View>
   );
 }
 
 type TreeSelection =
+  | { kind: "problemType" }
   | { kind: "results" }
   | { kind: "sanitizer" }
   | { kind: "external" }
@@ -299,7 +264,6 @@ export function BuildConsole(props: {
   const selection = signal<TreeSelection>({ kind: "results" });
   const onlyAnomalyRows = signal(false);
   const statusOpen = signal(false);
-  const filterOpen = signal(false);
   const filterSolutions = signal<string[]>([]);
   const filterTests = signal<string[]>([]);
 
@@ -366,7 +330,6 @@ export function BuildConsole(props: {
         testPaneTab.set("input");
         filterSolutions.set([]);
         filterTests.set([]);
-        filterOpen.set(false);
         onlyAnomalyRows.set(false);
         statusOpen.set(false);
         dirtyUndoNotice.set(undefined);
@@ -435,7 +398,8 @@ export function BuildConsole(props: {
     const rep = activeReport();
     if (!rep) return;
     untracked(() => {
-      if (rep.solutions && rep.solutions.length > 0) {
+      // A partial run's summaries cover only the tests it ran: never let them judge a solution.
+      if (!rep.subset && rep.solutions && rep.solutions.length > 0) {
         const next = new Map(lastFullSummaries());
         for (const s of rep.solutions) next.set(s.name, s);
         lastFullSummaries.set(next);
@@ -559,8 +523,10 @@ export function BuildConsole(props: {
   );
 
   const summaryBySolution = computed(() => {
+    const rep = activeReport();
+    if (rep?.subset) return lastFullSummaries();
     const m = new Map<string, SolutionSummaryData>();
-    for (const s of activeReport()?.solutions ?? []) m.set(s.name, s);
+    for (const s of rep?.solutions ?? []) m.set(s.name, s);
     return m;
   });
 
@@ -617,7 +583,42 @@ export function BuildConsole(props: {
     return list.length > 0 ? list.reduce((acc, s) => acc + s.score, 0) : null;
   });
 
-  const modeBadges = computed(() => buildPackageModeBadges(inspection(), activeReport(), isZh()));
+  // Problem type (§5.2): drives which objects the sidebar shows.
+  const isInteractive = computed(() => Boolean(inspection()?.files?.interactor));
+  const isSubtaskProblem = computed(() => subtasks().length > 0);
+  const judgeMode = computed(() => judgeModeOf(isInteractive(), inspection()?.checker));
+  const typeSummary = computed(() =>
+    problemTypeSummary({
+      interactive: isInteractive(),
+      runs: inspection()?.runs ?? 1,
+      subtaskScore: isSubtaskProblem() ? totalSubtaskScore() : null,
+    }),
+  );
+
+  /** 「应 AC，实际 WA」 for a solution whose result does not match its expectation. */
+  function solutionMismatchText(spec: SolutionHeaderSpec): string | undefined {
+    const sum = summaryBySolution().get(spec.name) ?? lastFullSummaries().get(spec.name);
+    if (!sum || sum.matched) return undefined;
+    if (spec.score != null && sum.total_score != null) {
+      return t("build.mismatch.score", { expected: formatScoreExpect(spec.score)!, actual: formatScoreValue(sum.total_score) });
+    }
+    const expected = (spec.expected.length > 0 ? spec.expected : ["AC"]).join("/");
+    return t("build.mismatch.verdict", { expected, actual: sum.actual_verdict });
+  }
+
+  /** 「仅看异常」 counts the cells that do not match their solution's expectation (§5.3). */
+  const anomalousCellCount = computed(() => {
+    let n = 0;
+    const lookup = matrixLookup();
+    for (const spec of solutionSpecs()) {
+      const sum = summaryBySolution().get(spec.name) ?? lastFullSummaries().get(spec.name);
+      for (const row of testRows()) {
+        const c = lookup.get(matrixCellKey(row.index, spec.name));
+        if (c && isMatrixCellAnomaly(c.verdict, spec, row.subtask, sum?.matched)) n += 1;
+      }
+    }
+    return n;
+  });
   const matrixSubtaskGroups = computed(() => groupMatrixRowsBySubtask(displayedTableRows(), subtasks()));
 
   const selectedCellData = computed(() => {
@@ -669,7 +670,6 @@ export function BuildConsole(props: {
     const groupId = grp?.id ?? "samples";
     testPaneTab.set("input");
     statusOpen.set(false);
-    filterOpen.set(false);
     selection.set({ kind: "testGroup", groupId, testIndex });
   }
 
@@ -677,13 +677,11 @@ export function BuildConsole(props: {
     if (props.readOnly || isRunningThis()) return;
     // No compiler: 「检查」 stays enabled and explains in the status popover (§6.1).
     if (compilerMissing()) {
-      filterOpen.set(false);
       statusOpen.set(true);
       return;
     }
     notice.set(undefined);
     statusOpen.set(false);
-    filterOpen.set(false);
     const hasFilter = mode !== "sanitize" && (filterTests().length > 0 || filterSolutions().length > 0);
     const effectiveMode = mode === "sanitize" ? "sanitize" : hasFilter ? "debug" : mode;
     const testsArg = hasFilter && filterTests().length > 0 ? filterTests() : null;
@@ -708,7 +706,6 @@ export function BuildConsole(props: {
     if (externalRunning()) return;
     notice.set(undefined);
     statusOpen.set(false);
-    filterOpen.set(false);
     const picked = await preview.pickCppFiles({
       title: t("build.external.pickerTitle"),
       buttonLabel: t("build.external.pickerButton"),
@@ -787,10 +784,6 @@ export function BuildConsole(props: {
       statusOpen.set(false);
       return true;
     }
-    if (filterOpen()) {
-      filterOpen.set(false);
-      return true;
-    }
     return false;
   }
 
@@ -806,7 +799,8 @@ export function BuildConsole(props: {
     problemStatusModel(
       {
         hasPackage: hasPackage(),
-        running: isRunningThis() && buildStatus().mode !== "sanitize",
+        running: isRunningThis(),
+        memoryCheck: buildStatus().mode === "sanitize",
         progress: { done: buildStatus().completed, total: buildStatus().total },
         compilerMissing: compilerMissing(),
         status: singleStatus(),
@@ -835,32 +829,28 @@ export function BuildConsole(props: {
     ),
   );
 
-  props.controller?.({
-    triggerPrimaryRun,
-    closePopovers,
+  props.controller?.({ triggerPrimaryRun, closePopovers, startRun });
+
+  const toolbarCtrl: ToolbarCtrl = {
     statusModel: () => statusModel(),
     statusOpen: () => statusOpen(),
     setStatusOpen: (open: boolean) => {
-      if (open) filterOpen.set(false);
       // An action's error has been read once the popover closes; the slot falls back to the state.
-      else if (notice()) notice.set(undefined);
+      if (!open && notice()) notice.set(undefined);
       statusOpen.set(open);
     },
-    canFilter: () => selection().kind === "results",
-    filterCount: () => activeFilterCount(),
-    toggleFilter: () => {
-      statusOpen.set(false);
-      filterOpen.set(!filterOpen());
+    selectionCount: () => activeFilterCount(),
+    clearSelection: () => {
+      filterSolutions.set([]);
+      filterTests.set([]);
     },
     running: () => isRunningThis(),
-    runningSanitize: () => isRunningThis() && buildStatus().mode === "sanitize",
     runningExternal: () => externalRunning(),
-    sanitizerStatus: () => sanitizerReport()?.status ?? "not_run",
     quickRunDone: () => quickRunDone.active(),
     startRun,
     pickAndRunExternal: () => void pickAndRunExternal(),
     cancelRun,
-  });
+  };
   cleanup(() => props.controller?.(undefined));
 
   function openExternal(relPath: string) {
@@ -871,7 +861,6 @@ export function BuildConsole(props: {
 
   function openFileInTree(relPath: string) {
     statusOpen.set(false);
-    filterOpen.set(false);
     if (relPath === "validator.cpp" || relPath === inspection()?.files?.validator) {
       selection.set({ kind: "validator" });
       return;
@@ -1013,7 +1002,7 @@ export function BuildConsole(props: {
     props.onRefreshPackage();
   }
 
-  function handleCreateInteractor() {
+  function handleCreateInteractor(stay = false) {
     if (props.readOnly) return;
     const res = preview.createPackageSource(props.problemId, "interactor", "interactor");
     if (!res.ok) {
@@ -1022,7 +1011,35 @@ export function BuildConsole(props: {
     }
     finishedReport.set(undefined);
     props.onRefreshPackage();
-    selection.set({ kind: "interactor" });
+    if (!stay) selection.set({ kind: "interactor" });
+  }
+
+  /** After the interactor is deleted, the judge mode the user picked on 题型 (§5.2). */
+  let pendingJudgeMode: JudgeMode | undefined;
+
+  function handleSetJudgeMode(mode: JudgeMode) {
+    if (props.readOnly || mode === judgeMode()) return;
+    if (mode === "interactive") {
+      handleCreateInteractor(true);
+      return;
+    }
+    if (isInteractive()) {
+      // Leaving 交互 deletes interactor.cpp: confirm first, then finish the switch.
+      pendingJudgeMode = mode;
+      pendingDelete.set({ kind: "interactor" });
+      return;
+    }
+    handleSetChecker(mode === "custom" ? "checker.cpp" : "wcmp");
+  }
+
+  function handleSetScoring(bySubtask: boolean) {
+    if (props.readOnly || bySubtask === isSubtaskProblem()) return;
+    if (bySubtask) {
+      editingSubtask.set(undefined);
+      subtaskModalOpen.set(true);
+    } else {
+      selection.set({ kind: "subtasks" });
+    }
   }
 
   function handleSetRuns(runs: number) {
@@ -1124,10 +1141,14 @@ export function BuildConsole(props: {
     } else if (target.kind === "interactor") {
       const res = preview.deleteInteractor(props.problemId);
       if (!res.ok) {
+        pendingJudgeMode = undefined;
         notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
         return;
       }
       finishedReport.set(undefined);
+      const next = pendingJudgeMode;
+      pendingJudgeMode = undefined;
+      if (next === "custom" || next === "standard") handleSetChecker(next === "custom" ? "checker.cpp" : "wcmp");
       props.onRefreshPackage();
     } else if (target.kind === "subtask") {
       const res = preview.deleteSubtask(props.problemId, target.id, true);
@@ -1164,7 +1185,9 @@ export function BuildConsole(props: {
           />
         }
       >
-        {/* ── Main Split: Left Object Tree (~228pt) + Right Content Area (directly under TitleBar) ── */}
+        <AuthoringToolbar ctrl={toolbarCtrl} readOnly={props.readOnly} />
+
+        {/* ── Main Split: Left Object Tree (~228pt) + Right Content Area ── */}
         <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
           {/* Decluttered Left Object Tree */}
           <Scroll
@@ -1183,16 +1206,48 @@ export function BuildConsole(props: {
             }}
             class="border-border bg-background/30"
           >
-            {/* 1. Results overview */}
+            {/* 题型 first: how this problem is judged, run and scored (§5.2) */}
             <TreeRow
-              testID="tree-item-results"
-              icon="table"
-              label={t("build.tree.results")}
-              active={selection().kind === "results"}
-              onPress={() => selection.set({ kind: "results" })}
+              testID="tree-item-type"
+              icon="settings"
+              label={t("build.tree.type")}
+              sub={typeSummary()}
+              active={selection().kind === "problemType"}
+              onPress={() => selection.set({ kind: "problemType" })}
             />
 
-            {/* 2. Validator & Checker */}
+            {/* 检查结果: the matrix, plus memory check / tester code once they have results */}
+            <View style={{ gap: 2 }}>
+              <TreeSectionHeader label={t("build.tree.checkResults")} />
+              <TreeRow
+                testID="tree-item-results"
+                icon="table"
+                label={t("build.tree.results")}
+                active={selection().kind === "results"}
+                onPress={() => selection.set({ kind: "results" })}
+              />
+              <If when={sanitizerReport()}>
+                <TreeRow
+                  testID="tree-item-sanitizer"
+                  icon="shieldCheck"
+                  label={t("build.tree.memoryCheck")}
+                  active={selection().kind === "sanitizer"}
+                  statusDot={sanitizerReport()?.status === "failed" ? "fail" : undefined}
+                  onPress={() => selection.set({ kind: "sanitizer" })}
+                />
+              </If>
+              <If when={(externalReport()?.submissions.length ?? 0) > 0 || externalRunning()}>
+                <TreeRow
+                  testID="tree-item-external"
+                  icon="folderOpen"
+                  label={t("build.tree.testerCode", { count: externalReport()?.submissions.length ?? 0 })}
+                  active={selection().kind === "external"}
+                  onPress={() => selection.set({ kind: "external" })}
+                />
+              </If>
+            </View>
+
+            {/* 校验与评测: shown by problem type (no 评测器 for an interactive problem without its own checker) */}
             <View style={{ gap: 2 }}>
               <TreeSectionHeader label={t("build.tree.validation")} />
               <TreeRow
@@ -1213,58 +1268,54 @@ export function BuildConsole(props: {
                   );
                 }}
               />
-              <TreeRow
-                testID="tree-item-checker"
-                icon="scale"
-                label={t("build.tree.checker")}
-                sub={inspection()?.checker || "wcmp"}
-                active={selection().kind === "checker"}
-                onPress={() => selection.set({ kind: "checker" })}
-                onContextMenu={(e) => {
-                  const chkFile = inspection()?.checker === "checker.cpp" ? inspection()?.files?.custom_checker : undefined;
-                  void DesktopMenu.popup(
-                    [
-                      { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "checker" }) },
-                      ...(chkFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(chkFile) }] : []),
-                    ],
-                    e.pagePosition,
-                  );
-                }}
-              />
-              <TreeRow
-                testID="tree-item-interactor"
-                icon="bot"
-                label={t("build.tree.interactor")}
-                sub={
-                  (inspection()?.runs ?? 1) > 1
-                    ? `×${inspection()?.runs}`
-                    : inspection()?.files?.interactor
-                      ? undefined
-                      : t("build.tree.interactorOff")
-                }
-                active={selection().kind === "interactor"}
-                onPress={() => selection.set({ kind: "interactor" })}
-                onContextMenu={(e) => {
-                  const intFile = inspection()?.files?.interactor;
-                  void DesktopMenu.popup(
-                    [
-                      { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "interactor" }) },
-                      ...(intFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(intFile) }] : []),
-                      ...(intFile && !props.readOnly
-                        ? [
-                            { type: "separator" as const },
-                            {
-                              label: t("build.interactor.deleteTooltip"),
-                              destructive: true,
-                              onSelect: () => pendingDelete.set({ kind: "interactor" }),
-                            },
-                          ]
-                        : []),
-                    ],
-                    e.pagePosition,
-                  );
-                }}
-              />
+              <If when={!isInteractive() || !!inspection()?.files?.custom_checker}>
+                <TreeRow
+                  testID="tree-item-checker"
+                  icon="scale"
+                  label={t("build.tree.checker")}
+                  active={selection().kind === "checker"}
+                  onPress={() => selection.set({ kind: "checker" })}
+                  onContextMenu={(e) => {
+                    const chkFile = inspection()?.checker === "checker.cpp" ? inspection()?.files?.custom_checker : undefined;
+                    void DesktopMenu.popup(
+                      [
+                        { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "checker" }) },
+                        ...(chkFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(chkFile) }] : []),
+                      ],
+                      e.pagePosition,
+                    );
+                  }}
+                />
+              </If>
+              <If when={isInteractive()}>
+                <TreeRow
+                  testID="tree-item-interactor"
+                  icon="bot"
+                  label={t("build.tree.interactor")}
+                  active={selection().kind === "interactor"}
+                  onPress={() => selection.set({ kind: "interactor" })}
+                  onContextMenu={(e) => {
+                    const intFile = inspection()?.files?.interactor;
+                    void DesktopMenu.popup(
+                      [
+                        { label: t("build.menu.openEdit"), onSelect: () => selection.set({ kind: "interactor" }) },
+                        ...(intFile ? [{ label: t("build.quickEdit.openExternal"), onSelect: () => openExternal(intFile) }] : []),
+                        ...(intFile && !props.readOnly
+                          ? [
+                              { type: "separator" as const },
+                              {
+                                label: t("build.interactor.deleteTooltip"),
+                                destructive: true,
+                                onSelect: () => pendingDelete.set({ kind: "interactor" }),
+                              },
+                            ]
+                          : []),
+                      ],
+                      e.pagePosition,
+                    );
+                  }}
+                />
+              </If>
             </View>
 
             {/* 3. Solutions (uniform `预期 WA` labels, small semantic dot, no ✓) */}
@@ -1293,15 +1344,9 @@ export function BuildConsole(props: {
                       testID={`tree-item-solution-${spec().name}`}
                       icon={role() === "main" ? "crown" : "code"}
                       label={spec().name}
-                      sub={
-                        role() === "main"
-                          ? undefined
-                          : formatScoreExpect(spec().score)
-                            ? t("build.tree.subtasksPts", { score: formatScoreExpect(spec().score)! })
-                            : `${t("build.programs.expectPrefix")} ${spec().expected.join("/")}`
-                      }
+                      sub={solutionExpectLabel(spec())}
                       active={selection().kind === "solution" && (selection() as { kind: "solution"; name: string }).name === spec().name}
-                      statusDot={sum() ? (sum()!.matched ? "ok" : "fail") : undefined}
+                      statusDot={sum() && !sum()!.matched ? "fail" : undefined}
                       onPress={() => selection.set({ kind: "solution", name: spec().name })}
                       onContextMenu={(e) => {
                         const s = spec();
@@ -1440,18 +1485,20 @@ export function BuildConsole(props: {
                 }
               />
 
-              <TreeRow
-                testID="tree-item-subtasks"
-                icon="listOrdered"
-                label={t("build.tree.subtasks")}
-                sub={
-                  totalSubtaskScore() != null
-                    ? t("build.tree.subtasksPts", { score: totalSubtaskScore()! })
-                    : undefined
-                }
-                active={selection().kind === "subtasks"}
-                onPress={() => selection.set({ kind: "subtasks" })}
-              />
+              <If when={isSubtaskProblem()}>
+                <TreeRow
+                  testID="tree-item-subtasks"
+                  icon="listOrdered"
+                  label={t("build.tree.subtasks")}
+                  sub={
+                    totalSubtaskScore() != null
+                      ? t("build.tree.subtasksPts", { score: totalSubtaskScore()! })
+                      : undefined
+                  }
+                  active={selection().kind === "subtasks"}
+                  onPress={() => selection.set({ kind: "subtasks" })}
+                />
+              </If>
 
               <Each of={testGroups()} key={(g) => g.id}>
                 {(grp) => {
@@ -1552,32 +1599,6 @@ export function BuildConsole(props: {
                   );
                 }}
               />
-              <View style={{ height: 1, marginTop: 6, marginBottom: 6 }} class="bg-border" />
-              <TreeRow
-                testID="tree-item-sanitizer"
-                icon="shieldCheck"
-                label={t("build.sanitize.button")}
-                active={selection().kind === "sanitizer"}
-                statusDot={
-                  sanitizerReport()?.status === "failed"
-                    ? "fail"
-                    : sanitizerReport()?.status === "passed"
-                      ? "ok"
-                      : undefined
-                }
-                onPress={() => selection.set({ kind: "sanitizer" })}
-              />
-              <TreeRow
-                testID="tree-item-external"
-                icon="play"
-                label={
-                  externalReport()?.submissions.length
-                    ? `${t("build.external.button")} (${externalReport()!.submissions.length})`
-                    : t("build.external.button")
-                }
-                active={selection().kind === "external"}
-                onPress={() => selection.set({ kind: "external" })}
-              />
             </View>
           </Scroll>
 
@@ -1590,53 +1611,57 @@ export function BuildConsole(props: {
               </If>
             </View>
 
+            {/* 题型: judge mode, runs, scoring (§5.2) */}
+            <If when={selection().kind === "problemType"}>
+              <Scroll style={{ flex: 1, minHeight: 0 }}>
+                <View testID="problem-type-page" style={{ paddingTop: 24, paddingBottom: 32, paddingLeft: 28, paddingRight: 28, maxWidth: 600, gap: 28 }}>
+                  <TypeSetting label={t("build.type.judge")} hint={judgeMode() === "interactive" ? t("build.type.judgeHintInteractive") : judgeMode() === "custom" ? t("build.type.judgeHintCustom") : t("build.type.judgeHintStandard")}>
+                    <Segmented
+                      items={[
+                        { value: "standard", label: t("build.type.judgeStandard") },
+                        { value: "custom", label: t("build.type.judgeCustom") },
+                        { value: "interactive", label: t("build.type.judgeInteractive") },
+                      ]}
+                      value={judgeMode()}
+                      onChange={(m) => handleSetJudgeMode(m as JudgeMode)}
+                      itemWidth={isZh() ? 96 : 128}
+                      disabled={props.readOnly}
+                    />
+                  </TypeSetting>
+                  <TypeSetting
+                    label={t("build.type.runsLabel")}
+                    hint={(inspection()?.runs ?? 1) >= 2 ? t("build.type.runsHint") : undefined}
+                  >
+                    <Segmented
+                      items={["1", "2", "3", "4"].map((n) => ({ value: n, label: runsLabel(Number(n)) }))}
+                      value={String(Math.min(4, Math.max(1, inspection()?.runs ?? 1)))}
+                      onChange={(n) => handleSetRuns(Number(n))}
+                      itemWidth={64}
+                      disabled={props.readOnly}
+                    />
+                  </TypeSetting>
+                  <TypeSetting
+                    label={t("build.type.scoring")}
+                    hint={isSubtaskProblem() ? t("build.type.scoringSubtaskHint", { score: totalSubtaskScore() ?? 0 }) : undefined}
+                  >
+                    <Segmented
+                      items={[
+                        { value: "whole", label: t("build.type.scoringWhole") },
+                        { value: "subtasks", label: t("build.type.scoringSubtasks") },
+                      ]}
+                      value={isSubtaskProblem() ? "subtasks" : "whole"}
+                      onChange={(v) => handleSetScoring(v === "subtasks")}
+                      itemWidth={isZh() ? 112 : 132}
+                      disabled={props.readOnly}
+                    />
+                  </TypeSetting>
+                </View>
+              </Scroll>
+            </If>
+
             {/* A. Results Overview — starts immediately at top of right pane */}
             <If when={selection().kind === "results"}>
               <View style={{ flex: 1, minHeight: 0 }}>
-                {/* Compact Phase 3C mode badges (interactive / multi-run / OI subtasks) — hidden for standard problems */}
-                <If when={modeBadges().length > 0}>
-                  <View
-                    testID="build-mode-badges-bar"
-                    style={{
-                      height: 32,
-                      paddingLeft: 16,
-                      paddingRight: 14,
-                      borderBottomWidth: 1,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                    class="border-b-border bg-background/25"
-                  >
-                    <Each of={modeBadges()} key={(b) => b.id}>
-                      {(badge) => (
-                        <View
-                          testID={`build-mode-badge-${badge().id}`}
-                          onPress={() => {
-                            if (badge().id === "subtasks") selection.set({ kind: "subtasks" });
-                            else selection.set({ kind: "interactor" });
-                          }}
-                          style={{
-                            height: 21,
-                            paddingLeft: 7,
-                            paddingRight: 7,
-                            borderRadius: 5,
-                            justifyContent: "center",
-                          }}
-                          class="bg-muted hover:bg-accent border border-border/60"
-                        >
-                          <Text
-                            style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                            class="text-secondary-foreground"
-                          >
-                            {badge().label}
-                          </Text>
-                        </View>
-                      )}
-                    </Each>
-                  </View>
-                </If>
-
                 {/* Dirty inputs notice + Undo (only when dirty inputs exist or just fixed) */}
                 <If when={dirtyInputs().length > 0}>
                   <View
@@ -1723,7 +1748,7 @@ export function BuildConsole(props: {
                             </Text>
                           </View>
                           <Text
-                            style={{ fontSize: 11, fontFamily: MONO, lineHeight: 16, numberOfLines: 4, textOverflow: "ellipsis" }}
+                            style={{ fontSize: 12, fontFamily: MONO, lineHeight: 16, numberOfLines: 4, textOverflow: "ellipsis" }}
                             class="text-secondary-foreground"
                           >
                             {cf().stderr}
@@ -1737,109 +1762,66 @@ export function BuildConsole(props: {
                 {/* P0-2 Quiet Results Table with P1-1 fluid column widths (min 120, max 180) */}
                 <Scroll horizontal style={{ flex: 1, minHeight: 0 }} contentStyle={{ flexGrow: 1 }}>
                   <View style={{ flex: 1, minHeight: 0, minWidth: COL_TEST_W + solutionSpecs().length * 120 + 32 }}>
-                    {/* Sticky Header Row */}
+                    {/* Header: one column per solution. Its verdict lives here (red dot when it does not
+                        match the expectation); subtask problems add the total score as a second line.
+                        Pressing a header selects it for 「运行选中」 (§5.1, §5.3). */}
                     <View
                       style={{
-                        height: 36,
+                        height: isSubtaskProblem() ? 48 : 38,
                         paddingLeft: 16,
                         paddingRight: 16,
                         borderBottomWidth: 1,
                         flexDirection: "row",
                         alignItems: "center",
                       }}
-                      class="border-border bg-background/50"
+                      class="border-border"
                     >
                       <View style={{ width: COL_TEST_W, flexShrink: 0 }}>
-                        <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
                           {t("build.table.testCase")}
                         </Text>
                       </View>
                       <Each of={solutionSpecs()} key={(s) => s.name}>
-                        {(spec) => (
-                          <View
-                            onPress={() => selection.set({ kind: "solution", name: spec().name })}
-                            style={{
-                              flex: 1,
-                              minWidth: 120,
-                              maxWidth: 180,
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 4,
-                              paddingRight: 10,
-                            }}
-                          >
-                            <If when={spec().is_main}>
-                              <Icon name="crown" size={12} tone="secondary-foreground" />
-                            </If>
-                            <Text
-                              style={{ fontSize: 12, fontWeight: 600, numberOfLines: 1, textOverflow: "ellipsis" }}
-                              class="text-foreground"
-                            >
-                              {spec().name}
-                            </Text>
-                          </View>
-                        )}
-                      </Each>
-                    </View>
-
-                    {/* Sticky Summary Conclusion Row (P1-5: preserves previous summary with `旧` on subset runs) */}
-                    <View
-                      style={{
-                        height: 30,
-                        paddingLeft: 16,
-                        paddingRight: 16,
-                        borderBottomWidth: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                      }}
-                      class="border-border bg-muted/20"
-                    >
-                      <View style={{ width: COL_TEST_W, flexShrink: 0 }}>
-                        <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
-                          {t("build.table.conclusion")}
-                        </Text>
-                      </View>
-                      <Each of={solutionSpecs()} key={(s) => s.name}>
                         {(spec) => {
-                          const conclusion = () => {
-                            const sum = summaryBySolution().get(spec().name);
-                            const prevSum = lastFullSummaries().get(spec().name);
-                            const cells: MatrixCellData[] = [];
-                            const lookup = matrixLookup();
-                            for (const row of testRows()) {
-                              const c = lookup.get(matrixCellKey(row.index, spec().name));
-                              if (c) cells.push(c);
-                            }
-                            return formatSolutionConclusion(sum, cells, isZh(), isRunningThis(), prevSum);
-                          };
+                          const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
+                          const mismatch = () => solutionMismatchText(spec());
+                          const picked = () => filterSolutions().includes(spec().name);
                           return (
                             <View
+                              testID={`matrix-col-${spec().name}`}
+                              onPress={() => filterSolutions.set(toggleSubsetSelection(filterSolutions(), spec().name))}
+                              tooltip={mismatch() ? tip(mismatch()!) : undefined}
+                              class={picked() ? "bg-accent" : "hover:bg-muted"}
                               style={{
                                 flex: 1,
                                 minWidth: 120,
                                 maxWidth: 180,
-                                paddingRight: 10,
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 5,
-                                opacity: conclusion().stale ? 0.55 : 1,
+                                height: "100%",
+                                marginRight: 4,
+                                paddingLeft: 6,
+                                paddingRight: 6,
+                                borderRadius: 6,
+                                justifyContent: "center",
+                                gap: 2,
                               }}
                             >
-                              <Text
-                                style={{ fontSize: 11, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                                class={
-                                  conclusion().tone === "fail"
-                                    ? "text-destructive"
-                                    : conclusion().tone === "ok"
-                                      ? "text-secondary-foreground"
-                                      : "text-muted-foreground"
-                                }
-                              >
-                                {conclusion().text}
-                              </Text>
-                              <If when={Boolean(conclusion().stale)}>
-                                <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
-                                  {t("build.table.staleTag")}
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                                <If when={spec().is_main}>
+                                  <Icon name="crown" size={12} tone="secondary-foreground" />
+                                </If>
+                                <Text
+                                  style={{ fontSize: 13, fontWeight: 600, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
+                                  class="text-foreground"
+                                >
+                                  {spec().name}
+                                </Text>
+                                <If when={mismatch()}>
+                                  <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-destructive" />
+                                </If>
+                              </View>
+                              <If when={isSubtaskProblem()}>
+                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  {formatSolutionScoreSummary(sum()) ?? "–"}
                                 </Text>
                               </If>
                             </View>
@@ -1847,53 +1829,6 @@ export function BuildConsole(props: {
                         }}
                       </Each>
                     </View>
-
-                    {/* Sticky OI Total Score Row (only when subtasks are declared) */}
-                    <If when={subtasks().length > 0}>
-                      <View
-                        testID="build-total-score-row"
-                        style={{
-                          height: 28,
-                          paddingLeft: 16,
-                          paddingRight: 16,
-                          borderBottomWidth: 1,
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                        class="border-border bg-muted/15"
-                      >
-                        <View style={{ width: COL_TEST_W, flexShrink: 0 }}>
-                          <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-secondary-foreground">
-                            {t("build.table.totalScore")}
-                          </Text>
-                        </View>
-                        <Each of={solutionSpecs()} key={(s) => s.name}>
-                          {(spec) => {
-                            const sum = () => summaryBySolution().get(spec().name) ?? lastFullSummaries().get(spec().name);
-                            const scoreText = () => formatSolutionScoreSummary(sum());
-                            return (
-                              <View
-                                style={{
-                                  flex: 1,
-                                  minWidth: 120,
-                                  maxWidth: 180,
-                                  paddingRight: 10,
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                }}
-                              >
-                                <Text
-                                  style={{ fontSize: 11.5, fontWeight: 600, fontVariant: ["tabular-nums"] }}
-                                  class={sum() && !sum()!.matched ? "text-destructive" : "text-foreground"}
-                                >
-                                  {scoreText() ?? "-"}
-                                </Text>
-                              </View>
-                            );
-                          }}
-                        </Each>
-                      </View>
-                    </If>
 
                     {/* Scrollable Compact Single-Line Test Rows (with optional collapsible OI subtask headers) */}
                     <Scroll style={{ flex: 1, minHeight: 0 }}>
@@ -1914,7 +1849,7 @@ export function BuildConsole(props: {
                                     flexDirection: "row",
                                     alignItems: "center",
                                   }}
-                                  class="border-border/80 bg-muted/30"
+                                  class="border-border bg-muted"
                                 >
                                   <View
                                     onPress={() => toggleSubtaskCollapsed(group().key)}
@@ -1933,17 +1868,19 @@ export function BuildConsole(props: {
                                       tone="secondary-foreground"
                                     />
                                     <Text
-                                      style={{ fontSize: 12, fontWeight: 600, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                      style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                       class="text-foreground"
                                     >
                                       {group().subtaskId
                                         ? t("build.table.subtaskHeader", { id: group().subtaskId! })
-                                        : t("build.subtasks.unassigned")}
+                                        : group().samples
+                                          ? t("build.tree.samples")
+                                          : t("build.subtasks.unassigned")}
                                     </Text>
                                     <If when={group().summary}>
                                       {(s) => (
                                         <Text
-                                          style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                                          style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                                           class="text-muted-foreground"
                                         >
                                           {t("build.tree.subtasksPts", { score: s().score })}
@@ -1976,18 +1913,10 @@ export function BuildConsole(props: {
                                           <If when={subScore()}>
                                             {(ss) => (
                                               <Text
-                                                style={{ fontSize: 11, fontWeight: 500, fontVariant: ["tabular-nums"] }}
-                                                class={
-                                                  ss().matched === false
-                                                    ? "text-destructive"
-                                                    : ss().full_score
-                                                      ? "text-secondary-foreground"
-                                                      : "text-foreground"
-                                                }
+                                                style={{ fontSize: 12, fontVariant: ["tabular-nums"], paddingLeft: 6 }}
+                                                class={ss().matched === false ? "text-destructive" : "text-secondary-foreground"}
                                               >
-                                                {ss().full_score
-                                                  ? `${formatScoreValue(ss().score)} / ${ss().max_score}`
-                                                  : `${formatScoreValue(ss().score)} / ${ss().max_score}  ${ss().verdict}`}
+                                                {`${formatScoreValue(ss().score)} / ${ss().max_score}`}
                                               </Text>
                                             )}
                                           </If>
@@ -2003,26 +1932,31 @@ export function BuildConsole(props: {
                                   {(row) => (
                                     <View
                                       style={{
-                                        height: 34,
-                                        paddingLeft: 16,
+                                        height: 38,
+                                        paddingLeft: 10,
                                         paddingRight: 16,
                                         borderBottomWidth: 1,
                                         flexDirection: "row",
                                         alignItems: "center",
                                       }}
-                                      class="border-border/60 hover:bg-muted/30"
+                                      class="border-border"
                                     >
-                                      {/* Test case label cell */}
+                                      {/* Row header: pressing it selects the test for 「运行选中」 */}
                                       <View
-                                        onPress={() => selectTestByIndex(row().index)}
+                                        testID={`matrix-row-${row().index}`}
+                                        onPress={() => filterTests.set(toggleSubsetSelection(filterTests(), String(row().index)))}
+                                        class={filterTests().includes(String(row().index)) ? "bg-accent" : "hover:bg-muted"}
                                         style={{
-                                          width: COL_TEST_W,
+                                          width: COL_TEST_W - 6,
+                                          height: 30,
+                                          marginRight: 6,
                                           flexShrink: 0,
                                           flexDirection: "row",
                                           alignItems: "center",
                                           gap: 6,
-                                          paddingLeft: isGrouped() ? 10 : 0,
-                                          paddingRight: 10,
+                                          borderRadius: 6,
+                                          paddingLeft: isGrouped() ? 16 : 6,
+                                          paddingRight: 8,
                                         }}
                                       >
                                         <Text
@@ -2041,7 +1975,7 @@ export function BuildConsole(props: {
                                           <Icon name="triangleAlert" size={12} tone="destructive" />
                                         </If>
                                         <If when={row().size_bytes > 0}>
-                                          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                                          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                                             {formatBytesCompact(row().size_bytes)}
                                           </Text>
                                         </If>
@@ -2055,7 +1989,7 @@ export function BuildConsole(props: {
                                           const isAnom = () => {
                                             const c = cell();
                                             if (!c) return false;
-                                            return isCellVerdictAnomaly(c.verdict, spec().expected, spec().is_main, sum()?.matched);
+                                            return isMatrixCellAnomaly(c.verdict, spec(), row().subtask, sum()?.matched);
                                           };
                                           const isPicked = () => {
                                             const s = selectedCell();
@@ -2066,7 +2000,6 @@ export function BuildConsole(props: {
                                               onPress={() => {
                                                 if (cell()) {
                                                   statusOpen.set(false);
-                                                  filterOpen.set(false);
                                                   selectedCell.set({ testIndex: row().index, solution: spec().name });
                                                 }
                                               }}
@@ -2087,18 +2020,16 @@ export function BuildConsole(props: {
                                                 }
                                               >
                                                 {(c) => {
-                                                  const st = () => cellVisualStyle(c().verdict, isAnom(), colorScheme() === "dark");
+                                                  const st = () => cellVisualStyle(c().verdict, isAnom());
                                                   const partial = () => formatScoreRatioPercent(c().score_ratio, false);
                                                   return (
                                                     <View
+                                                      class={`${st().cellClass} ${isPicked() ? "ring-2 ring-inset ring-primary" : ""}`}
                                                       style={{
-                                                        height: 24,
+                                                        height: 26,
                                                         paddingLeft: 7,
                                                         paddingRight: 7,
                                                         borderRadius: 5,
-                                                        borderWidth: isPicked() ? 2 : 0,
-                                                        backgroundColor: st().bg,
-                                                        borderColor: isPicked() ? token("primary") : "transparent",
                                                         opacity: c().stale ? 0.5 : 1,
                                                         flexDirection: "row",
                                                         alignItems: "center",
@@ -2106,25 +2037,11 @@ export function BuildConsole(props: {
                                                         gap: 6,
                                                       }}
                                                     >
-                                                      <Text
-                                                        style={{
-                                                          fontSize: 11.5,
-                                                          fontWeight: st().bold ? 600 : 500,
-                                                          color: st().fg,
-                                                          fontVariant: ["tabular-nums"],
-                                                        }}
-                                                      >
+                                                      <Text style={{ fontSize: 12, fontWeight: isAnom() ? 600 : 400, fontVariant: ["tabular-nums"] }} class={st().textClass}>
                                                         {partial() ? `${c().verdict} ${partial()!}` : c().verdict}
                                                       </Text>
-                                                      <Text
-                                                        style={{
-                                                          fontSize: 11,
-                                                          color: st().fg,
-                                                          opacity: st().solid ? 0.9 : 0.72,
-                                                          fontVariant: ["tabular-nums"],
-                                                        }}
-                                                      >
-                                                        {`${c().cpu_time_ms} ms`}
+                                                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], textAlign: "right" }} class={isAnom() ? "text-destructive" : "text-muted-foreground"}>
+                                                        {`${cellTimeMs(c())} ms`}
                                                       </Text>
                                                     </View>
                                                   );
@@ -2167,7 +2084,7 @@ export function BuildConsole(props: {
                         when={!isRunningThis()}
                         else={
                           <Text
-                            style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }}
+                            style={{ fontSize: 12, fontVariant: ["tabular-nums"] }}
                             class="text-secondary-foreground"
                           >
                             {buildStatus().total > 0
@@ -2179,15 +2096,15 @@ export function BuildConsole(props: {
                         <If when={effectiveSafetyMargin()}>
                           {(m) => (
                             <>
-                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {`${t("build.margin.maxInput")} ${formatBytesCompact(m().max_input_bytes)}`}
                               </Text>
-                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {`${t("build.margin.stdSlowest")} ${formatStdTimeRatio(m())}`}
                               </Text>
                               <If when={formatAcVsTleMargin(m())}>
                                 {(gap) => (
-                                  <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                     {`${t("build.margin.acVsTle")} ${gap()}`}
                                   </Text>
                                 )}
@@ -2214,39 +2131,12 @@ export function BuildConsole(props: {
                           flexShrink: 0,
                         }}
                       >
-                        <Icon
-                          name="triangleAlert"
-                          size={11.5}
-                          tone={anomalousRowIndices().size > 0 ? "chart-4" : "muted-foreground"}
-                        />
-                        <Text style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                          {`${t("build.filter.onlyAnomaly")} (${anomalousRowIndices().size})`}
+                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                          {`${t("build.filter.onlyAnomaly")} (${anomalousCellCount()})`}
                         </Text>
                       </View>
                     </If>
 
-                    <If when={!isRunningThis() && singleStatus().kind === "ready" && anomalousRowIndices().size === 0 && !onlyAnomalyRows()}>
-                      <View testID="build-verified-next-steps" style={{ flexDirection: "row", alignItems: "center", gap: 12, flexShrink: 0 }}>
-                        <If when={!!props.onSwitchToStatement}>
-                          <Text
-                            onPress={() => props.onSwitchToStatement?.()}
-                            style={{ fontSize: 11.5, fontWeight: 500 }}
-                            class="text-secondary-foreground hover:text-foreground"
-                          >
-                            {t("build.verified.backToStatement")}
-                          </Text>
-                        </If>
-                        <If when={!props.readOnly}>
-                          <Text
-                            onPress={() => dialog.set({ kind: "addToContest", problemId: props.problemId })}
-                            style={{ fontSize: 11.5, fontWeight: 500 }}
-                            class="text-primary"
-                          >
-                            {t("build.verified.addToContest")}
-                          </Text>
-                        </If>
-                      </View>
-                    </If>
                   </View>
                 </If>
 
@@ -2258,7 +2148,7 @@ export function BuildConsole(props: {
                     const rowMeta = () => testRows().find((r) => r.index === cell().test_index);
                     const isAnom = () => {
                       const sp = spec();
-                      return sp ? isCellVerdictAnomaly(cell().verdict, sp.expected, sp.is_main, sum()?.matched) : false;
+                      return sp ? isMatrixCellAnomaly(cell().verdict, sp, rowMeta()?.subtask, sum()?.matched) : false;
                     };
                     return (
                       <CellDiagnosticDrawer
@@ -2520,7 +2410,7 @@ export function BuildConsole(props: {
                                 </Text>
                               </View>
                               <If when={fileRel() || activeGroup()?.genCmd}>
-                                <Text style={{ fontSize: 11.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                <Text style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
                                   {fileRel() ?? activeGroup()?.genCmd ?? ""}
                                 </Text>
                               </If>
@@ -2662,7 +2552,7 @@ export function BuildConsole(props: {
                               </Text>
                               <If when={activeContent().truncated && activeContent().tail.length > 0}>
                                 <View style={{ paddingTop: 8, paddingBottom: 8 }}>
-                                  <Text style={{ fontSize: 11, fontFamily: MONO }} class="text-muted-foreground">
+                                  <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-muted-foreground">
                                     {"…"}
                                   </Text>
                                 </View>
@@ -2760,17 +2650,8 @@ export function BuildConsole(props: {
                                     gap: 6,
                                   }}
                                 >
-                                  <If when={Boolean(matchSelfTestResult(activeRel()!, activeReport()?.self_tests))}>
-                                    <View
-                                      style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: 3,
-                                        backgroundColor: matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed
-                                          ? "#16a34a"
-                                          : "#dc2626",
-                                      }}
-                                    />
+                                  <If when={matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed === false}>
+                                    <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-destructive" />
                                   </If>
                                   <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
                                     {activeRel()!.split("/").slice(-2).join("/")}
@@ -2901,7 +2782,7 @@ export function BuildConsole(props: {
                                   {t("build.interactor.title")}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
                                 {t("build.interactor.runsHint")}
                               </Text>
                             </View>
@@ -2919,7 +2800,7 @@ export function BuildConsole(props: {
                                   icon="plus"
                                   variant="primary"
                                   size="md"
-                                  onPress={handleCreateInteractor}
+                                  onPress={() => handleCreateInteractor()}
                                 />
                               ) : undefined
                             }
@@ -2992,13 +2873,13 @@ export function BuildConsole(props: {
                         </Text>
                       </If>
                       <If when={totalSubtaskScore() != null && totalSubtaskScore() !== 100}>
-                        <Text style={{ fontSize: 11.5 }} class="text-chart-4">
+                        <Text style={{ fontSize: 12 }} class="text-chart-4">
                           {t("build.subtasks.scoreNot100")}
                         </Text>
                       </If>
                     </View>
                   </View>
-                  <If when={!props.readOnly}>
+                  <If when={!props.readOnly && subtasks().length > 0}>
                     <Btn
                       testID="add-subtask-btn"
                       label={t("build.subtasks.add")}
@@ -3062,21 +2943,21 @@ export function BuildConsole(props: {
                                 {t("build.table.subtaskHeader", { id: sub().id })}
                               </Text>
                               <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }} class="bg-muted">
-                                <Text style={{ fontSize: 11.5, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                                <Text style={{ fontSize: 12, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
                                   {t("build.tree.subtasksPts", { score: sub().score })}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
                                 {sub().scoring === "sum" ? t("build.subtasks.scoringSum") : t("build.subtasks.scoringMin")}
                               </Text>
                             </View>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                              <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {t("build.subtasks.testCount", { count: sub().test_count })}
                               </Text>
                               <If when={(sub().depends?.length ?? 0) > 0}>
-                                <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                  {`${t("build.subtasks.dependsLabel")}: ${sub().depends!.join(", ")}`}
+                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  {t("build.subtasks.dependsOn", { list: sub().depends!.map((d) => t("build.table.subtaskHeader", { id: d })).join(isZh() ? "、" : ", ") })}
                                 </Text>
                               </If>
                             </View>
@@ -3180,14 +3061,14 @@ export function BuildConsole(props: {
                                   {t("build.tree.checker")}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
                                 {t("build.programs.builtinCheckerActive", { name: inspection()?.checker || "wcmp" })}
                               </Text>
                             </View>
                             {checkerDropdown()}
                           </View>
                           <View style={{ padding: 24, maxWidth: 560, gap: 8 }}>
-                            <Text style={{ fontSize: 12.5, lineHeight: 19 }} class="text-secondary-foreground">
+                            <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-secondary-foreground">
                               {t("build.programs.builtinCheckerHint")}
                             </Text>
                           </View>
@@ -3369,499 +3250,184 @@ export function BuildConsole(props: {
               })()}
             </If>
 
-            {/* Phase 3D: Isolated Sanitizer (ASan/UBSan) UB Check View */}
+            {/* 内存检查 (§5.6): one quiet line when clean; object-named findings when not */}
             <If when={selection().kind === "sanitizer"}>
               <View testID="build-sanitizer-view" style={{ flex: 1, minHeight: 0 }}>
                 <View
-                  style={{
-                    height: 46,
-                    paddingLeft: 16,
-                    paddingRight: 16,
-                    borderBottomWidth: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    flexShrink: 0,
-                  }}
+                  style={{ height: 46, paddingLeft: 20, paddingRight: 16, borderBottomWidth: 1, flexDirection: "row", alignItems: "center", flexShrink: 0 }}
                   class="border-border"
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
-                      {t("build.sanitize.panelTitle")}
-                    </Text>
-                    <If when={sanitizerReport()}>
-                      {(rep) => {
-                        const dark = () => colorScheme() === "dark";
-                        const st = () => rep().status;
-                        const bg = () =>
-                          st() === "passed"
-                            ? "rgba(16,185,129,0.12)"
-                            : st() === "failed"
-                              ? "rgba(244,63,94,0.12)"
-                              : "rgba(245,158,11,0.12)";
-                        const fg = () =>
-                          st() === "passed"
-                            ? dark()
-                              ? "#4ade80"
-                              : "#15803d"
-                            : st() === "failed"
-                              ? dark()
-                                ? "#f87171"
-                                : "#b91c1c"
-                              : dark()
-                                ? "#fbbf24"
-                                : "#b45309";
-                        const label = () =>
-                          st() === "passed"
-                            ? t("build.sanitize.passed")
-                            : st() === "failed"
-                              ? t("build.sanitize.failed", {
-                                  count: (rep().findings?.length ?? 0) + (rep().compile_failures?.length ?? 0),
-                                })
-                              : t("build.sanitize.unsupported");
-                        return (
-                          <View style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center", backgroundColor: bg() }}>
-                            <Text style={{ fontSize: 11.5, fontWeight: 500, color: fg(), fontVariant: ["tabular-nums"] }}>{label()}</Text>
-                          </View>
-                        );
-                      }}
-                    </If>
-                    <If when={sanitizerReport()}>
-                      {(rep) => (
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                          {t("build.sanitize.relaxedLimit", { ms: rep().relaxed_time_limit_ms })}
-                        </Text>
-                      )}
-                    </If>
-                  </View>
-                  <Btn
-                    testID="build-sanitize-rerun-btn"
-                    label={isRunningThis() && buildStatus().mode === "sanitize" ? t("build.sanitize.running") : t("build.sanitize.rerun")}
-                    icon="shieldCheck"
-                    variant="outline"
-                    disabled={props.readOnly || isRunningThis()}
-                    onPress={() => startRun("sanitize")}
-                  />
+                  <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                    {t("build.tree.memoryCheck")}
+                  </Text>
                 </View>
-
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 12 }}>
+                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: 16, paddingBottom: 24, paddingLeft: 20, paddingRight: 20, gap: 12 }}>
                   <If
                     when={sanitizerReport()}
                     else={
-                      <View style={{ paddingTop: 28, alignItems: "center", gap: 10 }}>
-                        <Icon name="shieldCheck" size={24} tone="muted-foreground" />
-                        <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
-                          {isRunningThis() && buildStatus().mode === "sanitize"
-                            ? t("build.sanitize.running")
-                            : t("build.sanitize.notRun")}
-                        </Text>
-                        <If when={!props.readOnly && !isRunningThis()}>
-                          <Btn
-                            label={t("build.sanitize.button")}
-                            icon="shieldCheck"
-                            variant="primary"
-                            onPress={() => startRun("sanitize")}
-                          />
-                        </If>
-                      </View>
+                      <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                        {t("build.sanitize.running")}
+                      </Text>
                     }
                   >
-                    {(rep) => (
-                      <View style={{ gap: 12 }}>
-                        <If when={rep().status === "unsupported" && rep().unsupported_reason}>
-                          <View style={{ padding: 12, borderRadius: 8, borderWidth: 1 }} class="bg-muted/50 border-border">
-                            <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
-                              {rep().unsupported_reason!}
+                    {(rep) => {
+                      const mainName = () => solutionSpecs().find((sp) => sp.is_main)?.name;
+                      return (
+                        <View style={{ gap: 12, maxWidth: 640 }}>
+                          <If when={rep().status === "passed" && (rep().findings?.length ?? 0) === 0}>
+                            <Text testID="sanitizer-clean" style={{ fontSize: 13 }} class="text-secondary-foreground">
+                              {t("build.sanitize.noFindings")}
                             </Text>
-                          </View>
-                        </If>
-
-                        <If when={(rep().compile_failures?.length ?? 0) > 0}>
-                          <View style={{ gap: 8 }}>
-                            <Each of={rep().compile_failures ?? []} key={(cf) => `${cf.target}:${cf.source}`}>
-                              {(cf) => (
-                                <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 6 }} class="bg-card border-border">
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                                    <Text style={{ fontSize: 12.5, fontWeight: 500, fontFamily: MONO }} class="text-destructive">
-                                      {cf().target}
-                                    </Text>
-                                    <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                                      {t("build.sanitize.compileFailed")}
-                                    </Text>
-                                  </View>
-                                  <Text style={{ fontSize: 11.5, fontFamily: MONO, lineHeight: 16 }} class="text-secondary-foreground">
+                          </If>
+                          <If when={rep().status === "unsupported"}>
+                            <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-secondary-foreground">
+                              {rep().unsupported_reason || t("build.sanitize.unsupported")}
+                            </Text>
+                          </If>
+                          <Each of={rep().compile_failures ?? []} key={(cf) => `${cf.target}:${cf.source}`}>
+                            {(cf) => (
+                              <View style={{ gap: 6 }}>
+                                <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-destructive">
+                                  {t("status.compileFailed", { file: sanitizerTargetName(cf().target, mainName()) })}
+                                </Text>
+                                <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted">
+                                  <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
                                     {cf().stderr.slice(0, 1200)}
                                   </Text>
                                 </View>
-                              )}
-                            </Each>
-                          </View>
-                        </If>
-
-                        <If when={(rep().findings?.length ?? 0) > 0}>
-                          <View style={{ gap: 8 }}>
-                            <Each of={rep().findings ?? []} key={(f, i) => `${f.target}:${f.test_index ?? i}:${f.summary}`}>
-                              {(f) => (
-                                <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 6 }} class="bg-card border-border">
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                    <Text style={{ fontSize: 12.5, fontWeight: 600, fontFamily: MONO }} class="text-foreground">
-                                      {f().target}
-                                    </Text>
-                                    <If when={!!f().test_name}>
-                                      <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-muted-foreground">
-                                        {f().test_name!}
-                                      </Text>
-                                    </If>
-                                  </View>
-                                  <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-destructive">
-                                    {f().summary}
+                              </View>
+                            )}
+                          </Each>
+                          <Each of={rep().findings ?? []} key={(f, i) => `${f.target}:${f.test_index ?? i}:${f.summary}`}>
+                            {(f) => (
+                              <View style={{ gap: 6, paddingBottom: 4 }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                                    {sanitizerTargetName(f().target, mainName())}
                                   </Text>
-                                  <If when={(f().stack_summary?.length ?? 0) > 0}>
-                                    <View style={{ padding: 8, borderRadius: 6, gap: 2 }} class="bg-muted">
-                                      <Each of={f().stack_summary ?? []} key="index">
-                                        {(line) => (
-                                          <Text style={{ fontSize: 11.5, fontFamily: MONO, lineHeight: 16 }} class="text-secondary-foreground">
-                                            {line()}
-                                          </Text>
-                                        )}
-                                      </Each>
-                                    </View>
+                                  <If when={!!f().test_name}>
+                                    <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                                      {f().test_name!}
+                                    </Text>
                                   </If>
                                 </View>
-                              )}
-                            </Each>
-                          </View>
-                        </If>
-
-                        <If when={rep().status === "passed" && (rep().findings?.length ?? 0) === 0}>
-                          <View style={{ padding: 12, borderRadius: 8, borderWidth: 1, gap: 4 }} class="bg-card border-border">
-                            <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                              {t("build.sanitize.noFindings")}
-                            </Text>
-                            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                              {t("build.sanitize.targetsChecked", { count: rep().targets?.length ?? 0 })}
-                            </Text>
-                          </View>
-                        </If>
-
-                        <If when={(rep().targets?.length ?? 0) > 0}>
-                          <View style={{ borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
-                            <Each of={rep().targets ?? []} key={(tr) => `${tr.kind}:${tr.target}`}>
-                              {(tr, idx) => (
-                                <View
-                                  style={{
-                                    height: 36,
-                                    paddingLeft: 12,
-                                    paddingRight: 12,
-                                    borderTopWidth: idx() > 0 ? 1 : 0,
-                                    flexDirection: "row",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    gap: 10,
-                                  }}
-                                  class="border-border"
-                                >
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
-                                    <View
-                                      style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: 3,
-                                        backgroundColor: tr().passed
-                                          ? colorScheme() === "dark"
-                                            ? "#4ade80"
-                                            : "#16a34a"
-                                          : colorScheme() === "dark"
-                                            ? "#f87171"
-                                            : "#dc2626",
-                                      }}
-                                    />
-                                    <Text style={{ fontSize: 12.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
-                                      {tr().target}
-                                    </Text>
-                                    <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                                      {tr().kind}
-                                    </Text>
+                                <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-destructive">
+                                  {f().summary}
+                                </Text>
+                                <If when={(f().stack_summary?.length ?? 0) > 0}>
+                                  <View style={{ padding: 8, borderRadius: 6, gap: 2 }} class="bg-muted">
+                                    <Each of={f().stack_summary ?? []} key="index">
+                                      {(line) => (
+                                        <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+                                          {line()}
+                                        </Text>
+                                      )}
+                                    </Each>
                                   </View>
-                                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                                    {tr().findings_count > 0 ? `${tr().findings_count} UB` : `${tr().checked_runs} runs`}
-                                  </Text>
-                                </View>
-                              )}
-                            </Each>
-                          </View>
-                        </If>
-                      </View>
-                    )}
+                                </If>
+                              </View>
+                            )}
+                          </Each>
+                        </View>
+                      );
+                    }}
                   </If>
                 </Scroll>
               </View>
             </If>
 
-            {/* Phase 3D: Zero-Pollution External Solution Trial Run View */}
+            {/* 验题人代码 (§5.6): 判定 / 通过 / 最慢用时 / 与标程相比; 「加入解法」 on row hover */}
             <If when={selection().kind === "external"}>
               <View testID="build-external-view" style={{ flex: 1, minHeight: 0 }}>
                 <View
-                  style={{
-                    height: 46,
-                    paddingLeft: 16,
-                    paddingRight: 16,
-                    borderBottomWidth: 1,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    flexShrink: 0,
-                  }}
+                  style={{ height: 46, paddingLeft: 20, paddingRight: 16, borderBottomWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0 }}
                   class="border-border"
                 >
                   <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
-                    {t("build.external.panelTitle")}
+                    {t("build.tree.testerCode", { count: externalReport()?.submissions.length ?? 0 })}
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <If when={!!externalMarkdown()}>
-                      <Btn
-                        testID="build-external-export-md"
-                        label={externalExported.active() ? t("build.external.exported") : t("build.external.exportMd")}
-                        icon={externalExported.active() ? "check" : "fileDown"}
-                        variant="outline"
-                        onPress={() => void exportExternalMarkdown()}
-                      />
-                    </If>
+                  <If when={!!externalMarkdown()}>
                     <Btn
-                      testID="build-external-pick-another"
-                      label={externalRunning() ? t("build.external.running") : t("build.external.pickAnother")}
-                      icon="play"
-                      variant="primary"
-                      disabled={externalRunning()}
-                      onPress={() => void pickAndRunExternal()}
+                      testID="build-external-export-md"
+                      label={externalExported.active() ? t("build.external.exported") : t("build.external.exportMd")}
+                      icon={externalExported.active() ? "check" : undefined}
+                      variant="ghost"
+                      onPress={() => void exportExternalMarkdown()}
                     />
-                  </View>
+                  </If>
                 </View>
 
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 12 }}>
+                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: 8, paddingBottom: 24, paddingLeft: 12, paddingRight: 12 }}>
                   <If
                     when={externalReport() && externalReport()!.submissions.length > 0}
                     else={
-                      <View style={{ paddingTop: 28, alignItems: "center", gap: 10 }}>
-                        <Icon name="play" size={24} tone="muted-foreground" />
-                        <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
-                          {externalRunning() ? t("build.external.running") : t("build.external.empty")}
-                        </Text>
-                      </View>
+                      <Text style={{ fontSize: 13, padding: 8 }} class="text-secondary-foreground">
+                        {t("build.external.running")}
+                      </Text>
                     }
                   >
-                    <View style={{ borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
-                      {/* Table header */}
-                      <View
-                        style={{
-                          height: 34,
-                          paddingLeft: 12,
-                          paddingRight: 12,
-                          borderBottomWidth: 1,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 10,
-                        }}
-                        class="border-border bg-muted/40"
-                      >
-                        <Text style={{ flex: 2, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colFile")}
-                        </Text>
-                        <Text style={{ width: 64, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colVerdict")}
-                        </Text>
-                        <Text style={{ width: 84, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colPassed")}
-                        </Text>
-                        <Text style={{ width: 72, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colTime")}
-                        </Text>
-                        <Text style={{ width: 82, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colRatio")}
-                        </Text>
-                        <Text style={{ flex: 2, fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
-                          {t("build.external.colFailure")}
-                        </Text>
-                        <View style={{ width: 124 }} />
-                      </View>
-                      <Each of={externalReport()?.submissions ?? []} key={(s) => s.file_path}>
-                        {(sub, idx) => {
-                          const dark = () => colorScheme() === "dark";
-                          const v = () => sub().verdict;
-                          const vBg = () =>
-                            v() === "AC"
-                              ? "rgba(16,185,129,0.12)"
-                              : v() === "TLE" || v() === "MLE"
-                                ? "rgba(245,158,11,0.12)"
-                                : "rgba(244,63,94,0.12)";
-                          const vFg = () =>
-                            v() === "AC"
-                              ? dark()
-                                ? "#4ade80"
-                                : "#15803d"
-                              : v() === "TLE" || v() === "MLE"
-                                ? dark()
-                                  ? "#fbbf24"
-                                  : "#b45309"
-                                : dark()
-                                  ? "#f87171"
-                                  : "#b91c1c";
-                          const adopted = () => !!adoptedExternalPaths()[sub().file_path];
-                          const failText = () => {
-                            if (sub().compile_error) return t("build.sanitize.compileFailed");
-                            const ff = sub().first_failure;
-                            if (!ff) return "—";
-                            return `${ff.test_name} (${ff.verdict})${ff.message ? ` ${ff.message}` : ""}`;
-                          };
-                          return (
-                            <View
-                              style={{
-                                minHeight: 40,
-                                paddingLeft: 12,
-                                paddingRight: 12,
-                                paddingTop: 6,
-                                paddingBottom: 6,
-                                borderTopWidth: idx() > 0 ? 1 : 0,
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 10,
-                              }}
-                              class="border-border"
-                            >
-                              <Text style={{ flex: 2, fontSize: 12.5, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
-                                {sub().file_name}
-                              </Text>
-                              <View style={{ width: 64, flexDirection: "row" }}>
-                                <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", backgroundColor: vBg() }}>
-                                  <Text style={{ fontSize: 11.5, fontWeight: 600, color: vFg() }}>{v()}</Text>
-                                </View>
-                              </View>
-                              <Text style={{ width: 84, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                                {sub().max_score != null
-                                  ? `${sub().total_score ?? 0}/${sub().max_score}`
-                                  : `${sub().passed_tests}/${sub().total_tests}`}
-                              </Text>
-                              <Text style={{ width: 72, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                                {`${sub().max_time_ms}ms`}
-                              </Text>
-                              <Text style={{ width: 82, fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                                {formatExternalRatio(sub().ratio_vs_std)}
-                              </Text>
-                              <Text style={{ flex: 2, fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
-                                {failText()}
-                              </Text>
-                              <View style={{ width: 124, flexDirection: "row", justifyContent: "flex-end" }}>
-                                <Btn
-                                  testID={`external-adopt-${idx()}`}
-                                  label={adopted() ? t("build.external.adopted") : t("build.external.adopt")}
-                                  icon={adopted() ? "check" : "plus"}
-                                  variant="outline"
-                                  disabled={props.readOnly || adopted()}
-                                  onPress={() => adoptExternal(sub())}
-                                />
-                              </View>
-                            </View>
-                          );
-                        }}
-                      </Each>
+                    <View style={{ height: 32, paddingLeft: 8, paddingRight: 8, flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      <Text style={{ flex: 1, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colFile")}</Text>
+                      <Text style={{ width: 64, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colVerdict")}</Text>
+                      <Text style={{ width: 72, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colPassed")}</Text>
+                      <Text style={{ width: 80, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colTime")}</Text>
+                      <Text style={{ width: 112, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colRatio")}</Text>
+                      <View style={{ width: 28 }} />
                     </View>
+                    <Each of={externalReport()?.submissions ?? []} key={(s) => s.file_path}>
+                      {(sub, idx) => {
+                        const adopted = () => !!adoptedExternalPaths()[sub().file_path];
+                        const failText = () => {
+                          if (sub().compile_error) return t("build.sanitize.compileFailed");
+                          const ff = sub().first_failure;
+                          if (!ff) return undefined;
+                          return `${ff.test_name}：${verdictWords(ff.verdict)}${ff.message ? `　${ff.message}` : ""}`;
+                        };
+                        return (
+                          <View
+                            class="group border-t border-border hover:bg-muted"
+                            style={{ height: 38, paddingLeft: 8, paddingRight: 8, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 12 }}
+                          >
+                            <Text style={{ flex: 1, fontSize: 13, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                              {sub().file_name}
+                            </Text>
+                            <Text
+                              tooltip={failText() ? tip(failText()!) : undefined}
+                              style={{ width: 64, fontSize: 13, fontVariant: ["tabular-nums"] }}
+                              class={sub().verdict === "AC" ? "text-foreground" : "text-secondary-foreground"}
+                            >
+                              {sub().compile_error ? "CE" : sub().verdict}
+                            </Text>
+                            <Text style={{ width: 72, fontSize: 13, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
+                              {sub().max_score != null ? `${sub().total_score ?? 0} / ${sub().max_score}` : `${sub().passed_tests} / ${sub().total_tests}`}
+                            </Text>
+                            <Text style={{ width: 80, fontSize: 13, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
+                              {`${sub().max_time_ms} ms`}
+                            </Text>
+                            <Text style={{ width: 112, fontSize: 13 }} class="text-secondary-foreground">
+                              {stdRatioWords(sub().ratio_vs_std)}
+                            </Text>
+                            <View style={{ width: 28, alignItems: "flex-end" }} class={adopted() ? "" : "opacity-0 group-hover:opacity-100"}>
+                              <IconBtn
+                                testID={`external-adopt-${idx()}`}
+                                icon={adopted() ? "check" : "plus"}
+                                size={26}
+                                tone="secondary-foreground"
+                                disabled={props.readOnly || adopted()}
+                                tooltip={tip(adopted() ? t("build.external.adopted") : t("build.external.adopt"))}
+                                onPress={() => adoptExternal(sub())}
+                              />
+                            </View>
+                          </View>
+                        );
+                      }}
+                    </Each>
                   </If>
                 </Scroll>
               </View>
             </If>
           </View>
         </View>
-
-        {/* ── P0-3 Anchored Overlay Popover: Subset Filter (Solutions + Test Tags, NEVER pushes table!) ── */}
-        <If when={filterOpen()}>
-          <View
-            testID="build-filter-popover"
-            style={{
-              position: "absolute",
-              top: 6,
-              right: 14,
-              width: 360,
-              borderRadius: 10,
-              borderWidth: 1,
-              boxShadow: popoverShadow(),
-              padding: 12,
-              gap: 10,
-            }}
-            class="bg-popover border-border"
-          >
-            <View style={{ gap: 6 }}>
-              <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
-                {t("build.tree.solutions")}
-              </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                <Each of={solutionSpecs()} key={(s) => s.name}>
-                  {(spec) => {
-                    const active = () => filterSolutions().includes(spec().name);
-                    return (
-                      <View
-                        onPress={() => filterSolutions.set(toggleSubsetSelection(filterSolutions(), spec().name))}
-                        class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
-                        style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
-                      >
-                        <Text
-                          style={{ fontSize: 12, fontWeight: 500 }}
-                          class={active() ? "text-primary-foreground" : "text-foreground"}
-                        >
-                          {spec().name}
-                        </Text>
-                      </View>
-                    );
-                  }}
-                </Each>
-              </View>
-            </View>
-
-            <If when={testTags().length > 0}>
-              <View style={{ gap: 6 }}>
-                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-muted-foreground">
-                  {t("build.filter.testsGroup")}
-                </Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  <Each of={testTags()} key={(tg) => tg}>
-                    {(tg) => {
-                      const active = () => filterTests().includes(tg());
-                      return (
-                        <View
-                          onPress={() => filterTests.set(toggleSubsetSelection(filterTests(), tg()))}
-                          class={active() ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}
-                          style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
-                        >
-                          <Text
-                            style={{ fontSize: 12, fontWeight: 500 }}
-                            class={active() ? "text-primary-foreground" : "text-foreground"}
-                          >
-                            {tg()}
-                          </Text>
-                        </View>
-                      );
-                    }}
-                  </Each>
-                </View>
-              </View>
-            </If>
-
-            <If when={activeFilterCount() > 0}>
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", borderTopWidth: 1, paddingTop: 8 }} class="border-border">
-                <Btn
-                  label={t("build.filter.clear")}
-                  icon="filterX"
-                  variant="ghost"
-                  onPress={() => {
-                    filterSolutions.set([]);
-                    filterTests.set([]);
-                  }}
-                />
-              </View>
-            </If>
-          </View>
-        </If>
 
         {/* Modals */}
         <CreateSourceModal
@@ -3933,6 +3499,23 @@ export function BuildConsole(props: {
   );
 }
 
+/** One setting on the 题型 page: a label, the control, an optional plain-language hint. */
+function TypeSetting(props: { label: string; hint?: string; children?: JSX.Element }) {
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+        {props.label}
+      </Text>
+      <View style={{ flexDirection: "row" }}>{props.children}</View>
+      <If when={props.hint}>
+        <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+          {props.hint}
+        </Text>
+      </If>
+    </View>
+  );
+}
+
 // ── Left Object Tree subcomponents ───────────────────────────────────────────
 
 function TreeSectionHeader(props: { label: string; action?: ReturnType<typeof IconBtn> | ReturnType<typeof AppMenu> }) {
@@ -3948,7 +3531,7 @@ function TreeSectionHeader(props: { label: string; action?: ReturnType<typeof Ic
       }}
     >
       {/* P2: 11px muted regular weight for clear hierarchy */}
-      <Text style={{ fontSize: 11, fontWeight: 400, letterSpacing: 0.2 }} class="text-muted-foreground">
+      <Text style={{ fontSize: 12, fontWeight: 400, letterSpacing: 0.2 }} class="text-muted-foreground">
         {props.label}
       </Text>
       {props.action}
@@ -3961,7 +3544,7 @@ function TreeRow(props: {
   label: string;
   sub?: string;
   active: boolean;
-  statusDot?: "ok" | "fail";
+  statusDot?: "fail";
   onPress: () => void;
   onContextMenu?: (e: ContextMenuEvent) => void;
   testID?: string;
@@ -3990,7 +3573,7 @@ function TreeRow(props: {
       <Text
         style={{
           flex: 1,
-          fontSize: 12.5,
+          fontSize: 13,
           fontWeight: 500,
           fontVariant: ["tabular-nums"],
           numberOfLines: 1,
@@ -4001,16 +3584,13 @@ function TreeRow(props: {
         {props.label}
       </Text>
       <If when={!!props.sub}>
-        <Text style={{ fontSize: 11, flexShrink: 0 }} class="text-muted-foreground">
+        <Text style={{ fontSize: 12, flexShrink: 0 }} class="text-muted-foreground">
           {props.sub!}
         </Text>
       </If>
       {/* P1-6: small semantic dot instead of checkmark ✓ */}
       <If when={props.statusDot === "fail"}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#dc2626", flexShrink: 0 }} />
-      </If>
-      <If when={props.statusDot === "ok"}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#16a34a", opacity: 0.65, flexShrink: 0 }} />
+        <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-destructive" />
       </If>
     </View>
   );
