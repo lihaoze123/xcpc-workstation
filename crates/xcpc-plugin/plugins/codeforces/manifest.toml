@@ -1,0 +1,11 @@
+id = "codeforces"
+name = "Codeforces"
+version = "1.0.0"
+description = "Official Codeforces OJ source plugin (account, rating history, incremental submissions, contests, URL parser)."
+author = "XCPC Workstation"
+entry = "index.js"
+capabilities = ["oj_source"]
+
+[permissions]
+domains = ["codeforces.com"]
+workspace_read = false

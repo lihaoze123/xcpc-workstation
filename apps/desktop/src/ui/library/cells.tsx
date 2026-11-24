@@ -71,6 +71,62 @@ function StatusSlot(props: { children?: JSX.Element; tooltipText?: string }) {
   );
 }
 
+/** Compact training status pill rendered when `trainingEnabled` is true and status != "none". */
+function TrainingStatusBadge(props: { status: string }) {
+  const st = props.status;
+  if (st !== "todo" && st !== "attempted" && st !== "ac" && st !== "upsolved") return null;
+  const label =
+    st === "ac"
+      ? t("training.status.ac")
+      : st === "upsolved"
+        ? t("training.status.upsolved")
+        : st === "attempted"
+          ? t("training.status.attempted")
+          : t("training.status.todo");
+  const bgClass =
+    st === "ac"
+      ? "bg-chart-2/15"
+      : st === "upsolved"
+        ? "bg-primary/15"
+        : st === "attempted"
+          ? "bg-chart-4/15"
+          : "bg-muted";
+  const textClass =
+    st === "ac"
+      ? "text-chart-2"
+      : st === "upsolved"
+        ? "text-primary"
+        : st === "attempted"
+          ? "text-chart-4"
+          : "text-secondary-foreground";
+  return (
+    <View
+      style={{
+        height: 18,
+        paddingLeft: 5,
+        paddingRight: 5,
+        borderRadius: 4,
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+      class={bgClass}
+    >
+      <Text
+        style={{
+          fontSize: 10.5,
+          lineHeight: 14,
+          fontWeight: 500,
+          fontVariant: ["tabular-nums"],
+        }}
+        class={textClass}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 export function renderLibraryCellContent(
   key: LibraryColumnKey | string,
   row: LibraryRow | undefined,
@@ -79,6 +135,7 @@ export function renderLibraryCellContent(
     showInlineId: boolean;
     maxTags: number;
     tagsWidth?: number;
+    trainingEnabled?: boolean;
     onToggleSelect?: () => void;
   },
 ): JSX.Element | null {
@@ -96,6 +153,9 @@ export function renderLibraryCellContent(
   if (key === "title") {
     return (
       <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+        {opts.trainingEnabled && row.trainingStatus && row.trainingStatus !== "none" && (
+          <TrainingStatusBadge status={row.trainingStatus} />
+        )}
         <Text
           style={{
             numberOfLines: 1,

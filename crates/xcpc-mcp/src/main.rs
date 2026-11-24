@@ -16,6 +16,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -24,10 +25,11 @@ use serde_json::json;
 use xcpc_convert::publish::{self, Kind, Report, Target};
 use xcpc_domain::{
     BatchItemStatus, BatchReport, ContestMetaPatch, DiffKind, GroupFilter, Language, LimitsPatch,
-    OverridePatch, Patch, RatingTier, SearchQuery,
+    OverridePatch, Patch, ProblemSource, RatingTier, SearchQuery, SyncedProblemStatus,
+    TrainingLogEntry, TrainingLogStatus,
 };
 use xcpc_engine::{Engine, FontOptions};
-use xcpc_storage::{Workspace, WorkspaceIndex};
+use xcpc_storage::{CreateProblemOptions, Workspace, WorkspaceIndex};
 
 mod mcp;
 mod views;
@@ -185,6 +187,27 @@ enum Command {
         #[command(subcommand)]
         action: TemplateCommand,
     },
+    /// Manage plugins (list, install, enable/disable, export, init, test, repo).
+    Plugin {
+        #[command(subcommand)]
+        action: PluginCommand,
+    },
+    /// Sync OJ accounts, submissions, and contests via enabled oj_source plugins, or manage handles.
+    Sync {
+        #[command(subcommand)]
+        action: Option<SyncCommand>,
+        /// Sync only this platform ID (e.g. codeforces, atcoder).
+        #[arg(long)]
+        platform: Option<String>,
+        /// Ignore stored incremental cursor and run a full sync.
+        #[arg(long)]
+        full: bool,
+    },
+    /// Manage personal training status logs and derived status.
+    Training {
+        #[command(subcommand)]
+        action: TrainingCommand,
+    },
     /// List the workspace's problems and contests.
     List,
     /// List the font families the engine sees.
@@ -272,6 +295,17 @@ enum ProblemCommand {
         /// Skip interactive confirmation.
         #[arg(long)]
         yes: bool,
+    },
+    /// Create a problem from an external OJ URL (deduplicating by `[[source]]`).
+    FromUrl {
+        /// External OJ problem URL (e.g. Codeforces or AtCoder problem URL).
+        url: String,
+        /// Override target problem ID (defaults to suggested slug such as `cf-1999a`).
+        #[arg(long)]
+        id: Option<String>,
+        /// Override problem title (defaults to resolved title or `<platform> <problem_key>`).
+        #[arg(long)]
+        title: Option<String>,
     },
 }
 
@@ -436,6 +470,143 @@ enum TemplateCommand {
         /// New template ID (slug under templates/).
         new_name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PluginCommand {
+    /// List all built-in and locally installed plugins.
+    List,
+    /// Install a plugin from a local directory or `.zip` archive.
+    Install {
+        /// Path to a plugin directory or `.zip` archive.
+        path: PathBuf,
+    },
+    /// Enable a plugin by ID.
+    Enable {
+        /// Plugin ID.
+        id: String,
+    },
+    /// Disable a plugin by ID.
+    Disable {
+        /// Plugin ID.
+        id: String,
+    },
+    /// Export a built-in plugin to `<dataDir>/plugins/<id>/` for local customization.
+    Export {
+        /// Built-in plugin ID.
+        id: String,
+    },
+    /// Scaffold a new plugin directory (`manifest.toml`, `index.js`, `xcpc-plugin.d.ts`).
+    Init {
+        /// Target directory to scaffold into.
+        dir: PathBuf,
+        /// Plugin template kind (`oj` or `tool`).
+        #[arg(long, default_value = "oj")]
+        kind: PluginScaffoldKind,
+    },
+    /// Run a local plugin directory directly without installing it.
+    Test {
+        /// Path to the local plugin directory.
+        dir: PathBuf,
+        /// Exported function name to invoke (defaults to `verify` for OJ plugins or `runTool` for tools).
+        action: Option<String>,
+        /// JSON arguments passed to the exported function (array of args, or single JSON value).
+        #[arg(long)]
+        args: Option<String>,
+    },
+    /// Manage decentralized plugin repository (`index.json`) subscriptions.
+    Repo {
+        #[command(subcommand)]
+        action: PluginRepoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginRepoCommand {
+    /// List configured plugin repository URLs.
+    List,
+    /// Add or update a plugin repository URL.
+    Add {
+        /// Repository `index.json` URL.
+        url: String,
+        /// Optional display name for the repository.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Remove a plugin repository URL.
+    Remove {
+        /// Repository URL to remove.
+        url: String,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PluginScaffoldKind {
+    Oj,
+    Tool,
+}
+
+impl PluginScaffoldKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            PluginScaffoldKind::Oj => "oj",
+            PluginScaffoldKind::Tool => "tool",
+        }
+    }
+
+    fn into_scaffold_kind(self) -> xcpc_plugin::ScaffoldKind {
+        match self {
+            PluginScaffoldKind::Oj => xcpc_plugin::ScaffoldKind::Oj,
+            PluginScaffoldKind::Tool => xcpc_plugin::ScaffoldKind::Tool,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum SyncCommand {
+    /// Get, set, or clear the configured handle for an OJ platform.
+    Handle {
+        /// Platform ID (e.g. codeforces, atcoder).
+        platform: String,
+        /// Handle to set (omit to show current handle).
+        #[arg(conflicts_with = "clear")]
+        handle: Option<String>,
+        /// Clear the configured handle for this platform.
+        #[arg(long)]
+        clear: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrainingCommand {
+    /// Record a manual training status change for a problem and show its derived status.
+    Status {
+        /// Problem ID (slug under problems/).
+        problem_id: String,
+        /// Status to record (`todo`, `attempted`, `ac`, `upsolved`, or `clear`).
+        status: TrainingStatusArg,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TrainingStatusArg {
+    Todo,
+    Attempted,
+    Ac,
+    Upsolved,
+    Clear,
+}
+
+impl TrainingStatusArg {
+    fn into_log_status(self) -> TrainingLogStatus {
+        match self {
+            TrainingStatusArg::Todo => TrainingLogStatus::Todo,
+            TrainingStatusArg::Attempted => TrainingLogStatus::Attempted,
+            TrainingStatusArg::Ac => TrainingLogStatus::Ac,
+            TrainingStatusArg::Upsolved => TrainingLogStatus::Upsolved,
+            TrainingStatusArg::Clear => TrainingLogStatus::Clear,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -679,6 +850,55 @@ impl From<xcpc_packages::PackageError> for Fatal {
             message: e.to_string(),
             human: Some(e.human_message()),
             exit_code,
+        }
+    }
+}
+
+impl From<xcpc_plugin::PluginError> for Fatal {
+    fn from(e: xcpc_plugin::PluginError) -> Self {
+        Fatal {
+            code: e.code(),
+            message: e.to_string(),
+            human: None,
+            exit_code: 2,
+        }
+    }
+}
+
+impl From<xcpc_sync::SyncError> for Fatal {
+    fn from(e: xcpc_sync::SyncError) -> Self {
+        match e {
+            xcpc_sync::SyncError::Plugin(p) => p.into(),
+            xcpc_sync::SyncError::PlatformNotFound(msg) => Fatal {
+                code: "platform_not_found",
+                message: format!("platform not found or disabled: {msg}"),
+                human: Some(format!("找不到或未启用平台「{msg}」。")),
+                exit_code: 2,
+            },
+            xcpc_sync::SyncError::InvalidDataDir(msg) => Fatal {
+                code: "invalid_data_dir",
+                message: format!("invalid data directory: {msg}"),
+                human: Some(format!("无法定位全局数据目录：{msg}")),
+                exit_code: 2,
+            },
+            xcpc_sync::SyncError::Io(err) => Fatal {
+                code: "io",
+                message: err.to_string(),
+                human: None,
+                exit_code: 2,
+            },
+            xcpc_sync::SyncError::Json(err) => Fatal {
+                code: "json",
+                message: err.to_string(),
+                human: None,
+                exit_code: 2,
+            },
+            xcpc_sync::SyncError::Sqlite(err) => Fatal {
+                code: "sqlite",
+                message: err.to_string(),
+                human: None,
+                exit_code: 2,
+            },
         }
     }
 }
@@ -1152,6 +1372,13 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             force,
         } => run_export(cli, *format, *kind, ids, out.as_ref(), *force),
         Command::Template { action } => run_template(cli, action),
+        Command::Plugin { action } => run_plugin(cli, action),
+        Command::Sync {
+            action,
+            platform,
+            full,
+        } => run_sync(cli, action.as_ref(), platform.as_deref(), *full),
+        Command::Training { action } => run_training(cli, action),
     }
 }
 
@@ -2698,6 +2925,682 @@ fn run_problem(cli: &Cli, action: &ProblemCommand) -> Result<ExitCode, Fatal> {
             }
             let report = ws.batch_delete_problems(ids)?;
             Ok(finish_batch(cli, &report, "problem delete"))
+        }
+        ProblemCommand::FromUrl { url, id, title } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let data_dir = resolve_data_dir()?;
+            let engine = xcpc_sync::SyncEngine::default_for_data_dir(data_dir);
+            let Some(resolved) = engine.resolve_problem_url(url)? else {
+                return Err(Fatal {
+                    code: "unsupported_url",
+                    message: format!("no enabled oj_source plugin could parse URL: {url}"),
+                    human: Some(format!(
+                        "无法解析该链接「{url}」：当前已启用的 OJ 插件均不支持此 URL。"
+                    )),
+                    exit_code: 2,
+                });
+            };
+
+            if let Some(existing_id) =
+                ws.find_problem_by_source(&resolved.platform, &resolved.problem_key)?
+            {
+                let existing = ws.load_problem(&existing_id)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "ok": true,
+                            "already_exists": true,
+                            "id": existing.id,
+                            "title": existing.meta.title,
+                            "path": existing.dir,
+                            "platform": resolved.platform,
+                            "problem_key": resolved.problem_key,
+                            "url": resolved.url,
+                            "rating": existing.meta.rating,
+                            "tags": existing.meta.tags,
+                            "sources": existing.meta.sources,
+                        }))
+                        .expect("serializable")
+                    );
+                } else {
+                    println!(
+                        "problem already exists: {} ({}) [{}:{}]",
+                        existing.id, existing.dir, resolved.platform, resolved.problem_key
+                    );
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            let slug = id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&resolved.suggested_slug);
+            let final_title = title
+                .as_deref()
+                .or(resolved.title.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{} {}", resolved.platform, resolved.problem_key));
+            let rating = resolved
+                .normalized_rating
+                .or(resolved.raw_rating)
+                .and_then(|r| u32::try_from(r).ok());
+            let opts = CreateProblemOptions {
+                sources: vec![ProblemSource {
+                    platform: resolved.platform.clone(),
+                    id: resolved.problem_key.clone(),
+                    url: Some(resolved.url.clone()),
+                }],
+                tags: resolved.tags.clone(),
+                difficulty: None,
+                rating,
+            };
+            let created = ws.create_problem_with_options(slug, &final_title, &opts)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "already_exists": false,
+                        "id": created.id,
+                        "title": created.meta.title,
+                        "path": created.dir,
+                        "platform": resolved.platform,
+                        "problem_key": resolved.problem_key,
+                        "url": resolved.url,
+                        "rating": created.meta.rating,
+                        "tags": created.meta.tags,
+                        "sources": created.meta.sources,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "created problem {} ({}) [{}:{}]",
+                    created.id, created.dir, resolved.platform, resolved.problem_key
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn resolve_data_dir() -> Result<PathBuf, Fatal> {
+    xcpc_sync::default_data_dir().ok_or_else(|| Fatal {
+        code: "invalid_data_dir",
+        message: "cannot determine XCPC data directory; set XCPC_DATA_DIR".to_owned(),
+        human: Some("无法定位全局数据目录，请设置环境变量 XCPC_DATA_DIR。".to_owned()),
+        exit_code: 2,
+    })
+}
+
+struct CliWorkspaceReader {
+    ws: Workspace,
+}
+
+impl xcpc_plugin::WorkspaceReader for CliWorkspaceReader {
+    fn list_problems(&self) -> xcpc_plugin::Result<Vec<xcpc_plugin::WorkspaceProblemSummary>> {
+        let ids = self
+            .ws
+            .list_problems()
+            .map_err(|e| xcpc_plugin::PluginError::InvalidPackage(e.to_string()))?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(p) = self.ws.load_problem(&id) {
+                out.push(xcpc_plugin::WorkspaceProblemSummary {
+                    id: p.id,
+                    title: p.meta.title,
+                    tags: p.meta.tags,
+                    difficulty: p.meta.rating.map(|r| r.to_string()),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn get_problem(
+        &self,
+        id: &str,
+    ) -> xcpc_plugin::Result<Option<xcpc_plugin::WorkspaceProblemDetail>> {
+        match self.ws.load_problem(id) {
+            Ok(p) => {
+                let statement_md = p
+                    .statement(Language::Chinese)
+                    .or_else(|| p.statements.first())
+                    .map(|s| s.file.text.clone());
+                let editorial_md = p.editorial.map(|e| e.text);
+                Ok(Some(xcpc_plugin::WorkspaceProblemDetail {
+                    id: p.id,
+                    title: p.meta.title,
+                    tags: p.meta.tags,
+                    difficulty: p.meta.rating.map(|r| r.to_string()),
+                    statement_md,
+                    editorial_md,
+                }))
+            }
+            Err(xcpc_storage::Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(xcpc_plugin::PluginError::InvalidPackage(e.to_string())),
+        }
+    }
+}
+
+fn plugin_summary_json(p: &xcpc_plugin::InstalledPlugin) -> serde_json::Value {
+    json!({
+        "id": p.manifest.id,
+        "name": p.manifest.name,
+        "version": p.manifest.version,
+        "description": p.manifest.description,
+        "origin": p.origin,
+        "enabled": p.enabled,
+        "capabilities": p.manifest.capabilities,
+        "domains": p.manifest.permissions.domains,
+        "has_unsandboxed_ui": p.manifest.ui_entry.is_some(),
+        "last_error": p.last_error,
+        "local_dir": p.local_dir.as_ref().map(|d| d.display().to_string()),
+    })
+}
+
+fn format_plugin_origin(origin: xcpc_plugin::PluginOrigin) -> &'static str {
+    match origin {
+        xcpc_plugin::PluginOrigin::Builtin => "builtin",
+        xcpc_plugin::PluginOrigin::LocalOverride => "local_override",
+        xcpc_plugin::PluginOrigin::Local => "local",
+    }
+}
+
+fn format_plugin_capability(cap: xcpc_plugin::PluginCapability) -> &'static str {
+    match cap {
+        xcpc_plugin::PluginCapability::OjSource => "oj_source",
+        xcpc_plugin::PluginCapability::Tool => "tool",
+        xcpc_plugin::PluginCapability::Commands => "commands",
+        xcpc_plugin::PluginCapability::Importer => "importer",
+        xcpc_plugin::PluginCapability::Exporter => "exporter",
+        xcpc_plugin::PluginCapability::Credentials => "credentials",
+    }
+}
+
+fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
+    match action {
+        PluginCommand::List => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let plugins = pm.list_plugins()?;
+            if cli.json {
+                let items: Vec<_> = plugins.iter().map(plugin_summary_json).collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "plugins": items,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                for p in &plugins {
+                    let state = if p.enabled { "enabled" } else { "disabled" };
+                    let caps = if p.manifest.capabilities.is_empty() {
+                        "-".to_owned()
+                    } else {
+                        p.manifest
+                            .capabilities
+                            .iter()
+                            .map(|c| format_plugin_capability(*c))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    };
+                    let domains = if p.manifest.permissions.domains.is_empty() {
+                        "-".to_owned()
+                    } else {
+                        p.manifest.permissions.domains.join(",")
+                    };
+                    let ui_flag = if p.manifest.ui_entry.is_some() {
+                        "\t[unsandboxed-ui]"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}{}",
+                        p.manifest.id,
+                        p.manifest.version,
+                        format_plugin_origin(p.origin),
+                        state,
+                        caps,
+                        domains,
+                        p.manifest.name,
+                        ui_flag,
+                    );
+                    if let Some(ref err) = p.last_error {
+                        println!("  last_error: {err}");
+                    }
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Install { path } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let installed = if path.is_dir() {
+                pm.install_from_dir(path)?
+            } else if path.is_file() {
+                pm.install_from_zip(path)?
+            } else {
+                return Err(xcpc_plugin::PluginError::InvalidPackage(format!(
+                    "plugin path does not exist: {}",
+                    path.display()
+                ))
+                .into());
+            };
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "plugin": plugin_summary_json(&installed),
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "installed plugin {} ({}) [{}]",
+                    installed.manifest.id,
+                    installed.manifest.version,
+                    format_plugin_origin(installed.origin)
+                );
+                if installed.manifest.ui_entry.is_some() {
+                    println!(
+                        "  warning: this plugin includes unsandboxed desktop UI code ({})",
+                        installed.manifest.ui_entry.as_deref().unwrap_or("ui.js")
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Enable { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            pm.set_enabled(id, true)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "enabled": true,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("enabled plugin {id}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Disable { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            pm.set_enabled(id, false)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "enabled": false,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("disabled plugin {id}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Export { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let dest = pm.export_builtin_copy(id)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "path": dest.display().to_string(),
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("exported plugin {id} to {}", dest.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Init { dir, kind } => {
+            xcpc_plugin::init_plugin_scaffold(dir, kind.into_scaffold_kind())?;
+            let files = ["manifest.toml", "index.js", "xcpc-plugin.d.ts"];
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "dir": dir.display().to_string(),
+                        "kind": kind.as_str(),
+                        "files": files,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("scaffolded {} plugin in {}", kind.as_str(), dir.display());
+                for f in files {
+                    println!("  {f}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Test { dir, action, args } => {
+            let manifest = xcpc_plugin::PluginManifest::from_file(&dir.join("manifest.toml"))?;
+            let (resolved_action, resolved_args) = match action {
+                Some(a) => (a.clone(), args.clone().unwrap_or_default()),
+                None => {
+                    let is_tool_only = manifest.has_capability(xcpc_plugin::PluginCapability::Tool)
+                        && !manifest.has_capability(xcpc_plugin::PluginCapability::OjSource);
+                    if is_tool_only {
+                        let first_tool = manifest
+                            .tools
+                            .first()
+                            .map(|t| t.id.as_str())
+                            .unwrap_or("hello");
+                        let default_args =
+                            serde_json::to_string(&json!([first_tool, {}])).expect("serializable");
+                        ("runTool".to_owned(), args.clone().unwrap_or(default_args))
+                    } else {
+                        (
+                            "verify".to_owned(),
+                            args.clone()
+                                .unwrap_or_else(|| r#"{"handle":"test"}"#.to_owned()),
+                        )
+                    }
+                }
+            };
+            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> =
+                open_workspace(cli).ok().map(|ws| {
+                    Arc::new(CliWorkspaceReader { ws }) as Arc<dyn xcpc_plugin::WorkspaceReader>
+                });
+            let report = xcpc_plugin::test_plugin_dir(
+                dir,
+                &resolved_action,
+                &resolved_args,
+                Arc::new(xcpc_plugin::UreqHttpClient::new()),
+                Arc::new(xcpc_plugin::SystemKeyringStore::new()),
+                ws_reader,
+            )?;
+            if cli.json {
+                let mut val = serde_json::to_value(&report).expect("serializable");
+                val["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&val).expect("serializable")
+                );
+            } else {
+                println!(
+                    "plugin {} :: {} ({} ms)",
+                    report.plugin_id, report.action, report.duration_ms
+                );
+                for log in &report.logs {
+                    println!("  [{}] {}", log.level, log.message);
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report.result).expect("serializable")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Repo { action } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            match action {
+                PluginRepoCommand::List => {
+                    let repos = pm.list_repos()?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "ok": true,
+                                "repos": repos,
+                            }))
+                            .expect("serializable")
+                        );
+                    } else if repos.is_empty() {
+                        println!("no plugin repositories configured");
+                    } else {
+                        for r in &repos {
+                            if let Some(ref name) = r.name {
+                                println!("{}\t{}", r.url, name);
+                            } else {
+                                println!("{}", r.url);
+                            }
+                        }
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                PluginRepoCommand::Add { url, name } => {
+                    pm.add_repo(url, name.clone())?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "ok": true,
+                                "url": url.trim(),
+                                "name": name,
+                            }))
+                            .expect("serializable")
+                        );
+                    } else {
+                        println!("added plugin repo {}", url.trim());
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                PluginRepoCommand::Remove { url } => {
+                    let removed = pm.remove_repo(url)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "ok": true,
+                                "url": url,
+                                "removed": removed,
+                            }))
+                            .expect("serializable")
+                        );
+                    } else if removed {
+                        println!("removed plugin repo {url}");
+                    } else {
+                        println!("plugin repo not found: {url}");
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
+        }
+    }
+}
+
+fn run_sync(
+    cli: &Cli,
+    action: Option<&SyncCommand>,
+    platform: Option<&str>,
+    full: bool,
+) -> Result<ExitCode, Fatal> {
+    let data_dir = resolve_data_dir()?;
+    match action {
+        Some(SyncCommand::Handle {
+            platform,
+            handle,
+            clear,
+        }) => {
+            let platform_norm = platform.trim().to_ascii_lowercase();
+            if platform_norm.is_empty() {
+                return Err(Fatal {
+                    code: "invalid_arguments",
+                    message: "platform ID cannot be empty".to_owned(),
+                    human: Some("平台 ID 不能为空。".to_owned()),
+                    exit_code: 2,
+                });
+            }
+            let mut config = xcpc_sync::SyncConfig::load(&data_dir)?;
+            if *clear {
+                config.set_handle(&platform_norm, "");
+                config.save(&data_dir)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "ok": true,
+                            "platform": platform_norm,
+                            "handle": serde_json::Value::Null,
+                        }))
+                        .expect("serializable")
+                    );
+                } else {
+                    println!("cleared handle for {platform_norm}");
+                }
+            } else if let Some(h) = handle {
+                config.set_handle(&platform_norm, h);
+                config.save(&data_dir)?;
+                let saved = config.handle_for(&platform_norm).map(str::to_owned);
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "ok": true,
+                            "platform": platform_norm,
+                            "handle": saved,
+                        }))
+                        .expect("serializable")
+                    );
+                } else if let Some(ref val) = saved {
+                    println!("set {platform_norm} handle to {val}");
+                } else {
+                    println!("cleared handle for {platform_norm}");
+                }
+            } else {
+                let current = config.handle_for(&platform_norm).map(str::to_owned);
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "ok": true,
+                            "platform": platform_norm,
+                            "handle": current,
+                        }))
+                        .expect("serializable")
+                    );
+                } else if let Some(val) = current {
+                    println!("{platform_norm}\t{val}");
+                } else {
+                    println!("{platform_norm}\t(not set)");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        None => {
+            let engine = xcpc_sync::SyncEngine::default_for_data_dir(data_dir);
+            let report = engine.sync(&xcpc_sync::SyncOptions {
+                platform: platform.map(str::to_owned),
+                full,
+            })?;
+            let all_ok = report.platforms.iter().all(|p| p.ok);
+            if cli.json {
+                let mut val = serde_json::to_value(&report).expect("serializable");
+                val["ok"] = json!(all_ok);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&val).expect("serializable")
+                );
+            } else if report.platforms.is_empty() {
+                println!(
+                    "no enabled oj_source platforms with configured handles (synced_at: {})",
+                    report.synced_at
+                );
+            } else {
+                println!("synced at {}:", report.synced_at);
+                for p in &report.platforms {
+                    if p.ok {
+                        println!(
+                            "  [ok] {} ({}): submissions={} rating_history={} contests={} account={} summary={}",
+                            p.platform,
+                            p.handle,
+                            p.submissions_synced,
+                            p.rating_history_synced,
+                            p.contests_synced,
+                            p.account_synced,
+                            p.summary_synced,
+                        );
+                    } else {
+                        println!(
+                            "  [error] {} ({}): {}",
+                            p.platform,
+                            p.handle,
+                            p.error.as_deref().unwrap_or("sync failed")
+                        );
+                    }
+                }
+            }
+            if all_ok {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::from(1))
+            }
+        }
+    }
+}
+
+fn run_training(cli: &Cli, action: &TrainingCommand) -> Result<ExitCode, Fatal> {
+    let ws = open_workspace(cli)?;
+    match action {
+        TrainingCommand::Status { problem_id, status } => {
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let problem = ws.load_problem(problem_id)?;
+            let log_status = status.into_log_status();
+            let entry = TrainingLogEntry {
+                at: xcpc_sync::now_rfc3339_utc(),
+                problem_id: Some(problem.id.clone()),
+                source: problem.meta.sources.first().cloned(),
+                status: log_status,
+            };
+            ws.append_training_log(&entry)?;
+
+            let synced = match resolve_data_dir() {
+                Ok(data_dir) if data_dir.join(xcpc_sync::DB_FILENAME).is_file() => {
+                    xcpc_sync::SyncDb::open(&data_dir)?
+                        .get_problem_sync_status(&problem.meta.sources)?
+                }
+                _ => SyncedProblemStatus::default(),
+            };
+            let derived =
+                ws.derive_problem_training_status(&problem.id, &problem.meta.sources, synced)?;
+
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "problem_id": problem.id,
+                        "recorded": log_status,
+                        "status": derived,
+                        "synced": {
+                            "ac": synced.ac,
+                            "attempted": synced.attempted,
+                        },
+                        "at": entry.at,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "{}\trecorded={}\tstatus={}",
+                    problem.id, log_status, derived
+                );
+            }
+            Ok(ExitCode::SUCCESS)
         }
     }
 }

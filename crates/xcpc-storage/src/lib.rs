@@ -22,8 +22,9 @@ use std::sync::mpsc;
 use sha2::{Digest, Sha256};
 use xcpc_domain::{
     ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, MAX_GROUP_NAME_CHARS, Problem,
-    ProblemMeta, Sample, SampleInventory, Statement, TemplateOptionValue, TemplateOptionsMap,
-    TextFile, check_id, normalize_group_name,
+    ProblemMeta, ProblemSource, Sample, SampleInventory, Statement, SyncedProblemStatus,
+    TemplateOptionValue, TemplateOptionsMap, TextFile, TrainingLogEntry, TrainingStatus, check_id,
+    derive_training_status, normalize_group_name, resolve_manual_status,
 };
 
 pub mod assets;
@@ -39,6 +40,7 @@ pub use assets::{
     RenameAssetResult, ScannedAssetRef, is_existing_asset_name, is_safe_asset_name,
     is_windows_reserved_name, read_image_dimensions,
 };
+pub use edit::CreateProblemOptions;
 pub use example::{
     init_example_workspace, init_example_workspace_with_options,
     init_example_workspace_with_template,
@@ -48,6 +50,9 @@ pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
 /// The file that marks a workspace's root.
 pub const WORKSPACE_FILE: &str = "workspace.toml";
+
+/// Workspace-relative path of the append-only training status log (`training/logs.jsonl`).
+pub const TRAINING_LOGS_REL_PATH: &str = "training/logs.jsonl";
 
 /// Static workspace-level `AGENTS.md` written by [`init_workspace`] when absent.
 /// Once created, it belongs to the user and is never overwritten.
@@ -511,6 +516,140 @@ impl Workspace {
 
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// Reads the optional `training = <bool>` setting from `workspace.toml`, defaulting
+    /// to `true` when absent.
+    pub fn training_enabled(&self) -> bool {
+        let Ok(raw) = fs::read_to_string(self.root.join(WORKSPACE_FILE)) else {
+            return true;
+        };
+        let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+            return true;
+        };
+        table
+            .get("training")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true)
+    }
+
+    /// Reads all manual status events from `training/logs.jsonl`.
+    ///
+    /// Returns an empty list if `training/logs.jsonl` does not exist yet; skips blank lines;
+    /// returns [`Error::Invalid`] on malformed JSON and [`Error::PathEscape`] if the path
+    /// escapes the workspace (e.g. via a symlink).
+    pub fn read_training_logs(&self) -> Result<Vec<TrainingLogEntry>> {
+        let raw = match self.read_text(TRAINING_LOGS_REL_PATH) {
+            Ok(text) => text,
+            Err(Error::NotFound(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut entries = Vec::new();
+        for (idx, line) in raw.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let entry =
+                TrainingLogEntry::from_json_line(trimmed).map_err(|msg| Error::Invalid {
+                    path: TRAINING_LOGS_REL_PATH.to_owned(),
+                    message: format!("line {}: {msg}", idx + 1),
+                })?;
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    /// Atomically appends one status event line to `training/logs.jsonl`.
+    ///
+    /// Enforces read-only mode and workspace path boundaries, creates `training/` if needed,
+    /// and writes via read-modify-[`write_atomic`].
+    pub fn append_training_log(&self, entry: &TrainingLogEntry) -> Result<()> {
+        self.check_writable(TRAINING_LOGS_REL_PATH)?;
+        let line = entry.to_json_line().map_err(|msg| Error::Invalid {
+            path: TRAINING_LOGS_REL_PATH.to_owned(),
+            message: msg,
+        })?;
+        let mut updated = match self.read_text(TRAINING_LOGS_REL_PATH) {
+            Ok(existing) => existing,
+            Err(Error::NotFound(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(&line);
+        updated.push('\n');
+        self.write(TRAINING_LOGS_REL_PATH, updated.as_bytes())
+    }
+
+    /// Derives the effective [`TrainingStatus`] for one problem by loading `training/logs.jsonl`
+    /// and merging it with `synced`.
+    pub fn derive_problem_training_status(
+        &self,
+        problem_id: &str,
+        sources: &[ProblemSource],
+        synced: SyncedProblemStatus,
+    ) -> Result<TrainingStatus> {
+        let logs = self.read_training_logs()?;
+        Ok(Self::derive_problem_training_status_from_logs(
+            &logs, problem_id, sources, synced,
+        ))
+    }
+
+    /// Derives the effective [`TrainingStatus`] for one problem using pre-loaded `entries`.
+    pub fn derive_problem_training_status_from_logs(
+        entries: &[TrainingLogEntry],
+        problem_id: &str,
+        sources: &[ProblemSource],
+        synced: SyncedProblemStatus,
+    ) -> TrainingStatus {
+        let manual = resolve_manual_status(entries, problem_id, sources);
+        derive_training_status(synced, manual)
+    }
+
+    /// Batch-derives effective [`TrainingStatus`] values for multiple problems using pre-loaded
+    /// `entries`.
+    pub fn derive_problem_training_statuses<'a>(
+        entries: &[TrainingLogEntry],
+        problems: impl IntoIterator<Item = (&'a str, &'a [ProblemSource], SyncedProblemStatus)>,
+    ) -> BTreeMap<String, TrainingStatus> {
+        problems
+            .into_iter()
+            .map(|(problem_id, sources, synced)| {
+                let status = Self::derive_problem_training_status_from_logs(
+                    entries, problem_id, sources, synced,
+                );
+                (problem_id.to_owned(), status)
+            })
+            .collect()
+    }
+
+    /// Finds the first problem in the workspace whose `[[source]]` matches `(platform, source_id)`
+    /// (case-insensitive), returning its slug ID if found.
+    pub fn find_problem_by_source(
+        &self,
+        platform: &str,
+        source_id: &str,
+    ) -> Result<Option<String>> {
+        let platform = platform.trim();
+        let source_id = source_id.trim();
+        if platform.is_empty() || source_id.is_empty() {
+            return Ok(None);
+        }
+        for id in self.list_problems()? {
+            let rel = format!("problems/{id}/problem.toml");
+            let Ok(raw) = self.read_text(&rel) else {
+                continue;
+            };
+            let Ok(meta) = parse_toml::<ProblemMeta>(&rel, &raw) else {
+                continue;
+            };
+            if meta.sources.iter().any(|s| s.matches(platform, source_id)) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// Reads the optional `template = "<name>"` setting from `workspace.toml`.

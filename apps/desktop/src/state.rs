@@ -189,6 +189,10 @@ pub(crate) struct State {
     pub(crate) batch_task: Arc<Mutex<BatchTaskSlot>>,
     /// In-memory byte backup of the last `normalize_dirty_inputs` call for single-click undo.
     pub(crate) dirty_inputs_backup: Mutex<Option<(String, Vec<(String, Vec<u8>)>)>>,
+    /// Shared plugin credential store (OS keyring with in-memory fallback for headless tests).
+    pub(crate) credentials: Arc<dyn xcpc_plugin::CredentialStore>,
+    /// Ensures silent startup auto-sync fires at most once per session.
+    pub(crate) startup_sync_triggered: AtomicBool,
 }
 
 impl Drop for State {
@@ -269,6 +273,8 @@ impl State {
             package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
             batch_task: Arc::new(Mutex::new(BatchTaskSlot::default())),
             dirty_inputs_backup: Mutex::new(None),
+            credentials: Arc::new(xcpc_plugin::SystemKeyringStore::new()),
+            startup_sync_triggered: AtomicBool::new(false),
         };
 
         if let Some(ws) = workspace {
@@ -455,6 +461,7 @@ impl State {
         let mut info = WorkspaceInfo {
             root: ws.root().display().to_string(),
             read_only: ws.is_read_only(),
+            training_enabled: ws.training_enabled(),
             last_workspace_missing: false,
             ..Default::default()
         };
@@ -1057,12 +1064,29 @@ impl State {
         let core = self.core.lock().unwrap();
         let ws = core.workspace.as_ref();
         let contest_map = core.index.problem_contest_map();
-        core.index
-            .search_problems(&core_query)
+        let matched = core.index.search_problems(&core_query);
+        let training_statuses = ws
+            .map(|w| {
+                let pairs: Vec<(&str, &[xcpc_domain::ProblemSource])> = matched
+                    .iter()
+                    .map(|p| (p.id.as_str(), p.sources.as_slice()))
+                    .collect();
+                crate::plugins::derive_library_training_statuses(
+                    w,
+                    self.data_dir.as_deref(),
+                    &pairs,
+                )
+            })
+            .unwrap_or_default();
+        matched
             .into_iter()
             .map(|p| {
                 let package_status = ws.and_then(|w| package_status_opt(w, &p.id));
                 let contest_ids = contest_map.get(&p.id).cloned().unwrap_or_default();
+                let training_status = training_statuses
+                    .get(&p.id)
+                    .cloned()
+                    .unwrap_or_else(crate::plugins::default_training_status_str);
                 ProblemSummaryJs {
                     id: p.id,
                     title: p.title,
@@ -1075,6 +1099,7 @@ impl State {
                     statement_path: p.statement_path,
                     package_status,
                     contest_ids,
+                    training_status,
                 }
             })
             .collect()

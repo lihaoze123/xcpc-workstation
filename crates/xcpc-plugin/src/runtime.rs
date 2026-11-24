@@ -1,0 +1,725 @@
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use rquickjs::{CatchResultExt, Context, Ctx, Exception, Function, Runtime};
+use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+use crate::credentials::CredentialStore;
+use crate::error::{PluginError, Result};
+use crate::http::{HttpClient, HttpRequest};
+use crate::kv::KvStore;
+use crate::manifest::PluginManifest;
+use crate::render::svg_to_png_base64;
+use crate::workspace::WorkspaceReader;
+
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+pub struct SandboxLimits {
+    pub timeout: Duration,
+    pub memory_limit_bytes: usize,
+}
+
+impl Default for SandboxLimits {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginLogEntry {
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallResult {
+    pub value: serde_json::Value,
+    pub logs: Vec<PluginLogEntry>,
+}
+
+pub struct HostContext {
+    pub manifest: PluginManifest,
+    pub http_client: Arc<dyn HttpClient>,
+    pub credentials: Arc<dyn CredentialStore>,
+    pub kv: Arc<KvStore>,
+    pub workspace: Option<Arc<dyn WorkspaceReader>>,
+    pub limits: SandboxLimits,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum CredentialHeaderSpec {
+    Structured {
+        header: String,
+        key: String,
+        #[serde(default)]
+        prefix: Option<String>,
+    },
+    Map(BTreeMap<String, String>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsFetchRequest {
+    url: String,
+    #[serde(default = "default_get")]
+    method: String,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    credential_header: Option<CredentialHeaderSpec>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+fn default_get() -> String {
+    "GET".to_string()
+}
+
+#[derive(Debug, Serialize)]
+struct HtmlElementMatch {
+    text: String,
+    html: String,
+    attrs: BTreeMap<String, String>,
+}
+
+const HOST_BOOTSTRAP_JS: &str = r#"
+(function() {
+  const _httpFetch = globalThis.__xcpc_http_fetch;
+  const _credGet = globalThis.__xcpc_cred_get;
+  const _htmlSelect = globalThis.__xcpc_html_select;
+  const _kvGet = globalThis.__xcpc_kv_get;
+  const _kvSet = globalThis.__xcpc_kv_set;
+  const _kvDelete = globalThis.__xcpc_kv_delete;
+  const _wsList = globalThis.__xcpc_ws_list_problems;
+  const _wsGet = globalThis.__xcpc_ws_get_problem;
+  const _svgToPng = globalThis.__xcpc_render_svg_to_png;
+  const _log = globalThis.__xcpc_log;
+
+  delete globalThis.__xcpc_http_fetch;
+  delete globalThis.__xcpc_cred_get;
+  delete globalThis.__xcpc_html_select;
+  delete globalThis.__xcpc_kv_get;
+  delete globalThis.__xcpc_kv_set;
+  delete globalThis.__xcpc_kv_delete;
+  delete globalThis.__xcpc_ws_list_problems;
+  delete globalThis.__xcpc_ws_get_problem;
+  delete globalThis.__xcpc_render_svg_to_png;
+  delete globalThis.__xcpc_log;
+
+  globalThis.host = Object.freeze({
+    http: Object.freeze({
+      fetch(req) {
+        const raw = _httpFetch(JSON.stringify(req ?? {}));
+        return JSON.parse(raw);
+      },
+    }),
+    credentials: Object.freeze({
+      get(key) {
+        const val = _credGet(String(key));
+        return val === undefined ? null : val;
+      },
+    }),
+    html: Object.freeze({
+      select(html, cssSelector) {
+        return JSON.parse(_htmlSelect(String(html ?? ""), String(cssSelector ?? "")));
+      },
+    }),
+    kv: Object.freeze({
+      get(key) {
+        const raw = _kvGet(String(key));
+        return raw == null ? null : JSON.parse(raw);
+      },
+      set(key, val) {
+        _kvSet(String(key), JSON.stringify(val === undefined ? null : val));
+      },
+      delete(key) {
+        return Boolean(_kvDelete(String(key)));
+      },
+    }),
+    workspace: Object.freeze({
+      listProblems() {
+        return JSON.parse(_wsList());
+      },
+      getProblem(id) {
+        return JSON.parse(_wsGet(String(id)));
+      },
+    }),
+    render: Object.freeze({
+      svgToPng(svg, scale) {
+        return _svgToPng(String(svg ?? ""), scale == null ? 1.0 : Number(scale));
+      },
+    }),
+    log(level, msg) {
+      _log(
+        String(level ?? "info"),
+        typeof msg === "string" ? msg : JSON.stringify(msg)
+      );
+    },
+  });
+})();
+"#;
+
+pub struct PluginRuntime;
+
+impl PluginRuntime {
+    /// Executes an exported function `fn_name` from `source` inside an isolated QuickJS sandbox.
+    pub fn call_function(
+        source: &str,
+        fn_name: &str,
+        args: &[serde_json::Value],
+        host_ctx: &HostContext,
+    ) -> Result<CallResult> {
+        let plugin_id = host_ctx.manifest.id.clone();
+        let limits = host_ctx.limits;
+
+        let rt = Runtime::new().map_err(|e| PluginError::JsError(e.to_string()))?;
+        rt.set_memory_limit(limits.memory_limit_bytes);
+        // Cap stack size to 1MB to guard against infinite recursion.
+        rt.set_max_stack_size(1024 * 1024);
+
+        let deadline = Instant::now() + limits.timeout;
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let timed_out_flag = Arc::clone(&timed_out);
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            if Instant::now() >= deadline {
+                timed_out_flag.store(true, Ordering::SeqCst);
+                true
+            } else {
+                false
+            }
+        })));
+
+        let logs: Arc<Mutex<Vec<PluginLogEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let last_host_error: Arc<Mutex<Option<PluginError>>> = Arc::new(Mutex::new(None));
+
+        let ctx = Context::full(&rt).map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let eval_outcome: Result<Option<String>> = ctx.with(|ctx| {
+            register_native_bridges(&ctx, host_ctx, &logs, &last_host_error)?;
+
+            // Build frozen `host` global and hide raw native bridges.
+            eval_checked(&ctx, HOST_BOOTSTRAP_JS)?;
+
+            // Load plugin module in CommonJS wrapper.
+            let wrapped = format!(
+                "globalThis.__xcpc_exports = (function() {{\n  const exports = {{}};\n  const module = {{ exports }};\n  (function(module, exports) {{\n{source}\n  }})(module, exports);\n  return module.exports;\n}})();"
+            );
+            eval_checked(&ctx, &wrapped)?;
+
+            // Invoke target function (sync or Promise-returning).
+            let fn_name_json = serde_json::to_string(fn_name)?;
+            let args_json = serde_json::to_string(args)?;
+            let invoke_js = format!(
+                r#"
+                (function() {{
+                  const mod = globalThis.__xcpc_exports || {{}};
+                  const fn = typeof mod[{fn_name_json}] === "function"
+                    ? mod[{fn_name_json}]
+                    : (typeof globalThis[{fn_name_json}] === "function" ? globalThis[{fn_name_json}] : null);
+                  if (!fn) {{
+                    throw new Error("FUNCTION_NOT_FOUND: plugin does not export '" + {fn_name_json} + "'");
+                  }}
+                  const args = {args_json};
+                  const out = fn.apply(mod, args);
+                  if (out && typeof out.then === "function") {{
+                    globalThis.__xcpc_settled = false;
+                    globalThis.__xcpc_result = undefined;
+                    globalThis.__xcpc_error = undefined;
+                    out.then(
+                      (v) => {{ globalThis.__xcpc_result = v; globalThis.__xcpc_settled = true; }},
+                      (e) => {{ globalThis.__xcpc_error = e; globalThis.__xcpc_settled = true; }}
+                    );
+                    return null;
+                  }}
+                  return JSON.stringify(out === undefined ? null : out);
+                }})()
+                "#
+            );
+
+            eval_checked_opt_string(&ctx, &invoke_js)
+        });
+
+        // Drive pending jobs if the function returned a Promise.
+        let result_json = match eval_outcome {
+            Ok(Some(json_str)) => json_str,
+            Ok(None) => {
+                while rt.is_job_pending() {
+                    if timed_out.load(Ordering::SeqCst) {
+                        return Err(PluginError::Timeout {
+                            plugin_id,
+                            timeout_ms: limits.timeout.as_millis() as u64,
+                        });
+                    }
+                    match rt.execute_pending_job() {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(e) => {
+                            return Err(classify_js_error(
+                                &plugin_id,
+                                limits,
+                                &timed_out,
+                                &last_host_error,
+                                e.to_string(),
+                            ));
+                        }
+                    }
+                }
+                ctx.with(|ctx| {
+                    let check_js = r#"
+                    (function() {
+                      if (!globalThis.__xcpc_settled) {
+                        throw new Error("PROMISE_UNSETTLED: async plugin function did not settle");
+                      }
+                      if (globalThis.__xcpc_error !== undefined) {
+                        throw globalThis.__xcpc_error;
+                      }
+                      return JSON.stringify(globalThis.__xcpc_result === undefined ? null : globalThis.__xcpc_result);
+                    })()
+                    "#;
+                    eval_checked_string(&ctx, check_js)
+                })
+                .map_err(|e| {
+                    classify_js_error(
+                        &plugin_id,
+                        limits,
+                        &timed_out,
+                        &last_host_error,
+                        e.to_string(),
+                    )
+                })?
+            }
+            Err(e) => {
+                return Err(classify_js_error(
+                    &plugin_id,
+                    limits,
+                    &timed_out,
+                    &last_host_error,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let value: serde_json::Value = serde_json::from_str(&result_json)?;
+        let collected_logs = logs.lock().unwrap().clone();
+        Ok(CallResult {
+            value,
+            logs: collected_logs,
+        })
+    }
+
+    /// Returns whether a plugin script exports the given function name.
+    pub fn has_export(source: &str, fn_name: &str, host_ctx: &HostContext) -> Result<bool> {
+        let rt = Runtime::new().map_err(|e| PluginError::JsError(e.to_string()))?;
+        rt.set_memory_limit(host_ctx.limits.memory_limit_bytes);
+        let ctx = Context::full(&rt).map_err(|e| PluginError::JsError(e.to_string()))?;
+        let logs: Arc<Mutex<Vec<PluginLogEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let last_err: Arc<Mutex<Option<PluginError>>> = Arc::new(Mutex::new(None));
+        ctx.with(|ctx| {
+            register_native_bridges(&ctx, host_ctx, &logs, &last_err)?;
+            eval_checked(&ctx, HOST_BOOTSTRAP_JS)?;
+            let wrapped = format!(
+                "globalThis.__xcpc_exports = (function() {{\n  const exports = {{}};\n  const module = {{ exports }};\n  (function(module, exports) {{\n{source}\n  }})(module, exports);\n  return module.exports;\n}})();"
+            );
+            eval_checked(&ctx, &wrapped)?;
+            let fn_name_json = serde_json::to_string(fn_name)?;
+            let check = format!(
+                "typeof (globalThis.__xcpc_exports || {{}})[{fn_name_json}] === 'function' || typeof globalThis[{fn_name_json}] === 'function'"
+            );
+            ctx.eval::<bool, _>(check)
+                .catch(&ctx)
+                .map_err(|e| PluginError::JsError(format!("{e}")))
+        })
+    }
+}
+
+fn classify_js_error(
+    plugin_id: &str,
+    limits: SandboxLimits,
+    timed_out: &AtomicBool,
+    last_host_error: &Mutex<Option<PluginError>>,
+    msg: String,
+) -> PluginError {
+    if timed_out.load(Ordering::SeqCst) {
+        return PluginError::Timeout {
+            plugin_id: plugin_id.to_string(),
+            timeout_ms: limits.timeout.as_millis() as u64,
+        };
+    }
+    if let Some(host_err) = last_host_error.lock().unwrap().take() {
+        return host_err;
+    }
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("out of memory") || lower.contains("allocation failed") {
+        return PluginError::MemoryLimit {
+            plugin_id: plugin_id.to_string(),
+            limit_bytes: limits.memory_limit_bytes,
+        };
+    }
+    PluginError::JsError(msg)
+}
+
+fn eval_checked<'js>(ctx: &Ctx<'js>, code: &str) -> Result<()> {
+    ctx.eval::<(), _>(code)
+        .catch(ctx)
+        .map_err(|e| PluginError::JsError(format!("{e}")))
+}
+
+fn eval_checked_string<'js>(ctx: &Ctx<'js>, code: &str) -> Result<String> {
+    ctx.eval::<String, _>(code)
+        .catch(ctx)
+        .map_err(|e| PluginError::JsError(format!("{e}")))
+}
+
+fn eval_checked_opt_string<'js>(ctx: &Ctx<'js>, code: &str) -> Result<Option<String>> {
+    ctx.eval::<Option<String>, _>(code)
+        .catch(ctx)
+        .map_err(|e| PluginError::JsError(format!("{e}")))
+}
+
+fn register_native_bridges<'js>(
+    ctx: &Ctx<'js>,
+    host_ctx: &HostContext,
+    logs: &Arc<Mutex<Vec<PluginLogEntry>>>,
+    last_host_error: &Arc<Mutex<Option<PluginError>>>,
+) -> Result<()> {
+    let globals = ctx.globals();
+
+    // 1. host.http.fetch
+    {
+        let manifest = host_ctx.manifest.clone();
+        let http = Arc::clone(&host_ctx.http_client);
+        let creds = Arc::clone(&host_ctx.credentials);
+        let last_err = Arc::clone(last_host_error);
+        let func = Function::new(ctx.clone(), move |ctx: Ctx<'js>, req_json: String| {
+            let parsed: JsFetchRequest = match serde_json::from_str(&req_json) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(Exception::throw_message(
+                        &ctx,
+                        &format!("INVALID_REQUEST: {e}"),
+                    ));
+                }
+            };
+            let url = match Url::parse(&parsed.url) {
+                Ok(u) => u,
+                Err(e) => {
+                    return Err(Exception::throw_message(&ctx, &format!("INVALID_URL: {e}")));
+                }
+            };
+            if url.scheme() != "http" && url.scheme() != "https" {
+                let err = PluginError::DomainNotAllowed {
+                    plugin_id: manifest.id.clone(),
+                    host: format!("scheme:{}", url.scheme()),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            }
+            let host_str = url.host_str().unwrap_or("");
+            if !manifest.is_domain_allowed(host_str) {
+                let err = PluginError::DomainNotAllowed {
+                    plugin_id: manifest.id.clone(),
+                    host: host_str.to_string(),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            }
+
+            // Domain is verified whitelisted; only now may we attach credentials.
+            let mut headers = parsed.headers;
+            if let Some(cred_spec) = parsed.credential_header {
+                match cred_spec {
+                    CredentialHeaderSpec::Structured {
+                        header,
+                        key,
+                        prefix,
+                    } => match creds.get(&manifest.id, &key) {
+                        Ok(Some(secret)) => {
+                            let val = match prefix {
+                                Some(p) => format!("{p}{secret}"),
+                                None => secret,
+                            };
+                            headers.insert(header, val);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let msg = e.to_string();
+                            *last_err.lock().unwrap() = Some(e);
+                            return Err(Exception::throw_message(&ctx, &msg));
+                        }
+                    },
+                    CredentialHeaderSpec::Map(map) => {
+                        for (header, key) in map {
+                            match creds.get(&manifest.id, &key) {
+                                Ok(Some(secret)) => {
+                                    headers.insert(header, secret);
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    *last_err.lock().unwrap() = Some(e);
+                                    return Err(Exception::throw_message(&ctx, &msg));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let http_req = HttpRequest {
+                url: parsed.url,
+                method: parsed.method,
+                headers,
+                body: parsed.body,
+                timeout_ms: parsed.timeout_ms,
+            };
+            let resp = match http.send(&http_req) {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                }
+            };
+            serde_json::to_string(&resp).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_http_fetch", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 2. host.credentials.get
+    {
+        let plugin_id = host_ctx.manifest.id.clone();
+        let creds = Arc::clone(&host_ctx.credentials);
+        let last_err = Arc::clone(last_host_error);
+        let func = Function::new(ctx.clone(), move |ctx: Ctx<'js>, key: String| {
+            match creds.get(&plugin_id, &key) {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    Err(Exception::throw_message(&ctx, &msg))
+                }
+            }
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_cred_get", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 3. host.html.select
+    {
+        let func = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, html: String, css_selector: String| {
+                let selector = match Selector::parse(&css_selector) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(Exception::throw_message(
+                            &ctx,
+                            &format!("INVALID_CSS_SELECTOR: {e:?}"),
+                        ));
+                    }
+                };
+                let doc = Html::parse_document(&html);
+                let mut matches = Vec::new();
+                for el in doc.select(&selector) {
+                    let text: String = el.text().collect();
+                    let inner_html = el.inner_html();
+                    let mut attrs = BTreeMap::new();
+                    for (k, v) in el.value().attrs() {
+                        attrs.insert(k.to_string(), v.to_string());
+                    }
+                    matches.push(HtmlElementMatch {
+                        text,
+                        html: inner_html,
+                        attrs,
+                    });
+                }
+                serde_json::to_string(&matches)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_html_select", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 4. host.kv.{get, set, delete}
+    {
+        let kv = Arc::clone(&host_ctx.kv);
+        let func_get = Function::new(ctx.clone(), move |ctx: Ctx<'js>, key: String| {
+            match kv.get(&key) {
+                Ok(Some(v)) => serde_json::to_string(&v)
+                    .map(Some)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                Ok(None) => Ok(None),
+                Err(e) => Err(Exception::throw_message(&ctx, &e.to_string())),
+            }
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_kv_get", func_get)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let kv = Arc::clone(&host_ctx.kv);
+        let func_set = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, key: String, val_json: String| {
+                let val: serde_json::Value = serde_json::from_str(&val_json)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?;
+                kv.set(&key, val)
+                    .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_kv_set", func_set)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let kv = Arc::clone(&host_ctx.kv);
+        let func_del = Function::new(ctx.clone(), move |ctx: Ctx<'js>, key: String| {
+            kv.delete(&key)
+                .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_kv_delete", func_del)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 5. host.workspace.{listProblems, getProblem}
+    {
+        let plugin_id = host_ctx.manifest.id.clone();
+        let allowed = host_ctx.manifest.permissions.workspace_read;
+        let ws = host_ctx.workspace.clone();
+        let last_err = Arc::clone(last_host_error);
+        let func_list = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
+            if !allowed {
+                let err = PluginError::PermissionDenied {
+                    plugin_id: plugin_id.clone(),
+                    permission: "workspace_read".into(),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            }
+            let Some(ref reader) = ws else {
+                let err = PluginError::PermissionDenied {
+                    plugin_id: plugin_id.clone(),
+                    permission: "workspace_read (no workspace attached)".into(),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            };
+            let list = match reader.list_problems() {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                }
+            };
+            serde_json::to_string(&list).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_ws_list_problems", func_list)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let plugin_id = host_ctx.manifest.id.clone();
+        let ws = host_ctx.workspace.clone();
+        let last_err = Arc::clone(last_host_error);
+        let func_get = Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: String| {
+            if !allowed {
+                let err = PluginError::PermissionDenied {
+                    plugin_id: plugin_id.clone(),
+                    permission: "workspace_read".into(),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            }
+            let Some(ref reader) = ws else {
+                let err = PluginError::PermissionDenied {
+                    plugin_id: plugin_id.clone(),
+                    permission: "workspace_read (no workspace attached)".into(),
+                };
+                let msg = err.to_string();
+                *last_err.lock().unwrap() = Some(err);
+                return Err(Exception::throw_message(&ctx, &msg));
+            };
+            let item = match reader.get_problem(&id) {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                }
+            };
+            serde_json::to_string(&item).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_ws_get_problem", func_get)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 6. host.render.svgToPng
+    {
+        let last_err = Arc::clone(last_host_error);
+        let func = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, svg: String, scale: f64| match svg_to_png_base64(
+                &svg,
+                Some(scale as f32),
+            ) {
+                Ok(b64) => Ok(b64),
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    Err(Exception::throw_message(&ctx, &msg))
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_render_svg_to_png", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    // 7. host.log
+    {
+        let logs_ref = Arc::clone(logs);
+        let func = Function::new(ctx.clone(), move |level: String, message: String| {
+            logs_ref
+                .lock()
+                .unwrap()
+                .push(PluginLogEntry { level, message });
+        })
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_log", func)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+    }
+
+    Ok(())
+}

@@ -114,6 +114,7 @@ export function LibraryView(props: { active: boolean }) {
   const tags = signal<string[]>([]);
   const tier = signal<TierName | undefined>(undefined);
   const platform = signal<string | undefined>(undefined);
+  const trainingStatusFilter = signal<string | undefined>(undefined);
   const sidebarGroup = signal<SidebarGroupSelection>({ kind: "all" });
   const sort = signal<DataTableSort | null>(null);
   const selection = signal<SelectionState>(EMPTY_SELECTION);
@@ -169,6 +170,7 @@ export function LibraryView(props: { active: boolean }) {
       tags.set([]);
       tier.set(undefined);
       platform.set(undefined);
+      trainingStatusFilter.set(undefined);
       sidebarGroup.set({ kind: "all" });
     });
   };
@@ -182,7 +184,14 @@ export function LibraryView(props: { active: boolean }) {
   });
 
   const readOnly = () => info().readOnly;
+  const trainingEnabled = () => info().trainingEnabled;
   const totalCount = () => info().problems.length;
+
+  effect(() => {
+    if (!trainingEnabled() && trainingStatusFilter() !== undefined) {
+      trainingStatusFilter.set(undefined);
+    }
+  });
 
   const facets = computed(() => {
     void revision();
@@ -210,13 +219,19 @@ export function LibraryView(props: { active: boolean }) {
       group: sg.kind === "named" ? sg.name : null,
       ungroupedOnly: sg.kind === "ungrouped",
     });
-    const list: LibraryRow[] = found.map((p) => ({
-      ...p,
-      ratingText: p.rating == null ? "" : String(p.rating),
-      tagsText: p.tags.join(" "),
-      source: p.sources.map((s) => `${s.platform} ${s.id}`).join("  "),
-      status: `${p.packageStatus ?? ""}:${p.hasEditorial ? "e" : ""}:${p.hasSolutions ? "c" : ""}`,
-    }));
+    const activeTrainingFilter = trainingEnabled() ? trainingStatusFilter() : undefined;
+    const list: LibraryRow[] = found
+      .filter((p) => {
+        if (!activeTrainingFilter) return true;
+        return (p.trainingStatus || "none") === activeTrainingFilter;
+      })
+      .map((p) => ({
+        ...p,
+        ratingText: p.rating == null ? "" : String(p.rating),
+        tagsText: p.tags.join(" "),
+        source: p.sources.map((s) => `${s.platform} ${s.id}`).join("  "),
+        status: `${p.packageStatus ?? ""}:${p.hasEditorial ? "e" : ""}:${p.hasSolutions ? "c" : ""}`,
+      }));
     const s = sort();
     if (s) {
       const dir = s.direction === "descending" ? -1 : 1;
@@ -264,6 +279,7 @@ export function LibraryView(props: { active: boolean }) {
     tags().length > 0 ||
     tier() !== undefined ||
     platform() !== undefined ||
+    (trainingEnabled() && trainingStatusFilter() !== undefined) ||
     sidebarGroup().kind !== "all";
 
   const visibleSelected = computed(() => {
@@ -431,6 +447,45 @@ export function LibraryView(props: { active: boolean }) {
       { label: t("library.sidebar.newGroup"), disabled: ro, onSelect: () => dialog.set({ kind: "newGroup" }) },
     ];
 
+    const setProblemTrainingStatus = (problemId: string, status: string) => {
+      if (ro) return;
+      const res = preview.setTrainingStatus(problemId, status);
+      if (res.ok) refresh();
+    };
+
+    const trainingSubmenu = [
+      {
+        label: t("training.status.todo"),
+        checked: row.trainingStatus === "todo",
+        disabled: ro,
+        onSelect: () => setProblemTrainingStatus(row.id, "todo"),
+      },
+      {
+        label: t("training.status.attempted"),
+        checked: row.trainingStatus === "attempted",
+        disabled: ro,
+        onSelect: () => setProblemTrainingStatus(row.id, "attempted"),
+      },
+      {
+        label: t("training.status.ac"),
+        checked: row.trainingStatus === "ac",
+        disabled: ro,
+        onSelect: () => setProblemTrainingStatus(row.id, "ac"),
+      },
+      {
+        label: t("training.status.upsolved"),
+        checked: row.trainingStatus === "upsolved",
+        disabled: ro,
+        onSelect: () => setProblemTrainingStatus(row.id, "upsolved"),
+      },
+      { type: "separator" as const },
+      {
+        label: t("training.status.clearManual"),
+        disabled: ro,
+        onSelect: () => setProblemTrainingStatus(row.id, "clear"),
+      },
+    ];
+
     void DesktopMenu.popup(
       [
         { label: ro ? t("common.view") : t("common.edit"), onSelect: () => openStudio({ target: "problem", id: row.id }) },
@@ -456,6 +511,9 @@ export function LibraryView(props: { active: boolean }) {
             }
           },
         },
+        ...(trainingEnabled()
+          ? [{ label: t("library.menu.trainingStatus"), disabled: ro, submenu: trainingSubmenu }]
+          : []),
         { label: t("library.menu.moveToGroup"), disabled: ro, submenu: singleGroupSubmenu },
         { label: t("library.menu.addToContest"), disabled: ro, onSelect: () => dialog.set({ kind: "addToContest", problemId: row.id }) },
         { label: t("common.revealInFolder"), onSelect: () => void preview.revealInFolder(`problems/${row.id}`) },
@@ -478,6 +536,25 @@ export function LibraryView(props: { active: boolean }) {
           ...facets().platforms.map((p) => ({ id: p, label: p, checked: platform() === p })),
         ]
       : [{ id: "__empty__", label: t("library.filter.noSources"), disabled: true }];
+
+  const trainingFilterItems = (): MenuEntry[] => [
+    { id: "", label: t("training.filter.all"), checked: trainingStatusFilter() === undefined },
+    { id: "none", label: t("training.status.none"), checked: trainingStatusFilter() === "none" },
+    { id: "todo", label: t("training.status.todo"), checked: trainingStatusFilter() === "todo" },
+    { id: "attempted", label: t("training.status.attempted"), checked: trainingStatusFilter() === "attempted" },
+    { id: "ac", label: t("training.status.ac"), checked: trainingStatusFilter() === "ac" },
+    { id: "upsolved", label: t("training.status.upsolved"), checked: trainingStatusFilter() === "upsolved" },
+  ];
+
+  const trainingFilterLabel = () => {
+    const st = trainingStatusFilter();
+    if (!st) return t("training.filter.label");
+    if (st === "none") return t("training.status.none");
+    if (st === "todo") return t("training.status.todo");
+    if (st === "attempted") return t("training.status.attempted");
+    if (st === "ac") return t("training.status.ac");
+    return t("training.status.upsolved");
+  };
 
   const groupByItems = (): MenuEntry[] => [
     { id: "none", label: t("library.groupBy.none"), checked: libraryGroupBy() === "none" },
@@ -669,6 +746,14 @@ export function LibraryView(props: { active: boolean }) {
                   entries={platformItems()}
                   onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
                 />
+                <If when={trainingEnabled()}>
+                  <FilterMenu
+                    label={trainingFilterLabel()}
+                    active={trainingStatusFilter() !== undefined}
+                    entries={trainingFilterItems()}
+                    onSelect={(id) => trainingStatusFilter.set(id || undefined)}
+                  />
+                </If>
                 <FilterMenu
                   label={groupByLabel()}
                   active={libraryGroupBy() !== "none"}
@@ -722,6 +807,7 @@ export function LibraryView(props: { active: boolean }) {
                       showInlineId={colLayout().showInlineId}
                       maxTags={colLayout().maxTags}
                       tagsWidth={colLayout().tagsWidth}
+                      trainingEnabled={trainingEnabled()}
                       sort={sort()}
                       onSortChange={(s) => sort.set(s)}
                       headerTriState={headerTriState()}
@@ -798,6 +884,7 @@ export function LibraryView(props: { active: boolean }) {
                               showInlineId: colLayout().showInlineId,
                               maxTags: colLayout().maxTags,
                               tagsWidth: colLayout().tagsWidth,
+                              trainingEnabled: trainingEnabled(),
                             })}
                           </View>
                         );

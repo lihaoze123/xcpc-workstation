@@ -632,6 +632,25 @@ pub struct Source {
     pub url: Option<String>,
 }
 
+/// Alias for [`Source`] used in training logs and OJ ingestion APIs.
+pub type ProblemSource = Source;
+
+impl Source {
+    /// Returns `true` if `platform` and `id` match case-insensitively (ignoring surrounding whitespace).
+    pub fn matches(&self, platform: &str, id: &str) -> bool {
+        let p = self.platform.trim();
+        let i = self.id.trim();
+        let tp = platform.trim();
+        let ti = id.trim();
+        !p.is_empty() && !i.is_empty() && p.eq_ignore_ascii_case(tp) && i.eq_ignore_ascii_case(ti)
+    }
+
+    /// Returns `true` if two sources identify the same external problem (case-insensitive platform & id).
+    pub fn matches_source(&self, other: &Source) -> bool {
+        self.matches(&other.platform, &other.id)
+    }
+}
+
 /// `contest.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1276,6 +1295,213 @@ pub struct FuzzyHit {
     pub score: f64,
 }
 
+// ---- Training status & logs (Phase 4A, docs/specs/phase-4-training-and-ecosystem.md §3.2) ----
+
+/// Effective training status of a problem, derived at runtime by merging synced OJ
+/// submissions with manual entries in `training/logs.jsonl`. Never persisted in `problem.toml`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TrainingStatus {
+    #[default]
+    None,
+    Todo,
+    Attempted,
+    Ac,
+    Upsolved,
+}
+
+impl TrainingStatus {
+    /// Canonical lowercase string representation (`"none"`, `"todo"`, `"attempted"`, `"ac"`, `"upsolved"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrainingStatus::None => "none",
+            TrainingStatus::Todo => "todo",
+            TrainingStatus::Attempted => "attempted",
+            TrainingStatus::Ac => "ac",
+            TrainingStatus::Upsolved => "upsolved",
+        }
+    }
+
+    /// Parses a training status string (case-insensitive, trimmed).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(TrainingStatus::None),
+            "todo" => Some(TrainingStatus::Todo),
+            "attempted" => Some(TrainingStatus::Attempted),
+            "ac" => Some(TrainingStatus::Ac),
+            "upsolved" => Some(TrainingStatus::Upsolved),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TrainingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TrainingStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("invalid training status {s:?}"))
+    }
+}
+
+/// Status event written to `training/logs.jsonl` (`clear` clears any prior manual override).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrainingLogStatus {
+    Todo,
+    Attempted,
+    Ac,
+    Upsolved,
+    Clear,
+}
+
+impl TrainingLogStatus {
+    /// Canonical lowercase string representation (`"todo"`, `"attempted"`, `"ac"`, `"upsolved"`, `"clear"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrainingLogStatus::Todo => "todo",
+            TrainingLogStatus::Attempted => "attempted",
+            TrainingLogStatus::Ac => "ac",
+            TrainingLogStatus::Upsolved => "upsolved",
+            TrainingLogStatus::Clear => "clear",
+        }
+    }
+
+    /// Parses a training log status string (case-insensitive, trimmed).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "todo" => Some(TrainingLogStatus::Todo),
+            "attempted" => Some(TrainingLogStatus::Attempted),
+            "ac" => Some(TrainingLogStatus::Ac),
+            "upsolved" => Some(TrainingLogStatus::Upsolved),
+            "clear" => Some(TrainingLogStatus::Clear),
+            _ => None,
+        }
+    }
+
+    /// Converts a log event into the corresponding manual [`TrainingStatus`] override
+    /// (`Clear` yields `None`).
+    pub fn to_training_status(self) -> Option<TrainingStatus> {
+        match self {
+            TrainingLogStatus::Todo => Some(TrainingStatus::Todo),
+            TrainingLogStatus::Attempted => Some(TrainingStatus::Attempted),
+            TrainingLogStatus::Ac => Some(TrainingStatus::Ac),
+            TrainingLogStatus::Upsolved => Some(TrainingStatus::Upsolved),
+            TrainingLogStatus::Clear => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TrainingLogStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TrainingLogStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("invalid training log status {s:?}"))
+    }
+}
+
+/// One append-only status event line in `training/logs.jsonl`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingLogEntry {
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ProblemSource>,
+    pub status: TrainingLogStatus,
+}
+
+impl TrainingLogEntry {
+    /// Serializes this entry to a single compact JSON line (no trailing newline).
+    pub fn to_json_line(&self) -> Result<String, String> {
+        serde_json::to_string(self).map_err(|e| e.to_string())
+    }
+
+    /// Parses a single JSON line from `training/logs.jsonl`.
+    pub fn from_json_line(line: &str) -> Result<Self, String> {
+        serde_json::from_str(line).map_err(|e| e.to_string())
+    }
+
+    /// Returns `true` if this log entry refers to `problem_id` or any external identity in `sources`.
+    pub fn matches_problem(&self, problem_id: &str, sources: &[ProblemSource]) -> bool {
+        if !problem_id.is_empty() && self.problem_id.as_deref() == Some(problem_id) {
+            return true;
+        }
+        self.source
+            .as_ref()
+            .is_some_and(|entry_src| sources.iter().any(|src| src.matches_source(entry_src)))
+    }
+}
+
+/// Synced external OJ status for a problem (derived from `<dataDir>/oj_sync.db`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncedProblemStatus {
+    pub ac: bool,
+    pub attempted: bool,
+}
+
+/// Scans `entries` chronologically to resolve the latest manual [`TrainingStatus`] override
+/// for a problem identified by `problem_id` and/or `sources` (case-insensitive platform & id).
+///
+/// A [`TrainingLogStatus::Clear`] entry clears any prior manual override.
+pub fn resolve_manual_status(
+    entries: &[TrainingLogEntry],
+    problem_id: &str,
+    sources: &[ProblemSource],
+) -> Option<TrainingStatus> {
+    let mut manual = None;
+    for entry in entries {
+        if entry.matches_problem(problem_id, sources) {
+            manual = entry.status.to_training_status();
+        }
+    }
+    manual
+}
+
+/// Derives the effective [`TrainingStatus`] by merging synced OJ submission status with the
+/// latest manual override from `training/logs.jsonl`.
+///
+/// Priority: `ac` / `upsolved` > `attempted` > `todo` > `none`.
+/// - External AC (`synced.ac == true`) + manual `Upsolved` -> `Upsolved`; otherwise `Ac`.
+/// - External attempted (`synced.attempted == true`) + manual `Ac`/`Upsolved` -> manual wins;
+///   otherwise `Attempted`.
+/// - Otherwise manual status (or `None`).
+pub fn derive_training_status(
+    synced: SyncedProblemStatus,
+    manual: Option<TrainingStatus>,
+) -> TrainingStatus {
+    let manual = manual.unwrap_or(TrainingStatus::None);
+    if synced.ac {
+        if manual == TrainingStatus::Upsolved {
+            TrainingStatus::Upsolved
+        } else {
+            TrainingStatus::Ac
+        }
+    } else if synced.attempted {
+        match manual {
+            TrainingStatus::Ac | TrainingStatus::Upsolved => manual,
+            TrainingStatus::None | TrainingStatus::Todo | TrainingStatus::Attempted => {
+                TrainingStatus::Attempted
+            }
+        }
+    } else {
+        manual
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1801,5 +2027,240 @@ score = [20, 40]
         let serialized = toml::to_string(&meta).unwrap();
         let again: ProblemMeta = toml::from_str(&serialized).unwrap();
         assert_eq!(meta, again);
+    }
+
+    #[test]
+    fn training_status_and_log_status_serde_and_parse() {
+        assert_eq!(TrainingStatus::default(), TrainingStatus::None);
+        for (status, text) in [
+            (TrainingStatus::None, "none"),
+            (TrainingStatus::Todo, "todo"),
+            (TrainingStatus::Attempted, "attempted"),
+            (TrainingStatus::Ac, "ac"),
+            (TrainingStatus::Upsolved, "upsolved"),
+        ] {
+            assert_eq!(status.as_str(), text);
+            assert_eq!(status.to_string(), text);
+            assert_eq!(TrainingStatus::parse(text), Some(status));
+            assert_eq!(TrainingStatus::parse(&text.to_uppercase()), Some(status));
+            assert_eq!(text.parse::<TrainingStatus>().unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, format!("\"{text}\""));
+            assert_eq!(
+                serde_json::from_str::<TrainingStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(TrainingStatus::parse("unknown"), None);
+        assert!("unknown".parse::<TrainingStatus>().is_err());
+
+        for (status, text, expected_manual) in [
+            (TrainingLogStatus::Todo, "todo", Some(TrainingStatus::Todo)),
+            (
+                TrainingLogStatus::Attempted,
+                "attempted",
+                Some(TrainingStatus::Attempted),
+            ),
+            (TrainingLogStatus::Ac, "ac", Some(TrainingStatus::Ac)),
+            (
+                TrainingLogStatus::Upsolved,
+                "upsolved",
+                Some(TrainingStatus::Upsolved),
+            ),
+            (TrainingLogStatus::Clear, "clear", None),
+        ] {
+            assert_eq!(status.as_str(), text);
+            assert_eq!(status.to_string(), text);
+            assert_eq!(TrainingLogStatus::parse(text), Some(status));
+            assert_eq!(TrainingLogStatus::parse(&format!(" {text} ")), Some(status));
+            assert_eq!(status.to_training_status(), expected_manual);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, format!("\"{text}\""));
+            assert_eq!(
+                serde_json::from_str::<TrainingLogStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(TrainingLogStatus::parse("none"), None);
+    }
+
+    #[test]
+    fn training_log_entry_omits_none_fields_and_roundtrips() {
+        let entry = TrainingLogEntry {
+            at: "2026-11-24T12:00:00Z".into(),
+            problem_id: Some("cf-1999a".into()),
+            source: Some(ProblemSource {
+                platform: "codeforces".into(),
+                id: "1999A".into(),
+                url: None,
+            }),
+            status: TrainingLogStatus::Upsolved,
+        };
+        let line = entry.to_json_line().unwrap();
+        assert!(!line.contains("\"url\""));
+        assert!(line.contains("\"problem_id\":\"cf-1999a\""));
+        assert!(line.contains("\"status\":\"upsolved\""));
+        assert_eq!(TrainingLogEntry::from_json_line(&line).unwrap(), entry);
+
+        let minimal = TrainingLogEntry {
+            at: "2026-11-24T12:01:00Z".into(),
+            problem_id: None,
+            source: None,
+            status: TrainingLogStatus::Clear,
+        };
+        let min_line = minimal.to_json_line().unwrap();
+        assert!(!min_line.contains("problem_id"));
+        assert!(!min_line.contains("source"));
+        assert_eq!(
+            TrainingLogEntry::from_json_line(&min_line).unwrap(),
+            minimal
+        );
+    }
+
+    #[test]
+    fn resolve_manual_status_chronological_clear_and_case_insensitive_source() {
+        let sources = vec![ProblemSource {
+            platform: "CodeForces".into(),
+            id: "1999a".into(),
+            url: None,
+        }];
+        let entries = vec![
+            TrainingLogEntry {
+                at: "2026-11-20T00:00:00Z".into(),
+                problem_id: Some("other-problem".into()),
+                source: None,
+                status: TrainingLogStatus::Ac,
+            },
+            TrainingLogEntry {
+                at: "2026-11-21T00:00:00Z".into(),
+                problem_id: Some("cf-1999a".into()),
+                source: None,
+                status: TrainingLogStatus::Todo,
+            },
+            TrainingLogEntry {
+                at: "2026-11-22T00:00:00Z".into(),
+                problem_id: None,
+                source: Some(ProblemSource {
+                    platform: "codeforces".into(),
+                    id: "1999A".into(),
+                    url: None,
+                }),
+                status: TrainingLogStatus::Upsolved,
+            },
+            TrainingLogEntry {
+                at: "2026-11-23T00:00:00Z".into(),
+                problem_id: Some("cf-1999a".into()),
+                source: None,
+                status: TrainingLogStatus::Clear,
+            },
+        ];
+
+        // Up to entry 2 -> Todo.
+        assert_eq!(
+            resolve_manual_status(&entries[..2], "cf-1999a", &sources),
+            Some(TrainingStatus::Todo)
+        );
+        // Up to entry 3 -> matched by case-insensitive source -> Upsolved.
+        assert_eq!(
+            resolve_manual_status(&entries[..3], "cf-1999a", &sources),
+            Some(TrainingStatus::Upsolved)
+        );
+        // After Clear -> None.
+        assert_eq!(resolve_manual_status(&entries, "cf-1999a", &sources), None);
+
+        // Subsequent manual status after Clear takes effect.
+        let mut extended = entries;
+        extended.push(TrainingLogEntry {
+            at: "2026-11-24T00:00:00Z".into(),
+            problem_id: None,
+            source: Some(ProblemSource {
+                platform: "CODEFORCES".into(),
+                id: "1999A".into(),
+                url: None,
+            }),
+            status: TrainingLogStatus::Attempted,
+        });
+        assert_eq!(
+            resolve_manual_status(&extended, "cf-1999a", &sources),
+            Some(TrainingStatus::Attempted)
+        );
+    }
+
+    #[test]
+    fn derive_training_status_follows_priority_rules() {
+        let none_synced = SyncedProblemStatus {
+            ac: false,
+            attempted: false,
+        };
+        let attempted_synced = SyncedProblemStatus {
+            ac: false,
+            attempted: true,
+        };
+        let ac_synced = SyncedProblemStatus {
+            ac: true,
+            attempted: true,
+        };
+        let ac_only_synced = SyncedProblemStatus {
+            ac: true,
+            attempted: false,
+        };
+
+        // External AC + manual Upsolved -> Upsolved; any other manual -> Ac.
+        for synced in [ac_synced, ac_only_synced] {
+            assert_eq!(
+                derive_training_status(synced, Some(TrainingStatus::Upsolved)),
+                TrainingStatus::Upsolved
+            );
+            for manual in [
+                None,
+                Some(TrainingStatus::None),
+                Some(TrainingStatus::Todo),
+                Some(TrainingStatus::Attempted),
+                Some(TrainingStatus::Ac),
+            ] {
+                assert_eq!(
+                    derive_training_status(synced, manual),
+                    TrainingStatus::Ac,
+                    "synced={synced:?}, manual={manual:?}"
+                );
+            }
+        }
+
+        // External Attempted: Ac / Upsolved win; None / Todo / Attempted -> Attempted.
+        assert_eq!(
+            derive_training_status(attempted_synced, Some(TrainingStatus::Ac)),
+            TrainingStatus::Ac
+        );
+        assert_eq!(
+            derive_training_status(attempted_synced, Some(TrainingStatus::Upsolved)),
+            TrainingStatus::Upsolved
+        );
+        for manual in [
+            None,
+            Some(TrainingStatus::None),
+            Some(TrainingStatus::Todo),
+            Some(TrainingStatus::Attempted),
+        ] {
+            assert_eq!(
+                derive_training_status(attempted_synced, manual),
+                TrainingStatus::Attempted,
+                "manual={manual:?}"
+            );
+        }
+
+        // No external activity: manual wins (or None).
+        assert_eq!(
+            derive_training_status(none_synced, None),
+            TrainingStatus::None
+        );
+        for manual in [
+            TrainingStatus::None,
+            TrainingStatus::Todo,
+            TrainingStatus::Attempted,
+            TrainingStatus::Ac,
+            TrainingStatus::Upsolved,
+        ] {
+            assert_eq!(derive_training_status(none_synced, Some(manual)), manual);
+        }
     }
 }

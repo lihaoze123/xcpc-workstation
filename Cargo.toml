@@ -17,6 +17,8 @@ xcpc-convert = { path = "crates/xcpc-convert" }
 xcpc-engine = { path = "crates/xcpc-engine" }
 xcpc-judge = { path = "crates/xcpc-judge" }
 xcpc-packages = { path = "crates/xcpc-packages" }
+xcpc-plugin = { path = "crates/xcpc-plugin" }
+xcpc-sync = { path = "crates/xcpc-sync" }
 
 nsh-core = "0.6.0"
 nsh-base = { version = "0.6.0", default-features = false }
@@ -50,3 +52,10 @@ imagesize = "0.15"
 png = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 resvg = { version = "0.47", default-features = false }
+rquickjs = "0.14"
+ureq = "2"
+scraper = "0.29"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+url = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }

@@ -15,6 +15,7 @@
 mod cache;
 mod linux_chrome;
 mod page_image;
+mod plugins;
 mod prefs;
 mod snapshot;
 mod state;
@@ -42,19 +43,23 @@ pub use crate::types::{
     AssetReferenceJs, BatchDeleteItemJs, BatchDeleteResultJs, BatchExportRequestJs,
     BatchItemResultJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
     BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
-    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs, DetectedCompilerJs,
-    DialogLabelsJs, ExportBookStatusJs, ExportOjResultJs, FreezeResultJs, FuzzyHitJs,
-    GroupSummaryJs, JsonReportResultJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
+    ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
+    CreateProblemFromUrlResultJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
+    ExportOjResultJs, ExportPluginResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs,
+    InstallPluginResultJs, JsonReportResultJs, LimitsJs, MarkdownSpanJs, MathPreviewJs,
     NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs, PackageCreateResultJs,
     PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs, PackageWarningJs,
-    PdfFreshnessJs, PickedFolder, PickedPathsJs, PolygonImportResultJs, PreviewDiagnostic,
-    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
-    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
-    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, SamplePairJs, SavePackageFileResultJs,
-    SaveReportResultJs, SaveResult, SourceLocationJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile,
-    WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs, PluginCredentialFieldJs,
+    PluginRepoConfigJs, PluginSummaryJs, PluginsOverviewJs, PolygonImportResultJs,
+    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
+    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
+    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs,
+    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
+    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
+    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
+    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -98,7 +103,12 @@ impl Preview {
     /// legacy `last-workspace`). Pass `process.dataDir` for persistence; `null` disables it.
     pub fn new(data_dir: Option<String>) -> Self {
         linux_chrome::strip_titlebar_icon_once();
-        let data_dir = data_dir.map(PathBuf::from);
+        let data_dir = data_dir.map(|passed| {
+            std::env::var_os("XCPC_DATA_DIR")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(passed))
+        });
         Preview {
             state: Arc::new(State::new(data_dir)),
             generation: Arc::new(AtomicU64::new(0)),
@@ -2111,6 +2121,287 @@ impl Preview {
                 error: Some(format!("save markdown task failed: {e}")),
             },
         }
+    }
+
+    // ---- Phase 4A: Training status, URL resolution, Plugins & OJ Sync ------------------
+
+    /// Appends a manual training status event (`todo | attempted | ac | upsolved | clear`)
+    /// to `training/logs.jsonl`.
+    pub fn set_training_status(&self, problem_id: String, status: String) -> ActionResult {
+        self.state.set_training_status(&problem_id, &status)
+    }
+
+    /// Resolves an external OJ problem URL via enabled `oj_source` plugins and `oj_sync.db`.
+    pub async fn resolve_problem_url(this: Instance<Self>, url: String) -> ResolvedProblemUrlJs {
+        if this.is_disposed() {
+            return ResolvedProblemUrlJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.resolve_problem_url(&url))
+            .await
+            .unwrap_or_else(|e| ResolvedProblemUrlJs {
+                ok: false,
+                error: Some(format!("resolve problem URL failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Creates a problem from a resolved OJ URL (or returns the existing problem ID if a
+    /// matching `(platform, sourceId)` already exists in the workspace).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_problem_from_url(
+        &self,
+        id: String,
+        title: String,
+        platform: String,
+        source_id: String,
+        url: String,
+        tags: Vec<String>,
+        rating: Option<u32>,
+    ) -> CreateProblemFromUrlResultJs {
+        self.state
+            .create_problem_from_url(&id, &title, &platform, &source_id, &url, tags, rating)
+    }
+
+    /// Returns all discovered plugins, subscribed repositories, and global sync settings.
+    pub fn get_plugins_overview(&self) -> PluginsOverviewJs {
+        self.state.get_plugins_overview()
+    }
+
+    /// Enables or disables a discovered plugin by ID.
+    pub fn set_plugin_enabled(&self, id: String, enabled: bool) -> ActionResult {
+        self.state.set_plugin_enabled(&id, enabled)
+    }
+
+    /// Re-scans `<dataDir>/plugins/` and returns the refreshed plugins overview.
+    pub fn reload_plugins(&self) -> PluginsOverviewJs {
+        self.state.get_plugins_overview()
+    }
+
+    /// Exports an embedded built-in plugin to `<dataDir>/plugins/<id>/` for local customization.
+    pub fn export_builtin_plugin(&self, id: String) -> ExportPluginResultJs {
+        self.state.export_builtin_plugin(&id)
+    }
+
+    /// Opens a native folder or `.zip` picker (`kind`: `"dir" | "zip"`) and installs the plugin.
+    pub async fn install_plugin_from_dialog(
+        this: Instance<Self>,
+        kind: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> InstallPluginResultJs {
+        if this.is_disposed() {
+            return InstallPluginResultJs {
+                ok: false,
+                cancelled: false,
+                plugin_id: None,
+                overview: None,
+                error: Some("preview disposed".into()),
+            };
+        }
+        let is_zip = kind.trim().eq_ignore_ascii_case("zip");
+        let dialog = if is_zip {
+            let title = label_or(
+                labels.as_ref().and_then(|l| l.title.as_deref()),
+                "安装插件（ZIP）",
+            );
+            let button = label_or(
+                labels.as_ref().and_then(|l| l.button_label.as_deref()),
+                "安装",
+            );
+            let filter = label_or(
+                labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+                "插件包 (.zip)",
+            );
+            OpenDialog::files()
+                .title(title)
+                .button_label(button)
+                .filter(FileFilter::new(filter, ["zip"]))
+        } else {
+            let title = label_or(
+                labels.as_ref().and_then(|l| l.title.as_deref()),
+                "安装本地插件目录",
+            );
+            let button = label_or(
+                labels.as_ref().and_then(|l| l.button_label.as_deref()),
+                "安装",
+            );
+            OpenDialog::folders().title(title).button_label(button)
+        };
+
+        let picked = match pick_paths(dialog).await {
+            Ok(Some(mut paths)) if !paths.is_empty() => paths.remove(0),
+            Ok(_) => {
+                return InstallPluginResultJs {
+                    ok: false,
+                    cancelled: true,
+                    plugin_id: None,
+                    overview: None,
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return InstallPluginResultJs {
+                    ok: false,
+                    cancelled: false,
+                    plugin_id: None,
+                    overview: None,
+                    error: Some(err),
+                };
+            }
+        };
+
+        if this.is_disposed() {
+            return InstallPluginResultJs {
+                ok: false,
+                cancelled: false,
+                plugin_id: None,
+                overview: None,
+                error: Some("preview disposed".into()),
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.install_plugin_from_path(&picked, is_zip))
+            .await
+            .unwrap_or_else(|e| InstallPluginResultJs {
+                ok: false,
+                cancelled: false,
+                plugin_id: None,
+                overview: None,
+                error: Some(format!("install plugin task failed: {e}")),
+            })
+    }
+
+    /// Subscribes to a decentralized plugin repository (`index.json` URL).
+    pub fn add_plugin_repo(&self, url: String) -> ActionResult {
+        self.state.add_plugin_repo(&url)
+    }
+
+    /// Unsubscribes from a decentralized plugin repository URL.
+    pub fn remove_plugin_repo(&self, url: String) -> ActionResult {
+        self.state.remove_plugin_repo(&url)
+    }
+
+    /// Fetches a decentralized plugin repository's `index.json` catalog off the UI thread.
+    pub async fn fetch_plugin_repo_catalog(
+        this: Instance<Self>,
+        url: String,
+    ) -> RepoCatalogResultJs {
+        if this.is_disposed() {
+            return RepoCatalogResultJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.fetch_plugin_repo_catalog(&url))
+            .await
+            .unwrap_or_else(|e| RepoCatalogResultJs {
+                ok: false,
+                error: Some(format!("fetch repo catalog failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Downloads, verifies SHA-256, and installs a plugin from a decentralized repository.
+    pub async fn install_plugin_from_repo(
+        this: Instance<Self>,
+        repo_url: String,
+        plugin_id: String,
+    ) -> InstallPluginResultJs {
+        if this.is_disposed() {
+            return InstallPluginResultJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.install_plugin_from_repo(&repo_url, &plugin_id))
+            .await
+            .unwrap_or_else(|e| InstallPluginResultJs {
+                ok: false,
+                error: Some(format!("install plugin from repo failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Sets (or clears when empty) the single OJ handle for `platform`.
+    pub fn set_sync_handle(&self, platform: String, handle: String) -> ActionResult {
+        self.state.set_sync_handle(&platform, &handle)
+    }
+
+    /// Toggles silent OJ auto-sync on application startup.
+    pub fn set_auto_sync_on_startup(&self, enabled: bool) -> ActionResult {
+        self.state.set_auto_sync_on_startup(enabled)
+    }
+
+    /// Stores (or deletes when empty) a plugin credential in the OS keyring.
+    pub fn set_plugin_credential(
+        &self,
+        plugin_id: String,
+        key: String,
+        value: String,
+    ) -> ActionResult {
+        self.state.set_plugin_credential(&plugin_id, &key, &value)
+    }
+
+    /// Runs a plugin's `verify(ctx)` action off the UI thread.
+    pub async fn verify_plugin(this: Instance<Self>, plugin_id: String) -> VerifyPluginResultJs {
+        if this.is_disposed() {
+            return VerifyPluginResultJs {
+                ok: false,
+                message: None,
+                error: Some("preview disposed".into()),
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.verify_plugin(&plugin_id))
+            .await
+            .unwrap_or_else(|e| VerifyPluginResultJs {
+                ok: false,
+                message: None,
+                error: Some(format!("verify plugin failed: {e}")),
+            })
+    }
+
+    /// Runs OJ sync in a background thread so the UI never blocks.
+    pub async fn sync_oj(
+        this: Instance<Self>,
+        platform: Option<String>,
+        full: bool,
+    ) -> SyncReportJs {
+        if this.is_disposed() {
+            return SyncReportJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.sync_oj(platform, full))
+            .await
+            .unwrap_or_else(|e| SyncReportJs {
+                ok: false,
+                error: Some(format!("sync task failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Triggers silent startup auto-sync once per session in a background thread when
+    /// enabled and at least one enabled `oj_source` plugin has a configured handle.
+    pub async fn startup_sync_if_enabled(this: Instance<Self>) -> bool {
+        if this.is_disposed() {
+            return false;
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.startup_sync_if_enabled())
+            .await
+            .unwrap_or(false)
     }
 }
 

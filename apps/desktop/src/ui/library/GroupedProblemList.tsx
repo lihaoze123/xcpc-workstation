@@ -31,6 +31,7 @@ function GroupedRow(props: {
   showInlineId: boolean;
   maxTags: number;
   tagsWidth: number;
+  trainingEnabled?: boolean;
   selected: boolean;
   focused: boolean;
   onRowClick: (id: string, opts: { shift: boolean; mod: boolean; checkbox: boolean }) => void;
@@ -61,6 +62,7 @@ function GroupedRow(props: {
           showInlineId: props.showInlineId,
           maxTags: props.maxTags,
           tagsWidth: props.tagsWidth,
+          trainingEnabled: props.trainingEnabled,
         })}
       </View>
     );
@@ -104,6 +106,7 @@ export function GroupedProblemList(props: {
   showInlineId: boolean;
   maxTags: number;
   tagsWidth: number;
+  trainingEnabled?: boolean;
   sort: DataTableSort | null;
   onSortChange: (sort: DataTableSort | null) => void;
   headerTriState: CheckboxTriState;
@@ -254,6 +257,7 @@ export function GroupedProblemList(props: {
                               showInlineId={props.showInlineId}
                               maxTags={props.maxTags}
                               tagsWidth={props.tagsWidth}
+                              trainingEnabled={props.trainingEnabled}
                               selected={props.selectedIds.has(row().id)}
                               focused={props.focusedId === row().id && props.selectedIds.size === 0}
                               onRowClick={props.onRowClick}

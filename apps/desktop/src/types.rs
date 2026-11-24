@@ -215,6 +215,8 @@ pub struct WorkspaceInfo {
     /// Its directory; empty when none is open.
     pub root: String,
     pub read_only: bool,
+    /// True when `workspace.toml` enables training features (defaults to `true` when open).
+    pub training_enabled: bool,
     /// True when startup tried to reopen the last remembered workspace (`prefs.json` or
     /// legacy `last-workspace`) and its directory no longer exists or lacks `workspace.toml`.
     /// False on a fresh launch with no history or once any workspace is opened/initialized.
@@ -413,6 +415,10 @@ pub struct ProblemSummaryJs {
     /// Sorted IDs of non-archived contests that include this problem.
     #[prop(default)]
     pub contest_ids: Vec<String>,
+    /// Derived training status (`"none" | "todo" | "attempted" | "ac" | "upsolved"`).
+    /// Always `"none"` when `workspace.toml` sets `training = false`.
+    #[prop(default)]
+    pub training_status: String,
 }
 
 /// Summary of one persistent problem group for the library sidebar.
@@ -2014,6 +2020,192 @@ pub struct SaveReportResultJs {
     pub cancelled: bool,
     #[prop(skip_none)]
     pub path: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+// ---- Phase 4A: Plugins, OJ Sync & Training Status --------------------------------------
+
+/// Result of resolving an external OJ problem URL via enabled `oj_source` plugins.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ResolvedProblemUrlJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub platform: String,
+    #[prop(default)]
+    pub problem_key: String,
+    #[prop(default)]
+    pub suggested_slug: String,
+    #[prop(skip_none)]
+    pub title: Option<String>,
+    #[prop(default)]
+    pub tags: Vec<String>,
+    #[prop(skip_none)]
+    pub rating: Option<u32>,
+    #[prop(default)]
+    pub url: String,
+    #[prop(skip_none)]
+    pub existing_problem_id: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of creating (or deduplicating) a problem from a resolved OJ URL.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct CreateProblemFromUrlResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub problem_id: String,
+    pub existed: bool,
+    #[prop(skip_none)]
+    pub code: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Credential input specification for a plugin in Settings -> Plugins.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginCredentialFieldJs {
+    pub name: String,
+    pub label: String,
+    pub secret: bool,
+    pub has_value: bool,
+    #[prop(skip_none)]
+    pub description: Option<String>,
+    #[prop(skip_none)]
+    pub placeholder: Option<String>,
+}
+
+/// One discovered plugin (built-in, local override, or local install) in Settings -> Plugins.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginSummaryJs {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    /// `"builtin" | "local_override" | "local"`.
+    pub origin: String,
+    pub enabled: bool,
+    pub capabilities: Vec<String>,
+    pub domains: Vec<String>,
+    pub workspace_read: bool,
+    pub has_unsandboxed_ui: bool,
+    pub credentials: Vec<PluginCredentialFieldJs>,
+    #[prop(skip_none)]
+    pub handle: Option<String>,
+    #[prop(skip_none)]
+    pub last_error: Option<String>,
+}
+
+/// Subscribed decentralized plugin repository entry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginRepoConfigJs {
+    pub url: String,
+    #[prop(skip_none)]
+    pub name: Option<String>,
+}
+
+/// Full snapshot for the Settings -> Plugins panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginsOverviewJs {
+    pub plugins: Vec<PluginSummaryJs>,
+    pub repos: Vec<PluginRepoConfigJs>,
+    pub auto_sync_on_startup: bool,
+    #[prop(skip_none)]
+    pub last_synced_at: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of exporting a built-in plugin to `<dataDir>/plugins/<id>/`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ExportPluginResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub path: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of installing a plugin from a local directory, ZIP archive, or remote repository.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct InstallPluginResultJs {
+    pub ok: bool,
+    pub cancelled: bool,
+    #[prop(skip_none)]
+    pub plugin_id: Option<String>,
+    #[prop(skip_none)]
+    pub overview: Option<PluginsOverviewJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Permission preview for one entry in a decentralized plugin repository catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct RepoPluginPermissionJs {
+    pub domains: Vec<String>,
+    pub workspace_read: bool,
+    pub has_unsandboxed_ui: bool,
+}
+
+/// One installable plugin entry from a decentralized `index.json` catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct RepoPluginEntryJs {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub download_url: String,
+    pub sha256: String,
+    #[prop(skip_none)]
+    pub permissions: Option<RepoPluginPermissionJs>,
+}
+
+/// Result of fetching a decentralized repository's `index.json` catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct RepoCatalogResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub name: String,
+    #[prop(default)]
+    pub plugins: Vec<RepoPluginEntryJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of running a plugin's `verify(ctx)` action.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct VerifyPluginResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub message: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Per-platform result inside [`SyncReportJs`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PlatformSyncReportJs {
+    pub platform: String,
+    pub handle: String,
+    pub ok: bool,
+    pub account_synced: bool,
+    pub summary_synced: bool,
+    pub submissions_synced: u32,
+    pub rating_history_synced: u32,
+    pub contests_synced: u32,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Aggregated result of `syncOj(platform, full)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct SyncReportJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub synced_at: String,
+    #[prop(default)]
+    pub platforms: Vec<PlatformSyncReportJs>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }

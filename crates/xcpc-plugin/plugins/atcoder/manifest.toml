@@ -1,0 +1,11 @@
+id = "atcoder"
+name = "AtCoder"
+version = "1.0.0"
+description = "Official AtCoder OJ source plugin (Algorithm rating history, Kenkoooo incremental submissions & difficulty, contests, URL parser)."
+author = "XCPC Workstation"
+entry = "index.js"
+capabilities = ["oj_source"]
+
+[permissions]
+domains = ["atcoder.jp", "kenkoooo.com"]
+workspace_read = false

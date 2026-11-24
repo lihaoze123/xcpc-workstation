@@ -3183,3 +3183,284 @@ fn phase3c_interactive_runs_subtasks_and_scoring_bridge() {
     assert_eq!(after_del_sub3["total_score"], 100);
     assert_eq!(after_del_sub3["subtasks"].as_array().unwrap().len(), 2);
 }
+
+// ---- Phase 4A: Training status, URL resolution, Plugins & Sync bridge tests ------------
+
+#[test]
+fn phase4a_training_status_derivation_and_manual_override() {
+    let ws_dir = TempDir::new("p4a-train-ws");
+    let data_dir = TempDir::new("p4a-train-data");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let info = preview.init_workspace(ws_dir.0.display().to_string(), None);
+    assert!(info.error.is_none());
+    assert!(info.training_enabled);
+
+    // Create two problems: one linked to codeforces 1999A, one pure local.
+    let created = preview.create_problem_from_url(
+        "cf-1999a".into(),
+        "A+B Again?".into(),
+        "codeforces".into(),
+        "1999A".into(),
+        "https://codeforces.com/problemset/problem/1999/A".into(),
+        vec!["math".into()],
+        Some(800),
+    );
+    assert!(created.ok && !created.existed);
+    assert!(
+        preview
+            .create_problem("local-p".into(), "Local Problem".into())
+            .ok
+    );
+
+    // Seed oj_sync.db with an AC submission for codeforces 1999A.
+    let mut db = xcpc_sync::SyncDb::open(&data_dir.0).unwrap();
+    db.upsert_submissions(
+        "codeforces",
+        &[xcpc_plugin::OjSubmission {
+            submission_id: "sub-1".into(),
+            handle: "tourist".into(),
+            contest_id: Some("1999".into()),
+            problem_index: Some("A".into()),
+            problem_key: "1999A".into(),
+            problem_title: "A+B Again?".into(),
+            problem_url: Some("https://codeforces.com/problemset/problem/1999/A".into()),
+            raw_rating: Some(800.0),
+            normalized_rating: Some(800),
+            tags: vec!["math".into()],
+            verdict: "AC".into(),
+            language: Some("C++20".into()),
+            submitted_at: 1_700_000_000,
+        }],
+        "2026-11-24T00:00:00Z",
+    )
+    .unwrap();
+
+    // Synced AC shows as "ac", local shows as "none".
+    let list = preview.search_problems(ProblemSearchQuery::default());
+    let cf = list.iter().find(|p| p.id == "cf-1999a").unwrap();
+    let local = list.iter().find(|p| p.id == "local-p").unwrap();
+    assert_eq!(cf.training_status, "ac");
+    assert_eq!(local.training_status, "none");
+
+    // Manual override: local -> "todo", synced AC -> "upsolved".
+    assert!(
+        preview
+            .set_training_status("local-p".into(), "todo".into())
+            .ok
+    );
+    assert!(
+        preview
+            .set_training_status("cf-1999a".into(), "upsolved".into())
+            .ok
+    );
+    let list2 = preview.search_problems(ProblemSearchQuery::default());
+    assert_eq!(
+        list2
+            .iter()
+            .find(|p| p.id == "local-p")
+            .unwrap()
+            .training_status,
+        "todo"
+    );
+    assert_eq!(
+        list2
+            .iter()
+            .find(|p| p.id == "cf-1999a")
+            .unwrap()
+            .training_status,
+        "upsolved"
+    );
+
+    // Clear manual override: local returns to "none", cf returns to synced "ac".
+    assert!(
+        preview
+            .set_training_status("local-p".into(), "clear".into())
+            .ok
+    );
+    assert!(
+        preview
+            .set_training_status("cf-1999a".into(), "clear".into())
+            .ok
+    );
+    let list3 = preview.search_problems(ProblemSearchQuery::default());
+    assert_eq!(
+        list3
+            .iter()
+            .find(|p| p.id == "local-p")
+            .unwrap()
+            .training_status,
+        "none"
+    );
+    assert_eq!(
+        list3
+            .iter()
+            .find(|p| p.id == "cf-1999a")
+            .unwrap()
+            .training_status,
+        "ac"
+    );
+
+    // Invalid status is rejected cleanly.
+    let bad = preview.set_training_status("local-p".into(), "bogus".into());
+    assert!(!bad.ok);
+}
+
+#[test]
+fn phase4a_training_disabled_hides_status() {
+    let ws_dir = TempDir::new("p4a-disabled-ws");
+    let data_dir = TempDir::new("p4a-disabled-data");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let info = preview.init_workspace(ws_dir.0.display().to_string(), None);
+    assert!(info.training_enabled);
+
+    assert!(preview.create_problem("p1".into(), "Problem 1".into()).ok);
+    assert!(preview.set_training_status("p1".into(), "ac".into()).ok);
+
+    // Set `training = false` in workspace.toml and reopen.
+    let ws_toml = ws_dir.0.join("workspace.toml");
+    let mut raw = std::fs::read_to_string(&ws_toml).unwrap();
+    raw.push_str("\ntraining = false\n");
+    std::fs::write(&ws_toml, raw).unwrap();
+
+    let reopened = preview.open_workspace(ws_dir.0.display().to_string(), false);
+    assert!(reopened.error.is_none());
+    assert!(!reopened.training_enabled);
+
+    let list = preview.search_problems(ProblemSearchQuery::default());
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].training_status, "none");
+}
+
+#[test]
+fn phase4a_resolve_problem_url_and_create_dedup() {
+    let ws_dir = TempDir::new("p4a-url-ws");
+    let data_dir = TempDir::new("p4a-url-data");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let info = preview.init_workspace(ws_dir.0.display().to_string(), None);
+    assert!(info.error.is_none());
+
+    // Pre-populate oj_problem_meta cache so resolve_problem_url stays 100% offline.
+    let mut db = xcpc_sync::SyncDb::open(&data_dir.0).unwrap();
+    db.upsert_problem_meta(&xcpc_sync::CachedProblemMeta {
+        platform: "codeforces".into(),
+        problem_key: "1999A".into(),
+        title: Some("A+B Again?".into()),
+        url: Some("https://codeforces.com/problemset/problem/1999/A".into()),
+        raw_rating: Some(800),
+        normalized_rating: Some(800),
+        tags: vec!["implementation".into(), "math".into()],
+        updated_at: "2026-11-24T00:00:00Z".into(),
+    })
+    .unwrap();
+
+    let resolved = preview
+        .state
+        .resolve_problem_url("https://codeforces.com/problemset/problem/1999/A");
+    assert!(resolved.ok, "resolve error: {:?}", resolved.error);
+    assert_eq!(resolved.platform, "codeforces");
+    assert_eq!(resolved.problem_key, "1999A");
+    assert_eq!(resolved.suggested_slug, "cf-1999a");
+    assert_eq!(resolved.title.as_deref(), Some("A+B Again?"));
+    assert_eq!(resolved.rating, Some(800));
+    assert_eq!(resolved.tags, vec!["implementation", "math"]);
+    assert!(resolved.existing_problem_id.is_none());
+
+    // Create from URL.
+    let created = preview.create_problem_from_url(
+        resolved.suggested_slug.clone(),
+        resolved.title.clone().unwrap(),
+        resolved.platform.clone(),
+        resolved.problem_key.clone(),
+        resolved.url.clone(),
+        resolved.tags.clone(),
+        resolved.rating,
+    );
+    assert!(created.ok);
+    assert!(!created.existed);
+    assert_eq!(created.problem_id, "cf-1999a");
+
+    // Re-resolving now detects existing_problem_id, and creating again deduplicates.
+    let resolved2 = preview
+        .state
+        .resolve_problem_url("https://codeforces.com/contest/1999/problem/A");
+    assert!(resolved2.ok);
+    assert_eq!(resolved2.existing_problem_id.as_deref(), Some("cf-1999a"));
+
+    let dup = preview.create_problem_from_url(
+        "another-slug".into(),
+        "Dup".into(),
+        "codeforces".into(),
+        "1999A".into(),
+        resolved2.url,
+        vec![],
+        None,
+    );
+    assert!(dup.ok);
+    assert!(dup.existed);
+    assert_eq!(dup.problem_id, "cf-1999a");
+}
+
+#[test]
+fn phase4a_plugins_overview_handles_repos_and_export() {
+    let data_dir = TempDir::new("p4a-plugins-data");
+    let preview = Preview::new(Some(data_dir.0.display().to_string()));
+
+    let overview = preview.get_plugins_overview();
+    assert!(overview.error.is_none());
+    assert!(overview.auto_sync_on_startup);
+    assert!(
+        overview
+            .plugins
+            .iter()
+            .any(|p| p.id == "codeforces" && p.origin == "builtin")
+    );
+    assert!(
+        overview
+            .plugins
+            .iter()
+            .any(|p| p.id == "atcoder" && p.origin == "builtin")
+    );
+
+    // Configure handle, auto-sync, enable/disable, repo, and export built-in copy.
+    assert!(
+        preview
+            .set_sync_handle("codeforces".into(), "tourist".into())
+            .ok
+    );
+    assert!(preview.set_auto_sync_on_startup(false).ok);
+    assert!(preview.set_plugin_enabled("atcoder".into(), false).ok);
+    assert!(
+        preview
+            .add_plugin_repo("https://example.com/plugins/index.json".into())
+            .ok
+    );
+    let exported = preview.export_builtin_plugin("codeforces".into());
+    assert!(exported.ok, "export failed: {:?}", exported.error);
+    assert!(exported.path.is_some());
+
+    let updated = preview.reload_plugins();
+    assert!(!updated.auto_sync_on_startup);
+    assert_eq!(updated.repos.len(), 1);
+    assert_eq!(
+        updated.repos[0].url,
+        "https://example.com/plugins/index.json"
+    );
+
+    let cf = updated
+        .plugins
+        .iter()
+        .find(|p| p.id == "codeforces")
+        .unwrap();
+    assert_eq!(cf.origin, "local_override");
+    assert_eq!(cf.handle.as_deref(), Some("tourist"));
+
+    let ac = updated.plugins.iter().find(|p| p.id == "atcoder").unwrap();
+    assert!(!ac.enabled);
+
+    assert!(
+        preview
+            .remove_plugin_repo("https://example.com/plugins/index.json".into())
+            .ok
+    );
+    assert!(preview.get_plugins_overview().repos.is_empty());
+}

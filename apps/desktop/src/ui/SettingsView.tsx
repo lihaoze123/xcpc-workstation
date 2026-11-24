@@ -37,6 +37,7 @@ import { Section, SectionRow } from "./layout";
 import { abbreviateHome, pathBase } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
 import { ShortcutsList } from "./ShortcutsModal";
+import { PluginsPane } from "./PluginsPane";
 import {
   exportTraceDialog,
   startTraceRecording,
@@ -106,6 +107,7 @@ const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: Ico
   { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
   { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
   { id: "toolchain", labelKey: "settings.nav.toolchain", icon: "squareCode" },
+  { id: "plugins", labelKey: "settings.nav.plugins", icon: "sparkles" },
   { id: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
   { id: "shortcuts", labelKey: "settings.nav.shortcuts", icon: "keyboard" },
   { id: "about", labelKey: "settings.nav.about", icon: "info" },
@@ -1645,6 +1647,9 @@ export function SettingsView() {
           </If>
           <If when={active() === "toolchain"}>
             <ToolchainPane />
+          </If>
+          <If when={active() === "plugins"}>
+            <PluginsPane />
           </If>
           <If when={active() === "appearance"}>
             <AppearancePane />

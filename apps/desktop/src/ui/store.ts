@@ -70,6 +70,19 @@ setTimeout(() => {
   if (toolchainState() === undefined) refreshToolchain();
 }, 0);
 
+// Silent startup OJ auto-sync (runs at most once per session on a background thread; silent on success).
+setTimeout(() => {
+  try {
+    if (typeof preview.startupSyncIfEnabled === "function") {
+      void preview.startupSyncIfEnabled().then((synced) => {
+        if (synced) refresh();
+      });
+    }
+  } catch {
+    // Ignore in headless tests or when no data directory is configured.
+  }
+}, 200);
+
 /** What the studio shows: a problem, or a contest (and the problem of it in the editor). */
 export type StudioTarget = {
   target: "problem" | "contest";
@@ -212,7 +225,7 @@ function initialSpace(): Space {
 }
 
 export const space = signal<Space>(initialSpace());
-export type SettingsSection = "workspace" | "layout" | "toolchain" | "appearance" | "shortcuts" | "about";
+export type SettingsSection = "workspace" | "layout" | "toolchain" | "plugins" | "appearance" | "shortcuts" | "about";
 export const settingsSection = signal<SettingsSection>("workspace");
 export const brandReplayOpen = signal(false);
 export const newWorkspaceModalOpen = signal(false);

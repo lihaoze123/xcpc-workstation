@@ -3,7 +3,8 @@
 
 import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
-import { Btn, Segmented } from "./kit";
+import { Btn, Chip, DelayedSpinner, Segmented } from "./kit";
+import type { ResolvedProblemUrlJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
@@ -99,21 +100,95 @@ function Form(props: { head: any; submit: string; onSubmit: () => void; children
 }
 
 function NewProblem(props: { addTo?: string }) {
+  const url = signal("");
   const id = signal("");
   const title = signal("");
   const idTouched = signal(false);
+  const titleTouched = signal(false);
+  const resolvingUrl = signal(false);
+  const resolved = signal<ResolvedProblemUrlJs | undefined>(undefined);
+  const urlError = signal<string | undefined>(undefined);
   const error = signal<UiError | undefined>(undefined);
   let idInput: InputRef | undefined;
+  let urlTimer: number | undefined;
+  let resolveSeq = 0;
+
+  cleanup(() => {
+    clearTimeout(urlTimer);
+  });
+
+  const triggerResolveUrl = (rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+    clearTimeout(urlTimer);
+    if (!trimmed) {
+      batch(() => {
+        resolved.set(undefined);
+        urlError.set(undefined);
+        resolvingUrl.set(false);
+      });
+      return;
+    }
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+      return;
+    }
+    const seq = ++resolveSeq;
+    urlTimer = setTimeout(() => {
+      resolvingUrl.set(true);
+      urlError.set(undefined);
+      void preview
+        .resolveProblemUrl(trimmed)
+        .then((res) => {
+          if (seq !== resolveSeq) return;
+          resolvingUrl.set(false);
+          if (!res.ok) {
+            resolved.set(undefined);
+            urlError.set(res.error ?? t("dialogs.newProblem.urlUnsupported"));
+            return;
+          }
+          batch(() => {
+            resolved.set(res);
+            urlError.set(undefined);
+            error.set(undefined);
+            if (!idTouched() && res.suggestedSlug) {
+              id.set(res.suggestedSlug);
+            }
+            if (!titleTouched() && res.title) {
+              title.set(res.title);
+            }
+          });
+        })
+        .catch(() => {
+          if (seq !== resolveSeq) return;
+          resolvingUrl.set(false);
+        });
+    }, 240);
+  };
 
   const submit = () => {
     const pid = id().trim();
     if (!validId(pid)) return error.set({ code: "invalid_id" });
-    const res = preview.createProblem(pid, title().trim() || pid);
-    if (!res.ok) return error.set(errorOf(res));
+    const meta = resolved();
+    let createdId = pid;
+    if (meta && meta.ok) {
+      const res = preview.createProblemFromUrl(
+        pid,
+        title().trim() || meta.title || pid,
+        meta.platform ?? "",
+        meta.problemKey ?? "",
+        meta.url || url().trim(),
+        meta.tags ?? [],
+        meta.rating ?? null,
+      );
+      if (!res.ok) return error.set({ code: res.code, error: res.error });
+      createdId = res.problemId || pid;
+    } else {
+      const res = preview.createProblem(pid, title().trim() || pid);
+      if (!res.ok) return error.set(errorOf(res));
+    }
     if (props.addTo) {
       const c = info().contests.find((x) => x.id === props.addTo);
-      if (c) {
-        const cRes = preview.composeContest(c.id, [...c.items.map((i) => i.id), pid]);
+      if (c && !c.items.some((i) => i.id === createdId)) {
+        const cRes = preview.composeContest(c.id, [...c.items.map((i) => i.id), createdId]);
         if (!cRes.ok) {
           refresh();
           return error.set(errorOf(cRes));
@@ -122,7 +197,7 @@ function NewProblem(props: { addTo?: string }) {
     }
     refresh();
     dialog.set(undefined);
-    openStudio({ target: "problem", id: pid });
+    openStudio({ target: "problem", id: createdId });
   };
 
   const onTitleSubmit = () => {
@@ -139,6 +214,62 @@ function NewProblem(props: { addTo?: string }) {
       submit={t("common.create")}
       onSubmit={submit}
     >
+      <View style={{ gap: 6 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{t("dialogs.newProblem.urlLabel")}</Text>
+          <DelayedSpinner active={resolvingUrl()} size={12} />
+          <If when={!resolvingUrl() && !!urlError()}>
+            <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12 }} class="text-muted-foreground">
+              {urlError() ?? ""}
+            </Text>
+          </If>
+        </View>
+        <Input
+          class={`${INPUT_BASE} border-border`}
+          style={{ fontFamily: MONO }}
+          value={url()}
+          placeholder={t("dialogs.newProblem.urlPlaceholder")}
+          autoCapitalize="none"
+          autoCorrect={false}
+          submitBehavior="submit"
+          onChange={(e) => {
+            url.set(e.value);
+            triggerResolveUrl(e.value);
+          }}
+          onSubmit={() => triggerResolveUrl(url())}
+        />
+        <If when={resolved()?.ok}>
+          <View style={{ gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+              <Chip label={`${resolved()!.platform} ${resolved()!.problemKey}`} />
+              <If when={resolved()!.rating != null}>
+                <Chip label={`★ ${resolved()!.rating}`} />
+              </If>
+              <Each of={(resolved()!.tags ?? []).slice(0, 4)} key={(tg) => tg}>
+                {(tg) => <Chip label={tg()} />}
+              </Each>
+            </View>
+            <If when={!!resolved()!.existingProblemId}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                  {t("dialogs.newProblem.urlExistsHint", { id: resolved()!.existingProblemId! })}
+                </Text>
+                <Btn
+                  label={t("dialogs.newProblem.openExisting")}
+                  size="sm"
+                  variant="ghost"
+                  onPress={() => {
+                    const existingId = resolved()!.existingProblemId!;
+                    dialog.set(undefined);
+                    openStudio({ target: "problem", id: existingId });
+                  }}
+                />
+              </View>
+            </If>
+          </View>
+        </If>
+      </View>
+
       <Field
         label={t("dialogs.newProblem.titleLabel")}
         value={title()}
@@ -146,6 +277,7 @@ function NewProblem(props: { addTo?: string }) {
         autoFocus
         onChange={(v) =>
           batch(() => {
+            titleTouched.set(true);
             title.set(v);
             if (!idTouched()) {
               id.set(slugify(v));

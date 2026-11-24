@@ -11,8 +11,8 @@ use xcpc_domain::{
     BatchAddToContestResult, BatchItemOutcome, BatchItemStatus, BatchReport, ContestItem,
     ContestMeta, ContestMetaPatch, DeleteGroupReport, DiffKind, GroupSummary, LimitsPatch,
     MAX_CONTEST_PROBLEMS, OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch,
-    RenameGroupReport, Source, TemplateOptionValue, TemplateOptionsMap, TemplateOptionsPatch,
-    UnfreezeProblemDiff, check_id, label_for_index, normalize_group_name,
+    ProblemSource, RenameGroupReport, Source, TemplateOptionValue, TemplateOptionsMap,
+    TemplateOptionsPatch, UnfreezeProblemDiff, check_id, label_for_index, normalize_group_name,
 };
 
 use crate::{
@@ -44,7 +44,37 @@ const ALLOWED_PROBLEM_ROOT_FILES: &[&str] = &[
 /// Allowed single-level subdirectories for [`Workspace::write_problem_files`].
 const ALLOWED_PROBLEM_SUBDIRS: &[&str] = &["samples", "solutions", "generators", "tests"];
 
+/// Optional initial metadata when creating a problem (e.g. from a parsed OJ URL).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreateProblemOptions {
+    pub sources: Vec<ProblemSource>,
+    pub tags: Vec<String>,
+    /// Optional difficulty string (numeric strings like `"1600"` populate `rating`;
+    /// non-numeric labels are preserved under `difficulty` in `problem.toml`).
+    pub difficulty: Option<String>,
+    /// Optional explicit numeric rating (takes precedence over `difficulty` when set).
+    pub rating: Option<u32>,
+}
+
 impl Workspace {
+    // ---- Workspace-level settings ------------------------------------------------------
+
+    /// Updates `training = <bool>` in `workspace.toml` via `toml_edit`, preserving comments,
+    /// key order, `[template-options]`, `groups`, and unknown fields.
+    pub fn set_training_enabled(&self, enabled: bool) -> Result<()> {
+        self.check_writable(WORKSPACE_FILE)?;
+        let raw = match self.read_text(WORKSPACE_FILE) {
+            Ok(s) => s,
+            Err(Error::NotFound(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
+        let mut doc = parse_doc(WORKSPACE_FILE, &raw)?;
+        set_scalar(doc.as_table_mut(), "training", Value::from(enabled));
+        let rendered = doc.to_string();
+        let _: toml::Table = parse_toml(WORKSPACE_FILE, &rendered)?;
+        self.write(WORKSPACE_FILE, rendered.as_bytes())
+    }
+
     // ---- Workspace-level template settings ---------------------------------------------
 
     /// Partially updates `workspace.toml`'s default `template` and `[template-options.<tpl>]`
@@ -361,6 +391,17 @@ impl Workspace {
     /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton,
     /// and an empty `samples/` directory.
     pub fn create_problem(&self, id: &str, title: &str) -> Result<Problem> {
+        self.create_problem_with_options(id, title, &CreateProblemOptions::default())
+    }
+
+    /// Creates a new problem directory pre-populated with optional initial metadata
+    /// (`sources`, `tags`, `difficulty`/`rating`), e.g. from a parsed OJ URL.
+    pub fn create_problem_with_options(
+        &self,
+        id: &str,
+        title: &str,
+        options: &CreateProblemOptions,
+    ) -> Result<Problem> {
         check_id(id)?;
         let meta_rel = format!("problems/{id}/problem.toml");
         self.check_writable(&meta_rel)?;
@@ -385,10 +426,35 @@ impl Workspace {
 
         let mut doc = DocumentMut::new();
         doc["title"] = toml_edit::value(title);
+        if let Some(rating) = options.rating {
+            doc["rating"] = toml_edit::value(i64::from(rating));
+        } else if let Some(diff) = options
+            .difficulty
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if let Ok(parsed_rating) = diff.parse::<u32>() {
+                doc["rating"] = toml_edit::value(i64::from(parsed_rating));
+            } else {
+                doc["difficulty"] = toml_edit::value(diff);
+            }
+        }
+        let clean_tags = normalize_tag_list(&options.tags);
+        if !clean_tags.is_empty() {
+            let mut arr = Array::new();
+            for tag in &clean_tags {
+                arr.push(tag.as_str());
+            }
+            doc["tags"] = toml_edit::value(Value::Array(arr));
+        }
         let mut limits = Table::new();
         limits["time"] = toml_edit::value("1s");
         limits["memory"] = toml_edit::value("256MB");
         doc["limits"] = Item::Table(limits);
+        if !options.sources.is_empty() {
+            apply_sources(doc.as_table_mut(), &options.sources);
+        }
 
         self.write(&meta_rel, doc.to_string().as_bytes())?;
         self.write(

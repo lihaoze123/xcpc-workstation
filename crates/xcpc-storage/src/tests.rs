@@ -2390,3 +2390,279 @@ fn batch_delete_problems_reference_and_symlink_guards() {
         assert_eq!(link_item.code.as_deref(), Some("path_escape"));
     }
 }
+
+#[test]
+fn workspace_training_enabled_default_and_preserves_unknown_fields() {
+    let (dir, ws) = workspace();
+    // Absent key defaults to true.
+    assert!(ws.training_enabled());
+
+    // Populate workspace.toml with comments, template, groups, and unknown fields.
+    let initial = "# header comment\ntemplate = \"olymp-classic\"\ngroups = [\"DP\"]\ncustom_flag = 42\n\n[unknown_section]\nfoo = \"bar\"\n";
+    fs::write(dir.path().join(WORKSPACE_FILE), initial).unwrap();
+    assert!(ws.training_enabled());
+
+    ws.set_training_enabled(false).unwrap();
+    assert!(!ws.training_enabled());
+
+    let after_false = fs::read_to_string(dir.path().join(WORKSPACE_FILE)).unwrap();
+    assert!(after_false.contains("# header comment"));
+    assert!(after_false.contains("template = \"olymp-classic\""));
+    assert!(after_false.contains("groups = [\"DP\"]"));
+    assert!(after_false.contains("custom_flag = 42"));
+    assert!(after_false.contains("[unknown_section]"));
+    assert!(after_false.contains("foo = \"bar\""));
+    assert!(after_false.contains("training = false"));
+
+    ws.set_training_enabled(true).unwrap();
+    assert!(ws.training_enabled());
+
+    // Read-only workspace rejects set_training_enabled.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    let err = ro.set_training_enabled(false).unwrap_err();
+    assert_eq!(err.code(), "read_only");
+    assert!(ro.training_enabled());
+}
+
+#[test]
+fn training_logs_atomic_append_read_clear_and_derivation() {
+    use xcpc_domain::{
+        ProblemSource, SyncedProblemStatus, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
+    };
+
+    let (dir, ws) = workspace();
+    // Missing logs.jsonl returns empty vec.
+    assert!(ws.read_training_logs().unwrap().is_empty());
+
+    let src = ProblemSource {
+        platform: "codeforces".into(),
+        id: "1999A".into(),
+        url: None,
+    };
+
+    // Append creates training/ dir and writes atomically.
+    ws.append_training_log(&TrainingLogEntry {
+        at: "2026-11-24T10:00:00Z".into(),
+        problem_id: Some("two-sum".into()),
+        source: Some(src.clone()),
+        status: TrainingLogStatus::Todo,
+    })
+    .unwrap();
+
+    // External attempted overrides manual todo -> Attempted.
+    assert_eq!(
+        ws.derive_problem_training_status(
+            "two-sum",
+            std::slice::from_ref(&src),
+            SyncedProblemStatus {
+                ac: false,
+                attempted: true,
+            },
+        )
+        .unwrap(),
+        TrainingStatus::Attempted
+    );
+
+    // Manual upsolved + external AC -> Upsolved.
+    ws.append_training_log(&TrainingLogEntry {
+        at: "2026-11-24T11:00:00Z".into(),
+        problem_id: None,
+        source: Some(ProblemSource {
+            platform: "CODEFORCES".into(),
+            id: "1999a".into(),
+            url: None,
+        }),
+        status: TrainingLogStatus::Upsolved,
+    })
+    .unwrap();
+    assert_eq!(
+        ws.derive_problem_training_status(
+            "two-sum",
+            std::slice::from_ref(&src),
+            SyncedProblemStatus {
+                ac: true,
+                attempted: true,
+            },
+        )
+        .unwrap(),
+        TrainingStatus::Upsolved
+    );
+
+    // Clear resets manual override -> external AC yields Ac, no sync yields None.
+    ws.append_training_log(&TrainingLogEntry {
+        at: "2026-11-24T12:00:00Z".into(),
+        problem_id: Some("two-sum".into()),
+        source: None,
+        status: TrainingLogStatus::Clear,
+    })
+    .unwrap();
+
+    let logs = ws.read_training_logs().unwrap();
+    assert_eq!(logs.len(), 3);
+    assert_eq!(
+        Workspace::derive_problem_training_status_from_logs(
+            &logs,
+            "two-sum",
+            std::slice::from_ref(&src),
+            SyncedProblemStatus {
+                ac: true,
+                attempted: true,
+            },
+        ),
+        TrainingStatus::Ac
+    );
+    assert_eq!(
+        Workspace::derive_problem_training_status_from_logs(
+            &logs,
+            "two-sum",
+            std::slice::from_ref(&src),
+            SyncedProblemStatus::default(),
+        ),
+        TrainingStatus::None
+    );
+
+    // Batch helper with pre-loaded logs.
+    let batch = Workspace::derive_problem_training_statuses(
+        &logs,
+        [
+            (
+                "two-sum",
+                std::slice::from_ref(&src),
+                SyncedProblemStatus {
+                    ac: true,
+                    attempted: true,
+                },
+            ),
+            ("other", &[][..], SyncedProblemStatus::default()),
+        ],
+    );
+    assert_eq!(batch.get("two-sum"), Some(&TrainingStatus::Ac));
+    assert_eq!(batch.get("other"), Some(&TrainingStatus::None));
+
+    // Read-only workspace rejects append_training_log.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    let err = ro
+        .append_training_log(&TrainingLogEntry {
+            at: "2026-11-24T13:00:00Z".into(),
+            problem_id: Some("two-sum".into()),
+            source: None,
+            status: TrainingLogStatus::Ac,
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "read_only");
+
+    // Blank lines are skipped; malformed JSON returns Error::Invalid.
+    let log_path = dir.path().join(TRAINING_LOGS_REL_PATH);
+    let existing = fs::read_to_string(&log_path).unwrap();
+    fs::write(&log_path, format!("\n{existing}\n   \n")).unwrap();
+    assert_eq!(ws.read_training_logs().unwrap().len(), 3);
+
+    fs::write(&log_path, format!("{existing}{{not valid json\n")).unwrap();
+    let invalid = ws.read_training_logs().unwrap_err();
+    assert_eq!(invalid.code(), "invalid_file");
+}
+
+#[cfg(unix)]
+#[test]
+fn training_logs_rejects_symlink_escape() {
+    use xcpc_domain::{TrainingLogEntry, TrainingLogStatus};
+
+    let (dir, ws) = workspace();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("training")).unwrap();
+
+    let err = ws.read_training_logs().unwrap_err();
+    assert_eq!(err.code(), "path_escape");
+
+    let err = ws
+        .append_training_log(&TrainingLogEntry {
+            at: "2026-11-24T10:00:00Z".into(),
+            problem_id: Some("two-sum".into()),
+            source: None,
+            status: TrainingLogStatus::Todo,
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "path_escape");
+}
+
+#[test]
+fn find_problem_by_source_and_create_problem_with_options() {
+    use xcpc_domain::ProblemSource;
+
+    let (dir, ws) = workspace();
+
+    // Existing problem "two-sum" has source (codeforces, 1999A).
+    assert_eq!(
+        ws.find_problem_by_source("CodeForces", "1999a").unwrap(),
+        Some("two-sum".into())
+    );
+    assert_eq!(
+        ws.find_problem_by_source("atcoder", "abc300_a").unwrap(),
+        None
+    );
+    assert_eq!(ws.find_problem_by_source("", "1999A").unwrap(), None);
+
+    // Create problem with numeric difficulty (maps to rating), sources, and tags.
+    let created = ws
+        .create_problem_with_options(
+            "abc300-a",
+            "N-choice question",
+            &CreateProblemOptions {
+                sources: vec![ProblemSource {
+                    platform: "atcoder".into(),
+                    id: "abc300_a".into(),
+                    url: Some("https://atcoder.jp/contests/abc300/tasks/abc300_a".into()),
+                }],
+                tags: vec!["implementation".into(), "math".into(), "math".into()],
+                difficulty: Some("400".into()),
+                rating: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(created.id, "abc300-a");
+    assert_eq!(created.meta.title, "N-choice question");
+    assert_eq!(created.meta.rating, Some(400));
+    assert_eq!(created.meta.tags, vec!["implementation", "math"]);
+    assert_eq!(created.meta.sources.len(), 1);
+    assert_eq!(created.meta.sources[0].platform, "atcoder");
+    assert_eq!(created.meta.sources[0].id, "abc300_a");
+    assert_eq!(
+        ws.find_problem_by_source("ATCODER", "ABC300_A").unwrap(),
+        Some("abc300-a".into())
+    );
+
+    // Non-numeric difficulty is preserved as unknown field in problem.toml without breaking load.
+    let labeled = ws
+        .create_problem_with_options(
+            "luogu-p1001",
+            "A+B Problem",
+            &CreateProblemOptions {
+                sources: vec![ProblemSource {
+                    platform: "luogu".into(),
+                    id: "P1001".into(),
+                    url: None,
+                }],
+                tags: vec![],
+                difficulty: Some("入门".into()),
+                rating: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(labeled.meta.rating, None);
+    let raw_toml =
+        fs::read_to_string(dir.path().join("problems/luogu-p1001/problem.toml")).unwrap();
+    assert!(raw_toml.contains("difficulty = \"入门\""));
+
+    // Duplicate ID returns Conflict.
+    let dup = ws
+        .create_problem_with_options("abc300-a", "Dup", &CreateProblemOptions::default())
+        .unwrap_err();
+    assert_eq!(dup.code(), "conflict");
+
+    // Read-only rejects creation.
+    let ro = Workspace::open(dir.path(), true).unwrap();
+    let err = ro
+        .create_problem_with_options("ro-prob", "RO", &CreateProblemOptions::default())
+        .unwrap_err();
+    assert_eq!(err.code(), "read_only");
+}
