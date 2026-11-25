@@ -5,7 +5,7 @@
 <h1 align="center">XCPC Workstation</h1>
 
 <p align="center">
-  本地优先的 XCPC 工作站 —— 集开放目录题库、本地 Polygon 出题与严格验收、Polygon / DOMjudge / Hydro 数据包流转、活引用组卷与 Typst PDF 出版于一体，原生支持 AI Agent / MCP。
+  本地优先的 XCPC 工作站 —— 集开放目录题库、本地 Polygon 出题与严格验收、Polygon / DOMjudge / Hydro 数据包流转、活引用组卷与 Typst PDF 出版、高密度训练看板与混合沙箱插件生态于一体，原生支持 AI Agent / MCP。
 </p>
 
 <p align="center">
@@ -35,6 +35,8 @@
   - **双档门禁与「动静分离」**：开发态支持局部子集调试，`--strict` 严格验收强制通过自测、全量过检与标程时限余量检查；`xcpc check`、定稿与导出仅核对验收哈希，不暗中编译跑数。
 - **Polygon / DOMjudge / Hydro 生态数据包流转**：一键导入 Polygon 单题或整场比赛 ZIP（LaTeX 题面自动转 Markdown，完整导入 `interactor`、`run-count` 与 `groups` 子任务）；一键导出 DOMjudge 与 Hydro 最小集合 ZIP（自动剔除内部解法/生成器，内嵌 Typst 题面 PDF，支持交互题与 Hydro OI 子任务 `config.yaml`）。
 - **大规模题库组织、活引用组卷与多人 Git 协同**：全部项目数据以纯文本 Markdown + TOML 存储在开放目录中，个人配置与 `.xcpc/` 本地缓存彻底隔离；题库中心提供持久化分组侧栏、动态视图分组、多选与批量操作（加赛 / 归组 / 批量严格验收 / 批量导出）以及 `Ctrl+K` 分组配额与 `>` 动作检索；比赛以活引用组卷，定稿后将源文件、生效模板与两本 PDF 写入 `snapshot/` 永久只读复现。
+- **高密度训练看板与多平台 OJ 同步**：内置 Codeforces / AtCoder 增量同步，运行时自动合并外部提交与本地 `training/logs.jsonl` 记录（训练状态不污染题库文件）。提供全局时间窗、双模式年度热力图、Rating 走势曲线、难度突破趋势（P75 / P90）、难度与标签下钻分布、近期比赛日历、提交检索与题解聚合。
+- **混合沙箱插件生态与纯插件化「工具」Tab**：Core 层 QuickJS 沙箱运行 OJ 同步与无头计算，纯 Web `<WebView>` 沙箱承载独立 `ui.html` 交互画板（官方提供图论与几何画板、数论与位运算工作台、字符串算法调试器、复杂度与内存估算 4 款零权限工具），所有敏感权限均由 Rust Core 强制 `pending_trust` 信任门控与白名单拦截。
 - **AI Agent / MCP 一等公民与官方出题 Skill**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core，完整开放题库检索、题面读写、组卷、题目包检查/构建/严格验收/对拍与导入导出工具（支持 `--read-only` 守卫与外部修改零闪白同步）；内置 [`skills/xcpc-problem-creator/`](./skills/xcpc-problem-creator/SKILL.md) 官方出题 Skill，可通过 `xcpc init --with-skills` 一键装入工作区。
 - **为出题人打磨的写作、定制与双语界面**：内置简体中文 / English 实时热切换与双语模板参数；提供 `/` 斜杠命令菜单、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、自定义 `templates/*.typ` 与全局 `theme.toml`。
 
@@ -44,6 +46,14 @@
 
 <p align="center">
   <img src="./docs/images/library.png" width="100%" alt="XCPC Workstation 题库中心：持久化分组侧栏、比赛视图分组、Polygon 导入、验收状态与即时题面预览" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/training.png" width="100%" alt="XCPC Workstation 高密度训练看板：Codeforces / AtCoder 平台 Rating、双模式年度热力图、Rating 曲线与难度突破趋势" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/tools.png" width="100%" alt="XCPC Workstation 工具空间：纯 Web 沙箱承载官方图论与几何画板插件，零权限开箱即用" />
 </p>
 
 ---
@@ -114,6 +124,23 @@ xcpc -w ./my-xcpc import polygon ./contest-package.zip
 ```
 
 如需限制 Agent 仅作审题与诊断而不修改工作区，可在 `args` 中追加 `"--read-only"`。配合 `xcpc init --with-skills` 安装官方出题 Skill 后，Agent 可端到端完成出题、数据生成、严格验收与对拍。
+
+---
+
+## 插件生态
+
+在桌面端 **「工具」** 或 **「设置 → 插件」** 中，可一键浏览并安装官方插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins) 中的工具与扩展（亦可通过 CLI 安装或开发联调）：
+
+```bash
+# 脚手架生成插件项目、热重载链接并校验清单与打包约束
+xcpc plugin init ./my-tool --template ui
+xcpc plugin link ./my-tool
+xcpc plugin check ./my-tool
+```
+
+- **默认安全边界**：纯 Web 交互界面运行在独立 `<WebView>` 沙箱中（无文件系统或 Node 权限），仅通过结构化 `window.xcpc` 桥与宿主通信；后台 OJ 同步与无头工具运行在 Rust Core 内置的 QuickJS 沙箱中，所有网络域名、凭据与只读工作区访问均受白名单约束。
+- **核心强制信任门控**：零权限工具开箱即用；任何声明网络域名、凭据或工作区读取权限的第三方插件在首次安装或权限变更时默认处于 `pending_trust` 状态，需用户显式信任后方可执行。
+- **插件开发文档**：完整的清单格式、`@xcpc/plugin-sdk` API、单文件打包流程与社区上架指南见 [`docs/plugin-development.md`](./docs/plugin-development.md)；使用 AI Agent 辅助开发插件可参考 [`skills/xcpc-plugin-creator/SKILL.md`](./skills/xcpc-plugin-creator/SKILL.md)。
 
 ---
 

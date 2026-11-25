@@ -1,6 +1,6 @@
 # XCPC Workstation 文档
 
-XCPC Workstation 是本地优先的 **个人 XCPC 工作站**（以 Linux 桌面端为主）。题库是它的底座，在此之上提供比赛组卷、与 [`polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)（`olymp.sty` 中文版）版式一致的题面出版、训练看板，并把 Agent/MCP 作为一等用户来支持。当前优先级是**出版**。
+XCPC Workstation 是本地优先的 **个人 XCPC 工作站**（以 Linux 桌面端为主，支持交叉打包 Windows）。题库是它的底座，在此之上提供活引用式组卷、与 [`polygon-chinese-template`](https://github.com/lihaoze123/polygon-chinese-template)（`olymp.sty` 中文版）版式一致的题面出版、本地 Polygon 出题验题、混合沙箱插件与纯 Web `<WebView>` 插件生态、训练看板，并把 Agent/MCP 作为一等用户来支持。Phase 0–4 均已落地。
 
 | 文档 | 内容 |
 | :--- | :--- |
@@ -8,7 +8,8 @@ XCPC Workstation 是本地优先的 **个人 XCPC 工作站**（以 Linux 桌面
 | [architecture.md](./architecture.md) | 技术栈、crate 划分、领域模型、双层存储、格式转换管线、MCP/CLI 与安全边界 |
 | [statement-style.md](./statement-style.md) | 默认题面 `olymp-classic` 的基准与版式细则、字体、题解册、`xcpc-lint`、TRD、双语 |
 | [design-system.md](./design-system.md) | 应用界面的信息架构、色彩/圆角/字体/动效 Token、文案克制规范与交互工艺细则 |
-| [roadmap.md](./roadmap.md) | Phase 0–3 的范围，以及待定事项 |
+| [plugin-development.md](./plugin-development.md) | 插件开发指南：三种插件模式、安全与沙箱边界、CLI 工作流、`@xcpc/plugin-sdk` 与纯 Web `<WebView>` 示例 |
+| [roadmap.md](./roadmap.md) | Phase 0–4 演进路线与待定事项 |
 | [reference/](./reference/) | v1 遗留参考材料（只读，不迁移，详见下文） |
 
 ## 参考材料（`reference/`）

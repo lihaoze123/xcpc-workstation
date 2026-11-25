@@ -28,6 +28,8 @@ jobs:
         run: shellcheck -e SC2086 scripts/*.sh packaging/linux/*.sh
       - name: Check Python syntax
         run: python3 -m py_compile scripts/*.py
+      - name: Check plugin docs
+        run: python3 scripts/check-plugin-docs.py
 
   conventional-commits:
     name: PR title (Conventional Commits)
