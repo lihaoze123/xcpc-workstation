@@ -74,6 +74,7 @@ impl HttpClient for UreqHttpClient {
             .clamp(500, MAX_HTTP_TIMEOUT_MS);
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_millis(timeout_ms))
+            .redirects(0)
             .user_agent("XCPC-Workstation/0.3")
             .build();
 

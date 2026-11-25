@@ -1,17 +1,45 @@
 "use strict";
 
 function render(sdk) {
-  const { h, signal, effect, ui, token, colorScheme } = sdk;
-  const { View, Text, Canvas, Button, Input } = ui;
+  const { h, signal, effect, untracked, ui, token, colorScheme } = sdk;
+  const { View, Text, Canvas, Button, Segmented, Chip, Input, If } = ui;
+  const runUntracked = typeof untracked === "function" ? untracked : (fn) => fn();
 
   const NODE_R = 18;
+  const isDark = () => Boolean(colorScheme && colorScheme() === "dark");
   const PALETTE = [
-    { name: "默认", color: "#dbeafe" },
-    { name: "翠绿", color: "#bbf7d0" },
-    { name: "琥珀", color: "#fde68a" },
-    { name: "珊瑚", color: "#fecaca" },
-    { name: "紫藤", color: "#e9d5ff" },
+    { id: null, name: "默认" },
+    { id: "cyan", name: "青蓝", light: "#E0F2FE", dark: "#164E63", lightStroke: "#0284C7", darkStroke: "#38BDF8" },
+    { id: "green", name: "绿", light: "#DCFCE7", dark: "#14532D", lightStroke: "#15803D", darkStroke: "#4ADE80" },
+    { id: "amber", name: "橙", light: "#FEF3C7", dark: "#78350F", lightStroke: "#B45309", darkStroke: "#FBBF24" },
+    { id: "red", name: "红", light: "#FEE2E2", dark: "#7F1D1D", lightStroke: "#B91C1C", darkStroke: "#F87171" },
   ];
+
+  function findPaletteEntry(colorKey) {
+    if (!colorKey) return null;
+    return PALETTE.find((p) => p.id === colorKey || p.light === colorKey || p.dark === colorKey) || null;
+  }
+
+  function resolveNodeFill(colorKey, dark, fallback) {
+    if (!colorKey) return fallback;
+    const entry = findPaletteEntry(colorKey);
+    if (entry && entry.id) return dark ? entry.dark : entry.light;
+    return colorKey;
+  }
+
+  function resolveNodeStroke(colorKey, dark, isSel, fallback) {
+    if (isSel) return token("primary");
+    const entry = findPaletteEntry(colorKey);
+    if (entry && entry.id) return dark ? entry.darkStroke : entry.lightStroke;
+    return fallback;
+  }
+
+  function resolveNodeText(colorKey, dark, fallback) {
+    if (!colorKey) return fallback;
+    const entry = findPaletteEntry(colorKey);
+    if (entry && entry.id) return dark ? "#FAFAFA" : "#09090B";
+    return "#09090B";
+  }
 
   const SAMPLES = {
     tree: {
@@ -28,7 +56,7 @@ function render(sdk) {
       layout: "force",
       text: "1 2 5\n1 3 2\n2 4 1\n2 5 4\n3 5 3\n4 5 7",
     },
-    coords: {
+    geometry: {
       format: "coords",
       directed: false,
       oneIndexed: true,
@@ -36,6 +64,30 @@ function render(sdk) {
       text: "1 0 0\n2 4 0\n3 2 3\n4 6 3\nedge 1 2\nedge 2 3\nedge 3 1\nedge 2 4\nedge 3 4",
     },
   };
+
+  const FORMAT_ITEMS = [
+    { value: "edge_list", label: "边表", testID: "graph-format-edge_list" },
+    { value: "parent_array", label: "父数组", testID: "graph-format-parent_array" },
+    { value: "adj_list", label: "邻接表", testID: "graph-format-adj_list" },
+    { value: "coords", label: "点坐标", testID: "graph-format-coords" },
+  ];
+
+  const INDEX_ITEMS = [
+    { value: "1", label: "从 1 开始", testID: "graph-index-1" },
+    { value: "0", label: "从 0 开始", testID: "graph-index-0" },
+  ];
+
+  const DIR_ITEMS = [
+    { value: "undirected", label: "无向图", testID: "graph-dir-undirected" },
+    { value: "directed", label: "有向图", testID: "graph-dir-directed" },
+  ];
+
+  const LAYOUT_ITEMS = [
+    { value: "force", label: "力导向", testID: "graph-layout-force" },
+    { value: "tree", label: "树", testID: "graph-layout-tree" },
+    { value: "circle", label: "圆形", testID: "graph-layout-circle" },
+    { value: "coords", label: "按坐标", testID: "graph-layout-coords" },
+  ];
 
   const format = signal("edge_list"); // "edge_list" | "parent_array" | "adj_list" | "coords"
   const oneIndexed = signal(true);
@@ -47,11 +99,14 @@ function render(sdk) {
   const selectedId = signal(null);
   const connectMode = signal(false);
   const connectFrom = signal(null);
-  const canvasSize = signal({ width: 640, height: 460 });
+  const canvasSize = signal({ width: 420, height: 420 });
 
   let draggingId = null;
   let dragMoved = false;
   let suppressTextParse = false;
+  let hasUserDragged = false;
+  let hasMeasuredCanvas = false;
+  let lastAppliedPayload = null;
 
   function escapeXml(str) {
     return String(str)
@@ -61,14 +116,27 @@ function render(sdk) {
       .replace(/"/g, "&quot;");
   }
 
+  function clampNodesToBounds(list, w, h) {
+    const pad = Math.min(48, Math.max(NODE_R + 14, Math.min(w, h) * 0.12));
+    const minX = pad;
+    const maxX = Math.max(pad, w - pad);
+    const minY = pad;
+    const maxY = Math.max(pad, h - pad);
+    return list.map((nd) => ({
+      ...nd,
+      x: Math.max(minX, Math.min(maxX, Number.isFinite(nd.x) ? nd.x : w / 2)),
+      y: Math.max(minY, Math.min(maxY, Number.isFinite(nd.y) ? nd.y : h / 2)),
+    }));
+  }
+
   function layoutNodes(rawNodes, rawEdges, mode, w, h) {
     const list = rawNodes.map((n) => ({ ...n }));
     const n = list.length;
     if (n === 0) return list;
-    const pad = 42;
+    const pad = Math.min(52, Math.max(NODE_R + 18, Math.min(w, h) * 0.14));
     const cx = w / 2;
     const cy = h / 2;
-    const radius = Math.max(40, Math.min(w, h) / 2 - pad);
+    const radius = Math.max(36, Math.min(w, h) / 2 - pad);
 
     if (mode === "coords" && list.some((nd) => nd.x != null && nd.y != null)) {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -82,17 +150,19 @@ function render(sdk) {
       }
       const sx = Math.max(1e-6, maxX - minX);
       const sy = Math.max(1e-6, maxY - minY);
+      const usableW = Math.max(1, w - 2 * pad);
+      const usableH = Math.max(1, h - 2 * pad);
       for (let i = 0; i < n; i++) {
         if (list[i].x == null || list[i].y == null) {
-          const a = (2 * Math.PI * i) / n;
+          const a = (2 * Math.PI * i) / n - Math.PI / 2;
           list[i].x = cx + radius * Math.cos(a);
           list[i].y = cy + radius * Math.sin(a);
         } else {
-          list[i].x = pad + ((list[i].x - minX) / sx) * (w - 2 * pad);
-          list[i].y = h - pad - ((list[i].y - minY) / sy) * (h - 2 * pad);
+          list[i].x = pad + ((list[i].x - minX) / sx) * usableW;
+          list[i].y = h - pad - ((list[i].y - minY) / sy) * usableH;
         }
       }
-      return list;
+      return clampNodesToBounds(list, w, h);
     }
 
     if (mode === "tree") {
@@ -136,7 +206,7 @@ function render(sdk) {
         nd.x = p.x;
         nd.y = p.y;
       }
-      return list;
+      return clampNodesToBounds(list, w, h);
     }
 
     for (let i = 0; i < n; i++) {
@@ -145,15 +215,19 @@ function render(sdk) {
       list[i].y = cy + radius * Math.sin(a);
     }
 
-    if (mode === "circle" || n <= 2) return list;
+    if (mode === "circle" || n <= 2) {
+      return clampNodesToBounds(list, w, h);
+    }
 
     const idx = new Map();
     list.forEach((nd, i) => idx.set(nd.id, i));
-    const area = Math.max(1000, (w - 2 * pad) * (h - 2 * pad));
-    const k = Math.sqrt(area / Math.max(1, n));
-    let temp = Math.min(w, h) / 6;
+    const usableW = Math.max(80, w - 2 * pad);
+    const usableH = Math.max(80, h - 2 * pad);
+    const area = usableW * usableH;
+    const k = Math.sqrt(area / Math.max(1, n)) * 0.85;
+    let temp = Math.min(usableW, usableH) / 6;
 
-    for (let iter = 0; iter < 50; iter++) {
+    for (let iter = 0; iter < 55; iter++) {
       const dx = new Array(n).fill(0);
       const dy = new Array(n).fill(0);
       for (let i = 0; i < n; i++) {
@@ -187,9 +261,30 @@ function render(sdk) {
         list[i].x = Math.max(pad, Math.min(w - pad, list[i].x + (dx[i] / disp) * step));
         list[i].y = Math.max(pad, Math.min(h - pad, list[i].y + (dy[i] / disp) * step));
       }
-      temp *= 0.94;
+      temp *= 0.93;
     }
-    return list;
+
+    // Re-center bounding box inside viewport with generous padding
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const nd of list) {
+      minX = Math.min(minX, nd.x);
+      maxX = Math.max(maxX, nd.x);
+      minY = Math.min(minY, nd.y);
+      maxY = Math.max(maxY, nd.y);
+    }
+    const spanX = maxX - minX;
+    const spanY = maxY - minY;
+    if (spanX > 1 && spanY > 1) {
+      const scale = Math.min(1, usableW / spanX, usableH / spanY);
+      const midX = (minX + maxX) / 2;
+      const midY = (minY + maxY) / 2;
+      for (const nd of list) {
+        nd.x = cx + (nd.x - midX) * scale;
+        nd.y = cy + (nd.y - midY) * scale;
+      }
+    }
+
+    return clampNodesToBounds(list, w, h);
   }
 
   function parseTextToGraph(fmt, text, keepPositions) {
@@ -296,17 +391,22 @@ function render(sdk) {
     const needsLayout = !keepPositions || rawList.some((nd) => nd.x == null || nd.y == null);
     const placed = needsLayout
       ? layoutNodes(rawList, parsedEdges, layoutMode(), sz.width, sz.height)
-      : rawList;
+      : clampNodesToBounds(rawList, sz.width, sz.height);
     nodes.set(placed);
     edges.set(parsedEdges);
   }
 
   function serializeGraphToText(curNodes, curEdges) {
-    const fmt = format();
+    let fmt = format();
+    if (fmt === "parent_array") {
+      fmt = "edge_list";
+      format.set("edge_list");
+    }
     const lines = [];
     if (fmt === "coords") {
+      const hVal = canvasSize().height;
       for (const nd of curNodes) {
-        lines.push(nd.id + " " + Math.round(nd.x) + " " + Math.round(nd.y));
+        lines.push(nd.id + " " + Math.round(nd.x) + " " + Math.round(hVal - nd.y));
       }
       for (const e of curEdges) {
         lines.push("edge " + e.from + " " + e.to + (e.weight ? " " + e.weight : ""));
@@ -322,7 +422,6 @@ function render(sdk) {
         lines.push(u + ": " + vs.join(" "));
       }
     } else {
-      // edge_list (also fallback after interactive edits on parent_array)
       const touched = new Set();
       for (const e of curEdges) {
         touched.add(e.from);
@@ -340,29 +439,32 @@ function render(sdk) {
 
   function applyInitialPayload() {
     const payload = typeof sdk.initialPayload === "function" ? sdk.initialPayload() : sdk.initialPayload;
-    if (!payload || !Array.isArray(payload.nodes)) return;
-    if (payload.directed != null) directed.set(Boolean(payload.directed));
-    if (payload.one_indexed != null) oneIndexed.set(Boolean(payload.one_indexed));
-    if (payload.layout) layoutMode.set(String(payload.layout));
-    const sz = canvasSize();
-    const incomingNodes = payload.nodes.map((n) => ({
-      id: String(n.id),
-      label: String(n.label || n.id),
-      x: n.x != null ? Number(n.x) : null,
-      y: n.y != null ? Number(n.y) : null,
-      color: n.color || null,
-    }));
-    const incomingEdges = (payload.edges || []).map((e) => ({
-      from: String(e.from),
-      to: String(e.to),
-      weight: e.weight != null ? String(e.weight) : e.label != null ? String(e.label) : null,
-    }));
-    const placed = incomingNodes.some((n) => n.x == null || n.y == null)
-      ? layoutNodes(incomingNodes, incomingEdges, layoutMode(), sz.width, sz.height)
-      : incomingNodes;
-    nodes.set(placed);
-    edges.set(incomingEdges);
-    serializeGraphToText(placed, incomingEdges);
+    if (!payload || !Array.isArray(payload.nodes) || payload === lastAppliedPayload) return;
+    lastAppliedPayload = payload;
+    runUntracked(() => {
+      if (payload.directed != null) directed.set(Boolean(payload.directed));
+      if (payload.one_indexed != null) oneIndexed.set(Boolean(payload.one_indexed));
+      if (payload.layout) layoutMode.set(String(payload.layout));
+      const sz = canvasSize();
+      const incomingNodes = payload.nodes.map((n) => ({
+        id: String(n.id),
+        label: String(n.label || n.id),
+        x: n.x != null ? Number(n.x) : null,
+        y: n.y != null ? Number(n.y) : null,
+        color: n.color || null,
+      }));
+      const incomingEdges = (payload.edges || []).map((e) => ({
+        from: String(e.from),
+        to: String(e.to),
+        weight: e.weight != null ? String(e.weight) : e.label != null ? String(e.label) : null,
+      }));
+      const placed = incomingNodes.some((n) => n.x == null || n.y == null)
+        ? layoutNodes(incomingNodes, incomingEdges, layoutMode(), sz.width, sz.height)
+        : clampNodesToBounds(incomingNodes, sz.width, sz.height);
+      nodes.set(placed);
+      edges.set(incomingEdges);
+      serializeGraphToText(placed, incomingEdges);
+    });
   }
 
   // Initial load
@@ -392,6 +494,17 @@ function render(sdk) {
     return String(cur);
   }
 
+  function applyLayout(mode) {
+    layoutMode.set(mode);
+    hasUserDragged = false;
+    const sz = canvasSize();
+    const next = layoutNodes(nodes(), edges(), mode, sz.width, sz.height);
+    nodes.set(next);
+    if (format() === "coords") {
+      serializeGraphToText(next, edges());
+    }
+  }
+
   function buildCurrentSvg() {
     const sz = canvasSize();
     const w = Math.max(320, Math.round(sz.width));
@@ -400,13 +513,15 @@ function render(sdk) {
     const edList = edges();
     const isDir = directed();
     const byId = new Map(list.map((n) => [n.id, n]));
+    const strokeCol = "#52525b";
+    const textCol = "#09090b";
     const parts = [
       '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '">',
       '<rect width="100%" height="100%" fill="#ffffff"/>',
     ];
     if (isDir) {
       parts.push(
-        '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#475569"/></marker></defs>'
+        '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="' + strokeCol + '"/></marker></defs>'
       );
     }
     for (const e of edList) {
@@ -421,20 +536,21 @@ function render(sdk) {
       const x2 = v.x - (dx / d) * (isDir ? NODE_R + 4 : NODE_R);
       const y2 = v.y - (dy / d) * (isDir ? NODE_R + 4 : NODE_R);
       parts.push(
-        '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '" stroke="#475569" stroke-width="2"' + (isDir ? ' marker-end="url(#arr)"' : "") + "/>"
+        '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '" stroke="' + strokeCol + '" stroke-width="2"' + (isDir ? ' marker-end="url(#arr)"' : "") + "/>"
       );
       if (e.weight) {
         parts.push(
-          '<text x="' + ((x1 + x2) / 2).toFixed(1) + '" y="' + ((y1 + y2) / 2 - 6).toFixed(1) + '" text-anchor="middle" font-family="monospace" font-size="12" fill="#0f172a">' + escapeXml(e.weight) + "</text>"
+          '<text x="' + ((x1 + x2) / 2).toFixed(1) + '" y="' + ((y1 + y2) / 2 - 6).toFixed(1) + '" text-anchor="middle" font-family="monospace" font-size="12" fill="' + textCol + '">' + escapeXml(e.weight) + "</text>"
         );
       }
     }
     for (const nd of list) {
+      const fillCol = resolveNodeFill(nd.color, false, "#f4f4f5");
       parts.push(
-        '<circle cx="' + nd.x.toFixed(1) + '" cy="' + nd.y.toFixed(1) + '" r="' + NODE_R + '" fill="' + escapeXml(nd.color || "#dbeafe") + '" stroke="#334155" stroke-width="2"/>'
+        '<circle cx="' + nd.x.toFixed(1) + '" cy="' + nd.y.toFixed(1) + '" r="' + NODE_R + '" fill="' + escapeXml(fillCol) + '" stroke="' + strokeCol + '" stroke-width="2"/>'
       );
       parts.push(
-        '<text x="' + nd.x.toFixed(1) + '" y="' + (nd.y + 4).toFixed(1) + '" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0f172a">' + escapeXml(nd.label || nd.id) + "</text>"
+        '<text x="' + nd.x.toFixed(1) + '" y="' + (nd.y + 4).toFixed(1) + '" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="' + textCol + '">' + escapeXml(nd.label || nd.id) + "</text>"
       );
     }
     parts.push("</svg>");
@@ -442,27 +558,40 @@ function render(sdk) {
   }
 
   async function handleExportSvg() {
-    const svg = buildCurrentSvg();
-    if (sdk.saveText) {
-      const ok = await sdk.saveText(svg, "graph.svg");
-      if (ok && sdk.toast) sdk.toast("已导出 SVG");
-    } else if (sdk.copyText) {
-      await sdk.copyText(svg);
-      if (sdk.toast) sdk.toast("已复制 SVG 源码");
+    try {
+      const svg = buildCurrentSvg();
+      if (sdk.saveText) {
+        const ok = await sdk.saveText(svg, "graph.svg");
+        if (ok && sdk.toast) sdk.toast("已导出 SVG");
+      } else if (sdk.copyText) {
+        await sdk.copyText(svg);
+        if (sdk.toast) sdk.toast("已复制 SVG 源码");
+      }
+    } catch (err) {
+      if (sdk.toast) {
+        sdk.toast("导出 SVG 失败：" + (err && err.message ? err.message : String(err)), "issues");
+      }
     }
   }
 
   async function handleExportPng() {
     if (!sdk.renderSvgToPng || !sdk.savePng) return;
-    const svg = buildCurrentSvg();
-    const b64 = await sdk.renderSvgToPng(svg, 2.0);
-    const ok = await sdk.savePng(b64, "graph.png");
-    if (ok && sdk.toast) sdk.toast("已导出 PNG");
+    try {
+      const svg = buildCurrentSvg();
+      const b64 = await sdk.renderSvgToPng(svg, 2.0);
+      const ok = await sdk.savePng(b64, "graph.png");
+      if (ok && sdk.toast) sdk.toast("已导出 PNG");
+    } catch (err) {
+      if (sdk.toast) {
+        sdk.toast("导出 PNG 失败：" + (err && err.message ? err.message : String(err)), "issues");
+      }
+    }
   }
 
   function applySample(key) {
     const s = SAMPLES[key];
     if (!s) return;
+    hasUserDragged = false;
     format.set(s.format);
     directed.set(s.directed);
     oneIndexed.set(s.oneIndexed);
@@ -491,13 +620,15 @@ function render(sdk) {
 
   return h(
     View,
-    { style: { flex: 1, flexDirection: "row", backgroundColor: token("background") } },
-    // Left pane: text editor & controls
+    { style: { flex: 1, flexDirection: "row", minHeight: 0, backgroundColor: token("background") } },
+    // Left pane: text editor & controls (width 271 - 1 border - 24 padding = 246px inner;
+    // Segmented track chrome is 6px -> 240px items width = 4×60 or 2×120, all edges flush)
     h(
       View,
       {
         style: {
-          width: 300,
+          width: 271,
+          flexShrink: 0,
           borderRightWidth: 1,
           borderColor: token("border"),
           padding: 12,
@@ -505,100 +636,109 @@ function render(sdk) {
           backgroundColor: token("card"),
         },
       },
+      // Format selector
       h(
         View,
-        { style: { flexDirection: "row", flexWrap: "wrap", gap: 4 } },
-        ...[
-          ["edge_list", "边表"],
-          ["parent_array", "父数组"],
-          ["adj_list", "邻接表"],
-          ["coords", "坐标"],
-        ].map(([id, label]) =>
-          h(
-            Button,
-            {
-              variant: format() === id ? "default" : "outline",
-              size: "sm",
-              onPress: () => {
-                format.set(id);
-                parseTextToGraph(id, editorText(), false);
-              },
-            },
-            label
-          )
-        )
+        { style: { gap: 4 } },
+        h(Text, { style: { fontSize: 11.5, color: token("muted-foreground") } }, "输入格式"),
+        h(Segmented, {
+          items: FORMAT_ITEMS,
+          value: () => format(),
+          itemWidth: 60,
+          onChange: (id) => {
+            format.set(id);
+            parseTextToGraph(id, editorText(), false);
+          },
+        })
       ),
+      // Index & Direction selectors (uniform full-width 246px)
       h(
         View,
-        { style: { flexDirection: "row", flexWrap: "wrap", gap: 4 } },
-        h(
-          Button,
-          {
-            variant: oneIndexed() ? "default" : "outline",
-            size: "sm",
-            onPress: () => {
-              oneIndexed.set(!oneIndexed());
-              parseTextToGraph(format(), editorText(), false);
-            },
+        { style: { gap: 6 } },
+        h(Segmented, {
+          items: INDEX_ITEMS,
+          value: () => (oneIndexed() ? "1" : "0"),
+          itemWidth: 120,
+          onChange: (v) => {
+            oneIndexed.set(v === "1");
+            parseTextToGraph(format(), editorText(), false);
           },
-          oneIndexed() ? "1-indexed" : "0-indexed"
-        ),
+        }),
+        h(Segmented, {
+          items: DIR_ITEMS,
+          value: () => (directed() ? "directed" : "undirected"),
+          itemWidth: 120,
+          onChange: (v) => directed.set(v === "directed"),
+        })
+      ),
+      // Layout selector
+      h(
+        View,
+        { style: { gap: 4 } },
+        h(Text, { style: { fontSize: 11.5, color: token("muted-foreground") } }, "布局方式"),
+        h(Segmented, {
+          items: LAYOUT_ITEMS,
+          value: () => layoutMode(),
+          itemWidth: 60,
+          onChange: (id) => applyLayout(id),
+        })
+      ),
+      // Presets & connect mode
+      h(
+        View,
+        { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" } },
+        h(Button, { testID: "graph-sample-tree", variant: "outline", size: "sm", onPress: () => applySample("tree") }, "示例树"),
+        h(Button, { testID: "graph-sample-weighted", variant: "outline", size: "sm", onPress: () => applySample("weighted") }, "带权图"),
+        h(Button, { testID: "graph-sample-geometry", variant: "outline", size: "sm", onPress: () => applySample("geometry") }, "几何点集"),
         h(
-          Button,
+          View,
           {
-            variant: directed() ? "default" : "outline",
-            size: "sm",
-            onPress: () => directed.set(!directed()),
-          },
-          directed() ? "有向图" : "无向图"
-        ),
-        h(
-          Button,
-          {
-            variant: connectMode() ? "default" : "outline",
-            size: "sm",
+            testID: "graph-connect-toggle",
             onPress: () => {
               connectMode.set(!connectMode());
               connectFrom.set(null);
             },
+            style: () => ({
+              height: 28,
+              paddingLeft: 10,
+              paddingRight: 10,
+              borderRadius: 6,
+              borderWidth: 1,
+              borderColor: connectMode() ? token("primary") : token("border"),
+              backgroundColor: connectMode() ? token("accent") : token("card"),
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+            }),
           },
-          connectMode() ? "连边模式: 开" : "连边模式"
-        )
-      ),
-      h(
-        View,
-        { style: { flexDirection: "row", flexWrap: "wrap", gap: 4 } },
-        ...[
-          ["force", "力导向"],
-          ["tree", "树"],
-          ["circle", "圆形"],
-          ["coords", "坐标"],
-        ].map(([id, label]) =>
+          h(View, {
+            testID: "graph-connect-dot",
+            style: () => ({
+              width: 7,
+              height: 7,
+              borderRadius: 3.5,
+              backgroundColor: connectMode() ? token("primary") : token("muted-foreground"),
+              opacity: connectMode() ? 1 : 0.4,
+            }),
+          }),
           h(
-            Button,
+            Text,
             {
-              variant: layoutMode() === id ? "default" : "outline",
-              size: "sm",
-              onPress: () => {
-                layoutMode.set(id);
-                const sz = canvasSize();
-                nodes.set(layoutNodes(nodes(), edges(), id, sz.width, sz.height));
-              },
+              style: () => ({
+                fontSize: 12.5,
+                fontWeight: "500",
+                color: connectMode() ? token("primary") : token("foreground"),
+              }),
             },
-            label
+            "连边模式"
           )
         )
       ),
-      h(
-        View,
-        { style: { flexDirection: "row", gap: 4 } },
-        h(Button, { variant: "outline", size: "sm", onPress: () => applySample("tree") }, "示例树"),
-        h(Button, { variant: "outline", size: "sm", onPress: () => applySample("weighted") }, "带权图"),
-        h(Button, { variant: "outline", size: "sm", onPress: () => applySample("coords") }, "坐标")
-      ),
+      // Graph text input (two-way synced)
       h(Input, {
+        testID: "graph-editor-input",
         multiline: true,
-        value: editorText(),
+        value: () => editorText(),
         placeholder: "每行一条边 u v [w]",
         onChangeText: (txt) => {
           editorText.set(txt);
@@ -608,8 +748,19 @@ function render(sdk) {
         },
         style: { flex: 1, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5 },
       }),
-      selectedId()
-        ? h(
+      // Selected node inspector or hint
+      h(
+        If,
+        {
+          when: () => selectedId(),
+          else: h(
+            Text,
+            { style: { fontSize: 11, lineHeight: 16, color: token("muted-foreground") } },
+            "拖拽节点调整位置，点击空白加点，开启「连边模式」依次点击两点连边。"
+          ),
+        },
+        () =>
+          h(
             View,
             {
               style: {
@@ -623,44 +774,70 @@ function render(sdk) {
             h(
               View,
               { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" } },
-              h(Text, { style: { fontSize: 12, fontWeight: "600", color: token("foreground") } }, "选中节点: " + selectedId()),
-              h(Button, { variant: "destructive", size: "sm", onPress: deleteSelected }, "删除")
+              h(
+                Text,
+                { style: { fontSize: 12, fontWeight: "600", color: token("foreground") } },
+                () => "选中节点：" + (selectedId() || "")
+              ),
+              h(
+                Button,
+                {
+                  testID: "graph-delete-node",
+                  variant: "outline",
+                  size: "sm",
+                  style: () => ({ borderColor: token("destructive") }),
+                  textStyle: () => ({ color: token("destructive") }),
+                  onPress: deleteSelected,
+                },
+                "删除"
+              )
             ),
             h(
               View,
               { style: { flexDirection: "row", gap: 6 } },
               ...PALETTE.map((sw) =>
                 h(View, {
-                  onPress: () => recolorSelected(sw.color),
-                  style: {
-                    width: 22,
-                    height: 22,
-                    borderRadius: 11,
-                    backgroundColor: sw.color,
-                    borderWidth: 1,
-                    borderColor: token("border"),
+                  testID: "graph-color-" + (sw.id || "default"),
+                  onPress: () => recolorSelected(sw.id),
+                  style: () => {
+                    const dark = isDark();
+                    const cur = nodes().find((n) => n.id === selectedId());
+                    const activeColor = cur ? cur.color || null : null;
+                    const isPicked = activeColor === sw.id;
+                    return {
+                      width: 22,
+                      height: 22,
+                      borderRadius: 11,
+                      backgroundColor: sw.id ? (dark ? sw.dark : sw.light) : token("muted"),
+                      borderWidth: 2,
+                      borderColor: isPicked ? token("primary") : "transparent",
+                    };
                   },
                 })
               )
             )
           )
-        : h(
-            Text,
-            { style: { fontSize: 11, color: token("muted-foreground") } },
-            "提示：拖拽节点调整位置，点击空白加点，开启「连边模式」依次点击两点连边。"
-          )
+      )
     ),
     // Right pane: toolbar + interactive Canvas
     h(
       View,
-      { style: { flex: 1, padding: 12, gap: 8 } },
+      { style: { flex: 1, minWidth: 0, padding: 12, gap: 8 } },
       h(
         View,
-        { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" } },
+        { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 } },
         h(
           Text,
-          { style: { fontSize: 12, color: token("muted-foreground") } },
-          "节点 " + nodes().length + " · 边 " + edges().length + (connectFrom() ? " · 连边起点: " + connectFrom() : "")
+          {
+            testID: "graph-stats",
+            style: { fontSize: 12, fontVariant: ["tabular-nums"], color: token("muted-foreground") },
+          },
+          () =>
+            "节点 " +
+            nodes().length +
+            "   边 " +
+            edges().length +
+            (connectFrom() ? "   连边起点：" + connectFrom() : "")
         ),
         h(
           View,
@@ -668,20 +845,19 @@ function render(sdk) {
           h(
             Button,
             {
+              testID: "graph-relayout",
               variant: "outline",
               size: "sm",
-              onPress: () => {
-                const sz = canvasSize();
-                nodes.set(layoutNodes(nodes(), edges(), layoutMode(), sz.width, sz.height));
-              },
+              onPress: () => applyLayout(layoutMode()),
             },
             "重新布局"
           ),
-          h(Button, { variant: "outline", size: "sm", onPress: handleExportSvg }, "导出 SVG"),
-          h(Button, { variant: "default", size: "sm", onPress: handleExportPng }, "导出 PNG")
+          h(Button, { testID: "graph-export-svg", variant: "outline", size: "sm", onPress: handleExportSvg }, "导出 SVG"),
+          h(Button, { testID: "graph-export-png", variant: "default", size: "sm", onPress: handleExportPng }, "导出 PNG")
         )
       ),
       h(Canvas, {
+        testID: "graph-canvas",
         style: {
           flex: 1,
           borderRadius: 8,
@@ -690,8 +866,18 @@ function render(sdk) {
           backgroundColor: token("card"),
         },
         onLayout: (e) => {
-          if (e && e.bounds && e.bounds.size && e.bounds.size.width > 0 && e.bounds.size.height > 0) {
-            canvasSize.set({ width: e.bounds.size.width, height: e.bounds.size.height });
+          const w = e && e.bounds && e.bounds.size ? e.bounds.size.width : 0;
+          const hVal = e && e.bounds && e.bounds.size ? e.bounds.size.height : 0;
+          if (w > 40 && hVal > 40) {
+            const prev = canvasSize();
+            const changed = Math.abs(prev.width - w) > 2 || Math.abs(prev.height - hVal) > 2;
+            canvasSize.set({ width: w, height: hVal });
+            if (!hasMeasuredCanvas || (changed && !hasUserDragged)) {
+              hasMeasuredCanvas = true;
+              nodes.set(layoutNodes(nodes(), edges(), layoutMode(), w, hVal));
+            } else if (changed) {
+              nodes.set(clampNodesToBounds(nodes(), w, hVal));
+            }
           }
         },
         onPressDown: (e) => {
@@ -723,9 +909,14 @@ function render(sdk) {
             connectFrom.set(null);
             if (!connectMode()) {
               const id = nextNodeId();
-              const nextNodes = [...nodes(), { id, label: id, x, y, color: null }];
+              const sz = canvasSize();
+              const pad = NODE_R + 6;
+              const cx = Math.max(pad, Math.min(sz.width - pad, x));
+              const cy = Math.max(pad, Math.min(sz.height - pad, y));
+              const nextNodes = [...nodes(), { id, label: id, x: cx, y: cy, color: null }];
               nodes.set(nextNodes);
               selectedId.set(id);
+              hasUserDragged = true;
               serializeGraphToText(nextNodes, edges());
             }
           }
@@ -733,11 +924,21 @@ function render(sdk) {
         onMouseMove: (e) => {
           if (!draggingId) return;
           dragMoved = true;
-          const x = e.position.x;
-          const y = e.position.y;
+          hasUserDragged = true;
+          const sz = canvasSize();
+          const pad = NODE_R + 4;
+          const x = Math.max(pad, Math.min(sz.width - pad, e.position.x));
+          const y = Math.max(pad, Math.min(sz.height - pad, e.position.y));
           nodes.update((list) => list.map((n) => (n.id === draggingId ? { ...n, x, y } : n)));
         },
         onMouseUp: () => {
+          if (draggingId && dragMoved && format() === "coords") {
+            serializeGraphToText(nodes(), edges());
+          }
+          draggingId = null;
+          dragMoved = false;
+        },
+        onMouseLeave: () => {
           if (draggingId && dragMoved && format() === "coords") {
             serializeGraphToText(nodes(), edges());
           }
@@ -753,11 +954,11 @@ function render(sdk) {
           const cFrom = connectFrom();
 
           cx.clearRect(0, 0, size.width, size.height);
-          cx.fillStyle = dark ? "#18181b" : "#ffffff";
+          cx.fillStyle = token("card");
           cx.fillRect(0, 0, size.width, size.height);
 
           // Subtle dot grid
-          cx.fillStyle = dark ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.07)";
+          cx.fillStyle = dark ? "rgba(255,255,255,0.06)" : "rgba(9,9,11,0.06)";
           for (let gx = 24; gx < size.width; gx += 28) {
             for (let gy = 24; gy < size.height; gy += 28) {
               cx.fillRect(gx, gy, 1.5, 1.5);
@@ -765,13 +966,14 @@ function render(sdk) {
           }
 
           const byId = new Map(list.map((n) => [n.id, n]));
-          const strokeCol = dark ? "#94a3b8" : "#475569";
-          const textCol = dark ? "#f8fafc" : "#0f172a";
+          const strokeCol = token("secondary-foreground");
+          const textCol = token("foreground");
+          const nodeBg = token("muted");
           const primaryCol = token("primary");
 
           // Draw edges
           cx.strokeStyle = strokeCol;
-          cx.lineWidth = 2;
+          cx.lineWidth = 1.8;
           cx.font = "12px JetBrains Mono, monospace";
           cx.textAlign = "center";
           cx.textBaseline = "middle";
@@ -821,13 +1023,13 @@ function render(sdk) {
             const isSel = nd.id === sel || nd.id === cFrom;
             cx.beginPath();
             cx.arc(nd.x, nd.y, NODE_R, 0, Math.PI * 2);
-            cx.fillStyle = nd.color || (dark ? "#27272a" : "#dbeafe");
+            cx.fillStyle = resolveNodeFill(nd.color, dark, nodeBg);
             cx.fill();
-            cx.lineWidth = isSel ? 3 : 2;
-            cx.strokeStyle = isSel ? primaryCol : strokeCol;
+            cx.lineWidth = isSel ? 2.5 : 1.8;
+            cx.strokeStyle = resolveNodeStroke(nd.color, dark, isSel, strokeCol);
             cx.stroke();
 
-            cx.fillStyle = nd.color ? "#0f172a" : textCol;
+            cx.fillStyle = resolveNodeText(nd.color, dark, textCol);
             cx.fillText(String(nd.label || nd.id), nd.x, nd.y);
           }
         },

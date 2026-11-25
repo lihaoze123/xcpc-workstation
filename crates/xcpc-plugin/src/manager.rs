@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -175,6 +175,13 @@ impl PluginManager {
                 if !path.is_dir() {
                     continue;
                 }
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with('.'))
+                {
+                    continue;
+                }
                 let manifest_path = path.join("manifest.toml");
                 if !manifest_path.is_file() {
                     continue;
@@ -211,17 +218,9 @@ impl PluginManager {
             .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
 
         if let Some(ref dir) = info.local_dir {
-            let entry_path = dir.join(&info.manifest.entry);
-            let entry_source = std::fs::read_to_string(&entry_path).map_err(|e| {
-                PluginError::InvalidPackage(format!(
-                    "failed to read entry '{}': {e}",
-                    info.manifest.entry
-                ))
-            })?;
+            let entry_source = read_plugin_file_safe(dir, &info.manifest.entry, "entry")?;
             let ui_source = match info.manifest.ui_entry {
-                Some(ref ui) => Some(std::fs::read_to_string(dir.join(ui)).map_err(|e| {
-                    PluginError::InvalidPackage(format!("failed to read ui_entry '{ui}': {e}"))
-                })?),
+                Some(ref ui) => Some(read_plugin_file_safe(dir, ui, "ui_entry")?),
                 None => None,
             };
             Ok(LoadedPlugin {
@@ -315,11 +314,50 @@ impl PluginManager {
             )));
         }
 
-        let dest = self.plugins_dir().join(&manifest.id);
-        if dest.exists() {
-            std::fs::remove_dir_all(&dest)?;
+        let plugins_dir = self.plugins_dir();
+        std::fs::create_dir_all(&plugins_dir)?;
+        let dest = plugins_dir.join(&manifest.id);
+
+        let canonical_src = std::fs::canonicalize(src)?;
+        if dest.exists()
+            && let Ok(canonical_dest) = std::fs::canonicalize(&dest)
+            && (canonical_src == canonical_dest || canonical_dest.starts_with(&canonical_src))
+        {
+            return Err(PluginError::InvalidPackage(
+                "source and destination plugin directories overlap".into(),
+            ));
         }
-        copy_dir_recursive(src, &dest)?;
+
+        // Stage into a sibling temp directory first so any copy failure (e.g. symlink in `src`)
+        // never destroys an existing installed plugin.
+        let staging = tempfile::Builder::new()
+            .prefix(&format!(".{}.staging-", manifest.id))
+            .tempdir_in(&plugins_dir)?;
+        copy_dir_recursive(src, staging.path())?;
+
+        let backup = if dest.exists() {
+            let backup_dir = tempfile::Builder::new()
+                .prefix(&format!(".{}.backup-", manifest.id))
+                .tempdir_in(&plugins_dir)?;
+            let backup_path = backup_dir.keep();
+            std::fs::remove_dir(&backup_path)?;
+            std::fs::rename(&dest, &backup_path)?;
+            Some(backup_path)
+        } else {
+            None
+        };
+
+        let staging_path = staging.keep();
+        if let Err(err) = std::fs::rename(&staging_path, &dest) {
+            if let Some(ref backup_path) = backup {
+                let _ = std::fs::rename(backup_path, &dest);
+            }
+            let _ = std::fs::remove_dir_all(&staging_path);
+            return Err(err.into());
+        }
+        if let Some(backup_path) = backup {
+            let _ = std::fs::remove_dir_all(backup_path);
+        }
 
         let plugins = self.list_plugins()?;
         plugins
@@ -340,6 +378,15 @@ impl PluginManager {
         zip_bytes: &[u8],
         expected_sha256: Option<&str>,
     ) -> Result<InstalledPlugin> {
+        self.install_from_zip_bytes_inner(zip_bytes, expected_sha256, None)
+    }
+
+    fn install_from_zip_bytes_inner(
+        &self,
+        zip_bytes: &[u8],
+        expected_sha256: Option<&str>,
+        expected_id: Option<&str>,
+    ) -> Result<InstalledPlugin> {
         if let Some(expected) = expected_sha256 {
             let actual = sha256_hex(zip_bytes);
             if !actual.eq_ignore_ascii_case(expected.trim()) {
@@ -355,6 +402,15 @@ impl PluginManager {
 
         // Locate manifest.toml either at archive root or inside a single top-level directory.
         let plugin_root = locate_extracted_plugin_root(staging.path())?;
+        if let Some(expected_id) = expected_id {
+            let manifest = PluginManifest::from_file(&plugin_root.join("manifest.toml"))?;
+            if manifest.id != expected_id {
+                return Err(PluginError::InvalidPackage(format!(
+                    "extracted plugin id '{}' does not match repository entry id '{expected_id}'",
+                    manifest.id
+                )));
+            }
+        }
         self.install_from_dir(&plugin_root)
     }
 
@@ -428,7 +484,7 @@ impl PluginManager {
         http: &dyn HttpClient,
     ) -> Result<InstalledPlugin> {
         let zip_bytes = http.get_bytes(&entry.download_url)?;
-        self.install_from_zip_bytes(&zip_bytes, Some(&entry.sha256))
+        self.install_from_zip_bytes_inner(&zip_bytes, Some(&entry.sha256), Some(&entry.id))
     }
 }
 
@@ -444,13 +500,40 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Extracts a ZIP archive into `dest_dir` while strictly rejecting any path traversal (Zip Slip) or symlinks.
+const MAX_ZIP_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads a plugin-relative file after verifying its canonical path stays within `dir`.
+fn read_plugin_file_safe(dir: &Path, rel_path: &str, field_name: &str) -> Result<String> {
+    let canonical_dir = std::fs::canonicalize(dir).map_err(|e| {
+        PluginError::InvalidPackage(format!(
+            "failed to resolve plugin directory '{}': {e}",
+            dir.display()
+        ))
+    })?;
+    let candidate = dir.join(rel_path);
+    let canonical_file = std::fs::canonicalize(&candidate).map_err(|e| {
+        PluginError::InvalidPackage(format!("failed to read {field_name} '{rel_path}': {e}"))
+    })?;
+    if !canonical_file.starts_with(&canonical_dir) {
+        return Err(PluginError::ZipSlip(format!(
+            "{field_name} '{rel_path}' escapes plugin directory"
+        )));
+    }
+    std::fs::read_to_string(&canonical_file).map_err(|e| {
+        PluginError::InvalidPackage(format!("failed to read {field_name} '{rel_path}': {e}"))
+    })
+}
+
+/// Extracts a ZIP archive into `dest_dir` while strictly rejecting any path traversal (Zip Slip),
+/// symlinks, or decompressed size bombs.
 pub fn extract_zip_safe(zip_bytes: &[u8], dest_dir: &Path) -> Result<()> {
     let cursor = Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|e| PluginError::InvalidPackage(format!("invalid zip archive: {e}")))?;
 
     let canonical_dest = std::fs::canonicalize(dest_dir)?;
+    let mut total_written: u64 = 0;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -493,8 +576,19 @@ pub fn extract_zip_safe(zip_bytes: &[u8], dest_dir: &Path) -> Result<()> {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            let remaining_total = MAX_ZIP_TOTAL_BYTES.saturating_sub(total_written);
+            let max_for_entry = MAX_ZIP_FILE_BYTES.min(remaining_total);
             let mut out_file = std::fs::File::create(&out_path)?;
-            std::io::copy(&mut file, &mut out_file)?;
+            let mut limited = (&mut file).take(max_for_entry.saturating_add(1));
+            let written = std::io::copy(&mut limited, &mut out_file)?;
+            if written > max_for_entry {
+                drop(out_file);
+                let _ = std::fs::remove_file(&out_path);
+                return Err(PluginError::InvalidPackage(format!(
+                    "zip entry '{raw_name}' exceeds decompressed size limit"
+                )));
+            }
+            total_written = total_written.saturating_add(written);
         }
     }
 
@@ -899,7 +993,10 @@ pub fn test_plugin_dir(
     workspace: Option<Arc<dyn WorkspaceReader>>,
 ) -> Result<PluginTestReport> {
     let manifest = PluginManifest::from_file(&dir.join("manifest.toml"))?;
-    let source = std::fs::read_to_string(dir.join(&manifest.entry))?;
+    let source = read_plugin_file_safe(dir, &manifest.entry, "entry")?;
+    if let Some(ref ui) = manifest.ui_entry {
+        let _ = read_plugin_file_safe(dir, ui, "ui_entry")?;
+    }
 
     let parsed_args: serde_json::Value = if args_json.trim().is_empty() {
         serde_json::Value::Array(Vec::new())

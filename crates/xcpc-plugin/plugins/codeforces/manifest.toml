@@ -1,7 +1,7 @@
 id = "codeforces"
 name = "Codeforces"
 version = "1.0.0"
-description = "Official Codeforces OJ source plugin (account, rating history, incremental submissions, contests, URL parser)."
+description = "同步 Codeforces 提交与 Rating"
 author = "XCPC Workstation"
 entry = "index.js"
 capabilities = ["oj_source"]

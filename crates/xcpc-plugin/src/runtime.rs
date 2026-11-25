@@ -450,6 +450,7 @@ fn register_native_bridges<'js>(
 
             // Domain is verified whitelisted; only now may we attach credentials.
             let mut headers = parsed.headers;
+            let mut credential_header_names: Vec<String> = Vec::new();
             if let Some(cred_spec) = parsed.credential_header {
                 match cred_spec {
                     CredentialHeaderSpec::Structured {
@@ -462,6 +463,7 @@ fn register_native_bridges<'js>(
                                 Some(p) => format!("{p}{secret}"),
                                 None => secret,
                             };
+                            credential_header_names.push(header.to_ascii_lowercase());
                             headers.insert(header, val);
                         }
                         Ok(None) => {}
@@ -475,6 +477,7 @@ fn register_native_bridges<'js>(
                         for (header, key) in map {
                             match creds.get(&manifest.id, &key) {
                                 Ok(Some(secret)) => {
+                                    credential_header_names.push(header.to_ascii_lowercase());
                                     headers.insert(header, secret);
                                 }
                                 Ok(None) => {}
@@ -489,21 +492,110 @@ fn register_native_bridges<'js>(
                 }
             }
 
-            let http_req = HttpRequest {
-                url: parsed.url,
-                method: parsed.method,
-                headers,
-                body: parsed.body,
-                timeout_ms: parsed.timeout_ms,
-            };
-            let resp = match http.send(&http_req) {
-                Ok(r) => r,
-                Err(e) => {
-                    let msg = e.to_string();
-                    *last_err.lock().unwrap() = Some(e);
+            const MAX_REDIRECTS: usize = 5;
+            let mut current_url = url;
+            let mut current_method = parsed.method;
+            let mut current_body = parsed.body;
+            let mut redirect_count = 0usize;
+
+            let resp = loop {
+                let http_req = HttpRequest {
+                    url: current_url.to_string(),
+                    method: current_method.clone(),
+                    headers: headers.clone(),
+                    body: current_body.clone(),
+                    timeout_ms: parsed.timeout_ms,
+                };
+                let resp = match http.send(&http_req) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        return Err(Exception::throw_message(&ctx, &msg));
+                    }
+                };
+
+                let is_redirect = matches!(resp.status, 301 | 302 | 303 | 307 | 308);
+                let location = if is_redirect {
+                    resp.headers
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("location"))
+                        .map(|(_, v)| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                } else {
+                    None
+                };
+
+                let Some(loc) = location else {
+                    break resp;
+                };
+
+                redirect_count += 1;
+                if redirect_count > MAX_REDIRECTS {
+                    let err = PluginError::Http("too many redirects".into());
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
                     return Err(Exception::throw_message(&ctx, &msg));
                 }
+
+                let next_url = match current_url.join(&loc) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        let err =
+                            PluginError::Http(format!("invalid redirect location '{loc}': {e}"));
+                        let msg = err.to_string();
+                        *last_err.lock().unwrap() = Some(err);
+                        return Err(Exception::throw_message(&ctx, &msg));
+                    }
+                };
+
+                if next_url.scheme() != "http" && next_url.scheme() != "https" {
+                    let err = PluginError::DomainNotAllowed {
+                        plugin_id: manifest.id.clone(),
+                        host: format!("scheme:{}", next_url.scheme()),
+                    };
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                }
+                let next_host = next_url.host_str().unwrap_or("");
+                if !manifest.is_domain_allowed(next_host) {
+                    let err = PluginError::DomainNotAllowed {
+                        plugin_id: manifest.id.clone(),
+                        host: next_host.to_string(),
+                    };
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                }
+
+                // Strip credential and sensitive auth headers on cross-host / cross-origin redirects.
+                let same_origin = next_url.scheme().eq_ignore_ascii_case(current_url.scheme())
+                    && next_url
+                        .host_str()
+                        .zip(current_url.host_str())
+                        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+                    && next_url.port_or_known_default() == current_url.port_or_known_default();
+                if !same_origin {
+                    headers.retain(|k, _| {
+                        let lower = k.to_ascii_lowercase();
+                        !matches!(
+                            lower.as_str(),
+                            "authorization" | "proxy-authorization" | "cookie"
+                        ) && !credential_header_names.iter().any(|c| c == &lower)
+                    });
+                }
+
+                if resp.status == 303
+                    || ((resp.status == 301 || resp.status == 302)
+                        && current_method.eq_ignore_ascii_case("POST"))
+                {
+                    current_method = "GET".to_string();
+                    current_body = None;
+                }
+                current_url = next_url;
             };
+
             serde_json::to_string(&resp).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
         })
         .map_err(|e| PluginError::JsError(e.to_string()))?;

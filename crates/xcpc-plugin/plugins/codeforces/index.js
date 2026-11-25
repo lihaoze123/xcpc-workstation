@@ -89,56 +89,117 @@ function syncAccount(ctx) {
   };
 }
 
+const CF_PAGE_SIZE = 1000;
+const CF_MAX_PAGES = 100;
+
+function fetchPageWithRetry(url, pageIndex) {
+  try {
+    return fetchJson(url);
+  } catch (firstErr) {
+    try {
+      return fetchJson(url);
+    } catch (secondErr) {
+      const detail = String(
+        (secondErr && secondErr.message) ||
+          (firstErr && firstErr.message) ||
+          secondErr ||
+          firstErr
+      );
+      if (pageIndex === 0) {
+        throw new Error(detail);
+      }
+      throw new Error(
+        "Codeforces pagination failed on page " + (pageIndex + 1) + ": " + detail
+      );
+    }
+  }
+}
+
 function syncSubmissions(ctx, cursor) {
   const handle = String((ctx && ctx.handle) || "").trim();
   const lastSeenId = cursor != null && cursor !== "" ? Number(cursor) : 0;
-  const rows = fetchJson(
-    "https://codeforces.com/api/user.status?handle=" +
-      encodeURIComponent(handle) +
-      "&from=1&count=1000"
-  );
 
   let maxId = lastSeenId;
+  let minTestingId = null;
   const submissions = [];
-  for (const row of rows) {
-    const id = Number(row.id);
-    if (lastSeenId > 0 && id <= lastSeenId) {
-      continue;
-    }
-    if (id > maxId) {
-      maxId = id;
-    }
-    const prob = row.problem || {};
-    const cid = prob.contestId != null ? String(prob.contestId) : null;
-    const idx = prob.index ? String(prob.index) : null;
-    const problem_key = cid && idx ? cid + idx : String(prob.name || id);
-    let problem_url = null;
-    if (cid && idx) {
-      const prefix = Number(cid) >= 100000 ? "gym" : "contest";
-      problem_url = "https://codeforces.com/" + prefix + "/" + cid + "/problem/" + idx;
-    }
-    const raw_rating = prob.rating != null ? Number(prob.rating) : null;
+  const seenIds = new Set();
 
-    submissions.push({
-      submission_id: String(id),
-      handle,
-      contest_id: cid,
-      problem_index: idx,
-      problem_key,
-      problem_title: String(prob.name || problem_key),
-      problem_url,
-      raw_rating,
-      normalized_rating: normalizeRating(raw_rating),
-      tags: Array.isArray(prob.tags) ? prob.tags.map(String) : [],
-      verdict: mapVerdict(row.verdict),
-      language: row.programmingLanguage ? String(row.programmingLanguage) : null,
-      submitted_at: Number(row.creationTimeSeconds || 0),
-    });
+  for (let page = 0; page < CF_MAX_PAGES; page++) {
+    const from = page * CF_PAGE_SIZE + 1;
+    const rows = fetchPageWithRetry(
+      "https://codeforces.com/api/user.status?handle=" +
+        encodeURIComponent(handle) +
+        "&from=" +
+        from +
+        "&count=" +
+        CF_PAGE_SIZE,
+      page
+    );
+    if (!Array.isArray(rows) || rows.length === 0) {
+      break;
+    }
+
+    let reachedCursor = false;
+    for (const row of rows) {
+      const id = Number(row.id);
+      if (lastSeenId > 0 && id <= lastSeenId) {
+        reachedCursor = true;
+        continue;
+      }
+      if (seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
+      if (row.verdict === "TESTING" || row.verdict == null) {
+        if (minTestingId == null || id < minTestingId) {
+          minTestingId = id;
+        }
+      } else if (id > maxId) {
+        maxId = id;
+      }
+      const prob = row.problem || {};
+      const cid = prob.contestId != null ? String(prob.contestId) : null;
+      const idx = prob.index ? String(prob.index) : null;
+      const problem_key = cid && idx ? cid + idx : String(prob.name || id);
+      let problem_url = null;
+      if (cid && idx) {
+        const prefix = Number(cid) >= 100000 ? "gym" : "contest";
+        problem_url = "https://codeforces.com/" + prefix + "/" + cid + "/problem/" + idx;
+      }
+      const raw_rating = prob.rating != null ? Number(prob.rating) : null;
+
+      submissions.push({
+        submission_id: String(id),
+        handle,
+        contest_id: cid,
+        problem_index: idx,
+        problem_key,
+        problem_title: String(prob.name || problem_key),
+        problem_url,
+        raw_rating,
+        normalized_rating: normalizeRating(raw_rating),
+        tags: Array.isArray(prob.tags) ? prob.tags.map(String) : [],
+        verdict: mapVerdict(row.verdict),
+        language: row.programmingLanguage ? String(row.programmingLanguage) : null,
+        submitted_at: Number(row.creationTimeSeconds || 0),
+      });
+    }
+
+    if (reachedCursor || rows.length < CF_PAGE_SIZE) {
+      break;
+    }
   }
+
+  // Never advance the cursor past any still-TESTING submission so its final verdict is picked up
+  // on the next incremental sync.
+  const safeMaxId =
+    minTestingId != null
+      ? Math.max(lastSeenId, Math.min(maxId, minTestingId - 1))
+      : maxId;
 
   return {
     submissions,
-    next_cursor: maxId > 0 ? String(maxId) : cursor || null,
+    next_cursor: safeMaxId > 0 ? String(safeMaxId) : cursor || null,
   };
 }
 

@@ -1,7 +1,7 @@
 id = "atcoder"
 name = "AtCoder"
 version = "1.0.0"
-description = "Official AtCoder OJ source plugin (Algorithm rating history, Kenkoooo incremental submissions & difficulty, contests, URL parser)."
+description = "同步 AtCoder 提交与 Rating"
 author = "XCPC Workstation"
 entry = "index.js"
 capabilities = ["oj_source"]

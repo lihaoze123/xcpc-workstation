@@ -23,6 +23,7 @@ impl KvStore {
     }
 
     pub fn open(data_dir: &Path, plugin_id: &str) -> Result<Self> {
+        crate::manifest::validate_plugin_id(plugin_id)?;
         let dir = data_dir.join("plugin_kv");
         let path = dir.join(format!("{plugin_id}.json"));
         let map = if path.exists() {

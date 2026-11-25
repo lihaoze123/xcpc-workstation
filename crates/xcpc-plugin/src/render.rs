@@ -64,18 +64,9 @@ fn render_svg_pixmap(svg: &str, scale: f32) -> Result<tiny_skia::Pixmap> {
 /// Renders an SVG string to a PNG image and returns it as a base64-encoded string.
 pub fn svg_to_png_base64(svg: &str, scale: Option<f32>) -> Result<String> {
     let pixmap = render_svg_pixmap(svg, scale.unwrap_or(1.0))?;
-    let mut png_bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut png_bytes, pixmap.width(), pixmap.height());
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|e| PluginError::Render(format!("png header error: {e}")))?;
-        writer
-            .write_image_data(pixmap.data())
-            .map_err(|e| PluginError::Render(format!("png encode error: {e}")))?;
-    }
+    let png_bytes = pixmap
+        .encode_png()
+        .map_err(|e| PluginError::Render(format!("png encode error: {e}")))?;
 
     Ok(base64::engine::general_purpose::STANDARD.encode(png_bytes))
 }

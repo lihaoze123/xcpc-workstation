@@ -410,17 +410,26 @@ function runTool(toolId, inputs) {
   const placedNodes = layoutGraph(parsed, layout, width, height);
   const svg = renderGraphSvg(placedNodes, parsed.edges, parsed.directed, width, height);
 
+  const layoutLabel =
+    layout === "tree"
+      ? "树"
+      : layout === "circle"
+        ? "圆形"
+        : layout === "coords"
+          ? "按坐标"
+          : "力导向";
+
   return {
     summary:
       "已解析 " +
       placedNodes.length +
       " 个节点、" +
       parsed.edges.length +
-      " 条边 (" +
+      " 条边（" +
       (parsed.directed ? "有向" : "无向") +
-      ", " +
-      layout +
-      ")",
+      "，" +
+      layoutLabel +
+      "）",
     blocks: [
       {
         type: "graph",

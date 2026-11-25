@@ -67,7 +67,7 @@ function runBitwise(inputs) {
   const hex16 = "0x" + u.toString(16).toUpperCase().padStart(16, "0");
 
   return {
-    summary: "u64=" + u.toString() + " | hex=0x" + u.toString(16).toUpperCase() + " | popcount=" + popcount64(u),
+    summary: "u64=" + u.toString() + "  hex=0x" + u.toString(16).toUpperCase() + "  popcount=" + popcount64(u),
     blocks: [
       {
         type: "table",
@@ -365,7 +365,7 @@ function runNumberTheory(inputs) {
   }
 
   return {
-    summary: summaryParts.join(" · ") || "数论计算完成",
+    summary: summaryParts.join("  ") || "数论计算完成",
     blocks,
   };
 }

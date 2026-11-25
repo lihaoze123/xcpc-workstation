@@ -701,7 +701,7 @@ fn builtin_atcoder_end_to_end() {
     assert_eq!(batch.submissions[0].problem_title, "D. New Friends");
     assert_eq!(batch.submissions[0].raw_rating, Some(1200.0));
     assert_eq!(batch.submissions[0].normalized_rating, Some(1760));
-    assert_eq!(batch.next_cursor.as_deref(), Some("1713615001"));
+    assert_eq!(batch.next_cursor.as_deref(), Some("1713615000"));
 
     let contests = client.fetch_contests(&oj_ctx).unwrap();
     assert_eq!(contests.len(), 1);
@@ -1568,5 +1568,412 @@ module.exports = {
     assert!(
         matches!(ro_exp_err, PluginError::PermissionDenied { .. }),
         "got: {ro_exp_err:?}"
+    );
+}
+
+#[test]
+fn atcoder_pagination_boundary_dedup_verify_503_and_contest_time_guard() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+    let loaded = mgr.load_plugin("atcoder").unwrap();
+
+    // Build page 1 (500 items, epochs 1000..=1498 plus 2 items sharing boundary epoch 1499).
+    let mut page1_items = Vec::with_capacity(500);
+    for i in 0..498usize {
+        let id = 10_000 + i;
+        let epoch = 1000 + i;
+        page1_items.push(format!(
+            r#"{{"id":{id},"epoch_second":{epoch},"problem_id":"abc350_a","contest_id":"abc350","result":"AC","language":"C++"}}"#
+        ));
+    }
+    page1_items.push(r#"{"id":10498,"epoch_second":1499,"problem_id":"abc350_b","contest_id":"abc350","result":"WA","language":"C++"}"#.into());
+    page1_items.push(r#"{"id":10499,"epoch_second":1499,"problem_id":"abc350_b","contest_id":"abc350","result":"AC","language":"C++"}"#.into());
+    let page1_body = format!("[{}]", page1_items.join(","));
+
+    // Page 2 (from_second=1499): repeats 10498 & 10499 at epoch 1499, adds 10500 & 10501 at epoch 1499, plus 10502 at epoch 1500.
+    let page2_body = r#"[
+        {"id":10498,"epoch_second":1499,"problem_id":"abc350_b","contest_id":"abc350","result":"WA","language":"C++"},
+        {"id":10499,"epoch_second":1499,"problem_id":"abc350_b","contest_id":"abc350","result":"AC","language":"C++"},
+        {"id":10500,"epoch_second":1499,"problem_id":"abc350_c","contest_id":"abc350","result":"AC","language":"C++"},
+        {"id":10501,"epoch_second":1499,"problem_id":"abc350_d","contest_id":"abc350","result":"AC","language":"C++"},
+        {"id":10502,"epoch_second":1500,"problem_id":"abc350_e","contest_id":"abc350","result":"AC","language":"C++"}
+    ]"#;
+
+    let mock_http = Arc::new(MockHttpClient::new(move |req| {
+        if req.url.contains("from_second=0") {
+            ok_json(&page1_body)
+        } else if req.url.contains("from_second=1499") {
+            ok_json(page2_body)
+        } else if req.url.contains("problems.json") {
+            ok_json("[]")
+        } else if req.url.contains("problem-models.json") {
+            ok_json("{}")
+        } else if req.url == "https://atcoder.jp/users/outage_user/history/json" {
+            ok_json("[]")
+        } else if req.url == "https://atcoder.jp/users/outage_user" {
+            Ok(HttpResponse {
+                status: 503,
+                headers: BTreeMap::new(),
+                body: "Service Unavailable".into(),
+            })
+        } else if req.url == "https://atcoder.jp/contests/" {
+            Ok(HttpResponse {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: r##"
+                    <div id="contest-table-upcoming"><table><tbody>
+                      <tr>
+                        <td>TBD</td>
+                        <td><a href="/contests/bad_time">Broken Time Contest</a></td>
+                        <td>01:40</td>
+                      </tr>
+                      <tr>
+                        <td>2026-12-01 21:00:00+0900</td>
+                        <td><a href="/contests/abc401">AtCoder Beginner Contest 401</a></td>
+                        <td>01:40</td>
+                      </tr>
+                    </tbody></table></div>
+                "##
+                .into(),
+            })
+        } else {
+            panic!("unexpected url: {}", req.url);
+        }
+    }));
+
+    let host_ctx = HostContext {
+        manifest: loaded.info.manifest.clone(),
+        http_client: mock_http,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
+
+    let batch = client
+        .sync_submissions(
+            &OjContext {
+                handle: "chokudai".into(),
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(batch.submissions.len(), 503);
+    assert_eq!(batch.next_cursor.as_deref(), Some("1500"));
+    let unique_ids: std::collections::HashSet<&str> = batch
+        .submissions
+        .iter()
+        .map(|s| s.submission_id.as_str())
+        .collect();
+    assert_eq!(unique_ids.len(), 503);
+    assert!(unique_ids.contains("10500"));
+    assert!(unique_ids.contains("10501"));
+    assert!(unique_ids.contains("10502"));
+
+    // Verify distinguishes 503 from 404.
+    let v503 = client
+        .verify(&OjContext {
+            handle: "outage_user".into(),
+        })
+        .unwrap();
+    assert!(!v503.ok);
+    assert_eq!(
+        v503.message.as_deref(),
+        Some("AtCoder 服务暂时不可用，请稍后重试")
+    );
+
+    // fetchContests skips unparseable timeText row instead of emitting start_time: 0.
+    let contests = client
+        .fetch_contests(&OjContext {
+            handle: String::new(),
+        })
+        .unwrap();
+    assert_eq!(contests.len(), 1);
+    assert_eq!(contests[0].contest_id, "abc401");
+    assert!(contests[0].start_time > 0);
+}
+
+#[test]
+fn codeforces_testing_cursor_guard_and_mid_pagination_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+    let loaded = mgr.load_plugin("codeforces").unwrap();
+
+    // Case 1: TESTING submission in the middle (105=OK, 104=TESTING, 103=OK) -> cursor stops at 103.
+    let http1 = Arc::new(MockHttpClient::new(|_req| {
+        ok_json(
+            r#"{"status":"OK","result":[
+                {"id":105,"creationTimeSeconds":1700000105,"verdict":"OK","problem":{"contestId":1999,"index":"A","name":"P1"}},
+                {"id":104,"creationTimeSeconds":1700000104,"verdict":"TESTING","problem":{"contestId":1999,"index":"B","name":"P2"}},
+                {"id":103,"creationTimeSeconds":1700000103,"verdict":"OK","problem":{"contestId":1999,"index":"C","name":"P3"}}
+            ]}"#,
+        )
+    }));
+    let ctx1 = HostContext {
+        manifest: loaded.info.manifest.clone(),
+        http_client: http1,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let client1 = OjPluginClient::new(&loaded.entry_source, &ctx1);
+    let batch1 = client1
+        .sync_submissions(
+            &OjContext {
+                handle: "tourist".into(),
+            },
+            Some("100"),
+        )
+        .unwrap();
+    assert_eq!(batch1.submissions.len(), 3);
+    assert_eq!(batch1.next_cursor.as_deref(), Some("103"));
+
+    // Case 2: Transient failure on page 2 recovers via retry.
+    let mut page1 = Vec::with_capacity(1000);
+    for i in 0..1000i64 {
+        let id = 2000 - i;
+        page1.push(format!(
+            r#"{{"id":{id},"creationTimeSeconds":1700000000,"verdict":"OK","problem":{{"contestId":1999,"index":"A","name":"P"}}}}"#
+        ));
+    }
+    let page1_json = format!(r#"{{"status":"OK","result":[{}]}}"#, page1.join(","));
+    let page2_attempts = Arc::new(AtomicUsize::new(0));
+    let attempts_clone = Arc::clone(&page2_attempts);
+    let http2 = Arc::new(MockHttpClient::new(move |req| {
+        if req.url.contains("from=1&count=1000") {
+            ok_json(&page1_json)
+        } else if req.url.contains("from=1001&count=1000") {
+            let n = attempts_clone.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                ok_json(r#"{"status":"FAILED","comment":"Call limit exceeded"}"#)
+            } else {
+                ok_json(
+                    r#"{"status":"OK","result":[{"id":1000,"creationTimeSeconds":1700000000,"verdict":"OK","problem":{"contestId":1999,"index":"A","name":"P"}}]}"#,
+                )
+            }
+        } else {
+            panic!("unexpected url {}", req.url);
+        }
+    }));
+    let ctx2 = HostContext {
+        manifest: loaded.info.manifest.clone(),
+        http_client: http2,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let client2 = OjPluginClient::new(&loaded.entry_source, &ctx2);
+    let batch2 = client2
+        .sync_submissions(
+            &OjContext {
+                handle: "tourist".into(),
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(batch2.submissions.len(), 1001);
+    assert_eq!(batch2.next_cursor.as_deref(), Some("2000"));
+    assert_eq!(page2_attempts.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn security_redirect_whitelist_kv_traversal_repo_id_and_unpremultiplied_png() {
+    // 1. Redirect to non-whitelisted host must be blocked with DomainNotAllowed.
+    let manifest = minimal_manifest("redir-test", &["allowed.example.com"], false);
+    let mock_http = Arc::new(MockHttpClient::new(|req| {
+        if req.url == "https://allowed.example.com/start" {
+            Ok(HttpResponse {
+                status: 302,
+                headers: BTreeMap::from([(
+                    "location".to_string(),
+                    "https://evil.example.com/steal".to_string(),
+                )]),
+                body: String::new(),
+            })
+        } else {
+            panic!("should never follow redirect to {}", req.url);
+        }
+    }));
+    let host_ctx = HostContext {
+        manifest,
+        http_client: mock_http,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let src = r#"
+        module.exports = {
+            go() {
+                return host.http.fetch({ url: "https://allowed.example.com/start" });
+            }
+        };
+    "#;
+    let err = PluginRuntime::call_function(src, "go", &[], &host_ctx).unwrap_err();
+    assert!(
+        matches!(err, PluginError::DomainNotAllowed { ref host, .. } if host == "evil.example.com"),
+        "expected DomainNotAllowed for evil.example.com, got: {err:?}"
+    );
+
+    // 2. Cross-host redirect between two whitelisted hosts must strip credential headers.
+    let manifest2 = minimal_manifest("redir-cred", &["a.example.com", "b.example.com"], false);
+    let creds = Arc::new(MemoryCredentialStore::new());
+    creds.set("redir-cred", "api_key", "super-secret").unwrap();
+    let mock_http2 = Arc::new(MockHttpClient::new(|req| {
+        if req.url == "https://a.example.com/auth" {
+            Ok(HttpResponse {
+                status: 302,
+                headers: BTreeMap::from([(
+                    "location".to_string(),
+                    "https://b.example.com/final".to_string(),
+                )]),
+                body: String::new(),
+            })
+        } else if req.url == "https://b.example.com/final" {
+            ok_json(r#"{"ok":true}"#)
+        } else {
+            panic!("unexpected url {}", req.url);
+        }
+    }));
+    let host_ctx2 = HostContext {
+        manifest: manifest2,
+        http_client: mock_http2.clone(),
+        credentials: creds,
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let src2 = r#"
+        module.exports = {
+            go() {
+                return host.http.fetch({
+                    url: "https://a.example.com/auth",
+                    credentialHeader: { header: "X-Api-Key", key: "api_key" }
+                });
+            }
+        };
+    "#;
+    let call = PluginRuntime::call_function(src2, "go", &[], &host_ctx2).unwrap();
+    assert_eq!(call.value["status"], 200);
+    let reqs = mock_http2.recorded_requests();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(
+        reqs[0].headers.get("X-Api-Key").map(String::as_str),
+        Some("super-secret")
+    );
+    assert!(
+        !reqs[1].headers.contains_key("X-Api-Key"),
+        "credential header must be stripped on cross-host redirect: {:?}",
+        reqs[1].headers
+    );
+
+    // 3. KvStore::open rejects traversal IDs.
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        KvStore::open(tmp.path(), "../escape"),
+        Err(PluginError::ManifestInvalid(_))
+    ));
+    assert!(matches!(
+        KvStore::open(tmp.path(), "a/b"),
+        Err(PluginError::ManifestInvalid(_))
+    ));
+
+    // 4. install_from_repo_entry rejects manifest.id != entry.id.
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+    let spoofed_zip = make_zip(&[
+        (
+            "manifest.toml",
+            br#"
+id = "codeforces"
+name = "Spoofed"
+version = "9.9.9"
+entry = "index.js"
+capabilities = ["oj_source"]
+"#,
+        ),
+        ("index.js", b"module.exports = {};"),
+    ]);
+    let entry = RepoPluginEntry {
+        id: "benign-tool".into(),
+        name: "Benign Tool".into(),
+        version: "0.1.0".into(),
+        description: "Claims to be benign-tool".into(),
+        download_url: "https://repo.example.com/spoof.zip".into(),
+        sha256: sha256_hex(&spoofed_zip),
+        permissions: None,
+    };
+    let zip_clone = spoofed_zip.clone();
+    let repo_http =
+        MockHttpClient::new(|_| ok_json("{}")).with_bytes_handler(move |_| Ok(zip_clone.clone()));
+    let id_err = mgr.install_from_repo_entry(&entry, &repo_http).unwrap_err();
+    assert!(
+        matches!(id_err, PluginError::InvalidPackage(_)),
+        "expected InvalidPackage on ID mismatch, got: {id_err:?}"
+    );
+    assert!(
+        !mgr.plugins_dir().join("codeforces").exists(),
+        "mismatched repo plugin must not be installed"
+    );
+
+    // 5. svg_to_png_base64 produces unpremultiplied RGBA (50% opaque white has RGB ~= 255, not ~128).
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#ffffff" fill-opacity="0.5"/></svg>"##;
+    let b64 = crate::render::svg_to_png_base64(svg, Some(1.0)).unwrap();
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .unwrap();
+    let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes));
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut buf).unwrap();
+    let pixel = &buf[..info.buffer_size()];
+    // First pixel: R, G, B should be close to 255 (straight alpha), A should be ~128.
+    assert!(
+        pixel[0] >= 250 && pixel[1] >= 250 && pixel[2] >= 250,
+        "expected unpremultiplied white RGB >= 250, got {:?}",
+        &pixel[..4]
+    );
+    assert!(
+        (120..=136).contains(&pixel[3]),
+        "expected alpha ~128, got {}",
+        pixel[3]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn load_plugin_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let outside_dir = tempfile::tempdir().unwrap();
+    let secret_file = outside_dir.path().join("secret.js");
+    std::fs::write(&secret_file, "module.exports = { secret: true };").unwrap();
+
+    let plugin_dir = data_dir.path().join("plugins/sym-evil");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("manifest.toml"),
+        r#"
+id = "sym-evil"
+name = "Symlink Evil"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["tool"]
+"#,
+    )
+    .unwrap();
+    symlink(&secret_file, plugin_dir.join("index.js")).unwrap();
+
+    let mgr = PluginManager::new(data_dir.path());
+    let err = mgr.load_plugin("sym-evil").unwrap_err();
+    assert!(
+        matches!(err, PluginError::ZipSlip(_)),
+        "expected ZipSlip for symlink escape in load_plugin, got: {err:?}"
     );
 }

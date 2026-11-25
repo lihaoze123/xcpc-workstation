@@ -49,19 +49,37 @@ function normalizeRating(raw) {
 function verify(ctx) {
   const handle = String((ctx && ctx.handle) || "").trim();
   if (!handle) {
-    return { ok: false, message: "handle is required" };
+    return { ok: false, message: "请输入 AtCoder 账号" };
   }
   try {
+    const encoded = encodeURIComponent(handle);
     const res = host.http.fetch({
-      url: "https://atcoder.jp/users/" + encodeURIComponent(handle) + "/history/json",
+      url: "https://atcoder.jp/users/" + encoded + "/history/json",
       method: "GET",
     });
+    if (res.status === 404) {
+      return { ok: false, message: "未找到该 AtCoder 账号" };
+    }
     if (res.status !== 200) {
       return { ok: false, message: "AtCoder HTTP " + res.status };
     }
     const data = JSON.parse(res.body);
     if (!Array.isArray(data)) {
       return { ok: false, message: "Unexpected history response" };
+    }
+    if (data.length === 0) {
+      // AtCoder returns HTTP 200 `[]` on `/history/json` for non-existent users;
+      // verify existence against the user profile page (HTTP 404 when absent).
+      const profile = host.http.fetch({
+        url: "https://atcoder.jp/users/" + encoded,
+        method: "GET",
+      });
+      if (profile.status === 404) {
+        return { ok: false, message: "未找到该 AtCoder 账号" };
+      }
+      if (profile.status !== 200) {
+        return { ok: false, message: "AtCoder 服务暂时不可用，请稍后重试" };
+      }
     }
     return { ok: true, handle };
   } catch (e) {
@@ -121,42 +139,79 @@ function syncAccount(ctx) {
   };
 }
 
+const ATCODER_PAGE_SIZE = 500;
+const ATCODER_MAX_PAGES = 100;
+
 function syncSubmissions(ctx, cursor) {
   const handle = String((ctx && ctx.handle) || "").trim();
-  const fromSecond = cursor != null && cursor !== "" ? Number(cursor) : 0;
+  const initialFrom = cursor != null && cursor !== "" ? Number(cursor) : 0;
+  let fromSecond = Number.isFinite(initialFrom) && initialFrom >= 0 ? initialFrom : 0;
 
-  const rows = fetchJson(
-    "https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user=" +
-      encodeURIComponent(handle) +
-      "&from_second=" +
-      fromSecond
-  );
+  const collectedRows = [];
+  const seenIds = new Set();
+  let maxEpoch = fromSecond;
+
+  for (let page = 0; page < ATCODER_MAX_PAGES; page++) {
+    const rows = fetchJson(
+      "https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user=" +
+        encodeURIComponent(handle) +
+        "&from_second=" +
+        fromSecond
+    );
+    if (!Array.isArray(rows) || rows.length === 0) {
+      break;
+    }
+
+    let newCount = 0;
+    let pageMaxEpoch = fromSecond;
+    for (const row of rows) {
+      const id = String(row.id);
+      if (seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
+      newCount++;
+      const epoch = Number(row.epoch_second || 0);
+      if (epoch > pageMaxEpoch) {
+        pageMaxEpoch = epoch;
+      }
+      if (epoch > maxEpoch) {
+        maxEpoch = epoch;
+      }
+      collectedRows.push(row);
+    }
+
+    if (rows.length < ATCODER_PAGE_SIZE || newCount === 0) {
+      break;
+    }
+    // Advance to pageMaxEpoch (not +1) so submissions sharing the boundary second are never dropped;
+    // `seenIds` deduplicates any overlap on the next page.
+    fromSecond = pageMaxEpoch;
+  }
 
   let problemsMap = {};
-  try {
-    const problems = fetchJson("https://kenkoooo.com/atcoder/resources/problems.json");
-    if (Array.isArray(problems)) {
-      for (const p of problems) {
-        problemsMap[p.id] = p;
-      }
-    }
-  } catch (_) {}
-
   let modelsMap = {};
-  try {
-    const models = fetchJson("https://kenkoooo.com/atcoder/resources/problem-models.json");
-    if (models && typeof models === "object") {
-      modelsMap = models;
-    }
-  } catch (_) {}
+  if (collectedRows.length > 0) {
+    try {
+      const problems = fetchJson("https://kenkoooo.com/atcoder/resources/problems.json");
+      if (Array.isArray(problems)) {
+        for (const p of problems) {
+          problemsMap[p.id] = p;
+        }
+      }
+    } catch (_) {}
 
-  let maxEpoch = fromSecond;
+    try {
+      const models = fetchJson("https://kenkoooo.com/atcoder/resources/problem-models.json");
+      if (models && typeof models === "object") {
+        modelsMap = models;
+      }
+    } catch (_) {}
+  }
+
   const submissions = [];
-  for (const row of rows) {
+  for (const row of collectedRows) {
     const epoch = Number(row.epoch_second || 0);
-    if (epoch > maxEpoch) {
-      maxEpoch = epoch;
-    }
     const pid = String(row.problem_id || "");
     const cid = row.contest_id ? String(row.contest_id) : null;
     const pmeta = problemsMap[pid] || {};
@@ -185,7 +240,7 @@ function syncSubmissions(ctx, cursor) {
     });
   }
 
-  const next_cursor = rows.length > 0 ? String(maxEpoch + 1) : cursor || null;
+  const next_cursor = collectedRows.length > 0 ? String(maxEpoch) : cursor || null;
   return { submissions, next_cursor };
 }
 
@@ -217,7 +272,8 @@ function fetchContests(_ctx) {
           const cidMatch = href.match(/\/contests\/([^/?#]+)/);
           const contest_id = cidMatch ? cidMatch[1] : name;
           const parsedMs = Date.parse(timeText.replace(" ", "T"));
-          const start_time = Number.isFinite(parsedMs) ? Math.floor(parsedMs / 1000) : 0;
+          if (!Number.isFinite(parsedMs)) continue;
+          const start_time = Math.floor(parsedMs / 1000);
           const duration_sec = parseDurationToSeconds(cells[2].text);
           contests.push({
             contest_id,

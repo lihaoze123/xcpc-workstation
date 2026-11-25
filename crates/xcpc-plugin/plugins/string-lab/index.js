@@ -142,12 +142,12 @@ function runTool(toolId, inputs) {
   const matches = pattern ? findPatternMatches(text, pattern) : [];
 
   const n = text.length;
-  const indexHeaders = ["指标"];
+  const indexHeaders = ["下标"];
   const charRow = ["S[i]"];
-  const piRow = ["KMP π[i]"];
+  const piRow = ["KMP π"];
   const zRow = ["Z[i]"];
-  const d1Row = ["Manacher d1[i]"];
-  const d2Row = ["Manacher d2[i]"];
+  const d1Row = ["回文奇 d1"];
+  const d2Row = ["回文偶 d2"];
   for (let i = 0; i < n; i++) {
     indexHeaders.push(String(i));
     charRow.push(text[i]);
@@ -167,12 +167,12 @@ function runTool(toolId, inputs) {
 
   const summaryParts = [
     "长度 |S| = " + n,
-    "最长回文子串: \"" + manacher.longest + "\" (长度 " + manacher.longestLen + "，起点 " + manacher.longestStart + ")",
+    "最长回文子串：\"" + manacher.longest + "\"（长度 " + manacher.longestLen + "，起点 " + manacher.longestStart + "）",
   ];
   if (pattern) {
     summaryParts.push(
       matches.length > 0
-        ? "模式串 \"" + pattern + "\" 匹配位置 (0-indexed): [" + matches.join(", ") + "]"
+        ? "模式串 \"" + pattern + "\" 匹配位置（从 0 开始）：[" + matches.join(", ") + "]"
         : "模式串 \"" + pattern + "\" 未出现"
     );
   }
@@ -180,35 +180,32 @@ function runTool(toolId, inputs) {
   const blocks = [
     {
       type: "text",
-      title: "核心摘要",
+      title: "分析结果",
       content: summaryParts.join("\n"),
-      monospace: true,
+      monospace: false,
     },
     {
       type: "table",
-      title: "前缀函数 / Z 函数 / Manacher 对齐表",
+      title: "前缀函数 / Z 函数 / 回文半径",
       headers: indexHeaders,
       rows: [charRow, piRow, zRow, d1Row, d2Row],
     },
     {
       type: "table",
-      title: "后缀数组 (SA / RK / LCP)",
-      headers: ["RK (排名)", "SA[rk] (起点)", "LCP[rk]", "后缀 S[SA[rk]..]"],
+      title: "后缀数组",
+      headers: ["排名 RK", "起点 SA", "LCP", "后缀"],
       align: ["right", "right", "right", "left"],
       rows: saRows,
     },
+    {
+      type: "text",
+      title: "RK 数组（按原下标）",
+      content: "RK = [" + rk.join(", ") + "]",
+      monospace: true,
+    },
   ];
 
-  // Also include RK vector as compact text for quick lookup
-  blocks.push({
-    type: "text",
-    title: "RK 数组 (按原下标 i)",
-    content: "RK = [" + rk.join(", ") + "]",
-    monospace: true,
-  });
-
   return {
-    summary: summaryParts.join(" · "),
     blocks,
   };
 }

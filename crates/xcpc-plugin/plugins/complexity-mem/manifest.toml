@@ -1,7 +1,7 @@
 id = "complexity-mem"
 name = "复杂度与内存估算"
 version = "1.0.0"
-description = "离线估算常见算法时间复杂度运算量边界与数组精确内存占用。"
+description = "估算算法时间复杂度与数组内存占用"
 author = "XCPC Workstation"
 entry = "index.js"
 capabilities = ["tool"]
@@ -39,7 +39,7 @@ required = false
 [[tools]]
 id = "memory"
 name = "数组内存估算"
-description = "计算指定数据类型与多维数组尺寸的精确字节、KiB、MiB 与占比。"
+description = "计算指定数据类型与多维数组尺寸的字节、KiB、MiB 与占比。"
 
 [[tools.inputs]]
 name = "data_type"

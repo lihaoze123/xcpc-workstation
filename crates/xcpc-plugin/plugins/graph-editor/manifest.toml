@@ -1,7 +1,7 @@
 id = "graph-editor"
 name = "图论与几何画板"
 version = "1.0.0"
-description = "对标 another_graph_editor：边表 / 父数组 / 邻接表 / 几何坐标与画布双向联动，支持拖拽、着色、树/力导向布局及导出 SVG/PNG。"
+description = "画图、拖拽、导出图片"
 author = "XCPC Workstation"
 entry = "index.js"
 ui_entry = "ui.js"
@@ -19,7 +19,7 @@ context = "global"
 [[tools]]
 id = "parse-graph"
 name = "解析图并渲染 SVG"
-description = "将边表、父数组、邻接表或坐标文本解析为标准图结构与矢量 SVG。"
+description = "将边表、父数组、邻接表或点坐标解析为图结构与矢量图。"
 
 [[tools.inputs]]
 name = "format"
@@ -38,7 +38,7 @@ required = true
 
 [[tools.inputs]]
 name = "one_indexed"
-label = "1-indexed 编号"
+label = "从 1 开始编号"
 kind = "boolean"
 default = true
 required = false

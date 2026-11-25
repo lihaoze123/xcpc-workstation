@@ -15,11 +15,11 @@ const TYPE_SIZES = {
 };
 
 function formatOps(v) {
-  if (!Number.isFinite(v)) return "∞ (溢出)";
+  if (!Number.isFinite(v)) return "远超时限";
   if (v < 1e4) return String(Math.round(v));
   const exp = Math.floor(Math.log10(v));
   const mant = v / Math.pow(10, exp);
-  return mant.toFixed(2) + " × 10^" + exp;
+  return mant.toFixed(2) + "e" + exp;
 }
 
 function judgeVerdict(ops, budget) {
@@ -52,7 +52,8 @@ function runComplexity(inputs) {
 
   const rows = items.map(([label, baseOps]) => {
     const ops = baseOps * cf;
-    const ratio = Number.isFinite(ops) ? ((ops / budget) * 100).toFixed(2) + "%" : "> 9999%";
+    const pct = Number.isFinite(ops) ? (ops / budget) * 100 : Infinity;
+    const ratio = !Number.isFinite(pct) || pct > 9999 ? "远超时限" : pct.toFixed(2) + "%";
     return [label, formatOps(ops), ratio, judgeVerdict(ops, budget)];
   });
 
@@ -109,7 +110,17 @@ function runMemory(inputs) {
   const status = mib > limitMb ? "超出限制 (MLE)" : mib > limitMb * 0.75 ? "偏高（注意额外开销）" : "安全";
 
   return {
-    summary: dataType + "[" + dims.join("][") + "] = " + mib.toFixed(3) + " MiB (" + pct.toFixed(2) + "% of " + limitMb + " MiB)",
+    summary:
+      dataType +
+      "[" +
+      dims.join("][") +
+      "] = " +
+      mib.toFixed(3) +
+      " MiB（占 " +
+      limitMb +
+      " MiB 的 " +
+      pct.toFixed(2) +
+      "%）",
     blocks: [
       {
         type: "table",
@@ -117,13 +128,13 @@ function runMemory(inputs) {
         headers: ["指标", "数值"],
         align: ["left", "right"],
         rows: [
-          ["数据类型", dataType + " (" + elemSize + " bytes)"],
+          ["数据类型", dataType + "（" + elemSize + " 字节）"],
           ["维度", dims.join(" × ")],
           ["总元素数", totalElements.toLocaleString("en-US")],
           ["精确字节数 (B)", bytes.toLocaleString("en-US")],
           ["KiB", kib.toFixed(2)],
           ["MiB", mib.toFixed(4)],
-          ["占内存限制 (" + limitMb + " MiB)", pct.toFixed(2) + "%"],
+          ["占内存限制（" + limitMb + " MiB）", pct.toFixed(2) + "%"],
           ["评估", status],
         ],
       },

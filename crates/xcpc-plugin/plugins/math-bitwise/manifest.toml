@@ -1,7 +1,7 @@
 id = "math-bitwise"
 name = "数论与位运算工作台"
 version = "1.0.0"
-description = "64 位按位翻转、进制互转、质因数分解、欧拉函数、exgcd、快速幂模逆元、CRT 与常用竞赛模数速查。"
+description = "64 位进制翻转、数论计算与常用模数速查"
 author = "XCPC Workstation"
 entry = "index.js"
 ui_entry = "ui.js"
