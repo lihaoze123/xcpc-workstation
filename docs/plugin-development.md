@@ -23,7 +23,7 @@
 ### 模式 A：OJ 数据源插件（`oj_source`）
 
 - 在 `manifest.toml` 中声明 `capabilities = ["oj_source"]` 与 `[permissions].domains`。
-- 运行在 Core QuickJS 沙箱内，通过 `host.http.fetch`、`host.html.select`、`host.credentials.get`、`host.kv` 等宿主能力同步账号、提交记录、Rating 历史与比赛列表。
+- 运行在 Core QuickJS 沙箱内，通过 `host.http.fetch`（支持 `responseType: "text" | "base64"`）、`host.html.select`、`host.credentials.get`、`host.kv` 等宿主能力同步账号、提交记录、Rating 历史与比赛列表。
 - 导出契约见 [`OjSourcePlugin`](../packages/plugin-sdk/host.d.ts)。主仓库内置的 `codeforces` 与 `atcoder` 即为此模式。
 
 ### 模式 B：无头表单工具（Headless `tool`）
@@ -35,7 +35,7 @@
 ### 模式 C：纯 Web 自定义界面工具（`<WebView>` `tool`）
 
 - 在模式 B 基础上声明 `ui_entry = "ui.html"`（可同时保留 `index.js` 作为 QuickJS 计算/CLI/MCP 后端，并可搭配 `commands` 在命令面板中一键打开）。
-- 桌面端将 `ui.html` 加载进隔离的 `<WebView>`，并注入类型化的 `window.xcpc` 能力桥接与可选的宿主主题 CSS 变量（`--xcpc-*` 与 `data-theme="light|dark"`）。
+- 桌面端将 `ui.html` 加载进隔离的 `<WebView>`，并注入类型化的 `window.xcpc` 能力桥接（含 `runTool`、`storage`、`workspace`、`oj.listAccounts`、`clipboard`、`files`）与可选的宿主主题 CSS 变量（`--xcpc-*` 与 `data-theme="light|dark"`）。
 - 宿主只管能力不管样式：你可以使用原生 HTML/TS/CSS、Canvas2D、SVG，或通过 Vite 打包 Preact/React 等任意标准前端框架。官方插件 `graph-editor`、`math-bitwise` 即为此模式。
 
 > 除上述三种主形态外，`manifest.toml` 还支持 `commands`、`importer`、`exporter`、`credentials` 扩展点，详见 [`manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json) 与 [`host.d.ts`](../packages/plugin-sdk/host.d.ts)。

@@ -2573,6 +2573,12 @@ impl Preview {
             .plugin_workspace_query(&plugin_id, &method, args_json.as_deref())
     }
 
+    /// Returns the user's bound OJ accounts (platform, handle, cached rating/rank) for an
+    /// enabled, trusted plugin. Exposes no credentials or private submission data.
+    pub fn plugin_list_oj_accounts(&self, plugin_id: String) -> PluginWorkspaceResultJs {
+        self.state.plugin_list_oj_accounts(&plugin_id)
+    }
+
     /// Renders an SVG string to a PNG image (base64-encoded) via `resvg` + `tiny-skia`.
     pub fn plugin_render_svg_png(svg: String, scale: Option<f64>) -> PluginRenderPngResultJs {
         State::plugin_render_svg_png(&svg, scale)

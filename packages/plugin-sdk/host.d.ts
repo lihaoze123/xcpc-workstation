@@ -9,12 +9,19 @@ export interface HostHttpRequest {
     | { header: string; key: string; prefix?: string }
     | Record<string, string>;
   timeoutMs?: number;
+  /**
+   * Controls how the response body is returned:
+   * - `"text"` (default): UTF-8 string in `body`.
+   * - `"base64"`: raw bytes (up to 5 MiB) Base64-encoded in `body_base64` (useful for images).
+   */
+  responseType?: "text" | "base64";
 }
 
 export interface HostHttpResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
+  body_base64?: string;
 }
 
 export interface HtmlElementMatch {

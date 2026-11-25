@@ -3,12 +3,22 @@ use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{PluginError, Result};
 
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 15_000;
 const MAX_HTTP_TIMEOUT_MS: u64 = 60_000;
+const MAX_BINARY_BODY_BYTES: u64 = 5 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HttpResponseType {
+    #[default]
+    Text,
+    Base64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpRequest {
@@ -21,17 +31,21 @@ pub struct HttpRequest {
     pub body: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub response_type: HttpResponseType,
 }
 
 fn default_method() -> String {
     "GET".to_string()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpResponse {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_base64: Option<String>,
 }
 
 pub trait HttpClient: Send + Sync {
@@ -45,6 +59,7 @@ pub trait HttpClient: Send + Sync {
             headers: BTreeMap::new(),
             body: None,
             timeout_ms: Some(DEFAULT_HTTP_TIMEOUT_MS),
+            response_type: HttpResponseType::Text,
         })?;
         if !(200..300).contains(&resp.status) {
             return Err(PluginError::Http(format!(
@@ -103,14 +118,37 @@ impl HttpClient for UreqHttpClient {
                 headers.insert(name.to_ascii_lowercase(), val.to_string());
             }
         }
-        let body = resp
-            .into_string()
-            .map_err(|e| PluginError::Http(format!("failed to read response body: {e}")))?;
+        let (body, body_base64) = match req.response_type {
+            HttpResponseType::Text => {
+                let text = resp
+                    .into_string()
+                    .map_err(|e| PluginError::Http(format!("failed to read response body: {e}")))?;
+                (text, None)
+            }
+            HttpResponseType::Base64 => {
+                let mut buf = Vec::new();
+                resp.into_reader()
+                    .take(MAX_BINARY_BODY_BYTES + 1)
+                    .read_to_end(&mut buf)
+                    .map_err(|e| {
+                        PluginError::Http(format!("failed to read binary response body: {e}"))
+                    })?;
+                if buf.len() as u64 > MAX_BINARY_BODY_BYTES {
+                    return Err(PluginError::Http(format!(
+                        "binary response exceeds {} bytes limit",
+                        MAX_BINARY_BODY_BYTES
+                    )));
+                }
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+                (String::new(), Some(b64))
+            }
+        };
 
         Ok(HttpResponse {
             status,
             headers,
             body,
+            body_base64,
         })
     }
 
@@ -225,6 +263,7 @@ impl HttpClient for MockHttpClient {
             headers: BTreeMap::new(),
             body: None,
             timeout_ms: Some(DEFAULT_HTTP_TIMEOUT_MS),
+            response_type: HttpResponseType::Text,
         })?;
         if !(200..300).contains(&resp.status) {
             return Err(PluginError::Http(format!(

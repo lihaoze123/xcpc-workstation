@@ -292,6 +292,9 @@ var xcpc={
     getContest:function(id){return rpc("workspace.getContest",{id:String(id||"")});},
     listContests:function(){return rpc("workspace.listContests",{});}
   },
+  oj:{
+    listAccounts:function(){return rpc("oj.listAccounts",{});}
+  },
   toast:function(text,tone){
     notify("toast",{text:String(text||""),tone:tone||"info"});
   },
@@ -564,6 +567,12 @@ export function PluginWebView(props: {
         );
         if (!res.ok) throw new Error(formatPluginError(res.error));
         return res.dataJson ? JSON.parse(res.dataJson) : null;
+      }
+
+      case "oj.listAccounts": {
+        const res = preview.pluginListOjAccounts(pluginId);
+        if (!res.ok) throw new Error(formatPluginError(res.error));
+        return res.dataJson ? JSON.parse(res.dataJson) : [];
       }
 
       case "clipboard.writeText": {

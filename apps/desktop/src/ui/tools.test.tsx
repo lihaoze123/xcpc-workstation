@@ -103,6 +103,7 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
     expect(injected).toContain("window.nsh.postMessage");
     // S4: clipboard.readText, clipboard.readImage, and openExternal are not exposed to untrusted plugins.
     expect(injected).toContain("clipboard.writeImage");
+    expect(injected).toContain("oj.listAccounts");
     expect(injected).not.toContain("clipboard.readText");
     expect(injected).not.toContain("clipboard.readImage");
     expect(injected).not.toContain("openExternal");

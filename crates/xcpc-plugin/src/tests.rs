@@ -63,6 +63,7 @@ fn ok_json(body: &str) -> Result<HttpResponse> {
         status: 200,
         headers: BTreeMap::from([("content-type".to_string(), "application/json".to_string())]),
         body: body.to_string(),
+        body_base64: None,
     })
 }
 
@@ -666,6 +667,7 @@ fn builtin_atcoder_end_to_end() {
                     </body></html>
                 "##
                 .to_string(),
+                body_base64: None,
             })
         } else {
             panic!("unexpected url: {}", req.url);
@@ -1499,6 +1501,7 @@ fn atcoder_pagination_boundary_dedup_verify_503_and_contest_time_guard() {
                 status: 503,
                 headers: BTreeMap::new(),
                 body: "Service Unavailable".into(),
+                body_base64: None,
             })
         } else if req.url == "https://atcoder.jp/contests/" {
             Ok(HttpResponse {
@@ -1519,6 +1522,7 @@ fn atcoder_pagination_boundary_dedup_verify_503_and_contest_time_guard() {
                     </tbody></table></div>
                 "##
                 .into(),
+                body_base64: None,
             })
         } else {
             panic!("unexpected url: {}", req.url);
@@ -1678,6 +1682,7 @@ fn security_redirect_whitelist_kv_traversal_repo_id_and_unpremultiplied_png() {
                     "https://evil.example.com/steal".to_string(),
                 )]),
                 body: String::new(),
+                body_base64: None,
             })
         } else {
             panic!("should never follow redirect to {}", req.url);
@@ -1717,6 +1722,7 @@ fn security_redirect_whitelist_kv_traversal_repo_id_and_unpremultiplied_png() {
                     "https://b.example.com/final".to_string(),
                 )]),
                 body: String::new(),
+                body_base64: None,
             })
         } else if req.url == "https://b.example.com/final" {
             ok_json(r#"{"ok":true}"#)
@@ -2540,6 +2546,7 @@ fn fetch_repo_catalog_follows_https_redirects_and_blocks_http_downgrade() {
                 status: 302,
                 headers,
                 body: String::new(),
+                body_base64: None,
             })
         } else if req.url == "https://objects.githubusercontent.com/assets/index.json" {
             ok_json(r#"{"name": "XCPC Official", "plugins": []}"#)
@@ -2566,10 +2573,48 @@ fn fetch_repo_catalog_follows_https_redirects_and_blocks_http_downgrade() {
             status: 302,
             headers,
             body: String::new(),
+            body_base64: None,
         })
     });
     let err = mgr
         .fetch_repo_catalog("https://github.com/org/repo/index.json", &downgrade_http)
         .unwrap_err();
     assert_eq!(err.code(), "HTTP_NOT_ALLOWED");
+}
+
+#[test]
+fn http_fetch_base64_response_type() {
+    let manifest = minimal_manifest("img-fetcher", &["img.example.com"], false);
+    let mock_http = Arc::new(MockHttpClient::new(|req: &HttpRequest| {
+        assert_eq!(req.response_type, crate::http::HttpResponseType::Base64);
+        Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "image/png".to_string())]),
+            body: String::new(),
+            body_base64: Some("iVBORw0KGgo=".to_string()),
+        })
+    }));
+    let host_ctx = HostContext {
+        manifest,
+        http_client: mock_http,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let src = r#"
+        module.exports = {
+            fetchAvatar() {
+                const res = host.http.fetch({
+                    url: "https://img.example.com/avatar.png",
+                    responseType: "base64",
+                });
+                return { status: res.status, b64: res.body_base64, ct: res.headers["content-type"] };
+            }
+        };
+    "#;
+    let res = PluginRuntime::call_function(src, "fetchAvatar", &[], &host_ctx).unwrap();
+    assert_eq!(res.value["status"], 200);
+    assert_eq!(res.value["b64"], "iVBORw0KGgo=");
+    assert_eq!(res.value["ct"], "image/png");
 }

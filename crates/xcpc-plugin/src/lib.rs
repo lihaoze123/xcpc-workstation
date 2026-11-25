@@ -16,7 +16,9 @@ pub mod workspace;
 pub use commands::{PluginCommandAction, RegisteredPluginCommand};
 pub use credentials::{CredentialStore, MemoryCredentialStore, SystemKeyringStore};
 pub use error::{PluginError, Result};
-pub use http::{HttpClient, HttpRequest, HttpResponse, MockHttpClient, UreqHttpClient};
+pub use http::{
+    HttpClient, HttpRequest, HttpResponse, HttpResponseType, MockHttpClient, UreqHttpClient,
+};
 pub use io_ext::{
     ContestDraft, DraftSample, ExportContext, ExportFileEntry, ExportOutput, ImportAppliedReport,
     ImportDraft, ImportFileInput, ProblemDraft, RegisteredExporter, RegisteredImporter,

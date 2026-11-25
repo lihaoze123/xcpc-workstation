@@ -21,6 +21,7 @@ fn ok_json(body: &str) -> HttpResponse {
         status: 200,
         headers: BTreeMap::new(),
         body: body.to_string(),
+        body_base64: None,
     }
 }
 
@@ -934,6 +935,7 @@ fn atcoder_verify_rejects_nonexistent_user_and_accepts_unrated_existing_user() {
                 status: 404,
                 headers: BTreeMap::new(),
                 body: "Not Found".into(),
+                body_base64: None,
             });
         }
         if req.url == "https://atcoder.jp/users/fresh_unrated/history/json" {
@@ -944,6 +946,7 @@ fn atcoder_verify_rejects_nonexistent_user_and_accepts_unrated_existing_user() {
                 status: 200,
                 headers: BTreeMap::new(),
                 body: "<html><body>fresh_unrated</body></html>".into(),
+                body_base64: None,
             });
         }
         if req.url == "https://atcoder.jp/users/chokudai/history/json" {
@@ -1152,6 +1155,7 @@ fn failed_verification_during_sync_returns_error_and_does_not_advance_last_synce
                 status: 404,
                 headers: BTreeMap::new(),
                 body: "Not Found".into(),
+                body_base64: None,
             });
         }
         if url == "https://atcoder.jp/contests/" {

@@ -1392,6 +1392,91 @@ impl State {
         }
     }
 
+    pub(crate) fn plugin_list_oj_accounts(&self, plugin_id: &str) -> PluginWorkspaceResultJs {
+        let err_res = |code: &str, msg: String| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(msg),
+            error_code: Some(code.to_owned()),
+        };
+
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return err_res("DATA_DIR", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let plugins = match pm.list_plugins() {
+            Ok(list) => list,
+            Err(err) => return err_res(err.code(), err.to_string()),
+        };
+        let Some(plugin) = plugins.into_iter().find(|p| p.manifest.id == plugin_id) else {
+            return err_res(
+                "PLUGIN_NOT_FOUND",
+                format!("PLUGIN_NOT_FOUND: plugin '{plugin_id}' not found"),
+            );
+        };
+        if !plugin.enabled {
+            return err_res(
+                "PLUGIN_DISABLED",
+                format!("PLUGIN_DISABLED: plugin '{plugin_id}' is disabled"),
+            );
+        }
+        if plugin.pending_trust {
+            return err_res(
+                "PLUGIN_UNTRUSTED",
+                format!(
+                    "PLUGIN_UNTRUSTED: plugin '{plugin_id}' requires user trust before execution"
+                ),
+            );
+        }
+
+        let config = SyncConfig::load(&dir).unwrap_or_default();
+        let cached = SyncDb::open(&dir)
+            .ok()
+            .and_then(|db| db.list_accounts().ok())
+            .unwrap_or_default();
+
+        let mut accounts: Vec<serde_json::Value> = Vec::new();
+        for (platform, handle) in &config.handles {
+            let trimmed = handle.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let matched = cached
+                .iter()
+                .find(|a| a.platform == *platform && a.handle.eq_ignore_ascii_case(trimmed));
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "platform".into(),
+                serde_json::Value::String(platform.clone()),
+            );
+            obj.insert(
+                "handle".into(),
+                serde_json::Value::String(trimmed.to_owned()),
+            );
+            if let Some(rating) = matched.and_then(|a| a.rating) {
+                obj.insert("rating".into(), serde_json::json!(rating));
+            }
+            if let Some(max_rating) = matched.and_then(|a| a.max_rating) {
+                obj.insert("max_rating".into(), serde_json::json!(max_rating));
+            }
+            if let Some(rank) = matched.and_then(|a| a.rank.as_ref()) {
+                obj.insert("rank".into(), serde_json::Value::String(rank.clone()));
+            }
+            accounts.push(serde_json::Value::Object(obj));
+        }
+
+        match serde_json::to_string(&accounts) {
+            Ok(data_json) => PluginWorkspaceResultJs {
+                ok: true,
+                data_json: Some(data_json),
+                error: None,
+                error_code: None,
+            },
+            Err(err) => err_res("SERIALIZE", err.to_string()),
+        }
+    }
+
     pub(crate) fn plugin_workspace_query(
         &self,
         plugin_id: &str,

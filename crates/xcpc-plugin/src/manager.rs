@@ -1070,6 +1070,7 @@ impl PluginManager {
                 headers: BTreeMap::new(),
                 body: None,
                 timeout_ms: Some(15_000),
+                response_type: crate::http::HttpResponseType::Text,
             })?;
             if matches!(resp.status, 301 | 302 | 303 | 307 | 308) {
                 let Some(loc) = resp

@@ -50,6 +50,22 @@ export interface XcpcWorkspaceBridge {
   listContests(): Promise<WorkspaceContestSummary[]>;
 }
 
+export interface XcpcOjAccount {
+  platform: string;
+  handle: string;
+  rating?: number;
+  max_rating?: number;
+  rank?: string;
+}
+
+export interface XcpcOjBridge {
+  /**
+   * Lists the user's bound OJ accounts (platform, handle, cached rating/rank).
+   * Read-only; exposes no credentials or private submission data.
+   */
+  listAccounts(): Promise<XcpcOjAccount[]>;
+}
+
 export interface XcpcClipboardBridge {
   writeText(text: string): Promise<void>;
   /**
@@ -73,6 +89,7 @@ export interface XcpcBridge {
   ): Promise<T>;
   readonly storage: XcpcStorageBridge;
   readonly workspace: XcpcWorkspaceBridge;
+  readonly oj: XcpcOjBridge;
   toast(message: string, kind?: "info" | "success" | "error"): void;
   readonly clipboard: XcpcClipboardBridge;
   readonly files: XcpcFilesBridge;

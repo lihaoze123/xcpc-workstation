@@ -82,6 +82,8 @@ struct JsFetchRequest {
     credential_header: Option<CredentialHeaderSpec>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    #[serde(default)]
+    response_type: crate::http::HttpResponseType,
 }
 
 fn default_get() -> String {
@@ -575,6 +577,7 @@ fn register_native_bridges<'js>(
                     headers: headers.clone(),
                     body: current_body.clone(),
                     timeout_ms: parsed.timeout_ms,
+                    response_type: parsed.response_type,
                 };
                 let resp = match http.send(&http_req) {
                     Ok(r) => r,
