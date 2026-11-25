@@ -2286,7 +2286,7 @@ impl PluginUiWorker {
                             color_scheme,
                             reply,
                         } => {
-                            let res = match xcpc_plugin::PluginUiSession::mount(
+                            let res = match xcpc_plugin::PluginUiSession::mount_raw(
                                 loaded,
                                 kv,
                                 Some(Arc::new(UreqHttpClient::new())),
@@ -2297,22 +2297,15 @@ impl PluginUiWorker {
                                 &theme_tokens_json,
                                 &color_scheme,
                             ) {
-                                Ok((session, out)) => {
+                                Ok((session, frame_json)) => {
                                     let sid = next_id;
                                     next_id = next_id.wrapping_add(1).max(1);
                                     sessions.insert(sid, session);
-                                    match serde_json::to_string(&out) {
-                                        Ok(frame_json) => PluginUiFrameJs {
-                                            ok: true,
-                                            session_id: Some(sid),
-                                            frame_json: Some(frame_json),
-                                            error: None,
-                                        },
-                                        Err(e) => PluginUiFrameJs {
-                                            ok: false,
-                                            error: Some(e.to_string()),
-                                            ..Default::default()
-                                        },
+                                    PluginUiFrameJs {
+                                        ok: true,
+                                        session_id: Some(sid),
+                                        frame_json: Some(frame_json),
+                                        error: None,
                                     }
                                 }
                                 Err(e) => PluginUiFrameJs {
@@ -2331,12 +2324,13 @@ impl PluginUiWorker {
                         } => {
                             let res = match sessions.get(&session_id) {
                                 Some(sess) => {
-                                    match sess.dispatch_event(&callback_id, payload_json.as_deref())
+                                    match sess
+                                        .dispatch_event_raw(&callback_id, payload_json.as_deref())
                                     {
-                                        Ok(out) => PluginUiFrameJs {
+                                        Ok(frame_json) => PluginUiFrameJs {
                                             ok: true,
                                             session_id: Some(session_id),
-                                            frame_json: serde_json::to_string(&out).ok(),
+                                            frame_json: Some(frame_json),
                                             error: None,
                                         },
                                         Err(e) => PluginUiFrameJs {
@@ -2362,20 +2356,22 @@ impl PluginUiWorker {
                             reply,
                         } => {
                             let res = match sessions.get(&session_id) {
-                                Some(sess) => match sess.resolve_effect(effect_id, &result_json) {
-                                    Ok(out) => PluginUiFrameJs {
-                                        ok: true,
-                                        session_id: Some(session_id),
-                                        frame_json: serde_json::to_string(&out).ok(),
-                                        error: None,
-                                    },
-                                    Err(e) => PluginUiFrameJs {
-                                        ok: false,
-                                        session_id: Some(session_id),
-                                        frame_json: None,
-                                        error: Some(e.to_string()),
-                                    },
-                                },
+                                Some(sess) => {
+                                    match sess.resolve_effect_raw(effect_id, &result_json) {
+                                        Ok(frame_json) => PluginUiFrameJs {
+                                            ok: true,
+                                            session_id: Some(session_id),
+                                            frame_json: Some(frame_json),
+                                            error: None,
+                                        },
+                                        Err(e) => PluginUiFrameJs {
+                                            ok: false,
+                                            session_id: Some(session_id),
+                                            frame_json: None,
+                                            error: Some(e.to_string()),
+                                        },
+                                    }
+                                }
                                 None => PluginUiFrameJs {
                                     ok: false,
                                     error: Some("plugin UI session not found".to_owned()),
@@ -2392,11 +2388,11 @@ impl PluginUiWorker {
                         } => {
                             let res = match sessions.get(&session_id) {
                                 Some(sess) => {
-                                    match sess.update_theme(&theme_tokens_json, &color_scheme) {
-                                        Ok(out) => PluginUiFrameJs {
+                                    match sess.update_theme_raw(&theme_tokens_json, &color_scheme) {
+                                        Ok(frame_json) => PluginUiFrameJs {
                                             ok: true,
                                             session_id: Some(session_id),
-                                            frame_json: serde_json::to_string(&out).ok(),
+                                            frame_json: Some(frame_json),
                                             error: None,
                                         },
                                         Err(e) => PluginUiFrameJs {

@@ -50,6 +50,7 @@ import {
 import type { ToolOutputBlock } from "./types";
 
 interface SerializedVNode {
+  id: string;
   type: string;
   props: Record<string, unknown>;
   children: SerializedVNode[];
@@ -68,7 +69,9 @@ interface UiShortcutSpec {
 }
 
 interface UiRenderFrame {
-  tree: SerializedVNode;
+  tree?: SerializedVNode;
+  treeUnchanged?: boolean;
+  canvasOps?: Record<string, unknown>;
   effects: UiHostEffect[];
   shortcuts: UiShortcutSpec[];
 }
@@ -211,12 +214,35 @@ export function PluginUiRenderer(props: {
   revision: number;
   getInitialPayload?: () => unknown;
 }) {
-  const frame = signal<UiRenderFrame | null>(null);
-  const frameSeq = signal<number>(0);
+  const mountEpoch = signal<number>(0);
+  const rootNodeId = signal<string | null>(null);
+  const outputSeq = signal<number>(0);
   const error = signal<string | null>(null);
+
+  const nodeSignals = new Map<string, ReturnType<typeof signal<SerializedVNode>>>();
+  const canvasOpsSignals = new Map<string, ReturnType<typeof signal<unknown>>>();
+
+  const getNodeSignal = (id: string) => {
+    let sig = nodeSignals.get(id);
+    if (!sig) {
+      sig = signal<SerializedVNode>({ id, type: "View", props: {}, children: [] });
+      nodeSignals.set(id, sig);
+    }
+    return sig;
+  };
+
+  const getCanvasOpsSignal = (canvasKey: string) => {
+    let sig = canvasOpsSignals.get(canvasKey);
+    if (!sig) {
+      sig = signal<unknown>([]);
+      canvasOpsSignals.set(canvasKey, sig);
+    }
+    return sig;
+  };
 
   let sessionId: number | null = null;
   let unbindShortcuts: Array<() => void> = [];
+  let lastShortcutsJson = "";
   let moveTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingMove: { cb: string; payload: unknown } | null = null;
 
@@ -229,6 +255,7 @@ export function PluginUiRenderer(props: {
       }
     }
     unbindShortcuts = [];
+    lastShortcutsJson = "";
   };
 
   const disposeSession = () => {
@@ -243,6 +270,10 @@ export function PluginUiRenderer(props: {
       sessionId = null;
       preview.pluginUiDispose(sid);
     }
+    nodeSignals.clear();
+    canvasOpsSignals.clear();
+    rootNodeId.set(null);
+    mountEpoch.set(mountEpoch() + 1);
   };
 
   nshOnCleanup(() => {
@@ -250,7 +281,10 @@ export function PluginUiRenderer(props: {
   });
 
   const syncShortcuts = (specs: UiShortcutSpec[]) => {
+    const nextJson = JSON.stringify(specs ?? []);
+    if (nextJson === lastShortcutsJson) return;
     clearShortcuts();
+    lastShortcutsJson = nextJson;
     if (!specs || specs.length === 0) return;
     for (const sc of specs) {
       try {
@@ -359,6 +393,35 @@ export function PluginUiRenderer(props: {
     }
   };
 
+  const upsertTreeSignals = (root: SerializedVNode) => {
+    const seen = new Set<string>();
+    const visit = (node: SerializedVNode) => {
+      if (!node || typeof node.id !== "string") return;
+      seen.add(node.id);
+      const existing = nodeSignals.get(node.id);
+      if (existing) {
+        existing.set(node);
+      } else {
+        nodeSignals.set(node.id, signal(node));
+      }
+      if (node.type === "Menu" && node.props && node.props.triggerNode) {
+        visit(node.props.triggerNode as SerializedVNode);
+      }
+      const kids = node.children;
+      if (Array.isArray(kids)) {
+        for (let i = 0; i < kids.length; i++) {
+          visit(kids[i]);
+        }
+      }
+    };
+    visit(root);
+    for (const id of nodeSignals.keys()) {
+      if (!seen.has(id)) {
+        nodeSignals.delete(id);
+      }
+    }
+  };
+
   const applyFrameResult = (res: {
     ok: boolean;
     sessionId?: number | null;
@@ -372,8 +435,22 @@ export function PluginUiRenderer(props: {
     try {
       const parsed = JSON.parse(res.frameJson) as UiRenderFrame;
       error.set(null);
-      frame.set(parsed);
-      frameSeq.set(frameSeq() + 1);
+
+      // Always update Canvas2D command buffers in-place (even on `treeUnchanged` fast path).
+      if (parsed.canvasOps && typeof parsed.canvasOps === "object") {
+        for (const [canvasKey, ops] of Object.entries(parsed.canvasOps)) {
+          getCanvasOpsSignal(canvasKey).set(ops);
+        }
+      }
+
+      if (!parsed.treeUnchanged && parsed.tree) {
+        upsertTreeSignals(parsed.tree);
+        outputSeq.set(outputSeq() + 1);
+        if (rootNodeId() !== parsed.tree.id) {
+          rootNodeId.set(parsed.tree.id);
+        }
+      }
+
       syncShortcuts(parsed.shortcuts ?? []);
       if (sessionId !== null && parsed.effects && parsed.effects.length > 0) {
         runEffects(sessionId, parsed.effects);
@@ -443,291 +520,325 @@ export function PluginUiRenderer(props: {
     });
   });
 
-  const renderVNode = (node: SerializedVNode): JSX.Element => {
-    const p = node.props ?? {};
-    const kids = (node.children ?? []).map(renderVNode);
-    const childEl = kids.length === 0 ? undefined : kids.length === 1 ? kids[0] : kids;
+  const FALLBACK_NODE: SerializedVNode = { id: "", type: "View", props: {}, children: [] };
 
-    switch (node.type) {
-      case "View":
-        return (
-          <SdkView
-            testID={p.testID as string | undefined}
-            class={p.class as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            disabled={p.disabled as boolean | undefined}
-            tooltip={p.tooltip as string | undefined}
-            onPress={typeof p.onPress === "string" ? () => dispatch(p.onPress) : undefined}
-          >
-            {childEl}
-          </SdkView>
-        );
-      case "Row":
-        return (
-          <SdkRow
-            testID={p.testID as string | undefined}
-            gap={p.gap as number | undefined}
-            align={p.align as ViewStyle["alignItems"] | undefined}
-            justify={p.justify as ViewStyle["justifyContent"] | undefined}
-            wrap={p.wrap as boolean | undefined}
-            padding={p.padding as number | undefined}
-            class={p.class as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            onPress={typeof p.onPress === "string" ? () => dispatch(p.onPress) : undefined}
-          >
-            {childEl}
-          </SdkRow>
-        );
-      case "Col":
-        return (
-          <SdkCol
-            testID={p.testID as string | undefined}
-            gap={p.gap as number | undefined}
-            align={p.align as ViewStyle["alignItems"] | undefined}
-            justify={p.justify as ViewStyle["justifyContent"] | undefined}
-            wrap={p.wrap as boolean | undefined}
-            padding={p.padding as number | undefined}
-            class={p.class as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            onPress={typeof p.onPress === "string" ? () => dispatch(p.onPress) : undefined}
-          >
-            {childEl}
-          </SdkCol>
-        );
-      case "Card":
-        return (
-          <SdkCard
-            testID={p.testID as string | undefined}
-            class={p.class as string | undefined}
-            style={p.style as ViewStyle | undefined}
-          >
-            {childEl}
-          </SdkCard>
-        );
-      case "Text":
-        return (
-          <SdkText
-            testID={p.testID as string | undefined}
-            class={p.class as string | undefined}
-            style={p.style as Record<string, unknown> | undefined}
-          >
-            {String(p.text ?? "")}
-          </SdkText>
-        );
-      case "Scroll":
-        return (
-          <Scroll
-            testID={p.testID as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            contentStyle={p.contentStyle as ViewStyle | undefined}
-          >
-            {childEl as JSX.Element}
-          </Scroll>
-        );
-      case "Button":
-        return (
-          <SdkButton
-            testID={p.testID as string | undefined}
-            variant={p.variant as SdkButtonVariant | undefined}
-            size={p.size as "sm" | "md" | undefined}
-            icon={p.icon as IconName | undefined}
-            disabled={p.disabled as boolean | undefined}
-            style={p.style as ViewStyle | undefined}
-            textStyle={p.textStyle as Record<string, unknown> | undefined}
-            tooltip={p.tooltip as string | undefined}
-            onPress={typeof p.onPress === "string" ? () => dispatch(p.onPress) : undefined}
-          >
-            {p.label !== undefined ? String(p.label) : childEl}
-          </SdkButton>
-        );
-      case "Icon":
-        return (
-          <SdkIcon
-            name={(p.name as IconName) ?? "squareCode"}
-            size={p.size as number | undefined}
-            tone={p.tone as IconTone | undefined}
-            style={p.style as Record<string, unknown> | undefined}
-          />
-        );
-      case "Segmented":
-        return (
-          <SdkSegmented
-            items={(p.items as PluginSegmentedItem[]) ?? []}
-            value={String(p.value ?? "")}
-            itemWidth={p.itemWidth as number | undefined}
-            underline={p.underline as boolean | undefined}
-            disabled={p.disabled as boolean | undefined}
-            onChange={(val) => dispatch(p.onChange, val)}
-          />
-        );
-      case "Chip":
-        return (
-          <SdkChip
-            label={String(p.label ?? "")}
-            active={Boolean(p.active)}
-            maxWidth={p.maxWidth as ViewStyle["maxWidth"]}
-            onPress={typeof p.onPress === "string" ? () => dispatch(p.onPress) : undefined}
-          />
-        );
-      case "Input":
-        return (
-          <SdkInput
-            testID={p.testID as string | undefined}
-            value={String(p.value ?? "")}
-            placeholder={p.placeholder as string | undefined}
-            multiline={Boolean(p.multiline)}
-            disabled={Boolean(p.disabled)}
-            style={p.style as Record<string, unknown> | undefined}
-            onChangeText={(txt) => {
-              if (typeof p.onChangeText === "string") dispatch(p.onChangeText, txt);
-              if (typeof p.onChange === "string") dispatch(p.onChange, { value: txt });
-            }}
-          />
-        );
-      case "Switch":
-        return (
-          <SdkSwitch
-            testID={p.testID as string | undefined}
-            checked={p.checked !== undefined ? Boolean(p.checked) : Boolean(p.value)}
-            disabled={Boolean(p.disabled)}
-            label={p.label as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            onChange={(next) => dispatch(p.onChange, next)}
-          />
-        );
-      case "Select":
-        return (
-          <SdkSelect
-            testID={p.testID as string | undefined}
-            options={(p.options as PluginSelectOption[]) ?? []}
-            value={String(p.value ?? "")}
-            placeholder={p.placeholder as string | undefined}
-            disabled={Boolean(p.disabled)}
-            minWidth={p.minWidth as number | undefined}
-            style={p.style as ViewStyle | undefined}
-            onChange={(val) => dispatch(p.onChange, val)}
-          />
-        );
-      case "Badge":
-        return (
-          <SdkBadge
-            tone={p.tone as PluginBadgeTone | undefined}
-            style={p.style as ViewStyle | undefined}
-            textStyle={p.textStyle as Record<string, unknown> | undefined}
-            label={p.label !== undefined ? String(p.label) : undefined}
-          >
-            {p.label !== undefined ? undefined : childEl}
-          </SdkBadge>
-        );
-      case "Menu":
-        return (
-          <SdkMenu
-            items={(p.items as PluginMenuItem[]) ?? []}
-            align={p.align as "start" | "end" | undefined}
-            stayOpen={Boolean(p.stayOpen)}
-            minWidth={p.minWidth as number | undefined}
-            onSelect={(id) => dispatch(p.onSelect, id)}
-            trigger={
-              p.triggerNode
-                ? renderVNode(p.triggerNode as SerializedVNode)
-                : <View />
-            }
-          />
-        );
-      case "Modal":
-        return (
-          <SdkModal
-            open={Boolean(p.open)}
-            onClose={() => dispatch(p.onClose)}
-            title={p.title as string | undefined}
-            description={p.description as string | undefined}
-            icon={p.icon as IconName | undefined}
-            width={p.width as number | undefined}
-          >
-            {childEl}
-          </SdkModal>
-        );
-      case "Image":
-        return (
-          <SdkImage
-            testID={p.testID as string | undefined}
-            src={p.src as string | undefined}
-            pngBase64={p.pngBase64 as string | undefined}
-            svg={p.svg as string | undefined}
-            svgScale={p.svgScale as number | undefined}
-            width={p.width as number | string | undefined}
-            height={p.height as number | string | undefined}
-            fit={p.fit as "contain" | "cover" | "fill" | "scale-down" | "none" | undefined}
-            style={p.style as Record<string, unknown> | undefined}
-          />
-        );
-      case "CodeEditor":
-        return (
-          <SdkCodeEditor
-            testID={p.testID as string | undefined}
-            value={String(p.value ?? "")}
-            language={p.language as string | undefined}
-            placeholder={p.placeholder as string | undefined}
-            readOnly={Boolean(p.readOnly)}
-            style={p.style as ViewStyle | undefined}
-            onChange={(txt) => dispatch(p.onChange, txt)}
-          />
-        );
-      case "Output":
-        return (
-          <SdkOutput
-            blocks={(p.blocks as ToolOutputBlock[]) ?? []}
-            summary={p.summary as string | undefined}
-            resultSeq={frameSeq()}
-          />
-        );
-      case "Canvas": {
-        const ops = p.drawOps;
-        return (
-          <Canvas
-            testID={p.testID as string | undefined}
-            style={p.style as ViewStyle | undefined}
-            onLayout={
-              typeof p.onLayout === "string"
-                ? (e) => dispatch(p.onLayout, { bounds: e?.bounds })
-                : undefined
-            }
-            onPressDown={
-              typeof p.onPressDown === "string"
-                ? (e) => dispatch(p.onPressDown, { position: e.position })
-                : undefined
-            }
-            onMouseMove={
-              typeof p.onMouseMove === "string"
-                ? (e) => dispatchThrottledMove(p.onMouseMove, { position: e.position })
-                : undefined
-            }
-            onMouseUp={
-              typeof p.onMouseUp === "string"
-                ? () => dispatch(p.onMouseUp)
-                : undefined
-            }
-            onMouseLeave={
-              typeof p.onMouseLeave === "string"
-                ? () => dispatch(p.onMouseLeave)
-                : undefined
-            }
-            draw={(cx) => {
-              void frameSeq();
-              replayCanvasOps(cx, ops);
-            }}
-          />
-        );
+  function VNodeSlot(slotProps: { id: string }): JSX.Element {
+    const nodeSig = getNodeSignal(slotProps.id);
+    const node = (): SerializedVNode => nodeSig() ?? FALLBACK_NODE;
+    const p = () => node().props ?? {};
+
+    const renderChildren = (): JSX.Element => (
+      <Each
+        of={(node().children ?? []).map((c) => ({ id: c.id, type: c.type }))}
+        key={(c) => `${c.id}:${c.type}`}
+      >
+        {(c) => <VNodeSlot id={c().id} />}
+      </Each>
+    );
+
+    const renderByType = (nodeType: string): JSX.Element => {
+      switch (nodeType) {
+        case "View":
+          return (
+            <SdkView
+              testID={p().testID as string | undefined}
+              class={p().class as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              disabled={p().disabled as boolean | undefined}
+              tooltip={p().tooltip as string | undefined}
+              onPress={
+                typeof p().onPress === "string" ? () => dispatch(p().onPress) : undefined
+              }
+            >
+              {renderChildren()}
+            </SdkView>
+          );
+        case "Row":
+          return (
+            <SdkRow
+              testID={p().testID as string | undefined}
+              gap={p().gap as number | undefined}
+              align={p().align as ViewStyle["alignItems"] | undefined}
+              justify={p().justify as ViewStyle["justifyContent"] | undefined}
+              wrap={p().wrap as boolean | undefined}
+              padding={p().padding as number | undefined}
+              class={p().class as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              onPress={
+                typeof p().onPress === "string" ? () => dispatch(p().onPress) : undefined
+              }
+            >
+              {renderChildren()}
+            </SdkRow>
+          );
+        case "Col":
+          return (
+            <SdkCol
+              testID={p().testID as string | undefined}
+              gap={p().gap as number | undefined}
+              align={p().align as ViewStyle["alignItems"] | undefined}
+              justify={p().justify as ViewStyle["justifyContent"] | undefined}
+              wrap={p().wrap as boolean | undefined}
+              padding={p().padding as number | undefined}
+              class={p().class as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              onPress={
+                typeof p().onPress === "string" ? () => dispatch(p().onPress) : undefined
+              }
+            >
+              {renderChildren()}
+            </SdkCol>
+          );
+        case "Card":
+          return (
+            <SdkCard
+              testID={p().testID as string | undefined}
+              class={p().class as string | undefined}
+              style={p().style as ViewStyle | undefined}
+            >
+              {renderChildren()}
+            </SdkCard>
+          );
+        case "Text":
+          return (
+            <SdkText
+              testID={p().testID as string | undefined}
+              class={p().class as string | undefined}
+              style={p().style as Record<string, unknown> | undefined}
+            >
+              {String(p().text ?? "")}
+            </SdkText>
+          );
+        case "Scroll":
+          return (
+            <Scroll
+              testID={p().testID as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              contentStyle={p().contentStyle as ViewStyle | undefined}
+            >
+              {renderChildren()}
+            </Scroll>
+          );
+        case "Button":
+          return (
+            <SdkButton
+              testID={p().testID as string | undefined}
+              variant={p().variant as SdkButtonVariant | undefined}
+              size={p().size as "sm" | "md" | undefined}
+              icon={p().icon as IconName | undefined}
+              disabled={p().disabled as boolean | undefined}
+              style={p().style as ViewStyle | undefined}
+              textStyle={p().textStyle as Record<string, unknown> | undefined}
+              tooltip={p().tooltip as string | undefined}
+              onPress={
+                typeof p().onPress === "string" ? () => dispatch(p().onPress) : undefined
+              }
+            >
+              {p().label !== undefined ? String(p().label) : renderChildren()}
+            </SdkButton>
+          );
+        case "Icon":
+          return (
+            <SdkIcon
+              name={(p().name as IconName) ?? "squareCode"}
+              size={p().size as number | undefined}
+              tone={p().tone as IconTone | undefined}
+              style={p().style as Record<string, unknown> | undefined}
+            />
+          );
+        case "Segmented":
+          return (
+            <SdkSegmented
+              items={(p().items as PluginSegmentedItem[]) ?? []}
+              value={String(p().value ?? "")}
+              itemWidth={p().itemWidth as number | undefined}
+              underline={p().underline as boolean | undefined}
+              disabled={p().disabled as boolean | undefined}
+              onChange={(val) => dispatch(p().onChange, val)}
+            />
+          );
+        case "Chip":
+          return (
+            <SdkChip
+              label={String(p().label ?? "")}
+              active={Boolean(p().active)}
+              maxWidth={p().maxWidth as ViewStyle["maxWidth"]}
+              onPress={
+                typeof p().onPress === "string" ? () => dispatch(p().onPress) : undefined
+              }
+            />
+          );
+        case "Input":
+          return (
+            <SdkInput
+              testID={p().testID as string | undefined}
+              value={String(p().value ?? "")}
+              placeholder={p().placeholder as string | undefined}
+              multiline={Boolean(p().multiline)}
+              disabled={Boolean(p().disabled)}
+              style={p().style as Record<string, unknown> | undefined}
+              onChangeText={(txt) => {
+                const propsNow = p();
+                if (typeof propsNow.onChangeText === "string") {
+                  dispatch(propsNow.onChangeText, txt);
+                }
+                if (typeof propsNow.onChange === "string") {
+                  dispatch(propsNow.onChange, { value: txt });
+                }
+              }}
+            />
+          );
+        case "Switch":
+          return (
+            <SdkSwitch
+              testID={p().testID as string | undefined}
+              checked={p().checked !== undefined ? Boolean(p().checked) : Boolean(p().value)}
+              disabled={Boolean(p().disabled)}
+              label={p().label as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              onChange={(next) => dispatch(p().onChange, next)}
+            />
+          );
+        case "Select":
+          return (
+            <SdkSelect
+              testID={p().testID as string | undefined}
+              options={(p().options as PluginSelectOption[]) ?? []}
+              value={String(p().value ?? "")}
+              placeholder={p().placeholder as string | undefined}
+              disabled={Boolean(p().disabled)}
+              minWidth={p().minWidth as number | undefined}
+              style={p().style as ViewStyle | undefined}
+              onChange={(val) => dispatch(p().onChange, val)}
+            />
+          );
+        case "Badge":
+          return (
+            <SdkBadge
+              tone={p().tone as PluginBadgeTone | undefined}
+              style={p().style as ViewStyle | undefined}
+              textStyle={p().textStyle as Record<string, unknown> | undefined}
+              label={p().label !== undefined ? String(p().label) : undefined}
+            >
+              {p().label !== undefined ? undefined : renderChildren()}
+            </SdkBadge>
+          );
+        case "Menu":
+          return (
+            <SdkMenu
+              items={(p().items as PluginMenuItem[]) ?? []}
+              align={p().align as "start" | "end" | undefined}
+              stayOpen={Boolean(p().stayOpen)}
+              minWidth={p().minWidth as number | undefined}
+              onSelect={(id) => dispatch(p().onSelect, id)}
+              trigger={
+                p().triggerNode ? (
+                  <VNodeSlot id={(p().triggerNode as SerializedVNode).id} />
+                ) : (
+                  <View />
+                )
+              }
+            />
+          );
+        case "Modal":
+          return (
+            <SdkModal
+              open={Boolean(p().open)}
+              onClose={() => dispatch(p().onClose)}
+              title={p().title as string | undefined}
+              description={p().description as string | undefined}
+              icon={p().icon as IconName | undefined}
+              width={p().width as number | undefined}
+            >
+              {renderChildren()}
+            </SdkModal>
+          );
+        case "Image":
+          return (
+            <SdkImage
+              testID={p().testID as string | undefined}
+              src={p().src as string | undefined}
+              pngBase64={p().pngBase64 as string | undefined}
+              svg={p().svg as string | undefined}
+              svgScale={p().svgScale as number | undefined}
+              width={p().width as number | string | undefined}
+              height={p().height as number | string | undefined}
+              fit={p().fit as "contain" | "cover" | "fill" | "scale-down" | "none" | undefined}
+              style={p().style as Record<string, unknown> | undefined}
+            />
+          );
+        case "CodeEditor":
+          return (
+            <SdkCodeEditor
+              testID={p().testID as string | undefined}
+              value={String(p().value ?? "")}
+              language={p().language as string | undefined}
+              placeholder={p().placeholder as string | undefined}
+              readOnly={Boolean(p().readOnly)}
+              style={p().style as ViewStyle | undefined}
+              onChange={(txt) => dispatch(p().onChange, txt)}
+            />
+          );
+        case "Output":
+          return (
+            <SdkOutput
+              blocks={(p().blocks as ToolOutputBlock[]) ?? []}
+              summary={p().summary as string | undefined}
+              resultSeq={outputSeq()}
+            />
+          );
+        case "Canvas": {
+          const canvasKey = String(p().__canvasKey ?? slotProps.id);
+          const opsSig = getCanvasOpsSignal(canvasKey);
+          return (
+            <Canvas
+              testID={p().testID as string | undefined}
+              style={p().style as ViewStyle | undefined}
+              onLayout={(e) => {
+                const cb = p().onLayout;
+                if (typeof cb === "string") dispatch(cb, { bounds: e?.bounds });
+              }}
+              onPressDown={(e) => {
+                const cb = p().onPressDown;
+                if (typeof cb === "string") dispatch(cb, { position: e.position });
+              }}
+              onMouseMove={(e) => {
+                const cb = p().onMouseMove;
+                if (typeof cb === "string") dispatchThrottledMove(cb, { position: e.position });
+              }}
+              onMouseUp={() => {
+                const cb = p().onMouseUp;
+                if (typeof cb === "string") dispatch(cb);
+              }}
+              onMouseLeave={() => {
+                const cb = p().onMouseLeave;
+                if (typeof cb === "string") dispatch(cb);
+              }}
+              draw={(cx) => {
+                replayCanvasOps(cx, opsSig());
+              }}
+            />
+          );
+        }
+        default:
+          return <View style={p().style as ViewStyle | undefined}>{renderChildren()}</View>;
       }
-      default:
-        return <View style={p.style as ViewStyle | undefined}>{childEl as JSX.Element}</View>;
-    }
-  };
+    };
+
+    return (
+      <Each
+        of={[{ key: `${slotProps.id}:${node().type}`, type: node().type }]}
+        key={(entry) => entry.key}
+      >
+        {(entry) => renderByType(entry().type)}
+      </Each>
+    );
+  }
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
       <If
-        when={!error() && frame()}
+        when={!error() && rootNodeId()}
         else={
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 }}>
             <Icon name="circleAlert" size={22} tone="destructive" />
@@ -740,8 +851,11 @@ export function PluginUiRenderer(props: {
           </View>
         }
       >
-        <Each of={frame() ? [{ seq: frameSeq(), tree: frame()!.tree }] : []} key={(it) => it.seq}>
-          {(it) => renderVNode(it().tree)}
+        <Each
+          of={rootNodeId() ? [{ key: `${mountEpoch()}:${rootNodeId()}`, id: rootNodeId()! }] : []}
+          key={(it) => it.key}
+        >
+          {(it) => <VNodeSlot id={it().id} />}
         </Each>
       </If>
     </View>

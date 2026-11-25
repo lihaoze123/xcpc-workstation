@@ -2062,6 +2062,7 @@ module.exports = {
 function render(sdk) {
   const { h, signal, ui, useTool, storage, toast } = sdk;
   const count = signal(storage.get("count") ?? 1);
+  const dragX = signal(50);
   const res = useTool("add", () => ({ a: count() }));
   return h(ui.Col, { gap: 8 },
     h(ui.Text, { testID: "counter" }, () => "n=" + count()),
@@ -2076,10 +2077,13 @@ function render(sdk) {
     }, "+1"),
     h(ui.Canvas, {
       testID: "cv",
+      onMouseMove: (ev) => {
+        if (ev && ev.position) dragX.set(ev.position.x);
+      },
       draw: (cx, sz) => {
         cx.clearRect(0, 0, sz.width, sz.height);
         cx.beginPath();
-        cx.arc(50, 50, 10 + count(), 0, Math.PI * 2);
+        cx.arc(dragX(), 50, 10 + count(), 0, Math.PI * 2);
         cx.fill();
       }
     }),
@@ -2106,28 +2110,53 @@ module.exports = { render };
     )
     .unwrap();
 
-    // Initial render: counter text = "n=1", Output has "sum=2", Canvas has recorded drawOps.
-    let children = out1.tree["children"].as_array().unwrap();
+    // Initial render: counter text = "n=1", Output has "sum=2", Canvas has recorded canvas_ops, stable IDs.
+    assert!(!out1.tree_unchanged);
+    let tree1 = out1.tree.as_ref().expect("initial frame must include tree");
+    assert_eq!(tree1["id"], "root");
+    let children = tree1["children"].as_array().unwrap();
     assert_eq!(children[0]["props"]["text"], "n=1");
     let inc_cb = children[1]["props"]["onPress"]
         .as_str()
         .unwrap()
         .to_string();
-    let draw_ops = children[2]["props"]["drawOps"].as_array().unwrap();
-    assert!(draw_ops.iter().any(|op| op[0] == "arc" && op[3] == 11.0));
+    let move_cb = children[2]["props"]["onMouseMove"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let draw_ops = out1.canvas_ops["cv"].as_array().unwrap();
+    assert!(
+        draw_ops
+            .iter()
+            .any(|op| op[0] == "arc" && op[1] == 50.0 && op[3] == 11.0)
+    );
     assert_eq!(children[3]["props"]["blocks"][0]["content"], "sum=2");
+
+    // Canvas-only mouseMove -> treeUnchanged fast path skips VNode tree payload, updates canvas_ops only.
+    let out_drag = session
+        .dispatch_event(&move_cb, Some(r#"{"position":{"x":123,"y":50}}"#))
+        .unwrap();
+    assert!(out_drag.tree_unchanged);
+    assert!(out_drag.tree.is_none());
+    let drag_ops = out_drag.canvas_ops["cv"].as_array().unwrap();
+    assert!(
+        drag_ops
+            .iter()
+            .any(|op| op[0] == "arc" && op[1] == 123.0 && op[3] == 11.0)
+    );
 
     // Dispatch button press -> signal updates to 2, storage persists 2, toast effect queued, Canvas re-recorded.
     let out2 = session.dispatch_event(&inc_cb, None).unwrap();
-    let ch2 = out2.tree["children"].as_array().unwrap();
+    assert!(!out2.tree_unchanged);
+    let ch2 = out2.tree.as_ref().unwrap()["children"].as_array().unwrap();
     assert_eq!(ch2[0]["props"]["text"], "n=2");
     assert_eq!(ch2[3]["props"]["blocks"][0]["content"], "sum=3");
     assert!(
-        ch2[2]["props"]["drawOps"]
+        out2.canvas_ops["cv"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|op| op[0] == "arc" && op[3] == 12.0)
+            .any(|op| op[0] == "arc" && op[1] == 123.0 && op[3] == 12.0)
     );
     assert_eq!(kv.get("count").unwrap(), Some(serde_json::json!(2)));
     assert!(out2.effects.iter().any(|e| e.kind == "toast"));

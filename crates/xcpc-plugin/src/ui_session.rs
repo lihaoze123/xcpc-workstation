@@ -4,6 +4,7 @@
 //! with a transparent JSX / Signal / Canvas2D-recorder SDK, serializing the reactive component tree
 //! into a lightweight JSON VNode tree for native NSH rendering without `eval` or `new Function()`.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -44,7 +45,12 @@ pub struct UiShortcutSpec {
 /// Serialized output returned by every UI session turn (`mount`, `dispatch_event`, `resolve_effect`, `update_theme`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiRenderOutput {
-    pub tree: serde_json::Value,
+    #[serde(default)]
+    pub tree: Option<serde_json::Value>,
+    #[serde(default, rename = "treeUnchanged")]
+    pub tree_unchanged: bool,
+    #[serde(default, rename = "canvasOps")]
+    pub canvas_ops: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub effects: Vec<UiHostEffect>,
     #[serde(default)]
@@ -346,7 +352,10 @@ const UI_SDK_BOOTSTRAP_JS: &str = r##"
         const idx = i;
         if (typeof props.children === "function") {
           const el = props.children(() => item, () => idx);
-          const ser = serializeNode(el, path + ":each:" + i);
+          const itemPath = typeof props.key === "function"
+            ? path + ":k=" + String(props.key(item, idx))
+            : path + ":each:" + i;
+          const ser = serializeNode(el, itemPath);
           if (ser !== null) {
             if (Array.isArray(ser)) out.push(...ser);
             else out.push(ser);
@@ -385,7 +394,7 @@ const UI_SDK_BOOTSTRAP_JS: &str = r##"
         } catch (err) {
           // Record draw error silently so host canvas stays clean.
         }
-        outProps.drawOps = rec.ops;
+        currentCanvasOps[canvasKey] = rec.ops;
       }
       // Wrap onLayout to remember canvas dimensions inside QuickJS as well.
       const userOnLayout = typeof props.onLayout === "function" ? props.onLayout : null;
@@ -397,24 +406,25 @@ const UI_SDK_BOOTSTRAP_JS: &str = r##"
         }
         if (userOnLayout) userOnLayout(ev);
       });
-      return { type, props: outProps, children: [] };
+      return { id: path, type, props: outProps, children: [] };
     }
 
     if (type === "Text") {
       outProps.text = resolveText(props.children);
-      return { type, props: outProps, children: [] };
+      return { id: path, type, props: outProps, children: [] };
     }
 
     if (type === "Button" || type === "Badge") {
       const ch = resolveMaybe(props.children);
       if (typeof ch === "string" || typeof ch === "number") {
         outProps.label = String(ch);
-        return { type, props: outProps, children: [] };
+        return { id: path, type, props: outProps, children: [] };
       }
-      return { type, props: outProps, children: serializeChildren(ch, path) };
+      return { id: path, type, props: outProps, children: serializeChildren(ch, path) };
     }
 
     return {
+      id: path,
       type,
       props: outProps,
       children: serializeChildren(props.children, path),
@@ -576,21 +586,50 @@ const UI_SDK_BOOTSTRAP_JS: &str = r##"
   };
 
   let rootVNode = null;
+  let currentCanvasOps = {};
+  let lastTreeJson = null;
 
   function flushSnapshot() {
     callbackTable = new Map();
     nextCbId = 1;
-    const tree = untracked(() => serializeNode(rootVNode, "root"));
+    currentCanvasOps = {};
+    const tree = untracked(() => serializeNode(rootVNode, "root")) || {
+      id: "root",
+      type: "View",
+      props: {},
+      children: [],
+    };
     const effects = pendingEffects;
     pendingEffects = [];
-    return JSON.stringify({
-      tree: tree || { type: "View", props: {}, children: [] },
-      effects,
-      shortcuts: registeredShortcuts,
-    });
+    const nextTreeJson = JSON.stringify(tree);
+    const treeUnchanged = lastTreeJson !== null && nextTreeJson === lastTreeJson;
+    if (!treeUnchanged) {
+      lastTreeJson = nextTreeJson;
+      return (
+        '{"tree":' +
+        nextTreeJson +
+        ',"treeUnchanged":false,"canvasOps":' +
+        JSON.stringify(currentCanvasOps) +
+        ',"effects":' +
+        JSON.stringify(effects) +
+        ',"shortcuts":' +
+        JSON.stringify(registeredShortcuts) +
+        "}"
+      );
+    }
+    return (
+      '{"treeUnchanged":true,"canvasOps":' +
+      JSON.stringify(currentCanvasOps) +
+      ',"effects":' +
+      JSON.stringify(effects) +
+      ',"shortcuts":' +
+      JSON.stringify(registeredShortcuts) +
+      "}"
+    );
   }
 
   globalThis.__xcpc_ui_sdk = sdk;
+  globalThis.__xcpc_current_sdk = sdk;
   globalThis.__xcpc_ui_flush = flushSnapshot;
   globalThis.__xcpc_ui_mount_only = function(payloadJson, themeJson, scheme) {
     themeTokens = themeJson ? JSON.parse(themeJson) : {};
@@ -675,6 +714,34 @@ impl PluginUiSession {
         theme_tokens_json: &str,
         color_scheme: &str,
     ) -> Result<(Self, UiRenderOutput)> {
+        let (session, raw) = Self::mount_raw(
+            loaded,
+            kv,
+            http_client,
+            credentials,
+            workspace_reader,
+            ui_workspace,
+            initial_payload_json,
+            theme_tokens_json,
+            color_scheme,
+        )?;
+        let output: UiRenderOutput = serde_json::from_str(&raw)?;
+        Ok((session, output))
+    }
+
+    /// Mounts a persistent UI session and returns the raw serialized frame JSON without redundant Rust JSON parsing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mount_raw(
+        loaded: LoadedPlugin,
+        kv: Arc<KvStore>,
+        http_client: Option<Arc<dyn HttpClient>>,
+        credentials: Option<Arc<dyn CredentialStore>>,
+        workspace_reader: Option<Arc<dyn WorkspaceReader>>,
+        ui_workspace: Option<Arc<dyn UiWorkspaceBridge>>,
+        initial_payload_json: Option<&str>,
+        theme_tokens_json: &str,
+        color_scheme: &str,
+    ) -> Result<(Self, String)> {
         let ui_source = loaded.ui_source.clone().ok_or_else(|| {
             PluginError::InvalidPackage(format!(
                 "plugin '{}' has no ui_entry configured",
@@ -759,16 +826,13 @@ impl PluginUiSession {
             timed_out,
         };
         session.drain_jobs()?;
-        let output = session.flush()?;
-        Ok((session, output))
+        let raw = session.flush_raw()?;
+        Ok((session, raw))
     }
 
-    fn flush(&self) -> Result<UiRenderOutput> {
-        let raw = self
-            .ctx
-            .with(|ctx| eval_string(&ctx, "globalThis.__xcpc_ui_flush()"))?;
-        let output: UiRenderOutput = serde_json::from_str(&raw)?;
-        Ok(output)
+    fn flush_raw(&self) -> Result<String> {
+        self.ctx
+            .with(|ctx| eval_string(&ctx, "globalThis.__xcpc_ui_flush()"))
     }
 
     fn reset_deadline(&self) {
@@ -795,29 +859,56 @@ impl PluginUiSession {
         Ok(())
     }
 
-    /// Dispatches a UI callback or registered shortcut event and returns the refreshed VNode tree + effects.
-    pub fn dispatch_event(
+    /// Dispatches a UI callback or registered shortcut event and returns the raw serialized frame JSON.
+    pub fn dispatch_event_raw(
         &self,
         callback_id: &str,
         payload_json: Option<&str>,
-    ) -> Result<UiRenderOutput> {
+    ) -> Result<String> {
         self.reset_deadline();
         let cb_arg = serde_json::to_string(callback_id)?;
         let payload_arg = serde_json::to_string(&payload_json.unwrap_or(""))?;
         let call = format!("globalThis.__xcpc_ui_invoke({cb_arg}, {payload_arg});");
         self.ctx.with(|ctx| eval_void(&ctx, &call, "dispatch.js"))?;
         self.drain_jobs()?;
-        self.flush()
+        self.flush_raw()
     }
 
-    /// Resolves an async host effect (e.g. `pickFile`, `readClipboard`, `savePng`) back into the QuickJS session.
-    pub fn resolve_effect(&self, effect_id: u64, result_json: &str) -> Result<UiRenderOutput> {
+    /// Dispatches a UI callback or registered shortcut event and returns the refreshed VNode tree + effects.
+    pub fn dispatch_event(
+        &self,
+        callback_id: &str,
+        payload_json: Option<&str>,
+    ) -> Result<UiRenderOutput> {
+        let raw = self.dispatch_event_raw(callback_id, payload_json)?;
+        Ok(serde_json::from_str(&raw)?)
+    }
+
+    /// Resolves an async host effect back into the QuickJS session and returns the raw frame JSON.
+    pub fn resolve_effect_raw(&self, effect_id: u64, result_json: &str) -> Result<String> {
         self.reset_deadline();
         let res_arg = serde_json::to_string(result_json)?;
         let call = format!("globalThis.__xcpc_ui_resolve_only({effect_id}, {res_arg});");
         self.ctx.with(|ctx| eval_void(&ctx, &call, "resolve.js"))?;
         self.drain_jobs()?;
-        self.flush()
+        self.flush_raw()
+    }
+
+    /// Resolves an async host effect (e.g. `pickFile`, `readClipboard`, `savePng`) back into the QuickJS session.
+    pub fn resolve_effect(&self, effect_id: u64, result_json: &str) -> Result<UiRenderOutput> {
+        let raw = self.resolve_effect_raw(effect_id, result_json)?;
+        Ok(serde_json::from_str(&raw)?)
+    }
+
+    /// Updates theme tokens and color scheme and returns the raw frame JSON.
+    pub fn update_theme_raw(&self, theme_tokens_json: &str, color_scheme: &str) -> Result<String> {
+        self.reset_deadline();
+        let theme_arg = serde_json::to_string(theme_tokens_json)?;
+        let scheme_arg = serde_json::to_string(color_scheme)?;
+        let call = format!("globalThis.__xcpc_ui_update_theme({theme_arg}, {scheme_arg});");
+        self.ctx.with(|ctx| eval_void(&ctx, &call, "theme.js"))?;
+        self.drain_jobs()?;
+        self.flush_raw()
     }
 
     /// Updates theme tokens and color scheme (e.g. light <-> dark toggle) and returns the re-rendered tree.
@@ -826,13 +917,8 @@ impl PluginUiSession {
         theme_tokens_json: &str,
         color_scheme: &str,
     ) -> Result<UiRenderOutput> {
-        self.reset_deadline();
-        let theme_arg = serde_json::to_string(theme_tokens_json)?;
-        let scheme_arg = serde_json::to_string(color_scheme)?;
-        let call = format!("globalThis.__xcpc_ui_update_theme({theme_arg}, {scheme_arg});");
-        self.ctx.with(|ctx| eval_void(&ctx, &call, "theme.js"))?;
-        self.drain_jobs()?;
-        self.flush()
+        let raw = self.update_theme_raw(theme_tokens_json, color_scheme)?;
+        Ok(serde_json::from_str(&raw)?)
     }
 
     /// Invokes all registered `sdk.onCleanup` callbacks in reverse order.
