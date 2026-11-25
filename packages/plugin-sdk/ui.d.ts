@@ -52,6 +52,12 @@ export interface XcpcWorkspaceBridge {
 
 export interface XcpcClipboardBridge {
   writeText(text: string): Promise<void>;
+  /**
+   * Copies an image to the system clipboard.
+   * Accepts either raw PNG base64 (matching `files.savePng`) or a
+   * `data:image/...;base64,...` data URL (such as `canvas.toDataURL("image/png")`).
+   */
+  writeImage(pngBase64: string): Promise<void>;
 }
 
 export interface XcpcFilesBridge {

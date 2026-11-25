@@ -63,7 +63,7 @@
    default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';
    ```
    插件的 `ui.html` 被放入 `<iframe sandbox="allow-scripts" srcdoc="...">`（无 `allow-same-origin`、无 `allow-top-navigation`），彻底杜绝外链资源、Cookie/Storage 越权或通过注释/前置脚本绕过 CSP。
-3. **每次挂载独立 `bridgeToken`**：外层壳持有每次挂载随机生成的 `bridgeToken`（不暴露给 iframe），仅中继满足 `ev.source === frame.contentWindow && ev.origin === "null"` 的消息给宿主校验。宿主不向未授权插件暴露 `clipboard.readText` 或 `openExternal`。
+3. **每次挂载独立 `bridgeToken`**：外层壳持有每次挂载随机生成的 `bridgeToken`（不暴露给 iframe），仅中继满足 `ev.source === frame.contentWindow && ev.origin === "null"` 的消息给宿主校验。宿主不向未授权插件暴露 `clipboard.readText`、`clipboard.readImage` 或 `openExternal`。
 
 ### 2.3 QuickJS 沙箱、仓库协议与软链防护
 

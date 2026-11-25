@@ -18,7 +18,7 @@ import {
 import { Preview } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { Btn } from "../kit";
-import { goSettings, openToolPlugin, preview } from "../store";
+import { goSettings, openToolPlugin, pluginRevisionFor, preview } from "../store";
 import { MONO, token, UI_SANS } from "../theme";
 import { showToast, type ToastTone } from "../Toast";
 import { zhEn } from "../training/locale";
@@ -26,6 +26,32 @@ import { classifyPluginUiError, formatPluginError, type PluginUiErrorInfo } from
 
 export const PLUGIN_WEBVIEW_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';";
+
+const DATA_IMAGE_BASE64_RE = /^data:image\/[a-zA-Z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)$/;
+const RAW_BASE64_RE = /^[A-Za-z0-9+/=\s]+$/;
+
+/**
+ * Normalizes a plugin `clipboard.writeImage` argument into a safe `data:image/...;base64,...` URL.
+ * Accepts either raw PNG base64 (matching `files.savePng`) or a base64 `data:image/...` URL
+ * (such as `canvas.toDataURL("image/png")`), and rejects arbitrary URL schemes.
+ */
+export function normalizeClipboardImageSrc(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("Empty image data");
+  }
+  const dataMatch = DATA_IMAGE_BASE64_RE.exec(trimmed);
+  if (dataMatch) {
+    const payload = dataMatch[1].replace(/\s+/g, "");
+    if (!payload) throw new Error("Empty image data");
+    const prefix = trimmed.slice(0, trimmed.indexOf(",") + 1);
+    return `${prefix}${payload}`;
+  }
+  if (trimmed.includes(":") || !RAW_BASE64_RE.test(trimmed)) {
+    throw new Error("Invalid image data: expected PNG base64 or data:image/...;base64,... URL");
+  }
+  return `data:image/png;base64,${trimmed.replace(/\s+/g, "")}`;
+}
 
 const FALLBACK_LIGHT_VARS: Record<string, string> = {
   "--xcpc-bg": "#FAFAFA",
@@ -270,7 +296,8 @@ var xcpc={
     notify("toast",{text:String(text||""),tone:tone||"info"});
   },
   clipboard:{
-    writeText:function(text){return rpc("clipboard.writeText",{text:String(text||"")});}
+    writeText:function(text){return rpc("clipboard.writeText",{text:String(text||"")});},
+    writeImage:function(pngBase64){return rpc("clipboard.writeImage",{pngBase64:String(pngBase64||"")});}
   },
   files:{
     saveText:function(defaultName,content){
@@ -398,7 +425,6 @@ interface BridgeRpcMessage {
 
 export function PluginWebView(props: {
   pluginId: string;
-  revision: number;
   getInitialPayload?: () => unknown;
 }) {
   const htmlDoc = signal<string | null>(null);
@@ -425,11 +451,11 @@ export function PluginWebView(props: {
     }
   };
 
-  // Load raw HTML whenever `pluginId`, per-plugin `revision`, or manual `reloadTick` changes.
+  // Load raw HTML whenever `pluginId`, per-plugin revision, or manual `reloadTick` changes.
   // Theme is read untracked here so light/dark switches update live via postMessage without reloading!
   effect(() => {
     const id = props.pluginId;
-    void props.revision;
+    void pluginRevisionFor(id);
     void reloadTick();
 
     loadGen += 1;
@@ -542,6 +568,12 @@ export function PluginWebView(props: {
 
       case "clipboard.writeText": {
         await Clipboard.writeText(String(params.text ?? ""));
+        return undefined;
+      }
+
+      case "clipboard.writeImage": {
+        const src = normalizeClipboardImageSrc(String(params.pngBase64 ?? ""));
+        await Clipboard.writeImage(src);
         return undefined;
       }
 

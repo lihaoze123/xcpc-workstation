@@ -1,0 +1,8 @@
+### 新增
+
+- **WebView 插件图片剪贴板桥接**：`window.xcpc.clipboard` 新增 `writeImage(pngBase64)`（同步更新 `@xcpc/plugin-sdk/ui` 类型与 `docs/plugin-development.md`），支持纯 PNG Base64 与 `data:image/...;base64,...` 数据 URL，严格拦截非图片协议且继续禁止读取剪贴板。
+
+### 修复
+
+- 修复在「工具」空间切换两个不同的纯 Web `<WebView>` 插件（如 `CodeSnap`、`图论与几何画板`、`数论与位运算工作台`）时，因缺少按 `plugin_id` 键控重挂载导致 WebView 停留在前一个插件页面的问题。
+- 修复 `<PluginWebView>` 内部未直接订阅 `pluginRevisionFor(pluginId)` 导致单个 WebView 插件热重载不触发刷新的问题。

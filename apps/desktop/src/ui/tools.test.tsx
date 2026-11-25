@@ -18,6 +18,7 @@ import { classifyPluginUiError, formatPluginError } from "./tools/pluginErrors";
 import {
   buildThemeCssVars,
   injectPluginHtml,
+  normalizeClipboardImageSrc,
   PLUGIN_WEBVIEW_CSP,
 } from "./tools/PluginWebView";
 import {
@@ -100,8 +101,10 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
     expect(injected).not.toContain("allow-same-origin");
     expect(injected).toContain("tok-fixed-1234");
     expect(injected).toContain("window.nsh.postMessage");
-    // S4: clipboard.readText and openExternal are not exposed to untrusted plugins.
+    // S4: clipboard.readText, clipboard.readImage, and openExternal are not exposed to untrusted plugins.
+    expect(injected).toContain("clipboard.writeImage");
     expect(injected).not.toContain("clipboard.readText");
+    expect(injected).not.toContain("clipboard.readImage");
     expect(injected).not.toContain("openExternal");
     // Payload with `</script>` must be safely escaped so it cannot break out of the injected script tag.
     expect(injected).toContain("<\\/script>");
@@ -125,6 +128,18 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
       },
     );
     expect(attackS2.indexOf(PLUGIN_WEBVIEW_CSP)).toBeLessThan(attackS2.indexOf("http://evil"));
+  });
+
+  test("normalizeClipboardImageSrc accepts raw PNG base64 and data:image URLs, and rejects unsafe schemes", () => {
+    const sampleB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    expect(normalizeClipboardImageSrc(sampleB64)).toBe(`data:image/png;base64,${sampleB64}`);
+    expect(normalizeClipboardImageSrc(`data:image/png;base64,${sampleB64}`)).toBe(
+      `data:image/png;base64,${sampleB64}`,
+    );
+    expect(() => normalizeClipboardImageSrc("")).toThrow();
+    expect(() => normalizeClipboardImageSrc("file:///etc/passwd")).toThrow();
+    expect(() => normalizeClipboardImageSrc("https://example.com/a.png")).toThrow();
+    expect(() => normalizeClipboardImageSrc("data:text/html;base64,PHNjcmlwdD4=")).toThrow();
   });
 
   test("New Issue C: per-plugin revision isolates unrelated plugin changes", () => {

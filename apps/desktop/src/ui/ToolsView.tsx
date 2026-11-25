@@ -15,7 +15,6 @@ import {
   activeToolPluginId,
   goSettings,
   notifyPluginsChanged,
-  pluginRevisionFor,
   pluginsRevision,
   preview,
   refreshPluginsOverview,
@@ -436,11 +435,14 @@ export function ToolsView(props: { active?: boolean }) {
                     </Each>
                   }
                 >
-                  <PluginWebView
-                    pluginId={group().plugin_id}
-                    revision={pluginRevisionFor(group().plugin_id)}
-                    getInitialPayload={consumeInitialPayload}
-                  />
+                  <Each of={[group()]} key={(g) => g.plugin_id}>
+                    {(g) => (
+                      <PluginWebView
+                        pluginId={g().plugin_id}
+                        getInitialPayload={consumeInitialPayload}
+                      />
+                    )}
+                  </Each>
                 </If>
               </View>
             </View>
