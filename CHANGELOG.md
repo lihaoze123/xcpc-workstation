@@ -2,6 +2,13 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0-beta.4] - 2026-11-25
+
+### 新增
+
+- **QuickJS `host.http.fetch` 二进制 Base64 响应**：新增可选 `responseType: "text" | "base64"` 参数与响应字段 `body_base64`（受域名白名单、逐跳重定向校验与 5 MiB 体积上限约束），支持插件在沙箱内安全拉取远程头像等图片资源。
+- **WebView 已绑定 OJ 账号只读桥接**：`window.xcpc.oj` 新增 `listAccounts()`，供纯 Web 插件一键读取工作站已绑定的 OJ 账号（平台、Handle 与缓存 Rating/Rank），不暴露凭据与提交记录；同步更新 `@xcpc/plugin-sdk/{host,ui}` 类型定义与 `docs/plugin-development.md`。
+
 ## [0.4.0-beta.3] - 2026-11-25
 
 ### 新增
