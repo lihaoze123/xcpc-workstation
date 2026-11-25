@@ -2,6 +2,16 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0-beta.2] - 2026-11-25
+
+### 修复
+
+- 恢复 `.cargo/config.toml` 中 `[profile.dev.package."*"]` 的 `opt-level = 2`（保留 `debug = 0`），修复 `nsh dev` 模式下因 `nsh-*`、`taffy`、`ropey`、`rustybuzz`、`pulldown-cmark`、`kurbo` 等依赖退化为无优化构建导致的编辑器输入卡顿与 Typst/CeTZ 预览缓慢问题。
+
+### 文档
+
+- 补齐中英双语 README 的 Phase 4 功能介绍与「训练 / 工具」界面截图，新增完整插件开发指南（`docs/plugin-development.md`）、SDK 文档与防漂移校验脚本（`scripts/check-plugin-docs.py`），以及面向 AI Agent 的插件开发 Skill（`skills/xcpc-plugin-creator/SKILL.md`）。
+
 ## [0.4.0-beta.1] - 2026-11-25
 
 Phase 4（4A–4D）首个预览版：在题库、出版与本地 Polygon 之外补齐**混合沙箱插件引擎、个人训练看板、纯净 WebView 插件化工具箱与插件开发生态**。
