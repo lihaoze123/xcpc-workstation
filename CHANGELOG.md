@@ -2,6 +2,26 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-25
+
+Phase 3「本地 Polygon」正式版：在出版工作台之上完整补齐本地出题、验题、数据流转与发布级流畅性体验。
+
+### 核心亮点
+
+- **本地题目包与检查引擎（`xcpc-judge`）**：
+  - 原生题目包结构：`solutions/`、`generators/`、`tests/`、`validator.cpp`、`checker.cpp`、`interactor.cpp`，通过 `problem.toml` 声明式配置 `[[test]]` 与 `[solutions.*]`。
+  - 一键全链路检查（编译 → 校验器自测 → 生成数据 → 校验 → 标程出答案 → 全解法评测），按预期结论核对 AC / WA / TLE / MLE / RE，附安全边际摘要与单步复现命令；支持逐格流式进度、按测试点/解法子集局部运行与严格验收（`--strict`）。
+  - 支持交互题多轮通信、OI 子任务计分与自测、自动保存反例的对拍（`xcpc package stress`）、ASan/UBSan 体检（`--sanitize`）、整场就绪审计（`xcpc contest audit`）、外部验题试跑（`verify-external`）以及比赛覆写时限检查（`--contest`）。
+- **Polygon 导入与 OJ 数据包导出（`xcpc-packages`）**：
+  - 支持 Polygon ZIP 单题与整场导入（`contest.xml` 自动展开子题并归组），题面转为 Markdown，样例、配图、校验器、检查器、生成器与解法全量导入，内置 Zip Slip 防护与原子暂存。
+  - 支持 DOMjudge / Hydro 单题与整场批量导出，严格剔除解法、生成器与题解，以最新严格检查通过为导出门禁（Hydro 内嵌 PDF 题面）。
+- **桌面端出题工作室与题库升级**：
+  - 「题面 / 出题」并列模式：对象树 + 测试点 × 解法结果矩阵，支持键盘浏览用例、查看输入/答案/实际输出、单文件快编与数据增删；比赛工作室内就地出题检查，大纲实时同步状态。
+  - 题库新增持久化分组、多选与批量操作，完善 `Ctrl+K` 命令面板。
+- **CLI、MCP 与流畅性打磨**：
+  - 补齐 `xcpc package`、`xcpc import` / `export`、`xcpc group`、`xcpc search` / `show` 及对应 MCP 工具，内建出题工作流 Skill `xcpc-problem-creator`。
+  - 15 题比赛 release 实测流畅性优化（切题高亮 < 1ms、编辑器实例池复用约 2ms、视口页优先与相邻页预热、结果帧合批），新增离线性能 Trace 录制与分析工具链。
+
 ## [0.3.0-beta.1] - 2026-11-24
 
 Phase 3「本地 Polygon」首个预览版：在出版工作台之上补齐出题、验题与 OJ 数据包流转，并完成一轮以 release 实测为准的流畅性优化。
