@@ -1416,9 +1416,18 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
     let dir = tempfile::tempdir().unwrap();
     let ws = init_workspace_with_template(dir.path(), Some("cnoi-classic")).unwrap();
 
-    // Only the chosen preset is materialized into templates/ (no implicit built-in list).
-    assert_eq!(ws.list_templates(), vec!["cnoi-classic".to_owned()]);
+    // Chosen statement preset + TRD presets are materialized into templates/.
+    assert_eq!(
+        ws.list_templates(),
+        vec![
+            "cnoi-classic".to_owned(),
+            "trd-book".to_owned(),
+            "trd-compact".to_owned(),
+        ]
+    );
     assert!(dir.path().join("templates/cnoi-classic.typ").is_file());
+    assert!(dir.path().join("templates/trd-compact.typ").is_file());
+    assert!(dir.path().join("templates/trd-book.typ").is_file());
     assert!(!dir.path().join("templates/olymp-classic.typ").exists());
 
     // install_preset_template installs to default or custom name and refuses overwrite.
@@ -1428,7 +1437,12 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
     assert_eq!(installed, "templates/my-min.typ");
     assert_eq!(
         ws.list_templates(),
-        vec!["cnoi-classic".to_owned(), "my-min".to_owned()]
+        vec![
+            "cnoi-classic".to_owned(),
+            "my-min".to_owned(),
+            "trd-book".to_owned(),
+            "trd-compact".to_owned(),
+        ]
     );
     let conflict = ws
         .install_preset_template("minimal", Some("my-min"))
@@ -1441,7 +1455,14 @@ fn template_seeds_disk_only_listing_detach_remove_and_image_import() {
 
     // Deleting files in templates/ updates list immediately (no built-in fallback).
     fs::remove_file(dir.path().join("templates/my-min.typ")).unwrap();
-    assert_eq!(ws.list_templates(), vec!["cnoi-classic".to_owned()]);
+    assert_eq!(
+        ws.list_templates(),
+        vec![
+            "cnoi-classic".to_owned(),
+            "trd-book".to_owned(),
+            "trd-compact".to_owned(),
+        ]
+    );
 
     // Contest-local template detach & remove.
     ws.create_problem("p1", "P1").unwrap();

@@ -207,7 +207,32 @@ export function revealState(status: ExportBookStatusJs | undefined, book: Book):
 
 // ── Titles ───────────────────────────────────────────────────────────────────
 
-export type Space = "problems" | "contests" | "training" | "tools" | "settings";
+export type Space = "problems" | "contests" | "snippets" | "training" | "tools" | "settings";
+
+/** Ordered visible spaces for NavRail and dynamic `mod+1..N` shortcut assignment. */
+export function visibleSpaces(opts: {
+  hasWorkspace: boolean;
+  snippetsEnabled: boolean;
+  trainingEnabled: boolean;
+}): Space[] {
+  const out: Space[] = [];
+  if (opts.hasWorkspace) {
+    out.push("problems", "contests");
+    if (opts.snippetsEnabled) out.push("snippets");
+    if (opts.trainingEnabled) out.push("training");
+  }
+  out.push("tools", "settings");
+  return out;
+}
+
+/** Returns the dynamic `mod+1..N` shortcut string for `target`, or `undefined` when hidden. */
+export function shortcutForSpace(
+  target: Space,
+  opts: { hasWorkspace: boolean; snippetsEnabled: boolean; trainingEnabled: boolean },
+): string | undefined {
+  const idx = visibleSpaces(opts).indexOf(target);
+  return idx >= 0 ? `mod+${idx + 1}` : undefined;
+}
 
 /** Reactive localized display name for a top-level space. */
 export function spaceName(s: Space): string {
@@ -216,6 +241,8 @@ export function spaceName(s: Space): string {
       return t("space.problems");
     case "contests":
       return t("space.contests");
+    case "snippets":
+      return t("space.snippets");
     case "training":
       return t("space.training");
     case "tools":

@@ -42,6 +42,7 @@ import {
   jumpToContest,
   libraryGroupBy,
   librarySidebarOpen,
+  openNewSnippetModal,
   openStudio,
   pluginsRevision,
   preview,
@@ -1392,9 +1393,26 @@ function ProblemInspector(props: {
         />
       </View>
       <If when={tabs().length > 1}>
-        <View style={{ height: 36, flexDirection: "row", alignItems: "stretch", paddingLeft: 12, paddingRight: 12, gap: 8, borderBottomWidth: 1 }} class="border-border">
+        <View style={{ height: 38, flexDirection: "row", alignItems: "stretch", paddingLeft: 20, paddingRight: 20, gap: 8, borderBottomWidth: 1 }} class="border-border">
           <Segmented items={tabs()} value={tab()} onChange={(v) => tab.set(v)} itemWidth={72} underline />
           <View style={{ flex: 1 }} />
+          <If when={tab() === "code" && info().snippetsEnabled && !info().readOnly}>
+            <View style={{ justifyContent: "center" }}>
+              <Btn
+                testID="library-promote-snippet"
+                variant="outline"
+                icon="bookOpen"
+                label={t("snippets.action.promoteToSnippet")}
+                onPress={() =>
+                  openNewSnippetModal({
+                    code: code(),
+                    sourceProblem: props.id,
+                    title: detail().title,
+                  })
+                }
+              />
+            </View>
+          </If>
           <If when={tab() === "code" && detail().solutions.length > 1}>
             <View style={{ justifyContent: "center" }}>
               <AppMenu

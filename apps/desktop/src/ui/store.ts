@@ -136,6 +136,9 @@ export function refresh() {
     if (!next.trainingEnabled && space() === "training") {
       space.set("problems");
     }
+    if (!next.snippetsEnabled && space() === "snippets") {
+      space.set("problems");
+    }
     revision.set(revision() + 1);
   });
 }
@@ -227,6 +230,7 @@ export function savePrefs(patch: Partial<AppPrefsJs>) {
 function initialSpace(): Space {
   const s = prefs.lastSpace;
   if (s === "training") return info().trainingEnabled ? "training" : "problems";
+  if (s === "snippets") return info().snippetsEnabled ? "snippets" : "problems";
   return s === "problems" || s === "contests" || s === "tools" || s === "settings" ? s : "problems";
 }
 
@@ -369,16 +373,81 @@ function restoreStudio(): StudioTarget | undefined {
 }
 
 export function goSpace(next: Space) {
-  const target: Space = next === "training" && !info().trainingEnabled ? "problems" : next;
+  let target: Space = next;
+  if (target === "training" && !info().trainingEnabled) target = "problems";
+  if (target === "snippets" && !info().snippetsEnabled) target = "problems";
   batch(() => {
     studio.set(undefined);
+    activeSnippetStudio.set(undefined);
+    activeTrdStudio.set(undefined);
     space.set(target);
   });
   savePrefs({ lastSpace: target, lastTarget: null, lastId: null, lastLabel: null });
 }
 
+// ── Phase 5: Snippets & Living TRD navigation state ──────────────────────────
+
+export const snippetsSubTab = signal<"library" | "trds">("library");
+export const selectedSnippetSlug = signal<string | undefined>(undefined);
+export const selectedTrdId = signal<string | undefined>(undefined);
+export const activeSnippetStudio = signal<string | undefined>(undefined);
+export const activeTrdStudio = signal<string | undefined>(undefined);
+export const bundlerModalOpen = signal(false);
+export const newSnippetSeed = signal<{ code?: string; sourceProblem?: string; title?: string } | undefined>(undefined);
+export const newTrdModalOpen = signal(false);
+export const snippetsRevision = signal(0);
+
+export function bumpSnippetsRevision() {
+  snippetsRevision.set(snippetsRevision() + 1);
+}
+
+export function openNewSnippetModal(seed?: { code?: string; sourceProblem?: string; title?: string }) {
+  newSnippetSeed.set(seed ?? {});
+}
+
+export function openSnippetStudio(slug: string) {
+  batch(() => {
+    studio.set(undefined);
+    activeTrdStudio.set(undefined);
+    selectedSnippetSlug.set(slug);
+    activeSnippetStudio.set(slug);
+  });
+}
+
+export function closeSnippetStudio() {
+  activeSnippetStudio.set(undefined);
+}
+
+export function openTrdStudio(id: string) {
+  batch(() => {
+    studio.set(undefined);
+    activeSnippetStudio.set(undefined);
+    selectedTrdId.set(id);
+    activeTrdStudio.set(id);
+  });
+}
+
+export function closeTrdStudio() {
+  activeTrdStudio.set(undefined);
+}
+
+export function jumpToProblem(problemId: string) {
+  batch(() => {
+    studio.set(undefined);
+    activeSnippetStudio.set(undefined);
+    activeTrdStudio.set(undefined);
+    selectedProblem.set(problemId);
+    space.set("problems");
+  });
+  savePrefs({ lastSpace: "problems", lastTarget: null, lastId: null, lastLabel: null });
+}
+
+/** Controls the collapsible "Advanced" block in Settings -> Toolchain (e.g. expanded when jumping from offline Library Checker toast). */
+export const toolchainAdvancedOpen = signal(false);
+
 /** Navigates directly to a specific settings section. */
-export function goSettings(section: SettingsSection) {
+export function goSettings(section: SettingsSection, opts?: { expandAdvanced?: boolean }) {
+  if (opts?.expandAdvanced) toolchainAdvancedOpen.set(true);
   settingsSection.set(section);
   goSpace("settings");
 }
@@ -417,8 +486,12 @@ function adopt(next: WorkspaceInfo, failContext: string) {
     if (switched) {
       importWarnings.set(undefined);
       studio.set(undefined);
+      activeSnippetStudio.set(undefined);
+      activeTrdStudio.set(undefined);
       selectedProblem.set(undefined);
       selectedContest.set(undefined);
+      selectedSnippetSlug.set(undefined);
+      selectedTrdId.set(undefined);
       archivedExpanded.set(false);
       unfreezeFor.set(undefined);
       dialog.set(undefined);
@@ -429,6 +502,9 @@ function adopt(next: WorkspaceInfo, failContext: string) {
     }
     info.set(next);
     if (!next.trainingEnabled && space() === "training") {
+      space.set("problems");
+    }
+    if (!next.snippetsEnabled && space() === "snippets") {
       space.set("problems");
     }
     revision.set(revision() + 1);

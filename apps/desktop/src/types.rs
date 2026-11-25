@@ -217,6 +217,8 @@ pub struct WorkspaceInfo {
     pub read_only: bool,
     /// True when `workspace.toml` enables training features (defaults to `true` when open).
     pub training_enabled: bool,
+    /// True when `workspace.toml` enables snippets / TRD features (defaults to `true` when open).
+    pub snippets_enabled: bool,
     /// True when startup tried to reopen the last remembered workspace (`prefs.json` or
     /// legacy `last-workspace`) and its directory no longer exists or lacks `workspace.toml`.
     /// False on a fresh launch with no history or once any workspace is opened/initialized.
@@ -698,6 +700,12 @@ pub struct AppPrefsJs {
     /// Library dynamic grouping mode (`"none" | "group" | "rating" | "platform" | "contest" | "package_status"`).
     #[prop(skip_none)]
     pub library_group_by: Option<String>,
+    /// Optional GitHub raw mirror URL prefix for Library Checker snippet verification.
+    #[prop(skip_none)]
+    pub library_checker_mirror_url: Option<String>,
+    /// Optional local filesystem path to a `library-checker-problems` clone.
+    #[prop(skip_none)]
+    pub library_checker_local_repo_path: Option<String>,
 }
 
 impl Default for AppPrefsJs {
@@ -715,6 +723,8 @@ impl Default for AppPrefsJs {
             cxx_override: None,
             library_sidebar_open: true,
             library_group_by: None,
+            library_checker_mirror_url: None,
+            library_checker_local_repo_path: None,
         }
     }
 }

@@ -33,6 +33,8 @@ use xcpc_engine::{Engine, FontOptions};
 use xcpc_storage::{CreateProblemOptions, Workspace, WorkspaceIndex};
 
 mod mcp;
+mod trd_cli;
+mod trd_mcp;
 mod views;
 
 #[derive(Parser)]
@@ -223,6 +225,36 @@ enum Command {
         /// Ignore stored incremental cursor and run a full sync.
         #[arg(long)]
         full: bool,
+    },
+    /// Manage algorithm snippets (list, show, new, delete, verify).
+    Snippet {
+        #[command(subcommand)]
+        action: trd_cli::SnippetCommand,
+    },
+    /// Bundle a local C++ file or workspace snippet into a single self-contained file.
+    Bundle {
+        /// Local C++ source file to expand (mutually exclusive with `--snippet`).
+        file: Option<PathBuf>,
+        /// Expand a workspace snippet slug and all its transitive dependencies.
+        #[arg(long)]
+        snippet: Option<String>,
+        /// Additional `#include "..."` search directory (repeatable).
+        #[arg(short = 'I', long = "include-dir", value_name = "DIR")]
+        include_dirs: Vec<PathBuf>,
+        /// Copy bundled C++ source to the system clipboard.
+        #[arg(long)]
+        copy: bool,
+        /// Write bundled C++ source to this file path.
+        #[arg(short = 'o', long = "output", alias = "out")]
+        out: Option<PathBuf>,
+        /// Strip comments and collapse blank lines for compact contest submission.
+        #[arg(long)]
+        compact: bool,
+    },
+    /// Manage Living TRDs (list, show, compose, freeze, unfreeze, check, build, render).
+    Trd {
+        #[command(subcommand)]
+        action: trd_cli::TrdCommand,
     },
     /// Manage personal training status logs and derived status.
     Training {
@@ -1600,6 +1632,24 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             platform,
             full,
         } => run_sync(cli, action.as_ref(), platform.as_deref(), *full),
+        Command::Snippet { action } => trd_cli::run_snippet(cli, action),
+        Command::Bundle {
+            file,
+            snippet,
+            include_dirs,
+            copy,
+            out,
+            compact,
+        } => trd_cli::run_bundle(
+            cli,
+            file.as_deref(),
+            snippet.as_deref(),
+            include_dirs,
+            *copy,
+            out.as_deref(),
+            *compact,
+        ),
+        Command::Trd { action } => trd_cli::run_trd(cli, action),
         Command::Training { action } => run_training(cli, action),
     }
 }

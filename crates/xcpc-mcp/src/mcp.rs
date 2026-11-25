@@ -66,14 +66,14 @@ pub fn serve(ws: Workspace, fonts: FontOptions) -> Result<()> {
     Ok(())
 }
 
-struct Server {
-    ws: Workspace,
-    engine: Engine,
+pub(crate) struct Server {
+    pub(crate) ws: Workspace,
+    pub(crate) engine: Engine,
 }
 
-type ToolErr = Option<(String, String)>;
+pub(crate) type ToolErr = Option<(String, String)>;
 
-fn fail(code: &str, message: impl Into<String>) -> ToolErr {
+pub(crate) fn fail(code: &str, message: impl Into<String>) -> ToolErr {
     Some((code.to_owned(), message.into()))
 }
 
@@ -170,21 +170,41 @@ impl Server {
             "ingest_problem" => self.tool_ingest_problem(obj),
             "log_training_record" => self.tool_log_training_record(obj),
             "list_training_editorials" => self.tool_list_training_editorials(obj),
+            "search_snippets" => self.tool_search_snippets(obj),
+            "get_snippet" => self.tool_get_snippet(obj),
+            "get_trd" => self.tool_get_trd(obj),
+            "bundle_code" => self.tool_bundle_code(obj),
+            "verify_snippet" => self.tool_verify_snippet(obj),
+            "write_snippet" => self.tool_write_snippet(obj),
+            "compose_trd" => self.tool_compose_trd(obj),
+            "freeze_trd" => self.tool_freeze_trd(obj),
             _ => Err(None),
         }
     }
 
     fn tool_compile_and_diagnose(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
         let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
-        let (_, _, report) = publish::check(
-            &self.ws,
-            &mut self.engine,
-            &what.target,
-            what.kind,
-            what.language,
-            None,
-        )
-        .map_err(|e| fail(e.code(), e.to_string()))?;
+        let report = match what.target {
+            McpTarget::Trd(id) => {
+                let statuses = xcpc_judge::all_snippet_verify_statuses(&self.ws)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                let (_, _, report) = publish::check_trd(&self.ws, &mut self.engine, &id, &statuses)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                report
+            }
+            McpTarget::Publish(target) => {
+                let (_, _, report) = publish::check(
+                    &self.ws,
+                    &mut self.engine,
+                    &target,
+                    what.kind,
+                    what.language,
+                    None,
+                )
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+                report
+            }
+        };
         Ok(structured(
             serde_json::to_value(&report).expect("serializable"),
         ))
@@ -209,15 +229,25 @@ impl Server {
                 s.clamp(0.5, 4.0) as f32
             }
         };
-        let (compiled, _, report) = publish::check(
-            &self.ws,
-            &mut self.engine,
-            &what.target,
-            what.kind,
-            what.language,
-            None,
-        )
-        .map_err(|e| fail(e.code(), e.to_string()))?;
+        let (compiled, report) = match what.target {
+            McpTarget::Trd(id) => {
+                let (compiled, _, report) = publish::compile_trd(&self.ws, &mut self.engine, &id)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                (compiled, report)
+            }
+            McpTarget::Publish(target) => {
+                let (compiled, _, report) = publish::check(
+                    &self.ws,
+                    &mut self.engine,
+                    &target,
+                    what.kind,
+                    what.language,
+                    None,
+                )
+                .map_err(|e| fail(e.code(), e.to_string()))?;
+                (compiled, report)
+            }
+        };
         let Some(compiled) = compiled else {
             return Ok(structured(
                 serde_json::to_value(&report).expect("serializable"),
@@ -242,36 +272,53 @@ impl Server {
 
     fn tool_export_pdf(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
         let what = What::parse(args).map_err(|m| fail("invalid_arguments", m))?;
-        let output = match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
-            Some(path) => path,
-            None => publish::default_output(&self.ws, &what.target, what.kind),
-        };
-        self.ws
-            .check_writable(&output)
-            .map_err(|e| fail(e.code(), e.to_string()))?;
-        let (compiled, _, report) = publish::check(
-            &self.ws,
-            &mut self.engine,
-            &what.target,
-            what.kind,
-            what.language,
-            None,
-        )
-        .map_err(|e| fail(e.code(), e.to_string()))?;
-        let mut value = serde_json::to_value(&report).expect("serializable");
-        if let (Some(compiled), true) = (compiled, report.ok) {
-            let pdf = compiled.pdf().map_err(|e| {
-                fail(
-                    "pdf_failed",
-                    e.first().map(|d| d.message.clone()).unwrap_or_default(),
+        match what.target {
+            McpTarget::Trd(id) => {
+                let output = opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))?;
+                let out_path = output.as_deref().map(Path::new);
+                let (written, report) =
+                    publish::export_trd_pdf(&self.ws, &mut self.engine, &id, out_path)
+                        .map_err(|e| fail(e.code(), e.to_string()))?;
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                if let Some(rel) = written {
+                    value["output"] = json!(rel);
+                }
+                Ok(structured(value))
+            }
+            McpTarget::Publish(target) => {
+                let output =
+                    match opt_str(args, "output").map_err(|m| fail("invalid_arguments", m))? {
+                        Some(path) => path,
+                        None => publish::default_output(&self.ws, &target, what.kind),
+                    };
+                self.ws
+                    .check_writable(&output)
+                    .map_err(|e| fail(e.code(), e.to_string()))?;
+                let (compiled, _, report) = publish::check(
+                    &self.ws,
+                    &mut self.engine,
+                    &target,
+                    what.kind,
+                    what.language,
+                    None,
                 )
-            })?;
-            self.ws
-                .write(&output, &pdf)
                 .map_err(|e| fail(e.code(), e.to_string()))?;
-            value["output"] = json!(output);
+                let mut value = serde_json::to_value(&report).expect("serializable");
+                if let (Some(compiled), true) = (compiled, report.ok) {
+                    let pdf = compiled.pdf().map_err(|e| {
+                        fail(
+                            "pdf_failed",
+                            e.first().map(|d| d.message.clone()).unwrap_or_default(),
+                        )
+                    })?;
+                    self.ws
+                        .write(&output, &pdf)
+                        .map_err(|e| fail(e.code(), e.to_string()))?;
+                    value["output"] = json!(output);
+                }
+                Ok(structured(value))
+            }
         }
-        Ok(structured(value))
     }
 
     fn tool_search_problems(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
@@ -1660,6 +1707,14 @@ fn is_known_tool(name: &str) -> bool {
             | "ingest_problem"
             | "log_training_record"
             | "list_training_editorials"
+            | "search_snippets"
+            | "get_snippet"
+            | "get_trd"
+            | "bundle_code"
+            | "verify_snippet"
+            | "write_snippet"
+            | "compose_trd"
+            | "freeze_trd"
     )
 }
 
@@ -1730,7 +1785,7 @@ fn parse_namespaced_options_patch(
 }
 
 /// A result carrying `value` both as structured content and as text.
-fn structured(value: Value) -> Value {
+pub(crate) fn structured(value: Value) -> Value {
     let failed = value.get("ok") == Some(&json!(false));
     json!({
         "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value).expect("serializable") }],
@@ -1739,7 +1794,7 @@ fn structured(value: Value) -> Value {
     })
 }
 
-fn reject_unknown_keys(
+pub(crate) fn reject_unknown_keys(
     obj: &Map<String, Value>,
     allowed: &[&str],
     context: &str,
@@ -1752,14 +1807,14 @@ fn reject_unknown_keys(
     Ok(())
 }
 
-fn req_str(obj: &Map<String, Value>, key: &str) -> Result<String, String> {
+pub(crate) fn req_str(obj: &Map<String, Value>, key: &str) -> Result<String, String> {
     obj.get(key)
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| format!("`{key}` is required and must be a string"))
 }
 
-fn opt_str(obj: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+pub(crate) fn opt_str(obj: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
     match obj.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -1767,7 +1822,7 @@ fn opt_str(obj: &Map<String, Value>, key: &str) -> Result<Option<String>, String
     }
 }
 
-fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
+pub(crate) fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
     match obj.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -1892,7 +1947,7 @@ fn patch_bool_alias(
     }
 }
 
-fn opt_str_vec(obj: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
+pub(crate) fn opt_str_vec(obj: &Map<String, Value>, key: &str) -> Result<Vec<String>, String> {
     match obj.get(key) {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(arr)) => arr
@@ -1921,8 +1976,13 @@ fn req_str_vec(obj: &Map<String, Value>, key: &str) -> Result<Vec<String>, Strin
         .collect()
 }
 
+enum McpTarget {
+    Publish(Target),
+    Trd(String),
+}
+
 struct What {
-    target: Target,
+    target: McpTarget,
     kind: Kind,
     language: Option<Language>,
 }
@@ -1931,9 +1991,10 @@ impl What {
     fn parse(args: &Map<String, Value>) -> Result<Self, String> {
         let id = req_str(args, "id")?;
         let target = match args.get("target").and_then(Value::as_str) {
-            Some("problem") => Target::Problem(id),
-            Some("contest") => Target::Contest(id),
-            _ => return Err("`target` must be \"problem\" or \"contest\"".into()),
+            Some("problem") => McpTarget::Publish(Target::Problem(id)),
+            Some("contest") => McpTarget::Publish(Target::Contest(id)),
+            Some("trd") => McpTarget::Trd(id),
+            _ => return Err("`target` must be \"problem\", \"contest\", or \"trd\"".into()),
         };
         let kind = match opt_str(args, "book")?.as_deref() {
             None | Some("statements") => Kind::Statements,
@@ -1954,10 +2015,10 @@ impl What {
 
 fn tools() -> Value {
     let what = json!({
-        "target": { "type": "string", "enum": ["problem", "contest"], "description": "What to typeset." },
-        "id": { "type": "string", "description": "The problem's or contest's ID: its directory name under problems/ or contests/." },
-        "book": { "type": "string", "enum": ["statements", "editorial"], "description": "The statements (default) or the A4 editorial book." },
-        "language": { "type": "string", "enum": ["chinese", "english"], "description": "For a single problem: the language to set it in. A contest has its own." },
+        "target": { "type": "string", "enum": ["problem", "contest", "trd"], "description": "What to typeset (`problem`, `contest`, or `trd`)." },
+        "id": { "type": "string", "description": "The problem's, contest's, or TRD's ID: its directory name under problems/, contests/, or trds/." },
+        "book": { "type": "string", "enum": ["statements", "editorial"], "description": "The statements (default) or the A4 editorial book (ignored for `trd`)." },
+        "language": { "type": "string", "enum": ["chinese", "english"], "description": "For a single problem: the language to set it in. A contest or TRD has its own." },
     });
     let with = |extra: Value| {
         let mut props = what.clone();
@@ -2302,6 +2363,9 @@ fn tools() -> Value {
     }
     if let Some(tr) = training_tools().as_array() {
         all.extend(tr.iter().cloned());
+    }
+    if let Some(trd) = crate::trd_mcp::trd_tools().as_array() {
+        all.extend(trd.iter().cloned());
     }
     Value::Array(all)
 }
@@ -2670,6 +2734,14 @@ mod tests {
                 "ingest_problem",
                 "log_training_record",
                 "list_training_editorials",
+                "search_snippets",
+                "get_snippet",
+                "get_trd",
+                "bundle_code",
+                "verify_snippet",
+                "write_snippet",
+                "compose_trd",
+                "freeze_trd",
             ]
         );
         assert!(
@@ -2678,13 +2750,15 @@ mod tests {
         );
 
         // Calling an unfreeze tool name directly must return JSON-RPC unknown tool (-32602).
-        let unfreeze = server
-            .handle(&json!({
-                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                "params": { "name": "unfreeze_contest", "arguments": { "id": "any" } }
-            }))
-            .unwrap();
-        assert_eq!(unfreeze["error"]["code"], -32602);
+        for forbidden in ["unfreeze_contest", "unfreeze_trd"] {
+            let unfreeze = server
+                .handle(&json!({
+                    "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                    "params": { "name": forbidden, "arguments": { "id": "any" } }
+                }))
+                .unwrap();
+            assert_eq!(unfreeze["error"]["code"], -32602);
+        }
     }
 
     #[test]

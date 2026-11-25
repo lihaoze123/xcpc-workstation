@@ -28,13 +28,15 @@ mod schema;
 
 pub use typst_render::render as render_page_raw;
 
-/// One bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`).
+/// One bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`, `trd-compact`,
+/// `trd-book`).
 ///
 /// Presets have no runtime privilege or implicit fallback; they are only materialized
 /// into a workspace's `templates/` directory during initialization or explicit install.
 #[derive(Debug, Clone, Copy)]
 pub struct PresetSeed {
     pub id: &'static str,
+    pub kind: xcpc_domain::TemplateKind,
     pub name_zh: &'static str,
     pub name_en: &'static str,
     pub description_zh: &'static str,
@@ -46,6 +48,7 @@ pub struct PresetSeed {
 pub const PRESETS: &[PresetSeed] = &[
     PresetSeed {
         id: "olymp-classic",
+        kind: xcpc_domain::TemplateKind::Statement,
         name_zh: "XCPC 经典",
         name_en: "XCPC Classic",
         description_zh: "对齐 olymp.sty 的经典 ICPC / XCPC 版式",
@@ -54,6 +57,7 @@ pub const PRESETS: &[PresetSeed] = &[
     },
     PresetSeed {
         id: "cnoi-classic",
+        kind: xcpc_domain::TemplateKind::Statement,
         name_zh: "OI 风格",
         name_en: "OI Classic",
         description_zh: "CCF CSP-J/S 与 NOI 官方风格题面与题解",
@@ -62,11 +66,30 @@ pub const PRESETS: &[PresetSeed] = &[
     },
     PresetSeed {
         id: "minimal",
+        kind: xcpc_domain::TemplateKind::Statement,
         name_zh: "极简空白",
         name_en: "Minimal Blank",
         description_zh: "极简空白起点模板，方便从零编写自定义比赛模板",
         description_en: "Minimal blank starter template for building custom contest layouts from scratch",
         source: include_str!("../templates/minimal.typ"),
+    },
+    PresetSeed {
+        id: "trd-compact",
+        kind: xcpc_domain::TemplateKind::Trd,
+        name_zh: "赛场紧凑多栏",
+        name_en: "TRD Compact",
+        description_zh: "横版 A4 紧凑多栏赛场参考手册，附累计分块校验哈希边栏与考场核对命令",
+        description_en: "Landscape A4 compact multi-column contest reference with KACTL++ cumulative hash gutter",
+        source: include_str!("../templates/trd-compact.typ"),
+    },
+    PresetSeed {
+        id: "trd-book",
+        kind: xcpc_domain::TemplateKind::Trd,
+        name_zh: "中文讲义与复习册",
+        name_en: "TRD Study Book",
+        description_zh: "竖版 A4 讲义与复习册，延续 olymp-classic 字体体系，适合数学推导、公式卡片与代码混排",
+        description_en: "Portrait A4 study guide with olymp-classic typography for derivations, formula cards, and code",
+        source: include_str!("../templates/trd-book.typ"),
     },
 ];
 
@@ -76,14 +99,23 @@ pub fn list_presets() -> Vec<xcpc_domain::PresetInfo> {
         .iter()
         .map(|p| xcpc_domain::PresetInfo {
             id: p.id.to_owned(),
+            kind: p.kind,
             name: xcpc_domain::LocalizedText::bilingual(p.name_zh, p.name_en),
             description: xcpc_domain::LocalizedText::bilingual(p.description_zh, p.description_en),
         })
         .collect()
 }
 
+/// Returns metadata for bundled preset template seeds of a specific [`xcpc_domain::TemplateKind`].
+pub fn list_presets_by_kind(kind: xcpc_domain::TemplateKind) -> Vec<xcpc_domain::PresetInfo> {
+    list_presets()
+        .into_iter()
+        .filter(|p| p.kind == kind)
+        .collect()
+}
+
 /// Returns the bundled Typst seed source for a preset ID (`"olymp-classic"`,
-/// `"cnoi-classic"`, or `"minimal"`).
+/// `"cnoi-classic"`, `"minimal"`, `"trd-compact"`, or `"trd-book"`).
 pub fn preset_source(id: &str) -> Option<&'static str> {
     PRESETS.iter().find(|p| p.id == id).map(|p| p.source)
 }
@@ -115,6 +147,14 @@ const TEMPLATES: &[(&str, &str)] = &[
     (
         "/xcpc/mitex/latex/standard.typ",
         include_str!("../templates/mitex/latex/standard.typ"),
+    ),
+    (
+        "/xcpc/trd-compact.typ",
+        include_str!("../templates/trd-compact.typ"),
+    ),
+    (
+        "/xcpc/trd-book.typ",
+        include_str!("../templates/trd-book.typ"),
     ),
 ];
 

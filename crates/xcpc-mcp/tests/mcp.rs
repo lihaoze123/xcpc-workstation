@@ -179,7 +179,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 33);
+    assert_eq!(tools.len(), 41);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -205,6 +205,11 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "run_external_solution",
         "get_training_dashboard",
         "list_training_editorials",
+        "search_snippets",
+        "get_snippet",
+        "get_trd",
+        "bundle_code",
+        "verify_snippet",
     ] {
         assert_eq!(
             read_only_map.get(read_tool),
@@ -234,6 +239,9 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "set_training_status",
         "ingest_problem",
         "log_training_record",
+        "write_snippet",
+        "compose_trd",
+        "freeze_trd",
     ] {
         assert_eq!(
             read_only_map.get(write_tool),
@@ -875,7 +883,7 @@ fn template_tools_list_presets_install_and_set_local_options() {
             .as_array()
             .unwrap()
             .len(),
-        3
+        5
     );
 
     let added = client.call_tool(

@@ -16,6 +16,7 @@ pub mod assets;
 mod markdown;
 pub mod publish;
 mod spans;
+pub mod trd;
 
 pub use assets::{
     AssetReference, clean_unused_problem_assets, delete_problem_asset, find_asset_references,
@@ -24,6 +25,9 @@ pub use assets::{
 };
 pub use markdown::{markdown_with_samples, math_to_typst};
 pub use spans::{Span, SpanKind, markdown_spans};
+pub use trd::{
+    CONTEST_HASH_VERIFY_CMD, TrdBook, TrdChapterInput, prepare_printed_code, render_trd,
+};
 
 /// A diagnostic in a workspace file (1-based line and column).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -607,7 +611,7 @@ fn write_problem_entry_head(
     ));
 }
 
-fn typst_string_array(items: &[String]) -> String {
+pub(crate) fn typst_string_array(items: &[String]) -> String {
     if items.is_empty() {
         "()".into()
     } else {
@@ -711,7 +715,7 @@ fn typst_option_value(val: &TemplateOptionValue) -> String {
 }
 
 /// Serializes a map of template options into a Typst dictionary literal.
-fn typst_options_dict(map: &BTreeMap<String, TemplateOptionValue>) -> String {
+pub(crate) fn typst_options_dict(map: &BTreeMap<String, TemplateOptionValue>) -> String {
     if map.is_empty() {
         return "(:)".into();
     }

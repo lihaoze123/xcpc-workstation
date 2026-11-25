@@ -94,6 +94,10 @@ impl StoredPrefs {
         next.language = normalize_language_pref(next.language.as_deref());
         next.cxx_override = normalize_cxx_override(next.cxx_override.as_deref());
         next.library_group_by = normalize_library_group_by(next.library_group_by.as_deref());
+        next.library_checker_mirror_url =
+            normalize_cxx_override(next.library_checker_mirror_url.as_deref());
+        next.library_checker_local_repo_path =
+            normalize_cxx_override(next.library_checker_local_repo_path.as_deref());
         next.recent_workspaces = dedup_recent(next.recent_workspaces);
         self.app = next;
     }
@@ -101,6 +105,16 @@ impl StoredPrefs {
     /// Updates the persisted C++ compiler path override (empty string clears it).
     pub(crate) fn set_cxx_override(&mut self, path: Option<&str>) {
         self.app.cxx_override = normalize_cxx_override(path);
+    }
+
+    /// Updates the persisted Library Checker mirror URL and local repo path.
+    pub(crate) fn set_library_checker_config(
+        &mut self,
+        mirror_url: Option<&str>,
+        local_repo_path: Option<&str>,
+    ) {
+        self.app.library_checker_mirror_url = normalize_cxx_override(mirror_url);
+        self.app.library_checker_local_repo_path = normalize_cxx_override(local_repo_path);
     }
 
     /// Records a visit to `key` at the current wall-clock time.
@@ -272,6 +286,14 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
     }
     app.library_group_by =
         normalize_library_group_by(obj.get("libraryGroupBy").and_then(JsonValue::as_str));
+    app.library_checker_mirror_url = normalize_cxx_override(
+        obj.get("libraryCheckerMirrorUrl")
+            .and_then(JsonValue::as_str),
+    );
+    app.library_checker_local_repo_path = normalize_cxx_override(
+        obj.get("libraryCheckerLocalRepoPath")
+            .and_then(JsonValue::as_str),
+    );
 
     let mut frecency = HashMap::new();
     if let Some(frec_obj) = obj.get("frecency").and_then(JsonValue::as_object) {
@@ -340,6 +362,12 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     root["librarySidebarOpen"] = JsonValue::from(prefs.app.library_sidebar_open);
     if let Some(ref group_by) = prefs.app.library_group_by {
         root["libraryGroupBy"] = JsonValue::from(group_by.as_str());
+    }
+    if let Some(ref mirror) = prefs.app.library_checker_mirror_url {
+        root["libraryCheckerMirrorUrl"] = JsonValue::from(mirror.as_str());
+    }
+    if let Some(ref repo) = prefs.app.library_checker_local_repo_path {
+        root["libraryCheckerLocalRepoPath"] = JsonValue::from(repo.as_str());
     }
     if let Some(ref window_state) = prefs.window_state {
         root["windowState"] = window_state.clone();

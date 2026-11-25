@@ -8,19 +8,25 @@ import { Command, type CommandEntry, type CommandItem } from "nsh/base";
 import { t } from "./i18n";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
-import { buildPaletteItems } from "./logic";
+import { buildPaletteItems, shortcutForSpace } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
 import { Modal } from "./Modal";
 import { shortcutsOpen } from "./ShortcutsModal";
 import { MONO } from "./theme";
 import { showToast } from "./Toast";
+import { parseJsonPayload } from "./snippets/snippetLogic";
+import type { SnippetListPayload, TrdSummaryItem } from "./snippets/types";
+import { runSnippetVerifyJob } from "./snippets/verifyJob";
 import {
   parseJsonReport,
   type PluginCommandAction,
   type RegisteredPluginCommand,
 } from "./tools/types";
 import {
+  activeSnippetStudio,
+  activeTrdStudio,
   archivedExpanded,
+  bundlerModalOpen,
   dialog,
   goSettings,
   goSpace,
@@ -28,8 +34,12 @@ import {
   importPolygon,
   info,
   librarySidebarOpen,
+  newTrdModalOpen,
+  openNewSnippetModal,
+  openSnippetStudio,
   openStudio,
   openToolPlugin,
+  openTrdStudio,
   paletteOpen,
   pickWorkspace,
   pluginsRevision,
@@ -37,6 +47,8 @@ import {
   requestNewWorkspace,
   selectedContest,
   selectedProblem,
+  snippetsRevision,
+  snippetsSubTab,
   space,
   studio,
   studioActions,
@@ -134,11 +146,27 @@ function actions(): Action[] {
       run: () => toggleLibrarySidebar(),
       when: () => hasWorkspace() && !inStudio && space() === "problems",
     },
-    { id: "a:space-problems", icon: "libraryBig", label: t("space.problems"), keywords: ["problems", "library", "题库", "tiku"], shortcut: inStudio ? undefined : "mod+1", run: () => goSpace("problems"), when: hasWorkspace },
-    { id: "a:space-contests", icon: "trophy", label: t("space.contests"), keywords: ["contests", "比赛", "bisai"], shortcut: inStudio ? undefined : "mod+2", run: () => goSpace("contests"), when: hasWorkspace },
-    { id: "a:space-training", icon: "crown", label: t("space.training"), keywords: ["training", "dashboard", "calendar", "submissions", "训练", "看板", "xunlian"], shortcut: inStudio ? undefined : "mod+3", run: () => goSpace("training"), when: () => hasWorkspace() && info().trainingEnabled },
-    { id: "a:space-tools", icon: "squareCode", label: t("space.tools"), keywords: ["tools", "toolbox", "plugin", "graph", "math", "工具", "画板", "插件", "gongju"], shortcut: inStudio ? undefined : "mod+4", run: () => goSpace("tools") },
-    { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio ? undefined : "mod+5", run: () => goSpace("settings") },
+    { id: "a:space-problems", icon: "libraryBig", label: t("space.problems"), keywords: ["problems", "library", "题库", "tiku"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("problems", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("problems"), when: hasWorkspace },
+    { id: "a:space-contests", icon: "trophy", label: t("space.contests"), keywords: ["contests", "比赛", "bisai"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("contests", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("contests"), when: hasWorkspace },
+    { id: "a:space-snippets", icon: "bookOpen", label: t("space.snippets"), keywords: ["snippets", "trd", "templates", "模板", "算法库", "moban"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("snippets", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("snippets"), when: () => hasWorkspace() && info().snippetsEnabled },
+    { id: "a:bundler", icon: "fileCode2", label: t("snippets.bundler"), keywords: ["bundle", "expand", "cpp", "single", "展开", "提交代码", "zhankai"], run: () => bundlerModalOpen.set(true), when: () => hasWorkspace() && info().snippetsEnabled },
+    { id: "a:new-snippet", icon: "plus", label: t("snippets.newSnippet"), keywords: ["new", "snippet", "algorithm", "新建", "算法", "模板", "moban"], run: () => { goSpace("snippets"); snippetsSubTab.set("library"); openNewSnippetModal(); }, when: () => hasWorkspace() && info().snippetsEnabled && !info().readOnly },
+    { id: "a:new-trd", icon: "plus", label: t("snippets.newTrd"), keywords: ["new", "trd", "handbook", "新建", "模板册", "mobance"], run: () => { goSpace("snippets"); snippetsSubTab.set("trds"); newTrdModalOpen.set(true); }, when: () => hasWorkspace() && info().snippetsEnabled && !info().readOnly },
+    {
+      id: "a:verify-all-snippets",
+      icon: "shieldCheck",
+      label: t("snippets.verifyAll"),
+      keywords: ["verify", "snippet", "all", "验板", "验证", "全部模板"],
+      run: () => {
+        if (runSnippetVerifyJob({ mode: "all", slug: null, force: false })) {
+          showToast({ tone: "info", text: t("snippets.action.verifying") });
+        }
+      },
+      when: () => hasWorkspace() && info().snippetsEnabled,
+    },
+    { id: "a:space-training", icon: "crown", label: t("space.training"), keywords: ["training", "dashboard", "calendar", "submissions", "训练", "看板", "xunlian"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("training", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("training"), when: () => hasWorkspace() && info().trainingEnabled },
+    { id: "a:space-tools", icon: "squareCode", label: t("space.tools"), keywords: ["tools", "toolbox", "plugin", "graph", "math", "工具", "画板", "插件", "gongju"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("tools", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("tools") },
+    { id: "a:space-settings", icon: "settings", label: t("space.settings"), keywords: ["settings", "preferences", "设置", "shezhi"], shortcut: inStudio || activeSnippetStudio() || activeTrdStudio() ? undefined : shortcutForSpace("settings", { hasWorkspace: hasWorkspace(), snippetsEnabled: info().snippetsEnabled, trainingEnabled: info().trainingEnabled }), run: () => goSpace("settings") },
     { id: "a:appearance", icon: "pencil", label: t("palette.action.appearance"), keywords: ["appearance", "theme", "dark", "light", "font", "language", "外观", "主题", "字号", "语言", "waiguan", "yuyan"], run: () => goSettings("appearance") },
     { id: "a:toolchain", icon: "squareCode", label: t("palette.action.toolchain"), keywords: ["toolchain", "compiler", "g++", "clang++", "cxx", "工具链", "编译器", "gongjulian"], run: () => goSettings("toolchain") },
     { id: "a:shortcuts", icon: "code", label: t("palette.action.shortcuts"), keywords: ["shortcut", "shortcuts", "key", "help", "快捷键", "kuaijiejian"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
@@ -188,8 +216,16 @@ function actions(): Action[] {
   }));
 
   const builtins = list.filter((a) => !a.when || a.when());
+  // In the Snippets space, prioritize snippet/TRD actions at the top of the action list.
+  const inSnippets = !inStudio && space() === "snippets";
+  const orderedBuiltins = inSnippets
+    ? [
+        ...builtins.filter((a) => a.id.includes("snippet") || a.id.includes("trd") || a.id.includes("bundler")),
+        ...builtins.filter((a) => !a.id.includes("snippet") && !a.id.includes("trd") && !a.id.includes("bundler")),
+      ]
+    : builtins;
   // In the Tools space, sort tool/plugin commands to the very top of the palette.
-  return inTools ? [...pluginActions, ...builtins] : [...builtins, ...pluginActions];
+  return inTools ? [...pluginActions, ...orderedBuiltins] : [...orderedBuiltins, ...pluginActions];
 }
 
 /** Top breathing room below the title bar so the palette never touches the window's top edge. */
@@ -227,23 +263,75 @@ function PaletteBody() {
     return preview.fuzzyJump(query().trim(), activeContest());
   });
 
+  const snippetHits = computed(() => {
+    if (!hasWorkspace() || !info().snippetsEnabled || actionMode()) return [];
+    void snippetsRevision();
+    const q = query().trim().toLowerCase();
+    const snips = parseJsonPayload<SnippetListPayload>(preview.listSnippetsJson())?.snippets ?? [];
+    const trds = parseJsonPayload<{ trds: TrdSummaryItem[] }>(preview.listTrdsJson())?.trds ?? [];
+    const out: { id: string; kind: "snippet" | "trd"; slug: string; label: string; group: string; hasCode?: boolean }[] = [];
+    for (const s of snips) {
+      const hay = `${s.title} ${s.slug} ${(s.tags ?? []).join(" ")}`.toLowerCase();
+      if (!q || hay.includes(q)) {
+        out.push({
+          id: `s:${s.slug}`,
+          kind: "snippet",
+          slug: s.slug,
+          label: s.title,
+          group: t("snippets.tab.library"),
+          hasCode: s.has_code,
+        });
+      }
+    }
+    for (const trd of trds) {
+      const hay = `${trd.name} ${trd.id}`.toLowerCase();
+      if (!q || hay.includes(q)) {
+        out.push({
+          id: `t:${trd.id}`,
+          kind: "trd",
+          slug: trd.id,
+          label: trd.name,
+          group: t("snippets.tab.trds"),
+        });
+      }
+    }
+    return out.slice(0, q ? 12 : space() === "snippets" ? 8 : 0);
+  });
+
   const built = computed(() =>
     buildPaletteItems(query(), jumps(), actions(), activeContest(), {
-      prioritizeActions: !studio() && space() === "tools",
+      prioritizeActions: !studio() && (space() === "tools" || space() === "snippets"),
     }),
   );
 
-  const items = computed<CommandItem[]>(() =>
-    built().items.map((x) => ({
+  const items = computed<CommandItem[]>(() => {
+    const snipItems: CommandItem[] = snippetHits().map((x) => ({
+      id: x.id,
+      label: x.label,
+      group: x.group,
+      shortcut: null,
+    }));
+    const baseItems: CommandItem[] = built().items.map((x) => ({
       id: x.id,
       label: x.label,
       group: x.groupLabel,
       shortcut: x.shortcut ?? null,
-    })),
-  );
+    }));
+    return space() === "snippets" || query().trim().length > 0
+      ? [...snipItems, ...baseItems]
+      : baseItems;
+  });
 
   function select(id: string) {
     close();
+    if (id.startsWith("s:")) {
+      openSnippetStudio(id.slice(2));
+      return;
+    }
+    if (id.startsWith("t:")) {
+      openTrdStudio(id.slice(2));
+      return;
+    }
     if (id.startsWith("a:")) {
       const a = actions().find((x) => x.id === id);
       setTimeout(() => a?.run(), 0);
@@ -260,11 +348,18 @@ function PaletteBody() {
   }
 
   const hitOf = (id: string) => jumps().find((h) => `j:${h.visitKey}` === id);
+  const snipHitOf = (id: string) => snippetHits().find((h) => h.id === id);
   const meta = (id: string) => {
+    const sh = snipHitOf(id);
+    if (sh) return sh.slug;
     const hit = hitOf(id);
     return hit && hit.kind !== "contest_item" ? hit.id : undefined;
   };
   const lead = (id: string) => {
+    const sh = snipHitOf(id);
+    if (sh) {
+      return <Icon name={sh.kind === "trd" ? "bookOpen" : sh.hasCode === false ? "sigma" : "code"} size={16} />;
+    }
     if (id.startsWith("a:")) return <Icon name={actions().find((x) => x.id === id)?.icon ?? "arrowRight"} size={16} />;
     const hit = hitOf(id);
     if (hit?.kind === "contest_item")
@@ -290,7 +385,7 @@ function PaletteBody() {
       onSelect={(e) => select(e.id)}
       onCancel={close}
       autoFocus
-      placeholder={t("palette.placeholder")}
+      placeholder={!studio() && space() === "snippets" ? t("palette.placeholderSnippets") : t("palette.placeholder")}
       searchPrefix={<Icon name="search" size={16} tone={actionMode() ? "primary" : "muted-foreground"} />}
       searchSuffix={<Kbd keys="escape" faint />}
       searchBarClass="px-3.5 flex-row items-center gap-2.5 border-b border-border"

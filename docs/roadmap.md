@@ -319,6 +319,30 @@
 
 **不做**（Phase 4 整体）：比赛复盘页（`training/reviews/*.md`）、独立待补队列页、耗时/VP/错因标签录入表单、单平台多账号合并、Competitive Companion 端口监听、题单（`sheets/*.toml`）、能力雷达图/平台环形图、盲盒抽题、间隔复习提醒、年度总结幻灯片、编译期响应式语法糖与独立 HMR 守护进程。
 
+## Phase 5：Living TRD（活模板册）与可验证算法库（规划已确认）
+
+2026-11-26 深度对齐确认，按 **5A / 5B / 5C** 三步推进，详细规格见 [specs/phase-5-living-trd.md](./specs/phase-5-living-trd.md)：
+
+### Phase 5A：算法库底座、通用单文件展开器与本地验板
+
+1. **双层活引用底层（`snippets/<slug>/`）**：每条算法独立目录（`snippet.toml`、可选 `code.hpp`、`notes.md`、`test.cpp` 等），支持无代码的**纯公式/结论卡片**；通过扫描 `code.hpp` 中的 `#include "<slug>/code.hpp"` 自动构建依赖 DAG（外部编辑器 `-I snippets` 直接可用，无需 TOML 重复声明）。
+2. **通用单文件展开器（C++ Bundler）**：支持展开任意本地 `.cpp` 赛时代码（同时解析工作区 `snippets/` 与相对路径 / `-I` 本地自定义头文件）或单个算法条目，自动拓扑内联、去重 `#pragma once` 与标准库头文件，提供 `xcpc bundle` CLI（支持 `--copy`）供编辑器一键绑定提交。
+3. **考场累计分块校验哈希（KACTL++）**：印刷前自动隐藏 `#pragma once` 与本地 `#include`（改以依赖徽标标注），严格基于最终印出代码计算逐块 / 每隔 $N$ 行的去注释去空白 6 位累计 MD5 哈希，与考场零依赖 Linux 命令（`cpp -dD -P -fpreprocessed | tr -d '[:space:]' | md5sum | cut -c-6`）逐字节对齐。
+4. **本地验板与依赖级联**：支持独立 `test.cpp` 自测与关联工作区 `problems/<slug>/` 验板；改底层板子自动标脏全部下游依赖并支持一键级联复验。
+
+### Phase 5B：Library Checker 全局直验与 TRD 出版引擎
+
+1. **Library Checker 全局按需缓存直验**：支持在 `snippet.toml` 中声明 `yosupo06/library-checker-problems` 题名，首次验板按需拉取几十 KB 轻量生成器与 `testlib` checker 至 `~/.cache/xcpc/library-checker/`（支持镜像/本地克隆路径配置，缓存后离线复用），直接由 `xcpc-judge` 原生造数跑测，零污染工作区 Git。
+2. **模板册活引用组册与冻结（`trds/<id>/`）**：按章节活引用算法条目，支持多本册子、缺失上游依赖 Preflight 检查、柔性冻结门禁（默认对未验/过期/失败报 warning，提供可选 `--strict` 严格阻断）与快照归档。
+3. **平权 Typst 模板种子**：复用 Phase 2.5C 的 `#let render(doc)` + `#let schema` 契约，提供 `trd-compact`（横版 A4 三栏、灰度印刷 + 「行号 哈希」边栏）与 `trd-book`（竖版 A4 单/双栏讲义风格）；内置示例工作区预置 3–5 条示范条目与 1 本示例模板册。
+
+### Phase 5C：桌面端「模板」空间、题解双向联动与 MCP / Skill
+
+1. **桌面端「模板」一级导航**：左侧导航升级为 `题库 / 比赛 / 模板 / 训练 / 工具 / 设置`（多人纯出题仓可通过 `workspace.toml` 隐藏），顶栏切换 `算法库 | 模板册`，复用出版工作室实时预览底座，并提供「展开提交代码」弹窗/抽屉入口。
+2. **题解双向联动与 Agent 赋能**：支持从题库代码与 `editorial.md` 代码块一键「沉淀为板子」，板子详情页展示反向关联题目；补齐 CLI、MCP 工具集与工作区 Skill。
+
+**不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
+
 ## 待定与远期（尚未排期）
 
 - **远期（原候选 Phase 3E）：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，2026-11-24 确认排到远期）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 赛制与断点续测；引入三道防线反作弊与分层审计模型，产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
@@ -327,7 +351,6 @@
 - **题单（`sheets/*.toml`）**。
 - 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。
-- 代码模板册（TRD）。
 - 双语并排校对与语义级 Diff。
 - 更多主题预设和定制体系。
 - 打包发布与 1,000+ 题规模的压测。

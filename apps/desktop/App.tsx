@@ -10,7 +10,7 @@ import { Btn, Chevron, Kbd, tip } from "./src/ui/kit";
 import { Icon } from "./src/ui/Icon";
 import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
-import { pathBase, windowTitle } from "./src/ui/logic";
+import { pathBase, visibleSpaces, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
 import { pageTransform, pageTransition } from "./src/ui/motion";
 import { NavRail } from "./src/ui/NavRail";
@@ -18,6 +18,11 @@ import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
 import { formatAppVersion, readAboutInfo, SettingsView } from "./src/ui/SettingsView";
 import { ShortcutsModal, shortcutsOpen } from "./src/ui/ShortcutsModal";
+import { BundlerModal } from "./src/ui/snippets/BundlerModal";
+import { NewSnippetModal, NewTrdModal } from "./src/ui/snippets/NewSnippetModal";
+import { SnippetsView } from "./src/ui/snippets/SnippetsView";
+import { SnippetStudio } from "./src/ui/snippets/SnippetStudio";
+import { TrdStudio } from "./src/ui/snippets/TrdStudio";
 import { StudioView } from "./src/ui/studio/StudioView";
 import { ToastHost } from "./src/ui/Toast";
 import { ToolsView } from "./src/ui/ToolsView";
@@ -26,6 +31,8 @@ import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
 import {
+  activeSnippetStudio,
+  activeTrdStudio,
   brandReplayOpen,
   flushPrefs,
   goSpace,
@@ -176,7 +183,12 @@ function App() {
 
   // Mounted synchronously on first use (no 1-frame blank flash), then kept mounted.
   const inStudio = computed(() => studio() !== undefined);
+  const inSnippetStudio = computed(() => activeSnippetStudio() !== undefined);
+  const inTrdStudio = computed(() => activeTrdStudio() !== undefined);
+  const inAnyStudio = computed(() => inStudio() || inSnippetStudio() || inTrdStudio());
   const studioMounted = computed<boolean>((prev) => Boolean(prev) || inStudio());
+  const snippetStudioMounted = computed<boolean>((prev) => Boolean(prev) || inSnippetStudio());
+  const trdStudioMounted = computed<boolean>((prev) => Boolean(prev) || inTrdStudio());
 
   useWindowTitle(() => {
     const t = studio();
@@ -195,22 +207,26 @@ function App() {
     });
   });
 
+  const goVisibleSlot = (idx: number) => {
+    if (inAnyStudio()) return;
+    const list = visibleSpaces({
+      hasWorkspace: hasWorkspace(),
+      snippetsEnabled: info().snippetsEnabled,
+      trainingEnabled: info().trainingEnabled,
+    });
+    const target = list[idx];
+    if (target) traceInteraction("nav.space", () => goSpace(target), { space: target });
+  };
+
   keymap.bind({
     "mod+k": () => traceInteraction("palette.toggle", () => paletteOpen.set(!paletteOpen())),
     "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
-    "mod+1": () =>
-      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("problems"), { space: "problems" }),
-    "mod+2": () =>
-      hasWorkspace() && !inStudio() && traceInteraction("nav.space", () => goSpace("contests"), { space: "contests" }),
-    "mod+3": () =>
-      hasWorkspace() &&
-      !inStudio() &&
-      info().trainingEnabled &&
-      traceInteraction("nav.space", () => goSpace("training"), { space: "training" }),
-    "mod+4": () =>
-      !inStudio() && traceInteraction("nav.space", () => goSpace("tools"), { space: "tools" }),
-    "mod+5": () =>
-      !inStudio() && traceInteraction("nav.space", () => goSpace("settings"), { space: "settings" }),
+    "mod+1": () => goVisibleSlot(0),
+    "mod+2": () => goVisibleSlot(1),
+    "mod+3": () => goVisibleSlot(2),
+    "mod+4": () => goVisibleSlot(3),
+    "mod+5": () => goVisibleSlot(4),
+    "mod+6": () => goVisibleSlot(5),
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 
@@ -242,7 +258,7 @@ function App() {
       style={{
         flex: 1,
         flexDirection: "column",
-        pointerEvents: inStudio() ? "none" : "auto",
+        pointerEvents: inAnyStudio() ? "none" : "auto",
       }}
     >
       <TitleBar
@@ -337,23 +353,29 @@ function App() {
       <View style={{ flex: 1, flexDirection: "row" }}>
         <NavRail
           space={space()}
+          snippetsEnabled={info().snippetsEnabled}
           trainingEnabled={info().trainingEnabled}
           hasWorkspace
           onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
         />
         <SpaceStage visible={space() === "problems"} variant="space">
-          <LibraryView active={!inStudio() && space() === "problems"} />
+          <LibraryView active={!inAnyStudio() && space() === "problems"} />
         </SpaceStage>
         <SpaceStage visible={space() === "contests"} variant="space">
-          <ContestsView active={!inStudio() && space() === "contests"} />
+          <ContestsView active={!inAnyStudio() && space() === "contests"} />
+        </SpaceStage>
+        <SpaceStage visible={info().snippetsEnabled && space() === "snippets"} variant="space">
+          <If when={info().snippetsEnabled}>
+            <SnippetsView active={!inAnyStudio() && space() === "snippets"} />
+          </If>
         </SpaceStage>
         <SpaceStage visible={info().trainingEnabled && space() === "training"} variant="space">
           <If when={info().trainingEnabled}>
-            <TrainingView active={!inStudio() && space() === "training"} />
+            <TrainingView active={!inAnyStudio() && space() === "training"} />
           </If>
         </SpaceStage>
         <SpaceStage visible={space() === "tools"} variant="space">
-          <ToolsView active={!inStudio() && space() === "tools"} />
+          <ToolsView active={!inAnyStudio() && space() === "tools"} />
         </SpaceStage>
         <SpaceStage visible={space() === "settings"} variant="space">
           <SettingsView />
@@ -397,6 +419,7 @@ function App() {
           <NavRail
             space={space()}
             hasWorkspace={false}
+            snippetsEnabled={false}
             trainingEnabled={false}
             onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
           />
@@ -419,6 +442,16 @@ function App() {
           <If when={studioMounted()}>
             <SpaceStage visible={inStudio()} variant="studio" animateOnMount>
               <StudioView active={inStudio()} />
+            </SpaceStage>
+          </If>
+          <If when={snippetStudioMounted()}>
+            <SpaceStage visible={inSnippetStudio()} variant="studio" animateOnMount>
+              <SnippetStudio active={inSnippetStudio()} />
+            </SpaceStage>
+          </If>
+          <If when={trdStudioMounted()}>
+            <SpaceStage visible={inTrdStudio()} variant="studio" animateOnMount>
+              <TrdStudio active={inTrdStudio()} />
             </SpaceStage>
           </If>
           <If when={openError() && (inStudio() || space() !== "settings")}>
@@ -497,6 +530,9 @@ function App() {
         </View>
         <Dialogs onJumpContest={(contestId) => jumpToContest(contestId)} />
         <UnfreezeDialog />
+        <BundlerModal />
+        <NewSnippetModal />
+        <NewTrdModal />
       </If>
       <CommandPalette />
       <If when={brandReplayOpen()}>

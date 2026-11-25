@@ -528,6 +528,8 @@ pub fn compile_cached_sanitized(
         source_bytes,
         source_disk_path,
         testlib,
+        &[],
+        &[],
     )
 }
 
@@ -602,6 +604,35 @@ pub fn compile_cached(
     source_disk_path: Option<&Path>,
     testlib: &ResolvedTestlib,
 ) -> std::result::Result<CompileResult, CompileFailure> {
+    compile_cached_with_includes(
+        cache,
+        compiler,
+        language,
+        target_label,
+        source_path_for_display,
+        source_bytes,
+        source_disk_path,
+        testlib,
+        &[],
+        &[],
+    )
+}
+
+/// Compiles a C++ source file using the Level 1 content-hash cache with additional
+/// `-I` include directories and an optional `extra_hash_salt` (e.g. transitive header hash).
+#[allow(clippy::too_many_arguments)]
+pub fn compile_cached_with_includes(
+    cache: &JudgeCache,
+    compiler: &DetectedCompiler,
+    language: SourceLanguage,
+    target_label: &str,
+    source_path_for_display: &str,
+    source_bytes: &[u8],
+    source_disk_path: Option<&Path>,
+    testlib: &ResolvedTestlib,
+    extra_include_dirs: &[PathBuf],
+    extra_hash_salt: &[u8],
+) -> std::result::Result<CompileResult, CompileFailure> {
     let flags = language.compile_flags();
     compile_cached_inner(
         cache,
@@ -614,6 +645,8 @@ pub fn compile_cached(
         source_bytes,
         source_disk_path,
         testlib,
+        extra_include_dirs,
+        extra_hash_salt,
     )
 }
 
@@ -629,6 +662,8 @@ fn compile_cached_inner(
     source_bytes: &[u8],
     source_disk_path: Option<&Path>,
     testlib: &ResolvedTestlib,
+    extra_include_dirs: &[PathBuf],
+    extra_hash_salt: &[u8],
 ) -> std::result::Result<CompileResult, CompileFailure> {
     let mut hasher = Sha256::new();
     hasher.update(namespace);
@@ -642,6 +677,10 @@ fn compile_cached_inner(
     }
     hasher.update(testlib.content_hash().as_bytes());
     hasher.update(b"\0");
+    if !extra_hash_salt.is_empty() {
+        hasher.update(extra_hash_salt);
+        hasher.update(b"\0");
+    }
     hasher.update(source_bytes);
     let key = format!("{:x}", hasher.finalize());
 
@@ -700,6 +739,9 @@ fn compile_cached_inner(
         cmd.arg(f);
     }
     cmd.arg("-I").arg(&inc_dir);
+    for dir in extra_include_dirs {
+        cmd.arg("-I").arg(dir);
+    }
     if let Some(parent) = src_to_compile.parent() {
         cmd.arg("-I").arg(parent);
     }

@@ -1514,9 +1514,11 @@ export function PreviewCanvas(props: {
                             {d().message}
                           </Text>
                         </View>
-                        <Text style={{ fontSize: 11.5, marginLeft: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                          {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : d().page != null ? t("preview.pageNumber", { page: d().page! + 1 }) : ""}
-                        </Text>
+                        <If when={Boolean(d().file || d().page != null)}>
+                          <Text style={{ fontSize: 11.5, marginLeft: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                            {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : t("preview.pageNumber", { page: d().page! + 1 })}
+                          </Text>
+                        </If>
                       </View>
                     )}
                   </Each>

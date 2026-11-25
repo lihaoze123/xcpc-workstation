@@ -19,6 +19,9 @@ use xcpc_domain::Language;
 
 use crate::example_en::EXAMPLE_FILES_EN;
 use crate::example_packages::SHARED_PACKAGE_FILES;
+use crate::example_snippets::{
+    EXAMPLE_SNIPPET_FILES_EN, EXAMPLE_SNIPPET_FILES_ZH, SHARED_SNIPPET_CODE_FILES,
+};
 use crate::{Result, Workspace, init_workspace_with_template};
 
 /// Static files seeded into an example workspace (relative to workspace root).
@@ -1656,15 +1659,17 @@ pub fn init_example_workspace_with_options(
     language: Language,
 ) -> Result<Workspace> {
     let ws = init_workspace_with_template(dir, template)?;
-    let (presets, files, groups): (&[&str], &[(&str, &str)], &[&str]) = match language {
+    let (presets, files, snippet_files, groups) = match language {
         Language::Chinese => (
-            &["olymp-classic", "cnoi-classic"],
+            &["olymp-classic", "cnoi-classic", "trd-compact", "trd-book"][..],
             EXAMPLE_FILES,
+            EXAMPLE_SNIPPET_FILES_ZH,
             EXAMPLE_GROUPS_ZH,
         ),
         Language::English => (
-            &["olymp-classic", "minimal"],
+            &["olymp-classic", "minimal", "trd-compact", "trd-book"][..],
             EXAMPLE_FILES_EN,
+            EXAMPLE_SNIPPET_FILES_EN,
             EXAMPLE_GROUPS_EN,
         ),
     };
@@ -1682,7 +1687,12 @@ pub fn init_example_workspace_with_options(
             ws.write(&rel, src.as_bytes())?;
         }
     }
-    for &(rel, content) in files.iter().chain(SHARED_PACKAGE_FILES.iter()) {
+    for &(rel, content) in files
+        .iter()
+        .chain(SHARED_PACKAGE_FILES.iter())
+        .chain(SHARED_SNIPPET_CODE_FILES.iter())
+        .chain(snippet_files.iter())
+    {
         let abs = ws.resolve(rel)?;
         if fs::symlink_metadata(&abs).is_err() {
             ws.write(rel, content.as_bytes())?;

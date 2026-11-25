@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub mod snippet;
+pub use snippet::*;
+
 /// The languages a statement is set in: they pick the template's keywords.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -246,10 +249,33 @@ pub struct TemplateField {
     pub when: BTreeMap<String, TemplateOptionValue>,
 }
 
+/// Which document family a Typst template belongs to (`"statement"` vs `"trd"`).
+///
+/// Used to keep statement/editorial templates and TRD templates isolated in UI dropdowns
+/// and template listings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplateKind {
+    #[default]
+    Statement,
+    Trd,
+}
+
+impl TemplateKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TemplateKind::Statement => "statement",
+            TemplateKind::Trd => "trd",
+        }
+    }
+}
+
 /// Parsed `#let schema = (...)` exported by a Typst template.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TemplateSchema {
+    #[serde(default)]
+    pub kind: TemplateKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<LocalizedText>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -274,13 +300,16 @@ impl TemplateSchema {
     }
 }
 
-/// Metadata for one bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`).
+/// Metadata for one bundled template seed (`olymp-classic`, `cnoi-classic`, `minimal`,
+/// `trd-compact`, `trd-book`).
 ///
 /// Presets have no runtime privilege or implicit fallback; they are only used when
 /// initializing a workspace or installing a new editable template into `templates/`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresetInfo {
     pub id: String,
+    #[serde(default)]
+    pub kind: TemplateKind,
     pub name: LocalizedText,
     pub description: LocalizedText,
 }
@@ -289,6 +318,8 @@ pub struct PresetInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemplateInfo {
     pub id: String,
+    #[serde(default)]
+    pub kind: TemplateKind,
     /// Workspace-relative path (e.g. `"templates/olymp-classic.typ"` or `"contests/c1/template.typ"`).
     pub path: String,
     pub name: LocalizedText,
@@ -770,7 +801,7 @@ pub struct Statement {
 }
 
 /// A text file and where it is, relative to the workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextFile {
     pub path: String,
     pub text: String,

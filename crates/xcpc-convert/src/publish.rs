@@ -13,13 +13,14 @@ use std::path::Path;
 
 use serde::Serialize;
 use xcpc_domain::{
-    ContestItem, ContestMeta, Language, Statement, TemplateFieldScope, TemplateFieldType,
-    TemplateInfo, TemplateOptionValue, TemplateOptionsMap, TextFile, check_id, label_for_index,
+    ContestItem, ContestMeta, Language, SnippetVerifyStatus, Statement, TemplateFieldScope,
+    TemplateFieldType, TemplateInfo, TemplateKind, TemplateOptionValue, TemplateOptionsMap,
+    TextFile, TrdFreezeResult, TrdPreflightSeverity, check_id, label_for_index,
 };
 use xcpc_engine::{Compiled, Engine};
 use xcpc_storage::{Error, SnapshotTemplateArchive, SnapshotTemplateMeta, Workspace};
 
-use crate::{Book, Document, Entry};
+use crate::{Book, Document, Entry, TrdBook, TrdChapterInput};
 
 /// Diagnostic code emitted when the resolved `.typ` template file does not exist on disk.
 pub const MISSING_TEMPLATE: &str = "missing_template";
@@ -706,6 +707,9 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
             if starts.is_empty() {
                 starts = compiled.starts("xcpc-tutorial");
             }
+            if starts.is_empty() {
+                starts = compiled.starts("xcpc-trd-item");
+            }
             let problems = pages(doc, &starts, total);
             let report = Report {
                 ok: !diagnostics.iter().any(Diagnostic::is_error),
@@ -1186,6 +1190,7 @@ pub fn inspect_template(ws: &Workspace, engine: &Engine, name: &str) -> Option<T
     let description = schema.description.clone();
     Some(TemplateInfo {
         id: name.to_owned(),
+        kind: schema.kind,
         path: rel_path,
         name: display_name,
         description,
@@ -1212,6 +1217,31 @@ pub fn inspect_contest_template(
     let description = schema.description.clone();
     Some(TemplateInfo {
         id: "local".to_owned(),
+        kind: schema.kind,
+        path: rel_path,
+        name: display_name,
+        description,
+        schema,
+    })
+}
+
+/// Inspects a TRD-local template (`trds/<trd_id>/template.typ`) and returns
+/// its metadata and declarative `#let schema` under ID `"local"`.
+pub fn inspect_trd_template(ws: &Workspace, engine: &Engine, trd_id: &str) -> Option<TemplateInfo> {
+    if !ws.has_trd_template(trd_id) {
+        return None;
+    }
+    let rel_path = format!("trds/{trd_id}/template.typ");
+    let import_path = format!("/{rel_path}");
+    let schema = engine.inspect_template_schema(&import_path);
+    let display_name = schema
+        .name
+        .clone()
+        .unwrap_or_else(|| xcpc_domain::LocalizedText::bilingual("本册专属模板", "TRD Template"));
+    let description = schema.description.clone();
+    Some(TemplateInfo {
+        id: "local".to_owned(),
+        kind: TemplateKind::Trd,
         path: rel_path,
         name: display_name,
         description,
@@ -1224,6 +1254,18 @@ pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
     ws.list_templates()
         .into_iter()
         .filter_map(|id| inspect_template(ws, engine, &id))
+        .collect()
+}
+
+/// Lists workspace templates filtered by [`TemplateKind`] (`Statement` vs `Trd`).
+pub fn list_templates_by_kind(
+    ws: &Workspace,
+    engine: &Engine,
+    kind: TemplateKind,
+) -> Vec<TemplateInfo> {
+    list_templates(ws, engine)
+        .into_iter()
+        .filter(|t| t.kind == kind)
         .collect()
 }
 
@@ -1348,4 +1390,557 @@ pub fn default_output(ws: &Workspace, target: &Target, kind: Kind) -> String {
         Target::Problem(id) => ws.load_problem(id).ok().map(|p| p.meta.title),
     };
     default_output_for_title(target, kind, title.as_deref())
+}
+
+// ---- Phase 5: Living TRD & Single-Snippet Publishing -----------------------------------
+
+fn is_builtin_trd_preset(name: &str) -> bool {
+    matches!(name, "trd-compact" | "trd-book")
+}
+
+/// Infers whether a TRD or snippet should use Chinese or English UI labels in templates.
+fn infer_trd_language(text: &str) -> Language {
+    if text.chars().any(crate::is_cjk) {
+        Language::Chinese
+    } else {
+        Language::English
+    }
+}
+
+/// Default workspace-relative PDF output path for a TRD (`build/<sanitized_name>.pdf`).
+pub fn default_trd_output(ws: &Workspace, trd_id: &str) -> String {
+    let base = ws
+        .load_trd(trd_id)
+        .ok()
+        .map(|t| sanitize_filename(&t.meta.name))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| trd_id.to_owned());
+    format!("build/{base}.pdf")
+}
+
+/// Builds a Typst [`Document`] for `trds/<trd_id>/`.
+///
+/// Template resolution priority:
+/// 1. When `trd.meta.frozen == true`: `trds/<id>/snapshot/template.typ` (and snapshot snippets).
+/// 2. Else if `trds/<id>/template.typ` exists: `/trds/<id>/template.typ`.
+/// 3. Else if `templates/<name>.typ` exists: `/templates/<name>.typ`.
+/// 4. Else if `<name>` is a built-in TRD preset (`trd-compact` / `trd-book`): `/xcpc/<name>.typ`.
+/// 5. Otherwise emits a `MISSING_TEMPLATE` diagnostic.
+pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
+    let trd = ws.load_trd(trd_id)?;
+    let mut missing_diags: Vec<crate::Diagnostic> = Vec::new();
+    let chapters_owned: Vec<(String, Vec<xcpc_domain::SnippetDetail>)> = if trd.meta.frozen {
+        ws.trd_snippets(&trd)?
+    } else {
+        let mut out = Vec::with_capacity(trd.meta.chapters.len());
+        for ch in &trd.meta.chapters {
+            let mut items = Vec::with_capacity(ch.items.len());
+            for slug in &ch.items {
+                match ws.load_snippet(slug) {
+                    Ok(detail) => items.push(detail),
+                    Err(xcpc_storage::Error::NotFound(_)) => {
+                        missing_diags.push(crate::Diagnostic {
+                            error: false,
+                            code: Some("missing_snippet".into()),
+                            message: format!("未找到模板「{slug}」"),
+                            file: String::new(),
+                            line: 0,
+                            column: 0,
+                        });
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            out.push((ch.title.clone(), items));
+        }
+        out
+    };
+    let lang = infer_trd_language(&trd.meta.name);
+    let mut book = TrdBook::from_meta(&trd.meta, lang);
+
+    let ws_template_opts = ws.workspace_template_options();
+    let merge_trd_opts = |tpl_name: &str| {
+        let mut merged: BTreeMap<String, TemplateOptionValue> =
+            ws_template_opts.get(tpl_name).cloned().unwrap_or_default();
+        if let Some(trd_opts) = trd.meta.template_options.get(tpl_name) {
+            for (k, v) in trd_opts {
+                merged.insert(k.clone(), v.clone());
+            }
+        }
+        merged
+    };
+
+    let mut missing_tpl_diag: Option<crate::Diagnostic> = None;
+    if trd.meta.frozen {
+        let snap_tpl_rel = format!("trds/{trd_id}/snapshot/template.typ");
+        let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
+        if has_snap_tpl {
+            let snap = ws.load_trd_snapshot_template(trd_id);
+            book.template_name = snap
+                .as_ref()
+                .map(|s| s.template.clone())
+                .unwrap_or_else(|| "local".into());
+            book.template_options = snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+            book.preamble = ws.load_trd_snapshot_preamble(trd_id);
+            book.template_import = Some(format!("/{snap_tpl_rel}"));
+        } else {
+            let name = book.template_name.clone();
+            if is_builtin_trd_preset(&name) {
+                book.template_import = Some(format!("/xcpc/{name}.typ"));
+                book.template_options = merge_trd_opts(&name);
+            } else {
+                book.template_import = None;
+                missing_tpl_diag = Some(crate::Diagnostic {
+                    error: true,
+                    code: Some(MISSING_TEMPLATE.into()),
+                    message: format!(
+                        "定稿模板册「{trd_id}」缺少快照模板文件 {snap_tpl_rel}，无法复现排版"
+                    ),
+                    file: format!("trds/{trd_id}/trd.toml"),
+                    line: 1,
+                    column: 1,
+                });
+            }
+        }
+    } else if ws.has_trd_template(trd_id) {
+        book.template_name = "local".into();
+        book.template_import = Some(format!("/trds/{trd_id}/template.typ"));
+        book.template_options = trd
+            .meta
+            .template_options
+            .get("local")
+            .cloned()
+            .unwrap_or_default();
+        book.preamble = ws.load_preamble();
+    } else {
+        let name = book.template_name.clone();
+        book.preamble = ws.load_preamble();
+        if check_id(&name).is_ok() && ws.has_custom_template(&name) {
+            book.template_import = Some(format!("/templates/{name}.typ"));
+            book.template_options = merge_trd_opts(&name);
+        } else if is_builtin_trd_preset(&name) {
+            book.template_import = Some(format!("/xcpc/{name}.typ"));
+            book.template_options = merge_trd_opts(&name);
+        } else {
+            book.template_import = None;
+            missing_tpl_diag = Some(crate::Diagnostic {
+                error: true,
+                code: Some(MISSING_TEMPLATE.into()),
+                message: format!(
+                    "未找到模板「{name}」（templates/{name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
+                ),
+                file: format!("trds/{trd_id}/trd.toml"),
+                line: 1,
+                column: 1,
+            });
+        }
+    }
+
+    let chapter_inputs: Vec<TrdChapterInput<'_>> = chapters_owned
+        .iter()
+        .map(|(title, items)| TrdChapterInput {
+            title: title.clone(),
+            items: items.iter().collect(),
+        })
+        .collect();
+
+    let mut doc = crate::render_trd(&book, &chapter_inputs);
+    if let Some(d) = missing_tpl_diag {
+        doc.diagnostics.push(d);
+    }
+    doc.diagnostics.extend(missing_diags);
+    Ok(doc)
+}
+
+/// Builds a Typst [`Document`] for a single snippet's live preview (notes + code + cumulative hash gutter).
+///
+/// `unsaved` optionally overrides one workspace-relative file (`snippets/<slug>/code.hpp` or
+/// `snippets/<slug>/notes.md`) in memory without touching disk.
+pub fn document_snippet_preview(
+    ws: &Workspace,
+    slug: &str,
+    template: Option<&str>,
+    unsaved: Option<(&str, &str)>,
+) -> Result<Document, Error> {
+    let mut snippet = ws.load_snippet(slug)?;
+    if let Some((path, text)) = unsaved {
+        let code_rel = format!("snippets/{slug}/code.hpp");
+        let notes_rel = format!("snippets/{slug}/notes.md");
+        if path == code_rel {
+            snippet.code = if text.trim().is_empty() {
+                None
+            } else {
+                Some(TextFile {
+                    path: code_rel,
+                    text: text.to_owned(),
+                })
+            };
+        } else if path == notes_rel {
+            snippet.notes = if text.trim().is_empty() {
+                None
+            } else {
+                Some(TextFile {
+                    path: notes_rel,
+                    text: text.to_owned(),
+                })
+            };
+        }
+    }
+
+    let lang = infer_trd_language(&snippet.meta.title);
+    let mut book = TrdBook::single(&snippet.meta.title, lang);
+    book.preamble = ws.load_preamble();
+
+    // Populate `slug -> title` for dependency resolution in single-snippet preview (review T2).
+    if let Ok(summaries) = ws.list_snippet_summaries() {
+        for s in summaries {
+            book.snippet_titles.insert(s.slug, s.title);
+        }
+    }
+
+    // If `template` is `"trd:<trd_id>"`, inherit that TRD's template AND merged template options (review T2).
+    let ws_template_opts = ws.workspace_template_options();
+    let trd_ref = template
+        .map(str::trim)
+        .and_then(|s| s.strip_prefix("trd:"))
+        .filter(|id| !id.is_empty())
+        .and_then(|id| ws.load_trd(id).ok());
+
+    let mut missing_tpl_diag = None;
+    if let Some(trd) = trd_ref {
+        if !trd.meta.frozen && ws.has_trd_template(&trd.id) {
+            book.template_name = "local".into();
+            book.template_import = Some(format!("/trds/{}/template.typ", trd.id));
+            book.template_options = trd
+                .meta
+                .template_options
+                .get("local")
+                .cloned()
+                .unwrap_or_default();
+        } else {
+            let tpl_name = trd
+                .meta
+                .template
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("trd-compact");
+            book.template_name = tpl_name.to_owned();
+            let mut merged = ws_template_opts.get(tpl_name).cloned().unwrap_or_default();
+            if let Some(trd_opts) = trd.meta.template_options.get(tpl_name) {
+                for (k, v) in trd_opts {
+                    merged.insert(k.clone(), v.clone());
+                }
+            }
+            book.template_options = merged;
+            if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
+                book.template_import = Some(format!("/templates/{tpl_name}.typ"));
+            } else if is_builtin_trd_preset(tpl_name) {
+                book.template_import = Some(format!("/xcpc/{tpl_name}.typ"));
+            }
+        }
+    } else {
+        let tpl_name = template
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("trd-compact");
+        book.template_name = tpl_name.to_owned();
+        book.template_options = ws_template_opts.get(tpl_name).cloned().unwrap_or_default();
+        if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
+            book.template_import = Some(format!("/templates/{tpl_name}.typ"));
+        } else if is_builtin_trd_preset(tpl_name) {
+            book.template_import = Some(format!("/xcpc/{tpl_name}.typ"));
+        } else {
+            book.template_import = None;
+            missing_tpl_diag = Some(crate::Diagnostic {
+                error: true,
+                code: Some(MISSING_TEMPLATE.into()),
+                message: format!(
+                    "未找到模板「{tpl_name}」（templates/{tpl_name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
+                ),
+                file: "workspace.toml".into(),
+                line: 1,
+                column: 1,
+            });
+        }
+    }
+
+    let chapters = [TrdChapterInput {
+        title: String::new(),
+        items: vec![&snippet],
+    }];
+    let mut doc = crate::render_trd(&book, &chapters);
+    if let Some(d) = missing_tpl_diag {
+        doc.diagnostics.push(d);
+    }
+    Ok(doc)
+}
+
+/// Compiles `trds/<trd_id>/` into a [`Compiled`] Typst document and [`Report`].
+pub fn compile_trd(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+) -> Result<(Option<Compiled>, Document, Report), Error> {
+    let doc = document_trd(ws, trd_id)?;
+    engine.reset_files();
+    let (compiled, report) = compile(engine, &doc);
+    Ok((compiled, doc, report))
+}
+
+/// Runs full TRD preflight (missing snippets, missing transitive deps, cycles, verification
+/// status warnings) plus Typst compilation into one combined [`Report`].
+pub fn check_trd(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+    verify_statuses: &BTreeMap<String, SnippetVerifyStatus>,
+) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
+    let trd = ws.load_trd(trd_id)?;
+    let preflight = if trd.meta.frozen {
+        Vec::new()
+    } else {
+        ws.preflight_trd(trd_id, verify_statuses)?
+    };
+    let preflight_diags: Vec<Diagnostic> = preflight
+        .iter()
+        .map(|i| Diagnostic {
+            severity: match i.severity {
+                TrdPreflightSeverity::Error => "error",
+                TrdPreflightSeverity::Warning => "warning",
+            },
+            code: Some(
+                serde_json::to_value(i.kind)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "trd_preflight".into()),
+            ),
+            message: i.message.clone(),
+            file: None,
+            line: None,
+            column: None,
+            page: None,
+            hints: Vec::new(),
+        })
+        .collect();
+
+    let (compiled, doc, mut report) = compile_trd(ws, engine, trd_id)?;
+    // Avoid duplicating missing_snippet diagnostics already emitted by preflight.
+    report
+        .diagnostics
+        .retain(|d| d.code.as_deref() != Some("missing_snippet"));
+    merge_diagnostics(&mut report.diagnostics, preflight_diags);
+    report.ok = compiled.is_some() && !report.diagnostics.iter().any(Diagnostic::is_error);
+    Ok((compiled, Some(doc), report))
+}
+
+/// Compiles `trds/<trd_id>/` into PDF bytes in memory.
+pub fn compile_trd_pdf_bytes(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+) -> Result<(Option<Vec<u8>>, Document, Report), Error> {
+    let (compiled, doc, mut report) = compile_trd(ws, engine, trd_id)?;
+    let Some(compiled) = compiled.filter(|_| report.ok) else {
+        report.ok = false;
+        return Ok((None, doc, report));
+    };
+    match compiled.pdf() {
+        Ok(bytes) => Ok((Some(bytes), doc, report)),
+        Err(errs) => {
+            report.ok = false;
+            merge_diagnostics(
+                &mut report.diagnostics,
+                errs.into_iter().map(from_engine_plain).collect(),
+            );
+            Ok((None, doc, report))
+        }
+    }
+}
+
+/// Compiles `trds/<trd_id>/` and atomically writes the PDF to `output_rel` (or
+/// [`default_trd_output`] when `None`). Enforces read-only mode and workspace path sandbox.
+pub fn export_trd_pdf(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+    output_rel: Option<&Path>,
+) -> Result<(Option<String>, Report), Error> {
+    if ws.is_read_only() {
+        return Err(Error::ReadOnly);
+    }
+    let rel_path = match output_rel {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => default_trd_output(ws, trd_id),
+    };
+    ws.check_writable(&rel_path)?;
+    let (pdf_bytes, _doc, report) = compile_trd_pdf_bytes(ws, engine, trd_id)?;
+    let Some(bytes) = pdf_bytes else {
+        return Ok((None, report));
+    };
+    ws.write(&rel_path, &bytes)?;
+    Ok((Some(rel_path), report))
+}
+
+/// Renders one 1-based page of `trds/<trd_id>/` as PNG bytes.
+pub fn render_trd_page_png(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+    page_1based: usize,
+    pixel_per_pt: f32,
+) -> Result<(Option<Vec<u8>>, Report), Error> {
+    let (compiled, _doc, report) = compile_trd(ws, engine, trd_id)?;
+    let Some(compiled) = compiled else {
+        return Ok((None, report));
+    };
+    let idx = page_1based.saturating_sub(1);
+    Ok((compiled.render_png(idx, pixel_per_pt), report))
+}
+
+/// Compiles a single snippet preview (`notes.md` + `code.hpp` + cumulative hash gutter).
+pub fn compile_snippet_preview(
+    ws: &Workspace,
+    engine: &mut Engine,
+    slug: &str,
+    template: Option<&str>,
+    unsaved: Option<(&str, &str)>,
+) -> Result<(Option<Compiled>, Document, Report), Error> {
+    let doc = document_snippet_preview(ws, slug, template, unsaved)?;
+    if unsaved.is_none() {
+        engine.reset_files();
+    }
+    let (compiled, report) = compile(engine, &doc);
+    Ok((compiled, doc, report))
+}
+
+/// Renders one 1-based page of a single snippet preview as PNG bytes.
+pub fn render_snippet_page_png(
+    ws: &Workspace,
+    engine: &mut Engine,
+    slug: &str,
+    template: Option<&str>,
+    page_1based: usize,
+    pixel_per_pt: f32,
+    unsaved: Option<(&str, &str)>,
+) -> Result<(Option<Vec<u8>>, Report), Error> {
+    let (compiled, _doc, report) = compile_snippet_preview(ws, engine, slug, template, unsaved)?;
+    let Some(compiled) = compiled else {
+        return Ok((None, report));
+    };
+    let idx = page_1based.saturating_sub(1);
+    Ok((compiled.render_png(idx, pixel_per_pt), report))
+}
+
+/// Validates, compiles PDF, builds the effective template archive, and atomically freezes
+/// `trds/<trd_id>/` into `snapshot/`.
+pub fn freeze_trd_with_pdf(
+    ws: &Workspace,
+    engine: &mut Engine,
+    trd_id: &str,
+    strict: bool,
+    verify_statuses: &BTreeMap<String, SnippetVerifyStatus>,
+) -> Result<(Option<TrdFreezeResult>, Report), Error> {
+    check_id(trd_id)?;
+    if ws.is_read_only() {
+        return Err(Error::ReadOnly);
+    }
+    let trd = ws.load_trd(trd_id)?;
+    if trd.meta.archived {
+        return Err(Error::TrdArchived(trd_id.to_owned()));
+    }
+    if trd.meta.frozen {
+        return Err(Error::TrdAlreadyFrozen(trd_id.to_owned()));
+    }
+
+    // Run preflight upfront so strict/hard errors return cleanly before compiling Typst.
+    let preflight = ws.preflight_trd(trd_id, verify_statuses)?;
+    let hard_errors: Vec<String> = preflight
+        .iter()
+        .filter(|i| i.severity == TrdPreflightSeverity::Error)
+        .map(|i| i.message.clone())
+        .collect();
+    if !hard_errors.is_empty() {
+        return Err(Error::TrdFreezeBlocked {
+            id: trd_id.to_owned(),
+            issues: hard_errors,
+        });
+    }
+    let warning_msgs: Vec<String> = preflight
+        .iter()
+        .filter(|i| i.severity == TrdPreflightSeverity::Warning)
+        .map(|i| i.message.clone())
+        .collect();
+    if strict && !warning_msgs.is_empty() {
+        return Err(Error::TrdFreezeBlocked {
+            id: trd_id.to_owned(),
+            issues: warning_msgs,
+        });
+    }
+
+    let (pdf_bytes, _doc, report) = compile_trd_pdf_bytes(ws, engine, trd_id)?;
+    let Some(pdf_bytes) = pdf_bytes else {
+        return Ok((None, report));
+    };
+
+    // Build template archive so frozen snapshots reproduce even if workspace templates change.
+    let (eff_template, template_bytes, merged_opts) = if ws.has_trd_template(trd_id) {
+        let rel = format!("trds/{trd_id}/template.typ");
+        let bytes = ws.read_bytes(&rel)?;
+        let opts = trd
+            .meta
+            .template_options
+            .get("local")
+            .cloned()
+            .unwrap_or_default();
+        ("local".to_owned(), bytes, opts)
+    } else {
+        let eff = trd
+            .meta
+            .template
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("trd-compact")
+            .to_owned();
+        let bytes = if ws.has_custom_template(&eff) {
+            ws.read_bytes(&format!("templates/{eff}.typ"))?
+        } else if let Some(src) = xcpc_engine::preset_source(&eff) {
+            src.as_bytes().to_vec()
+        } else {
+            return Err(Error::NotFound(format!("template {eff:?}")));
+        };
+        let mut opts = ws
+            .workspace_template_options()
+            .remove(&eff)
+            .unwrap_or_default();
+        if let Some(trd_opts) = trd.meta.template_options.get(&eff) {
+            for (k, v) in trd_opts {
+                opts.insert(k.clone(), v.clone());
+            }
+        }
+        (eff, bytes, opts)
+    };
+
+    let preamble_bytes = ws.load_preamble().map(String::into_bytes);
+    let archive = SnapshotTemplateArchive {
+        meta: SnapshotTemplateMeta {
+            template: eff_template,
+            has_custom_template: true,
+            has_preamble: preamble_bytes.is_some(),
+            options: merged_opts,
+        },
+        custom_template_bytes: Some(template_bytes),
+        preamble_bytes,
+        assets: BTreeMap::new(),
+    };
+
+    let result = ws.freeze_trd(
+        trd_id,
+        strict,
+        verify_statuses,
+        Some(&archive),
+        Some(&pdf_bytes),
+    )?;
+    Ok((Some(result), report))
 }

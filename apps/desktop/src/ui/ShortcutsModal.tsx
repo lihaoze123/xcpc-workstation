@@ -7,7 +7,9 @@ import { Input } from "nsh/base";
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
 import { IconBtn, Kbd, keyLabel } from "./kit";
+import { shortcutForSpace, type Space } from "./logic";
 import { Modal } from "./Modal";
+import { hasWorkspace, info } from "./store";
 import { cardShadow } from "./theme";
 
 export interface ShortcutItem {
@@ -54,9 +56,10 @@ const SHORTCUT_GROUP_DEFS: readonly ShortcutGroupDef[] = [
       { id: "shortcuts", labelKey: "shortcuts.item.shortcuts", keys: "mod+/", keywords: ["shortcut", "help", "key", "帮助", "快捷键"] },
       { id: "space-problems", labelKey: "shortcuts.item.spaceProblems", contextKey: "shortcuts.ctx.home", keys: "mod+1", keywords: ["library", "problems", "题库"] },
       { id: "space-contests", labelKey: "shortcuts.item.spaceContests", contextKey: "shortcuts.ctx.home", keys: "mod+2", keywords: ["contests", "比赛"] },
-      { id: "space-training", labelKey: "shortcuts.item.spaceTraining", contextKey: "shortcuts.ctx.home", keys: "mod+3", keywords: ["training", "dashboard", "训练", "看板"] },
-      { id: "space-tools", labelKey: "shortcuts.item.spaceTools", contextKey: "shortcuts.ctx.home", keys: "mod+4", keywords: ["tools", "toolbox", "plugin", "工具", "画板", "插件"] },
-      { id: "space-settings", labelKey: "shortcuts.item.spaceSettings", contextKey: "shortcuts.ctx.home", keys: "mod+5", keywords: ["settings", "设置"] },
+      { id: "space-snippets", labelKey: "shortcuts.item.spaceSnippets", contextKey: "shortcuts.ctx.home", keys: "mod+3", keywords: ["snippets", "trd", "templates", "模板", "算法库"] },
+      { id: "space-training", labelKey: "shortcuts.item.spaceTraining", contextKey: "shortcuts.ctx.home", keys: "mod+4", keywords: ["training", "dashboard", "训练", "看板"] },
+      { id: "space-tools", labelKey: "shortcuts.item.spaceTools", contextKey: "shortcuts.ctx.home", keys: "mod+5", keywords: ["tools", "toolbox", "plugin", "工具", "画板", "插件"] },
+      { id: "space-settings", labelKey: "shortcuts.item.spaceSettings", contextKey: "shortcuts.ctx.home", keys: "mod+6", keywords: ["settings", "设置"] },
       { id: "open-workspace", labelKey: "shortcuts.item.openWorkspace", keys: "mod+o", keywords: ["workspace", "folder", "工作区"] },
       { id: "escape", labelKey: "shortcuts.item.escape", keys: "escape", keywords: ["esc", "close", "back", "退出", "关闭"] },
     ],
@@ -172,21 +175,54 @@ const SHORTCUT_GROUP_DEFS: readonly ShortcutGroupDef[] = [
   },
 ];
 
-/** Resolves all shortcut groups in the active `locale()`. */
+const SPACE_SHORTCUT_MAP: Record<string, Space> = {
+  "space-problems": "problems",
+  "space-contests": "contests",
+  "space-snippets": "snippets",
+  "space-training": "training",
+  "space-tools": "tools",
+  "space-settings": "settings",
+};
+
+/** Resolves all shortcut groups in the active `locale()` and workspace visibility. */
 export function getShortcutGroups(): ShortcutGroup[] {
+  let navOpts = { hasWorkspace: true, snippetsEnabled: true, trainingEnabled: true };
+  try {
+    if (hasWorkspace()) {
+      navOpts = {
+        hasWorkspace: true,
+        snippetsEnabled: info().snippetsEnabled,
+        trainingEnabled: info().trainingEnabled,
+      };
+    }
+  } catch {
+    // Headless unit test fallback where store/native bridge is not initialized.
+  }
+
   return SHORTCUT_GROUP_DEFS.map((g) => ({
     id: g.id,
     title: t(g.titleKey),
-    items: g.items.map((it) => ({
-      id: it.id,
-      label: t(it.labelKey),
-      context: it.contextKey ? t(it.contextKey) : it.contextLiteral,
-      keys: it.keys,
-      gesture: it.gestureKeys
-        ? { mac: t(it.gestureKeys.mac), other: t(it.gestureKeys.other) }
-        : it.gestureLiteral,
-      keywords: it.keywords,
-    })),
+    items: g.items.flatMap((it): ShortcutItem[] => {
+      const targetSpace = SPACE_SHORTCUT_MAP[it.id];
+      let resolvedKeys = it.keys;
+      if (targetSpace) {
+        const dyn = shortcutForSpace(targetSpace, navOpts);
+        if (!dyn) return [];
+        resolvedKeys = dyn;
+      }
+      return [
+        {
+          id: it.id,
+          label: t(it.labelKey),
+          context: it.contextKey ? t(it.contextKey) : it.contextLiteral,
+          keys: resolvedKeys,
+          gesture: it.gestureKeys
+            ? { mac: t(it.gestureKeys.mac), other: t(it.gestureKeys.other) }
+            : it.gestureLiteral,
+          keywords: it.keywords,
+        },
+      ];
+    }),
   }));
 }
 

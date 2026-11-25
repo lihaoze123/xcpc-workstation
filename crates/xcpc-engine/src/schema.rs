@@ -18,7 +18,7 @@ use typst::{Library, World};
 use typst_layout::PagedDocument;
 use xcpc_domain::{
     LocalizedText, TemplateChoice, TemplateField, TemplateFieldScope, TemplateFieldType,
-    TemplateGroup, TemplateOptionValue, TemplateSchema,
+    TemplateGroup, TemplateKind, TemplateOptionValue, TemplateSchema,
 };
 
 use crate::{Engine, project_id};
@@ -104,6 +104,10 @@ pub(crate) fn inspect(engine: &Engine, import_path: &str) -> TemplateSchema {
 }
 
 fn parse_schema(dict: &Dict) -> TemplateSchema {
+    let kind = match get_str(dict, "kind").as_deref() {
+        Some("trd") => TemplateKind::Trd,
+        _ => TemplateKind::Statement,
+    };
     let name = get_localized(dict, "name");
     let description = get_localized(dict, "description");
     let groups = dict
@@ -137,6 +141,7 @@ fn parse_schema(dict: &Dict) -> TemplateSchema {
         })
         .unwrap_or_default();
     TemplateSchema {
+        kind,
         name,
         description,
         groups,
@@ -413,5 +418,30 @@ mod tests {
             note.placeholder,
             Some(LocalizedText::Plain("Type here".to_owned()))
         );
+        assert_eq!(schema.kind, TemplateKind::Statement);
+    }
+
+    #[test]
+    fn parses_trd_template_kind_and_preset_schemas() {
+        let engine = Engine::new(&FontOptions::from_env(), None);
+        let compact = inspect(&engine, "/xcpc/trd-compact.typ");
+        assert_eq!(compact.kind, TemplateKind::Trd);
+        assert!(compact.fields.iter().any(|f| f.key == "columns"));
+        assert!(compact.fields.iter().any(|f| f.key == "font-size"));
+        assert!(compact.fields.iter().any(|f| f.key == "hash-interval"));
+        assert!(compact.fields.iter().any(|f| f.key == "strip-comments"));
+        assert!(!compact.fields.iter().any(|f| f.key == "margin"));
+        assert!(!compact.fields.iter().any(|f| f.key == "show-verify-cmd"));
+        assert!(!compact.fields.iter().any(|f| f.key == "show-toc"));
+
+        let book = inspect(&engine, "/xcpc/trd-book.typ");
+        assert_eq!(book.kind, TemplateKind::Trd);
+        assert!(book.fields.iter().any(|f| f.key == "columns"));
+        assert!(book.fields.iter().any(|f| f.key == "font-size"));
+        assert!(book.fields.iter().any(|f| f.key == "hash-interval"));
+        assert!(book.fields.iter().any(|f| f.key == "strip-comments"));
+        assert!(!book.fields.iter().any(|f| f.key == "margin"));
+        assert!(!book.fields.iter().any(|f| f.key == "show-verify-cmd"));
+        assert!(!book.fields.iter().any(|f| f.key == "show-toc"));
     }
 }

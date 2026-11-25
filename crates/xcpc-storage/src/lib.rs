@@ -30,11 +30,15 @@ use xcpc_domain::{
 };
 
 pub mod assets;
+pub mod bundler;
+pub mod code_hash;
 pub mod edit;
 pub mod example;
 mod example_en;
 mod example_packages;
+mod example_snippets;
 pub mod index;
+pub mod snippets;
 pub mod watcher;
 
 pub use assets::{
@@ -42,12 +46,21 @@ pub use assets::{
     RenameAssetResult, ScannedAssetRef, is_existing_asset_name, is_safe_asset_name,
     is_windows_reserved_name, read_image_dimensions,
 };
+pub use bundler::{
+    ParsedInclude, SnippetDag, bundle_local_file, bundle_local_source, bundle_snippet,
+    bundle_workspace_code, parse_local_includes, parse_snippet_deps_from_code,
+};
+pub use code_hash::{
+    compute_cpp_hash_6, extract_snippet_slug_from_include, md5_digest, md5_hex_6,
+    preprocess_printed_code, strip_cpp_comments,
+};
 pub use edit::CreateProblemOptions;
 pub use example::{
     init_example_workspace, init_example_workspace_with_options,
     init_example_workspace_with_template,
 };
 pub use index::WorkspaceIndex;
+pub use snippets::DEFAULT_HASH_INTERVAL;
 pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
 /// The file that marks a workspace's root.
@@ -211,6 +224,30 @@ pub enum Error {
     InvalidGroupName(String),
     #[error("group {0:?} already exists")]
     GroupAlreadyExists(String),
+    #[error("snippet {0:?} already exists")]
+    SnippetAlreadyExists(String),
+    #[error("TRD {0:?} is frozen: it and its snapshot are read-only")]
+    TrdFrozen(String),
+    #[error("TRD {0:?} is archived: it is read-only until unarchived")]
+    TrdArchived(String),
+    #[error("TRD {0:?} is already frozen")]
+    TrdAlreadyFrozen(String),
+    #[error("TRD {0:?} is not frozen")]
+    TrdNotFrozen(String),
+    #[error("dependency cycle at {file}:{line}: {}", cycle.join(" -> "))]
+    DependencyCycle {
+        file: String,
+        line: usize,
+        cycle: Vec<String>,
+    },
+    #[error("missing local include {include:?} at {file}:{line}")]
+    MissingInclude {
+        file: String,
+        line: usize,
+        include: String,
+    },
+    #[error("cannot freeze TRD {id:?}: {}", issues.join("; "))]
+    TrdFreezeBlocked { id: String, issues: Vec<String> },
 }
 
 impl From<xcpc_domain::InvalidGroupName> for Error {
@@ -239,6 +276,14 @@ impl Error {
             Error::DisallowedPath(_) => "disallowed_path",
             Error::InvalidGroupName(_) => "invalid_group_name",
             Error::GroupAlreadyExists(_) => "group_already_exists",
+            Error::SnippetAlreadyExists(_) => "snippet_already_exists",
+            Error::TrdFrozen(_) => "trd_frozen",
+            Error::TrdArchived(_) => "trd_archived",
+            Error::TrdAlreadyFrozen(_) => "trd_already_frozen",
+            Error::TrdNotFrozen(_) => "trd_not_frozen",
+            Error::DependencyCycle { .. } => "dependency_cycle",
+            Error::MissingInclude { .. } => "missing_include",
+            Error::TrdFreezeBlocked { .. } => "trd_freeze_blocked",
         }
     }
 
@@ -292,6 +337,36 @@ impl Error {
             Error::GroupAlreadyExists(name) => {
                 format!("分组「{name}」已存在。请使用其他名称。")
             }
+            Error::SnippetAlreadyExists(slug) => {
+                format!("标识名「{slug}」已存在，请换一个标识名。")
+            }
+            Error::TrdFrozen(id) => {
+                format!("模板册「{id}」已定稿，当前只读。如需修改，请先「重新编辑」并确认。")
+            }
+            Error::TrdArchived(id) => {
+                format!("模板册「{id}」已归档，当前只读。如需修改，请先「取消归档」。")
+            }
+            Error::TrdAlreadyFrozen(id) => {
+                format!("模板册「{id}」已定稿。如需重新生成快照，请先「重新编辑」。")
+            }
+            Error::TrdNotFrozen(id) => {
+                format!("模板册「{id}」尚未定稿，无法重新编辑。请确认模板册状态后重试。")
+            }
+            Error::DependencyCycle { file, line, cycle } => {
+                format!("在 {file}:{line} 检测到循环依赖：{}。", cycle.join(" → "))
+            }
+            Error::MissingInclude {
+                file,
+                line,
+                include,
+            } => {
+                format!(
+                    "在 {file}:{line} 找不到本地头文件「{include}」。请检查路径或 -I 搜索目录。"
+                )
+            }
+            Error::TrdFreezeBlocked { id, issues } => {
+                format!("模板册「{id}」无法定稿：{}。", issues.join("；"))
+            }
         }
     }
 }
@@ -307,7 +382,9 @@ fn format_not_found_message(what: &str) -> String {
         return format!("找不到分组「{name}」。请检查分组名称是否存在。");
     }
     if let Some(id) = parse_quoted_after(what, "preset ") {
-        return format!("找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal。");
+        return format!(
+            "找不到预设模板「{id}」。可用预设：olymp-classic、cnoi-classic、minimal、trd-compact、trd-book。"
+        );
     }
     if let Some(id) = parse_quoted_after(what, "template ") {
         return format!(
@@ -383,10 +460,12 @@ pub fn init_workspace_with_template(
     }
 
     let seed_id = selected_tpl.unwrap_or("olymp-classic");
-    if let Some(src) = xcpc_engine::preset_source(seed_id) {
-        let tpl_file = dir.join("templates").join(format!("{seed_id}.typ"));
-        if fs::symlink_metadata(&tpl_file).is_err() {
-            write_atomic(&tpl_file, src.as_bytes()).map_err(|e| io(tpl_file.display(), e))?;
+    for id in [seed_id, "trd-compact", "trd-book"] {
+        if let Some(src) = xcpc_engine::preset_source(id) {
+            let tpl_file = dir.join("templates").join(format!("{id}.typ"));
+            if fs::symlink_metadata(&tpl_file).is_err() {
+                write_atomic(&tpl_file, src.as_bytes()).map_err(|e| io(tpl_file.display(), e))?;
+            }
         }
     }
 
@@ -987,6 +1066,33 @@ impl Workspace {
         (!text.trim().is_empty()).then_some(text)
     }
 
+    /// Reads archived template metadata from `trds/<id>/snapshot/template.toml` if present.
+    pub fn load_trd_snapshot_template(&self, trd_id: &str) -> Option<SnapshotTemplateMeta> {
+        check_id(trd_id).ok()?;
+        let rel = format!("trds/{trd_id}/snapshot/template.toml");
+        let raw = self.read_text(&rel).ok()?;
+        toml::from_str(&raw).ok()
+    }
+
+    /// Reads archived preamble from `trds/<id>/snapshot/preamble.typ` if present and non-empty.
+    pub fn load_trd_snapshot_preamble(&self, trd_id: &str) -> Option<String> {
+        check_id(trd_id).ok()?;
+        let rel = format!("trds/{trd_id}/snapshot/preamble.typ");
+        let text = self.read_text(&rel).ok()?;
+        (!text.trim().is_empty()).then_some(text)
+    }
+
+    /// Returns `true` when `trds/<trd_id>/template.typ` exists inside the workspace.
+    pub fn has_trd_template(&self, trd_id: &str) -> bool {
+        check_id(trd_id).is_ok()
+            && self
+                .root
+                .join("trds")
+                .join(trd_id)
+                .join("template.typ")
+                .is_file()
+    }
+
     /// Lists available workspace template names by scanning `templates/*.typ` on disk,
     /// excluding the reserved `preamble` file (`templates/preamble.typ`).
     pub fn list_templates(&self) -> Vec<String> {
@@ -1101,6 +1207,21 @@ impl Workspace {
                 }
                 if c.meta.frozen {
                     return Err(Error::Frozen(id.into_owned()));
+                }
+            }
+        }
+        let inside_trd = path.strip_prefix(self.root.join("trds")).ok();
+        if let Some(id) = inside_trd.and_then(|p| p.components().next()) {
+            let id = id.as_os_str().to_string_lossy();
+            if inside_trd.is_some_and(|p| p.components().count() > 1)
+                && check_id(&id).is_ok()
+                && let Ok(trd) = self.load_trd(&id)
+            {
+                if trd.meta.archived {
+                    return Err(Error::TrdArchived(id.into_owned()));
+                }
+                if trd.meta.frozen {
+                    return Err(Error::TrdFrozen(id.into_owned()));
                 }
             }
         }
@@ -1711,5 +1832,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     result
 }
 
+#[cfg(test)]
+mod snippet_tests;
 #[cfg(test)]
 mod tests;

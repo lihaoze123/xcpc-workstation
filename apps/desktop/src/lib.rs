@@ -18,6 +18,7 @@ mod page_image;
 mod plugins;
 mod prefs;
 mod snapshot;
+mod snippets;
 mod state;
 mod theme_config;
 mod types;
@@ -2963,6 +2964,275 @@ impl Preview {
             .unwrap_or_else(|e| {
                 JsonReportResultJs::err("task", format!("run exporter failed: {e}"))
             })
+    }
+
+    // ---- Phase 5: Algorithm Snippets, Bundler & Living TRDs ----------------------------
+
+    /// Lists all workspace snippets with verification status, reverse dependencies, and tags.
+    pub fn list_snippets_json(&self) -> JsonReportResultJs {
+        self.state.list_snippets_json()
+    }
+
+    /// Loads one snippet's full detail, verification status, and last cached report.
+    pub fn load_snippet_json(&self, slug: String) -> JsonReportResultJs {
+        self.state.load_snippet_json(&slug)
+    }
+
+    /// Creates a new snippet under `snippets/<slug>/`.
+    pub fn create_snippet(
+        &self,
+        slug: String,
+        meta_json: String,
+        code: Option<String>,
+        notes: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .create_snippet(&slug, &meta_json, code.as_deref(), notes.as_deref())
+    }
+
+    /// Partially updates `snippets/<slug>/snippet.toml` via `toml_edit`.
+    pub fn update_snippet_meta(&self, slug: String, patch_json: String) -> ActionResult {
+        self.state.update_snippet_meta(&slug, &patch_json)
+    }
+
+    /// Atomically writes a single file inside `snippets/<slug>/` (`code.hpp`, `notes.md`,
+    /// `test.cpp`, `verify_*.cpp`, etc.).
+    pub fn write_snippet_file(
+        &self,
+        slug: String,
+        file_name: String,
+        content: String,
+    ) -> ActionResult {
+        self.state.write_snippet_file(&slug, &file_name, &content)
+    }
+
+    /// Deletes `snippets/<slug>/`.
+    pub fn delete_snippet(&self, slug: String) -> ActionResult {
+        self.state.delete_snippet(&slug)
+    }
+
+    /// Starts background verification (`mode`: `"single" | "cascade" | "all"`).
+    pub fn start_snippet_verify(
+        &self,
+        mode: String,
+        slug: Option<String>,
+        force: bool,
+    ) -> ActionResult {
+        self.state.start_snippet_verify(&mode, slug, force)
+    }
+
+    /// Returns the current background snippet verification status and reports as JSON.
+    pub fn snippet_verify_status_json(&self) -> JsonReportResultJs {
+        self.state.snippet_verify_status_json()
+    }
+
+    /// Persists Library Checker mirror URL and local repository path in `prefs.json`.
+    pub fn set_library_checker_config(
+        &self,
+        mirror_url: Option<String>,
+        local_repo_path: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .set_library_checker_config(mirror_url, local_repo_path)
+    }
+
+    /// Expands a workspace snippet and all its transitive local `#include`s into one C++ file.
+    pub fn bundle_snippet_json(&self, slug: String, compact: bool) -> JsonReportResultJs {
+        self.state.bundle_snippet_json(&slug, compact)
+    }
+
+    /// Expands a local C++ file on disk with optional `-I` include directories.
+    pub fn bundle_local_file_json(
+        &self,
+        path: String,
+        include_dirs: Vec<String>,
+        compact: bool,
+    ) -> JsonReportResultJs {
+        self.state
+            .bundle_local_file_json(&path, include_dirs, compact)
+    }
+
+    /// Expands pasted C++ source text with optional base directory and `-I` include directories.
+    pub fn bundle_local_source_json(
+        &self,
+        source: String,
+        base_dir: Option<String>,
+        include_dirs: Vec<String>,
+        compact: bool,
+    ) -> JsonReportResultJs {
+        self.state
+            .bundle_local_source_json(&source, base_dir, include_dirs, compact)
+    }
+
+    /// Opens a native file dialog to pick a local `.cpp` / `.cc` / `.hpp` source file.
+    pub async fn pick_cpp_file(
+        this: Instance<Self>,
+        labels: Option<DialogLabelsJs>,
+    ) -> PickedPathsJs {
+        if this.is_disposed() {
+            return PickedPathsJs {
+                cancelled: true,
+                ..Default::default()
+            };
+        }
+        let start = this.with(|p| p.state.workspace_root());
+        let title = label_or(
+            labels.as_ref().and_then(|l| l.title.as_deref()),
+            "选择 C++ 源文件",
+        );
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "选择",
+        );
+        let filter_label = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "C++ 源码",
+        );
+        let mut dialog = OpenDialog::files()
+            .title(title)
+            .button_label(button)
+            .filter(FileFilter::new(
+                filter_label,
+                ["cpp", "cc", "cxx", "c", "hpp", "h"],
+            ));
+        if let Some(dir) = start {
+            dialog = dialog.directory(dir);
+        }
+        match pick_paths(dialog).await {
+            Ok(Some(paths)) => PickedPathsJs {
+                cancelled: paths.is_empty(),
+                paths: paths.into_iter().map(|p| p.display().to_string()).collect(),
+                error: None,
+            },
+            Ok(None) => PickedPathsJs {
+                cancelled: true,
+                ..Default::default()
+            },
+            Err(e) => PickedPathsJs {
+                cancelled: false,
+                paths: Vec::new(),
+                error: Some(e),
+            },
+        }
+    }
+
+    /// Prompts for a save location and writes text content (e.g., bundled C++ output).
+    pub async fn save_text_file_dialog(
+        content: String,
+        default_name: String,
+        labels: Option<DialogLabelsJs>,
+    ) -> ActionResult {
+        let title = label_or(labels.as_ref().and_then(|l| l.title.as_deref()), "另存为");
+        let button = label_or(
+            labels.as_ref().and_then(|l| l.button_label.as_deref()),
+            "保存",
+        );
+        let filter_label = label_or(
+            labels.as_ref().and_then(|l| l.filter_label.as_deref()),
+            "C++ 源码",
+        );
+        let dialog = SaveDialog::new()
+            .title(title)
+            .button_label(button)
+            .file_name(default_name)
+            .filter(FileFilter::new(filter_label, ["cpp", "hpp", "txt"]));
+        match pick_save_path(dialog).await {
+            Ok(Some(path)) => match xcpc_storage::write_atomic(&path, content.as_bytes()) {
+                Ok(()) => ActionResult::ok(),
+                Err(e) => ActionResult::err("io", e.to_string()),
+            },
+            Ok(None) => ActionResult::err("cancelled", "cancelled"),
+            Err(e) => ActionResult::err("dialog", e),
+        }
+    }
+
+    /// Lists all workspace TRD summaries as JSON.
+    pub fn list_trds_json(&self) -> JsonReportResultJs {
+        self.state.list_trds_json()
+    }
+
+    /// Loads one TRD's detail, preflight issues, and local template schema as JSON.
+    pub fn load_trd_json(&self, id: String) -> JsonReportResultJs {
+        self.state.load_trd_json(&id)
+    }
+
+    /// Creates or replaces a TRD's chapters and optional metadata patch.
+    pub fn compose_trd(
+        &self,
+        id: String,
+        chapters_json: String,
+        meta_patch_json: Option<String>,
+    ) -> ActionResult {
+        self.state
+            .compose_trd(&id, &chapters_json, meta_patch_json.as_deref())
+    }
+
+    /// Partially updates `trds/<id>/trd.toml` metadata via `toml_edit`.
+    pub fn update_trd_meta(&self, id: String, patch_json: String) -> ActionResult {
+        self.state.update_trd_meta(&id, &patch_json)
+    }
+
+    /// Deletes an unfrozen, unarchived TRD directory.
+    pub fn delete_trd(&self, id: String) -> ActionResult {
+        self.state.delete_trd(&id)
+    }
+
+    /// Archives or unarchives a TRD.
+    pub fn set_trd_archived(&self, id: String, archived: bool) -> ActionResult {
+        self.state.set_trd_archived(&id, archived)
+    }
+
+    /// Runs TRD preflight checks (missing snippets, missing deps, cycles, verify warnings).
+    pub fn preflight_trd_json(&self, id: String) -> JsonReportResultJs {
+        self.state.preflight_trd_json(&id)
+    }
+
+    /// Compiles and exports `trds/<id>/` to PDF off the UI thread.
+    pub async fn export_trd_pdf(this: Instance<Self>, id: String) -> WorkspaceFile {
+        if this.is_disposed() {
+            return WorkspaceFile {
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.export_trd_pdf(&id))
+            .await
+            .unwrap_or_else(|e| WorkspaceFile {
+                error: Some(format!("export trd failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Checks whether the default exported PDF for `trds/<id>/` exists on disk.
+    pub fn trd_export_status(&self, id: String) -> PdfFreshnessJs {
+        self.state.trd_export_status(&id)
+    }
+
+    /// Freezes (finalizes) a TRD snapshot with its compiled PDF off the UI thread.
+    pub async fn freeze_trd(this: Instance<Self>, id: String, strict: bool) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs::err("disposed", "preview disposed");
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.freeze_trd(&id, strict))
+            .await
+            .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("freeze trd failed: {e}")))
+    }
+
+    /// Computes the diff between a frozen TRD's snapshot and live workspace snippets.
+    pub fn diff_trd_for_unfreeze_json(&self, id: String) -> JsonReportResultJs {
+        self.state.diff_trd_for_unfreeze_json(&id)
+    }
+
+    /// Unfreezes (reopens) a frozen TRD for live editing.
+    pub fn unfreeze_trd(&self, id: String) -> ActionResult {
+        self.state.unfreeze_trd(&id)
+    }
+
+    /// Lists TRD templates (`TemplateKind::Trd`), TRD presets, and loaded font families.
+    pub fn list_trd_templates_json(&self) -> String {
+        self.state.list_trd_templates_json()
     }
 }
 

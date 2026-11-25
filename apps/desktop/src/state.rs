@@ -89,7 +89,7 @@ pub(crate) struct CompilerState {
 }
 
 impl CompilerState {
-    fn sync_root(&mut self, ws: &Workspace) {
+    pub(crate) fn sync_root(&mut self, ws: &Workspace) {
         let root = ws.root();
         if self.engine_root.as_deref() != Some(root) {
             self.engine.set_root(Some(root.to_path_buf()));
@@ -111,15 +111,37 @@ impl CompilerState {
         String,
     > {
         self.sync_root(ws);
-        publish::check(
-            ws,
-            &mut self.engine,
-            &request.target(),
-            request.kind(),
-            None,
-            request.unsaved(),
-        )
-        .map_err(|e| e.to_string())
+        match request.target.as_str() {
+            "trd" => {
+                let statuses = xcpc_judge::all_snippet_verify_statuses(ws).unwrap_or_default();
+                publish::check_trd(ws, &mut self.engine, &request.id, &statuses)
+                    .map_err(|e| e.to_string())
+            }
+            "snippet" => {
+                let template = (!request.book.is_empty() && request.book != "statements")
+                    .then_some(request.book.as_str());
+                // Ensure workspace template edits (`templates/*.typ`) are reloaded on preview refresh (review T3).
+                self.engine.reset_files();
+                let (compiled, doc, report) = publish::compile_snippet_preview(
+                    ws,
+                    &mut self.engine,
+                    &request.id,
+                    template,
+                    request.unsaved(),
+                )
+                .map_err(|e| e.to_string())?;
+                Ok((compiled, Some(doc), report))
+            }
+            _ => publish::check(
+                ws,
+                &mut self.engine,
+                &request.target(),
+                request.kind(),
+                None,
+                request.unsaved(),
+            )
+            .map_err(|e| e.to_string()),
+        }
     }
 }
 
@@ -185,6 +207,8 @@ pub(crate) struct State {
     pub(crate) math_engine: Mutex<Engine>,
     /// Background local Polygon package build slot.
     pub(crate) package_build: Arc<Mutex<PackageBuildSlot>>,
+    /// Background snippet verification runner slot.
+    pub(crate) snippet_verify: Arc<Mutex<crate::snippets::SnippetVerifySlot>>,
     /// Polling-free async batch build / export task slot.
     pub(crate) batch_task: Arc<Mutex<BatchTaskSlot>>,
     /// In-memory byte backup of the last `normalize_dirty_inputs` call for single-click undo.
@@ -274,6 +298,7 @@ impl State {
             }),
             math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
             package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
+            snippet_verify: Arc::new(Mutex::new(crate::snippets::SnippetVerifySlot::default())),
             batch_task: Arc::new(Mutex::new(BatchTaskSlot::default())),
             dirty_inputs_backup: Mutex::new(None),
             credentials: Arc::new(xcpc_plugin::SystemKeyringStore::new()),
@@ -491,6 +516,7 @@ impl State {
             root: ws.root().display().to_string(),
             read_only: ws.is_read_only(),
             training_enabled: ws.training_enabled(),
+            snippets_enabled: ws.snippets_enabled(),
             last_workspace_missing: false,
             ..Default::default()
         };
@@ -2175,7 +2201,7 @@ impl State {
     // ---- Templates & declarative schemas -----------------------------------------------
 
     pub(crate) fn list_templates_json(&self) -> String {
-        let presets = xcpc_engine::list_presets();
+        let presets = xcpc_engine::list_presets_by_kind(xcpc_domain::TemplateKind::Statement);
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return serde_json::to_string(&serde_json::json!({
@@ -2190,7 +2216,8 @@ impl State {
         let (templates, fonts) = {
             let mut engine = self.math_engine.lock().unwrap();
             engine.set_root(Some(ws.root().to_path_buf()));
-            let templates = publish::list_templates(&ws, &engine);
+            let templates =
+                publish::list_templates_by_kind(&ws, &engine, xcpc_domain::TemplateKind::Statement);
             let mut fonts: Vec<String> = engine
                 .font_families()
                 .into_iter()

@@ -6,7 +6,7 @@
 import { effect, reduceMotion, signal, Text, View, type ViewStyle } from "nsh";
 import { Icon, type IconName } from "./Icon";
 import { tip } from "./kit";
-import { spaceName, type Space } from "./logic";
+import { shortcutForSpace, spaceName, visibleSpaces, type Space } from "./logic";
 import { colorTransition, indicatorTransition } from "./motion";
 import { EASE_STANDARD, ms } from "./theme";
 
@@ -44,20 +44,28 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
   );
 }
 
-type TopSpace = "problems" | "contests" | "training" | "tools";
+type TopSpace = "problems" | "contests" | "snippets" | "training" | "tools";
 
 function isTopSpace(s: Space): s is TopSpace {
-  return s === "problems" || s === "contests" || s === "training" || s === "tools";
+  return s === "problems" || s === "contests" || s === "snippets" || s === "training" || s === "tools";
 }
 
 export function NavRail(props: {
   space: Space;
+  snippetsEnabled?: boolean;
   trainingEnabled?: boolean;
   hasWorkspace?: boolean;
   onChange: (space: Space) => void;
 }) {
   const wsOpen = () => props.hasWorkspace !== false;
+  const showSnippets = () => wsOpen() && props.snippetsEnabled !== false;
   const showTraining = () => wsOpen() && props.trainingEnabled !== false;
+  const navOpts = () => ({
+    hasWorkspace: wsOpen(),
+    snippetsEnabled: showSnippets(),
+    trainingEnabled: showTraining(),
+  });
+  const topList = () => visibleSpaces(navOpts()).filter(isTopSpace);
   const lastTopSpace = signal<TopSpace>(isTopSpace(props.space) ? props.space : wsOpen() ? "problems" : "tools");
   const slideTop = signal(false);
   let prevSpace: Space = props.space;
@@ -77,13 +85,8 @@ export function NavRail(props: {
   const inTopGroup = () => isTopSpace(props.space);
   const topIndicatorY = () => {
     const cur = lastTopSpace();
-    if (!wsOpen()) return 0;
-    const step = ITEM_SIZE + ITEM_GAP;
-    if (cur === "problems") return 0;
-    if (cur === "contests") return step;
-    if (cur === "training" && showTraining()) return 2 * step;
-    if (cur === "tools") return (showTraining() ? 3 : 2) * step;
-    return 0;
+    const idx = topList().indexOf(cur);
+    return (idx >= 0 ? idx : 0) * (ITEM_SIZE + ITEM_GAP);
   };
   const fadeTransition = (): ViewStyle => ({
     transitionProperty: "opacity",
@@ -91,8 +94,14 @@ export function NavRail(props: {
     transitionTimingFunction: EASE_STANDARD,
   });
 
-  const item = (space: Space, icon: IconName, keys: string) => (
-    <Item space={space} icon={icon} keys={keys} current={props.space} onChange={props.onChange} />
+  const item = (space: Space, icon: IconName) => (
+    <Item
+      space={space}
+      icon={icon}
+      keys={shortcutForSpace(space, navOpts()) ?? ""}
+      current={props.space}
+      onChange={props.onChange}
+    />
   );
   return (
     <View
@@ -130,15 +139,18 @@ export function NavRail(props: {
           class="bg-accent"
         />
         <If when={wsOpen()}>
-          {item("problems", "libraryBig", "mod+1")}
-          {item("contests", "trophy", "mod+2")}
+          {item("problems", "libraryBig")}
+          {item("contests", "trophy")}
+          <If when={showSnippets()}>
+            {item("snippets", "bookOpen")}
+          </If>
           <If when={showTraining()}>
-            {item("training", "crown", "mod+3")}
+            {item("training", "crown")}
           </If>
         </If>
-        {item("tools", "squareCode", "mod+4")}
+        {item("tools", "squareCode")}
         <View style={{ flex: 1 }} />
-        {item("settings", "settings", "mod+5")}
+        {item("settings", "settings")}
       </View>
     </View>
   );

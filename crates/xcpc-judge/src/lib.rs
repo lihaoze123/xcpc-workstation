@@ -12,6 +12,7 @@ pub mod package;
 pub mod report;
 pub mod runner;
 pub mod sanitize;
+pub mod snippet_verify;
 pub mod subtask;
 pub mod toolchain;
 
@@ -68,6 +69,11 @@ pub use sanitize::{
     SanitizeOptions, SanitizerFinding, SanitizerReport, SanitizerStatus, SanitizerTargetKind,
     SanitizerTargetResult, extract_sanitizer_diagnostic, is_expected_ac_solution,
     load_sanitizer_report, sanitize_package, sanitize_packages_batch,
+};
+pub use snippet_verify::{
+    SnippetVerifyOptions, all_snippet_verify_statuses, compute_snippet_verify_hash,
+    load_snippet_verify_report, snippet_verify_report_path, snippet_verify_status,
+    verify_all_snippets, verify_snippet, verify_snippet_cascade,
 };
 pub use subtask::{SubtaskValidation, validate_subtask_config};
 pub use toolchain::{

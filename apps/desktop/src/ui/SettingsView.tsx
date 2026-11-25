@@ -58,6 +58,7 @@ import {
   resetEditorTypography,
   revision,
   settingsSection,
+  toolchainAdvancedOpen,
   toolchainState,
   updateAppearanceMode,
   updateEditorFontSize,
@@ -641,7 +642,35 @@ function ToolchainPane() {
   const draft = signal(customOverrideInputValue(status().overridePath, compilers()));
   const redetected = createTransientFlag(1400);
   const overrideApplied = createTransientFlag(1500);
-  const advancedOpen = signal(false);
+
+  const initPrefs = preview.loadPrefs();
+  const savedLcMirror = signal(initPrefs.libraryCheckerMirrorUrl ?? "");
+  const savedLcRepo = signal(initPrefs.libraryCheckerLocalRepoPath ?? "");
+  const lcMirror = signal(initPrefs.libraryCheckerMirrorUrl ?? "");
+  const lcLocalRepo = signal(initPrefs.libraryCheckerLocalRepoPath ?? "");
+  const lcSaved = createTransientFlag(1600);
+  const lcDirty = () =>
+    lcMirror().trim() !== savedLcMirror().trim() || lcLocalRepo().trim() !== savedLcRepo().trim();
+
+  const saveLcConfig = () => {
+    const mirror = lcMirror().trim();
+    const repo = lcLocalRepo().trim();
+    const res = preview.setLibraryCheckerConfig(mirror || null, repo || null);
+    if (res.ok) {
+      savedLcMirror.set(mirror);
+      savedLcRepo.set(repo);
+      lcSaved.trigger();
+    }
+  };
+
+  const pickLcDir = async () => {
+    const picked = await preview.pickFolder({
+      title: t("settings.lc.localRepoLabel"),
+    });
+    if (!picked.cancelled && picked.path) {
+      lcLocalRepo.set(picked.path);
+    }
+  };
 
   const syncFromStatus = (next: ToolchainStatusJs) => {
     status.set(next);
@@ -816,33 +845,84 @@ function ToolchainPane() {
         </Section>
       </If>
 
-      <View style={{ gap: 8 }}>
+      <View style={{ gap: 10 }}>
         <View
           testID="toolchain-advanced-toggle"
-          onPress={() => advancedOpen.set(!advancedOpen())}
+          onPress={() => toolchainAdvancedOpen.set(!toolchainAdvancedOpen())}
           style={{ flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" }}
         >
-          <Icon name={advancedOpen() ? "chevronDown" : "chevronRight"} size={13} tone="muted-foreground" />
+          <Icon name={toolchainAdvancedOpen() ? "chevronDown" : "chevronRight"} size={13} tone="muted-foreground" />
           <Text style={{ fontSize: 13 }} class="text-secondary-foreground hover:text-foreground">
             {t("settings.toolchain.advanced")}
           </Text>
         </View>
-        <If when={advancedOpen()}>
-          <View testID="toolchain-advanced" style={{ paddingLeft: 17, gap: 6 }}>
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
-              {t("settings.toolchain.advancedPath")}
-            </Text>
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
-              {t("settings.toolchain.advancedEnv")}
-            </Text>
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
-              {t("settings.toolchain.advancedFlags")}
-            </Text>
-            <If when={Boolean(status().envOverride)}>
-              <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-secondary-foreground">
-                {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
+        <If when={toolchainAdvancedOpen()}>
+          <View testID="toolchain-advanced" style={{ gap: 14 }}>
+            <Section title={t("settings.lc.title")} description={t("settings.lc.desc")}>
+              <SectionRow first>
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                    {t("settings.lc.mirrorLabel")}
+                  </Text>
+                  <Input
+                    testID="lc-mirror-input"
+                    value={lcMirror()}
+                    placeholder={t("settings.lc.mirrorPlaceholder")}
+                    onChange={(e) => lcMirror.set(e.value)}
+                    class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
+                    style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                  />
+                </View>
+              </SectionRow>
+              <SectionRow>
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                    {t("settings.lc.localRepoLabel")}
+                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Input
+                      testID="lc-repo-input"
+                      value={lcLocalRepo()}
+                      placeholder={t("settings.lc.localRepoPlaceholder")}
+                      onChange={(e) => lcLocalRepo.set(e.value)}
+                      class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
+                      style={{ flex: 1, height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                    />
+                    <Btn variant="outline" icon="folderOpen" label={t("settings.lc.pickDir")} onPress={() => void pickLcDir()} />
+                  </View>
+                </View>
+              </SectionRow>
+              <SectionRow>
+                <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+                  <Btn
+                    testID="lc-save-btn"
+                    variant={lcSaved.active() ? "outline" : "primary"}
+                    icon={lcSaved.active() ? "check" : undefined}
+                    label={lcSaved.active() ? t("settings.toolchain.applied") : t("settings.toolchain.saveOverride")}
+                    disabled={!lcDirty() && !lcSaved.active()}
+                    onPress={saveLcConfig}
+                    style={{ minWidth: 78 }}
+                  />
+                </View>
+              </SectionRow>
+            </Section>
+
+            <View style={{ paddingLeft: 17, gap: 6 }}>
+              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+                {t("settings.toolchain.advancedPath")}
               </Text>
-            </If>
+              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+                {t("settings.toolchain.advancedEnv")}
+              </Text>
+              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+                {t("settings.toolchain.advancedFlags")}
+              </Text>
+              <If when={Boolean(status().envOverride)}>
+                <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-secondary-foreground">
+                  {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
+                </Text>
+              </If>
+            </View>
           </View>
         </If>
       </View>

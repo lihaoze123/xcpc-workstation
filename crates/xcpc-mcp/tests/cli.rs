@@ -749,8 +749,8 @@ fn init_example_and_output_override_and_human_error_messages() {
     let tpl_list = run_xcpc(Some(&target), &["--json", "template", "list"], None);
     assert_eq!(tpl_list.status.code(), Some(0));
     let tlj = parse_json_stdout(&tpl_list);
-    assert_eq!(tlj["presets"].as_array().unwrap().len(), 3);
-    assert_eq!(tlj["templates"].as_array().unwrap().len(), 2);
+    assert_eq!(tlj["presets"].as_array().unwrap().len(), 5);
+    assert_eq!(tlj["templates"].as_array().unwrap().len(), 4);
 
     let tpl_add = run_xcpc(
         Some(&target),

@@ -5,11 +5,13 @@ import { token } from "./theme";
 import arrowLeft from "./icons/arrow-left.svg";
 import arrowRight from "./icons/arrow-right.svg";
 import bold from "./icons/bold.svg";
+import bookOpen from "./icons/book-open.svg";
 import bot from "./icons/bot.svg";
 import check from "./icons/check.svg";
 import chevronDown from "./icons/chevron-down.svg";
 import chevronLeft from "./icons/chevron-left.svg";
 import chevronRight from "./icons/chevron-right.svg";
+import chevronUp from "./icons/chevron-up.svg";
 import chevronsUpDown from "./icons/chevrons-up-down.svg";
 import circleAlert from "./icons/circle-alert.svg";
 import code from "./icons/code.svg";
@@ -18,6 +20,7 @@ import cornerDownLeft from "./icons/corner-down-left.svg";
 import crown from "./icons/crown.svg";
 import database from "./icons/database.svg";
 import ellipsis from "./icons/ellipsis.svg";
+import fileCode2 from "./icons/file-code-2.svg";
 import fileDown from "./icons/file-down.svg";
 import filePenLine from "./icons/file-pen-line.svg";
 import fileText from "./icons/file-text.svg";
@@ -64,8 +67,8 @@ import zoomIn from "./icons/zoom-in.svg";
 import zoomOut from "./icons/zoom-out.svg";
 
 const ICONS = {
-  arrowLeft, arrowRight, bold, bot, check, chevronDown, chevronLeft, chevronRight, minus, chevronsUpDown, circleAlert, code, copy,
-  cornerDownLeft, crown, database, ellipsis, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
+  arrowLeft, arrowRight, bold, bookOpen, bot, check, chevronDown, chevronLeft, chevronRight, chevronUp, minus, chevronsUpDown, circleAlert, code, copy,
+  cornerDownLeft, crown, database, ellipsis, fileCode2, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
   gripVertical, heading, image, info, italic, keyboard, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
   palette, panelLeft, panelRight, pencil, play, plus, rotateCcw, scale, search, searchX, settings, shieldCheck, sigma, sparkles, squareCode, stamp, table,
   trash, triangleAlert, trophy, x, zoomIn, zoomOut,
