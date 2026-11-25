@@ -2086,14 +2086,23 @@ pub struct PluginSummaryJs {
     /// `"builtin" | "local_override" | "local"`.
     pub origin: String,
     pub enabled: bool,
+    #[prop(default)]
+    pub pending_trust: bool,
+    #[prop(default)]
+    pub overrides_builtin: bool,
+    #[prop(default)]
+    pub has_network: bool,
     pub capabilities: Vec<String>,
     pub domains: Vec<String>,
     pub workspace_read: bool,
-    pub has_unsandboxed_ui: bool,
+    #[prop(default)]
+    pub has_ui: bool,
     #[prop(default)]
     pub is_linked: bool,
     #[prop(skip_none)]
     pub link_target: Option<String>,
+    #[prop(skip_none)]
+    pub source_repo: Option<String>,
     pub credentials: Vec<PluginCredentialFieldJs>,
     #[prop(skip_none)]
     pub handle: Option<String>,
@@ -2149,7 +2158,6 @@ pub struct InstallPluginResultJs {
 pub struct RepoPluginPermissionJs {
     pub domains: Vec<String>,
     pub workspace_read: bool,
-    pub has_unsandboxed_ui: bool,
 }
 
 /// One installable plugin entry from a decentralized `index.json` catalog.
@@ -2179,6 +2187,35 @@ pub struct RepoCatalogResultJs {
     pub name: String,
     #[prop(default)]
     pub plugins: Vec<RepoPluginEntryJs>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// One failed repository fetch reported alongside aggregated repo catalog results.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct RepoFetchErrorJs {
+    pub repo_url: String,
+    #[prop(skip_none)]
+    pub repo_name: Option<String>,
+    pub error: String,
+}
+
+/// One plugin entry inside an aggregated multi-repository catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct AggregatedRepoPluginJs {
+    pub repo_url: String,
+    pub repo_name: String,
+    pub entry: RepoPluginEntryJs,
+}
+
+/// Aggregated catalog across all subscribed plugin repositories, including per-repo errors.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginRepoCatalogJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub plugins: Vec<AggregatedRepoPluginJs>,
+    #[prop(default)]
+    pub errors: Vec<RepoFetchErrorJs>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }
@@ -2319,14 +2356,32 @@ pub struct EditorialListResultJs {
 
 // ---- Phase 4C: Toolbox, Plugin UI SDK, Commands & Importer/Exporter --------------------
 
-/// Result of reading a plugin's desktop `ui.js` source (`pluginUiSource`).
+/// Loaded pure-Web HTML UI entry for `<PluginWebView>` (`loadPluginUiHtml`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
-pub struct PluginUiSourceResultJs {
+pub struct PluginUiHtmlJs {
     pub ok: bool,
     #[prop(skip_none)]
-    pub source: Option<String>,
+    pub html: Option<String>,
+    #[prop(skip_none)]
+    pub plugin_id: Option<String>,
+    #[prop(skip_none)]
+    pub workspace_read: Option<bool>,
     #[prop(skip_none)]
     pub error: Option<String>,
+    #[prop(skip_none)]
+    pub error_code: Option<String>,
+}
+
+/// Result of a permission-checked plugin workspace read query (`pluginWorkspaceQuery`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginWorkspaceResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub data_json: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+    #[prop(skip_none)]
+    pub error_code: Option<String>,
 }
 
 /// Result of rendering an SVG string to a PNG image via `resvg` (`pluginRenderSvgPng`).
@@ -2339,7 +2394,7 @@ pub struct PluginRenderPngResultJs {
     pub error: Option<String>,
 }
 
-/// Result of synchronous plugin KV read/delete (`pluginKvGet` / `pluginKvDelete`).
+/// Result of synchronous plugin KV read (`pluginKvGet`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
 pub struct PluginKvResultJs {
     pub ok: bool,
@@ -2358,6 +2413,8 @@ pub struct PluginWatchEventJs {
     pub kind: String,
     #[prop(default)]
     pub paths: Vec<String>,
+    #[prop(default)]
+    pub changed_plugin_ids: Vec<String>,
 }
 
 /// Result of picking and reading a local file via `pluginPickFileDialog`.
@@ -2372,18 +2429,6 @@ pub struct PluginPickFileResultJs {
     pub text: Option<String>,
     #[prop(skip_none)]
     pub content_base64: Option<String>,
-    #[prop(skip_none)]
-    pub error: Option<String>,
-}
-
-/// Serialized VNode frame & effects returned by a sandboxed Core QuickJS UI session.
-#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
-pub struct PluginUiFrameJs {
-    pub ok: bool,
-    #[prop(skip_none)]
-    pub session_id: Option<u32>,
-    #[prop(skip_none)]
-    pub frame_json: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }

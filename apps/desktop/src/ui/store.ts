@@ -4,7 +4,7 @@ import { traceSpan } from "./trace";
 // loop on external changes, and the studio's actions for the command palette.
 
 import process from "process";
-import { batch, signal, Storage } from "nsh";
+import { batch, signal, Storage, type Signal } from "nsh";
 import {
   Preview,
   type ActionResult,
@@ -238,6 +238,43 @@ export const newWorkspaceModalOpen = signal(false);
 
 /** Bumped whenever plugins are enabled, disabled, installed, or reloaded so Tools/Palette/IO menus refresh. */
 export const pluginsRevision = signal(0);
+/** Per-plugin revision counters so modifying/installing an unrelated plugin never reloads an open PluginWebView. */
+const pluginRevisions = new Map<string, Signal<number>>();
+
+function getPluginRevisionSignal(pluginId: string): Signal<number> {
+  let sig = pluginRevisions.get(pluginId);
+  if (!sig) {
+    sig = signal(0);
+    pluginRevisions.set(pluginId, sig);
+  }
+  return sig;
+}
+
+/** Reactive per-plugin revision number (only increments when `pluginId` itself changes or on full rescan). */
+export function pluginRevisionFor(pluginId: string): number {
+  return getPluginRevisionSignal(pluginId)();
+}
+
+/** Bumps revision counters for specific plugin IDs (or all tracked plugins when `changedIds` is `undefined`). */
+export function bumpPluginRevisions(changedIds?: readonly string[] | null) {
+  if (changedIds === undefined || changedIds === null) {
+    batch(() => {
+      for (const sig of pluginRevisions.values()) {
+        sig.set(sig() + 1);
+      }
+    });
+    return;
+  }
+  if (changedIds.length === 0) return;
+  batch(() => {
+    for (const id of changedIds) {
+      if (!id) continue;
+      const sig = getPluginRevisionSignal(id);
+      sig.set(sig() + 1);
+    }
+  });
+}
+
 /** Preloaded/cached plugins overview so Settings -> Plugins renders immediately with zero blank frame. */
 export const cachedPluginsOverview = signal<PluginsOverviewJs | undefined>(undefined);
 /** Shared reactive last-synced timestamp (ISO string) kept in sync between TrainingView and Settings -> Plugins. */
@@ -258,7 +295,7 @@ export function refreshPluginsOverview(reload = false): PluginsOverviewJs {
   return next;
 }
 
-export function notifyPluginsChanged() {
+export function notifyPluginsChanged(changedPluginIds?: readonly string[] | null) {
   try {
     if (typeof preview.getPluginsOverview === "function") {
       const next = preview.getPluginsOverview();
@@ -270,7 +307,10 @@ export function notifyPluginsChanged() {
   } catch {
     // Ignore in headless tests without a native plugin manager.
   }
-  pluginsRevision.set(pluginsRevision() + 1);
+  batch(() => {
+    pluginsRevision.set(pluginsRevision() + 1);
+    bumpPluginRevisions(changedPluginIds);
+  });
 }
 
 setTimeout(() => {
@@ -578,7 +618,14 @@ export function startPluginWatch() {
         pluginWatchStarted = false;
         return;
       }
-      notifyPluginsChanged();
+      const changedIds = ev.changedPluginIds;
+      if (ev.kind === "rescan") {
+        notifyPluginsChanged(undefined);
+      } else if (Array.isArray(changedIds)) {
+        notifyPluginsChanged(changedIds);
+      } else {
+        notifyPluginsChanged([]);
+      }
     }
   })();
 }

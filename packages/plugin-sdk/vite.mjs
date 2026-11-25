@@ -3,8 +3,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const VIRTUAL_UI_ID = "\0xcpc-plugin-sdk-ui";
-
 const NODE_BUILTINS = new Set([
   "assert",
   "async_hooks",
@@ -65,12 +63,12 @@ const FORBIDDEN_DOM_PATTERNS = [
   {
     re: /\b(?:window|document)\s*\./,
     name: "window/document",
-    hint: "QuickJS sandbox has no DOM. Move interactive UI to `src/ui.tsx` or use `host.html.select(html, selector)`.",
+    hint: "QuickJS sandbox has no DOM. Move interactive UI to `index.html` / `src/main.ts` or use `host.html.select(html, selector)`.",
   },
   {
     re: /\b(?:localStorage|sessionStorage)\b/,
     name: "localStorage/sessionStorage",
-    hint: "Use `host.kv.get/set/delete` in `index.js` (or `storage` in `ui.tsx`).",
+    hint: "Use `host.kv.get/set/delete` in `index.js` (or `window.xcpc.storage` in WebView UI).",
   },
   {
     re: /\bXMLHttpRequest\b/,
@@ -137,49 +135,63 @@ function findFirstExisting(root, candidates) {
   return null;
 }
 
-function createVirtualUiModuleCode() {
-  return `
-function __getSdk() {
-  if (typeof sdk !== "undefined" && sdk) return sdk;
-  if (globalThis.__xcpc_current_sdk) return globalThis.__xcpc_current_sdk;
-  throw new Error("@xcpc/plugin-sdk/ui must run inside XCPC Workstation ui.js");
-}
-export const getSdk = () => __getSdk();
-export const h = (...args) => __getSdk().h(...args);
-export const Fragment = (props) => (props ? props.children : null);
-export const signal = (...args) => __getSdk().signal(...args);
-export const computed = (...args) => __getSdk().computed(...args);
-export const effect = (...args) => __getSdk().effect(...args);
-export const untracked = (...args) => __getSdk().untracked(...args);
-export const token = (...args) => __getSdk().token(...args);
-export const colorScheme = (...args) => __getSdk().colorScheme(...args);
-export const runTool = (...args) => __getSdk().runTool(...args);
-export const useTool = (...args) => __getSdk().useTool(...args);
-export const onCleanup = (...args) => __getSdk().onCleanup(...args);
-export const onShortcut = (...args) => __getSdk().onShortcut(...args);
-export const openTool = (...args) => __getSdk().openTool(...args);
-export const pickFile = (...args) => __getSdk().pickFile(...args);
-export const readClipboard = (...args) => __getSdk().readClipboard(...args);
-export const openExternal = (...args) => __getSdk().openExternal(...args);
-export const renderSvgToPng = (...args) => __getSdk().renderSvgToPng(...args);
-export const savePng = (...args) => __getSdk().savePng(...args);
-export const saveText = (...args) => __getSdk().saveText(...args);
-export const copyText = (...args) => __getSdk().copyText(...args);
-export const toast = (...args) => __getSdk().toast(...args);
-export const initialPayload = (...args) => __getSdk().initialPayload(...args);
-export const ui = new Proxy({}, { get(_t, p) { return __getSdk().ui[p]; } });
-export const canvas = new Proxy({}, { get(_t, p) { return __getSdk().canvas[p]; } });
-export const storage = new Proxy({}, { get(_t, p) { return __getSdk().storage[p]; } });
-export const workspace = new Proxy({}, { get(_t, p) { return __getSdk().workspace[p]; } });
-`;
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function createSandboxGuardPlugin(enabled) {
+/**
+ * Inlines bundled CSS assets and IIFE JS chunks into a single standalone HTML string.
+ * Safely escapes `</script` as `<\/script` and `</style` as `<\/style`.
+ */
+export function inlineHtmlBundle(html, { jsChunks = [], cssAssets = [] } = {}) {
+  let out = String(html ?? "");
+
+  // Remove modulepreload links emitted by Vite.
+  out = out.replace(/<link\b[^>]*\brel=["']modulepreload["'][^>]*>\s*/gi, "");
+
+  for (const css of cssAssets) {
+    const escapedCss = String(css.source ?? "").replace(/<\/style/gi, "<\\/style");
+    const styleTag = `<style>\n${escapedCss}\n</style>`;
+    const escapedName = escapeRegExp(css.fileName);
+    const linkRe = new RegExp(
+      `<link\\b[^>]*\\bhref=["'][^"']*${escapedName}["'][^>]*>`,
+      "i",
+    );
+    if (linkRe.test(out)) {
+      out = out.replace(linkRe, () => styleTag);
+    } else if (/<\/head>/i.test(out)) {
+      out = out.replace(/<\/head>/i, () => `${styleTag}\n</head>`);
+    } else {
+      out = `${styleTag}\n${out}`;
+    }
+  }
+
+  for (const chunk of jsChunks) {
+    const escapedJs = String(chunk.code ?? "").replace(/<\/script/gi, "<\\/script");
+    const scriptTag = `<script>\n${escapedJs}\n</script>`;
+    const escapedName = escapeRegExp(chunk.fileName);
+    const scriptRe = new RegExp(
+      `<script\\b[^>]*\\bsrc=["'][^"']*${escapedName}["'][^>]*>\\s*<\\/script>`,
+      "i",
+    );
+    if (scriptRe.test(out)) {
+      out = out.replace(scriptRe, () => scriptTag);
+    } else if (/<\/body>/i.test(out)) {
+      out = out.replace(/<\/body>/i, () => `${scriptTag}\n</body>`);
+    } else {
+      out = `${out}\n${scriptTag}`;
+    }
+  }
+
+  return out;
+}
+
+function createSandboxGuardPlugin(isEnabled) {
   return {
     name: "xcpc:sandbox-guard",
     enforce: "pre",
     resolveId(source, importer) {
-      if (!enabled) return null;
+      if (!isEnabled()) return null;
       const forbidden = isForbiddenNodeImport(source);
       if (forbidden) {
         const hint =
@@ -192,7 +204,7 @@ function createSandboxGuardPlugin(enabled) {
       return null;
     },
     transform(code, id) {
-      if (!enabled) return null;
+      if (!isEnabled()) return null;
       if (id.includes("node_modules") || id.startsWith("\0")) return null;
       if (!/\.(?:[cm]?[jt]s)$/.test(id)) return null;
       const err = checkQuickJsForbiddenSource(code, id);
@@ -204,31 +216,12 @@ function createSandboxGuardPlugin(enabled) {
   };
 }
 
-function createUiVirtualSdkPlugin() {
-  return {
-    name: "xcpc:ui-virtual-sdk",
-    enforce: "pre",
-    resolveId(source) {
-      if (source === "@xcpc/plugin-sdk/ui") {
-        return VIRTUAL_UI_ID;
-      }
-      return null;
-    },
-    load(id) {
-      if (id === VIRTUAL_UI_ID) {
-        return createVirtualUiModuleCode();
-      }
-      return null;
-    },
-  };
-}
-
 /**
  * Zero-config Vite plugin for XCPC Workstation plugins.
- * - Reads `manifest.toml` to infer `index.js` and optional `ui.js` outputs.
- * - Bundles `src/index.{ts,js}` to a single CJS file in `dist/` with QuickJS sandbox guardrails.
- * - Bundles `src/ui.{tsx,ts,jsx,js}` (when present) to a single CJS file in `dist/` with virtual `@xcpc/plugin-sdk/ui`.
- * - Copies `manifest.toml` into `dist/` after each build (and watches `src/ui.*` + `manifest.toml` in `--watch` mode).
+ * - When `index.html` (or `ui.html`) exists: builds a single-file IIFE HTML bundle (`dist/ui.html`)
+ *   with CSS, JS, and assets inlined (safely escaping `</script>`).
+ * - Also builds `src/index.{ts,js}` -> `dist/index.js` (CJS) with QuickJS sandbox guardrails when present.
+ * - Copies `manifest.toml` into `dist/` after each build and works with both `vite build` and `vite build --watch`.
  */
 export function xcpcPlugin(options = {}) {
   const manifestRel = options.manifest ?? "manifest.toml";
@@ -239,8 +232,13 @@ export function xcpcPlugin(options = {}) {
   let manifestPath = "";
   let manifestMeta = { id: undefined, entry: "index.js", uiEntry: undefined };
   let indexInput = null;
-  let uiInput = null;
-  let uiOutFile = "ui.js";
+  let htmlInput = null;
+  let uiOutFile = "ui.html";
+  let isHtmlPrimaryBuild = false;
+
+  const guardPlugin = createSandboxGuardPlugin(
+    () => sandboxGuard && !isHtmlPrimaryBuild,
+  );
 
   const mainPlugin = {
     name: "xcpc:plugin",
@@ -261,22 +259,40 @@ export function xcpcPlugin(options = {}) {
           ]);
 
       if (options.uiEntry === false) {
-        uiInput = null;
+        htmlInput = null;
       } else if (typeof options.uiEntry === "string") {
-        uiInput = path.resolve(projectRoot, options.uiEntry);
+        htmlInput = path.resolve(projectRoot, options.uiEntry);
       } else {
-        uiInput = findFirstExisting(projectRoot, [
-          "src/ui.tsx",
-          "src/ui.ts",
-          "src/ui.jsx",
-          "src/ui.js",
-        ]);
+        htmlInput = findFirstExisting(projectRoot, ["index.html", "ui.html"]);
       }
-      uiOutFile = manifestMeta.uiEntry || "ui.js";
+
+      uiOutFile = manifestMeta.uiEntry || "ui.html";
+      isHtmlPrimaryBuild = Boolean(htmlInput);
+
+      if (isHtmlPrimaryBuild) {
+        return {
+          base: "./",
+          build: {
+            outDir: outDirRel,
+            emptyOutDir: true,
+            target: "es2022",
+            cssCodeSplit: false,
+            assetsInlineLimit: Infinity,
+            sourcemap: false,
+            rollupOptions: {
+              input: htmlInput,
+              output: {
+                format: "iife",
+                inlineDynamicImports: true,
+              },
+            },
+          },
+        };
+      }
 
       if (!indexInput) {
         throw new Error(
-          `[xcpc-plugin-sdk] Could not locate plugin entry (expected src/index.ts or src/index.js in ${projectRoot})`,
+          `[xcpc-plugin-sdk] Could not locate plugin entry (expected index.html, ui.html, src/index.ts, or src/index.js in ${projectRoot})`,
         );
       }
 
@@ -306,8 +322,8 @@ export function xcpcPlugin(options = {}) {
       if (manifestPath && fs.existsSync(manifestPath)) {
         this.addWatchFile(manifestPath);
       }
-      if (uiInput && fs.existsSync(uiInput)) {
-        this.addWatchFile(uiInput);
+      if (isHtmlPrimaryBuild && indexInput && fs.existsSync(indexInput)) {
+        this.addWatchFile(indexInput);
       }
     },
 
@@ -315,7 +331,7 @@ export function xcpcPlugin(options = {}) {
       const outDirAbs = path.resolve(projectRoot, outDirRel);
       fs.mkdirSync(outDirAbs, { recursive: true });
 
-      if (uiInput && fs.existsSync(uiInput)) {
+      if (isHtmlPrimaryBuild && indexInput && fs.existsSync(indexInput)) {
         const req = createRequire(path.join(projectRoot, "package.json"));
         let viteMod;
         try {
@@ -329,12 +345,7 @@ export function xcpcPlugin(options = {}) {
           root: projectRoot,
           configFile: false,
           logLevel: "silent",
-          esbuild: {
-            jsx: "transform",
-            jsxFactory: "h",
-            jsxFragment: "Fragment",
-          },
-          plugins: [createUiVirtualSdkPlugin()],
+          plugins: [createSandboxGuardPlugin(() => sandboxGuard)],
           build: {
             outDir: outDirRel,
             emptyOutDir: false,
@@ -342,9 +353,9 @@ export function xcpcPlugin(options = {}) {
             minify: false,
             sourcemap: false,
             lib: {
-              entry: uiInput,
+              entry: indexInput,
               formats: ["cjs"],
-              fileName: () => uiOutFile,
+              fileName: () => manifestMeta.entry || "index.js",
             },
             rollupOptions: {
               output: {
@@ -362,5 +373,55 @@ export function xcpcPlugin(options = {}) {
     },
   };
 
-  return [createSandboxGuardPlugin(sandboxGuard), mainPlugin];
+  const inlineHtmlPlugin = {
+    name: "xcpc:inline-html",
+    enforce: "post",
+    generateBundle(_opts, bundle) {
+      if (!isHtmlPrimaryBuild) return;
+
+      const htmlKeys = Object.keys(bundle).filter(
+        (key) => bundle[key].type === "asset" && key.endsWith(".html"),
+      );
+      if (htmlKeys.length === 0) return;
+
+      const htmlKey = htmlKeys[0];
+      const htmlAsset = bundle[htmlKey];
+      const jsChunks = [];
+      const cssAssets = [];
+      const toDelete = [];
+
+      for (const [key, item] of Object.entries(bundle)) {
+        if (item.type === "chunk" && key.endsWith(".js")) {
+          jsChunks.push({ fileName: item.fileName, code: item.code });
+          toDelete.push(key);
+        } else if (item.type === "asset" && key.endsWith(".css")) {
+          const source =
+            typeof item.source === "string"
+              ? item.source
+              : Buffer.from(item.source).toString("utf8");
+          cssAssets.push({ fileName: item.fileName, source });
+          toDelete.push(key);
+        }
+      }
+
+      const rawHtml =
+        typeof htmlAsset.source === "string"
+          ? htmlAsset.source
+          : Buffer.from(htmlAsset.source).toString("utf8");
+      const inlined = inlineHtmlBundle(rawHtml, { jsChunks, cssAssets });
+
+      for (const key of toDelete) {
+        delete bundle[key];
+      }
+
+      if (htmlKey !== uiOutFile) {
+        delete bundle[htmlKey];
+      }
+      htmlAsset.fileName = uiOutFile;
+      htmlAsset.source = inlined;
+      bundle[uiOutFile] = htmlAsset;
+    },
+  };
+
+  return [guardPlugin, mainPlugin, inlineHtmlPlugin];
 }

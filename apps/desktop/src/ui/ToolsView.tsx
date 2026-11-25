@@ -1,8 +1,8 @@
 // Pure Tools space (`工具`, Cmd+4): host contains zero hardcoded business utilities.
-// Dynamically lists enabled `tool` plugins and hosts either their desktop `ui.js`
-// interactive panel (via Core QuickJS `PluginUiRenderer`) or their headless `index.js` tool form + renderer.
+// Dynamically lists enabled `tool` plugins and hosts either their pure-Web `ui.html`
+// interactive panel (via `<PluginWebView>`) or their headless `index.js` tool form + renderer.
 
-import { computed, effect, Scroll, signal, Text, View } from "nsh";
+import { batch, computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
@@ -15,13 +15,15 @@ import {
   activeToolPluginId,
   goSettings,
   notifyPluginsChanged,
+  pluginRevisionFor,
   pluginsRevision,
   preview,
   refreshPluginsOverview,
 } from "./store";
 import { showToast } from "./Toast";
 import { HeadlessToolRunner } from "./tools/HeadlessToolRunner";
-import { PluginUiRenderer } from "./tools/PluginUiRenderer";
+import { formatPluginError } from "./tools/pluginErrors";
+import { PluginWebView } from "./tools/PluginWebView";
 import { parseJsonReport, type PluginToolGroup } from "./tools/types";
 import { zhEn } from "./training/locale";
 
@@ -49,16 +51,34 @@ export function ToolsView(props: { active?: boolean }) {
     return parseJsonReport<PluginToolGroup[]>(preview.pluginListTools(), []);
   });
 
+  const installedToolIds = computed<Set<string>>(
+    () => new Set(toolGroups().map((g) => g.plugin_id)),
+  );
+
   const selectedPluginId = signal<string>("");
+  // Keep user on the recommended grid while installing multiple official tools in a row (Awkward 5).
+  const stayOnRecommended = signal<boolean>(false);
 
   // Sync external navigation requests (`openToolPlugin`) and keep selection valid when plugins change.
   effect(() => {
     const groups = toolGroups();
     const requested = activeToolPluginId();
     if (requested && groups.some((g) => g.plugin_id === requested)) {
-      selectedPluginId.set(requested);
-      activeToolPluginId.set(undefined);
-      activeToolMode.set(undefined);
+      batch(() => {
+        stayOnRecommended.set(false);
+        selectedPluginId.set(requested);
+        activeToolPluginId.set(undefined);
+        activeToolMode.set(undefined);
+      });
+      return;
+    }
+
+    if (groups.length === 0) {
+      selectedPluginId.set("");
+      return;
+    }
+
+    if (stayOnRecommended()) {
       return;
     }
 
@@ -70,7 +90,7 @@ export function ToolsView(props: { active?: boolean }) {
   });
 
   const activeGroup = computed<PluginToolGroup | undefined>(() =>
-    toolGroups().find((g) => g.plugin_id === selectedPluginId()),
+    stayOnRecommended() ? undefined : toolGroups().find((g) => g.plugin_id === selectedPluginId()),
   );
 
   const graphEditorEnabled = computed(() =>
@@ -78,15 +98,28 @@ export function ToolsView(props: { active?: boolean }) {
   );
 
   const selectPlugin = (group: PluginToolGroup) => {
-    selectedPluginId.set(group.plugin_id);
-    activeToolId.set(undefined);
-    activeToolPayload.set(undefined);
+    batch(() => {
+      stayOnRecommended.set(false);
+      selectedPluginId.set(group.plugin_id);
+      activeToolId.set(undefined);
+      activeToolPayload.set(undefined);
+    });
+  };
+
+  const openRecommendedTool = (pluginId: string) => {
+    batch(() => {
+      stayOnRecommended.set(false);
+      selectedPluginId.set(pluginId);
+      activeToolId.set(undefined);
+      activeToolPayload.set(undefined);
+    });
   };
 
   // Empty-state recommended tools from subscribed repositories (including default official repo).
   const recommended = signal<RecommendedToolItem[]>([]);
   const loadingRecommended = signal(false);
-  const installingId = signal<string | undefined>(undefined);
+  // Per-plugin install stage so multiple cards can be installed independently without graying out others (Awkward 6).
+  const installingStages = signal<Record<string, string>>({});
   const repoBrowserOpen = signal(false);
   let lastCatalogRev = -1;
 
@@ -94,7 +127,7 @@ export function ToolsView(props: { active?: boolean }) {
     const rev = pluginsRevision();
     const empty = toolGroups().length === 0;
     if (!empty) return;
-    if (lastCatalogRev === rev) return;
+    if (lastCatalogRev === rev && recommended().length > 0) return;
     lastCatalogRev = rev;
 
     void (async () => {
@@ -133,22 +166,40 @@ export function ToolsView(props: { active?: boolean }) {
     })();
   });
 
+  const setInstallStage = (id: string, stage: string | undefined) => {
+    const next = { ...installingStages() };
+    if (stage === undefined) delete next[id];
+    else next[id] = stage;
+    installingStages.set(next);
+  };
+
   const performInstall = async (item: RecommendedToolItem) => {
-    if (installingId()) return;
-    installingId.set(item.entry.id);
+    const id = item.entry.id;
+    if (installingStages()[id]) return;
+    // Stay on recommended grid after install so the user can install multiple tools in a row.
+    stayOnRecommended.set(true);
+    setInstallStage(id, zhEn("下载中…", "Downloading…"));
+    const stageTimer = setTimeout(() => {
+      if (installingStages()[id]) {
+        setInstallStage(id, t("tools.installing"));
+      }
+    }, 1400);
     try {
-      const res = await preview.installPluginFromRepo(item.repoUrl, item.entry.id);
+      const res = await preview.installPluginFromRepo(item.repoUrl, id);
       if (res.ok) {
         showToast({ tone: "success", text: t("tools.installedToast", { name: item.entry.name }) });
-        selectedPluginId.set(item.entry.id);
-        notifyPluginsChanged();
+        notifyPluginsChanged([id]);
       } else {
-        showToast({ tone: "issues", text: res.error ?? t("tools.uiLoadFailed") });
+        showToast({ tone: "issues", text: formatPluginError(res.error, t("tools.uiLoadFailed")) });
       }
     } catch (err) {
-      showToast({ tone: "issues", text: err instanceof Error ? err.message : String(err) });
+      showToast({
+        tone: "issues",
+        text: formatPluginError(err instanceof Error ? err.message : String(err)),
+      });
     } finally {
-      installingId.set(undefined);
+      clearTimeout(stageTimer);
+      setInstallStage(id, undefined);
     }
   };
 
@@ -166,7 +217,8 @@ export function ToolsView(props: { active?: boolean }) {
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 8, gap: 4 }}>
           <Each of={toolGroups()} key={(g) => g.plugin_id}>
             {(group) => {
-              const isSelected = () => selectedPluginId() === group().plugin_id;
+              const isSelected = () =>
+                !stayOnRecommended() && selectedPluginId() === group().plugin_id;
               return (
                 <View
                   testID={`tool-item-${group().plugin_id}`}
@@ -287,7 +339,8 @@ export function ToolsView(props: { active?: boolean }) {
                   <View style={{ gap: 10 }}>
                     <Each of={recommended()} key={(item) => item.entry.id}>
                       {(item) => {
-                        const isBusy = () => installingId() === item().entry.id;
+                        const stage = () => installingStages()[item().entry.id];
+                        const isInstalled = () => installedToolIds().has(item().entry.id);
                         return (
                           <View
                             testID={`recommended-tool-${item().entry.id}`}
@@ -302,35 +355,38 @@ export function ToolsView(props: { active?: boolean }) {
                             }}
                           >
                             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                                <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
-                                  {item().entry.name}
-                                </Text>
-                                <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                                  v{item().entry.version}
-                                </Text>
-                                <If when={Boolean(item().entry.official)}>
-                                  <View class="bg-muted border border-border" style={{ paddingLeft: 5, paddingRight: 5, borderRadius: 4 }}>
-                                    <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
-                                      {t("tools.officialBadge")}
-                                    </Text>
-                                  </View>
-                                </If>
-                              </View>
+                              <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+                                {item().entry.name}
+                              </Text>
                               <If when={Boolean(item().entry.description)}>
                                 <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
                                   {item().entry.description}
                                 </Text>
                               </If>
                             </View>
-                            <Btn
-                              testID={`install-recommended-${item().entry.id}`}
-                              variant="primary"
-                              size="sm"
-                              disabled={Boolean(installingId())}
-                              label={isBusy() ? t("tools.installing") : t("tools.install")}
-                              onPress={() => requestInstall(item())}
-                            />
+                            <If
+                              when={isInstalled()}
+                              else={
+                                <Btn
+                                  testID={`install-recommended-${item().entry.id}`}
+                                  variant="primary"
+                                  size="sm"
+                                  disabled={Boolean(stage())}
+                                  label={stage() ?? t("tools.install")}
+                                  onPress={() => requestInstall(item())}
+                                  style={{ width: 84, flexShrink: 0 }}
+                                />
+                              }
+                            >
+                              <Btn
+                                testID={`open-recommended-${item().entry.id}`}
+                                variant="outline"
+                                size="sm"
+                                label={zhEn("打开", "Open")}
+                                onPress={() => openRecommendedTool(item().entry.id)}
+                                style={{ width: 84, flexShrink: 0 }}
+                              />
+                            </If>
                           </View>
                         );
                       }}
@@ -363,7 +419,7 @@ export function ToolsView(props: { active?: boolean }) {
                 </Text>
               </View>
 
-              {/* Render interactive UI (`ui.js`) if available, otherwise headless (`index.js`) runner */}
+              {/* Render interactive UI (`ui.html`) if available, otherwise headless (`index.js`) runner */}
               <View style={{ flex: 1, minHeight: 0 }}>
                 <If
                   when={group().has_ui}
@@ -380,9 +436,9 @@ export function ToolsView(props: { active?: boolean }) {
                     </Each>
                   }
                 >
-                  <PluginUiRenderer
+                  <PluginWebView
                     pluginId={group().plugin_id}
-                    revision={pluginsRevision()}
+                    revision={pluginRevisionFor(group().plugin_id)}
                     getInitialPayload={consumeInitialPayload}
                   />
                 </If>
@@ -396,7 +452,10 @@ export function ToolsView(props: { active?: boolean }) {
         open={repoBrowserOpen()}
         onClose={() => repoBrowserOpen.set(false)}
         filterCapability="tool"
-        onInstalled={(id) => selectedPluginId.set(id)}
+        onInstalled={(id) => {
+          stayOnRecommended.set(false);
+          selectedPluginId.set(id);
+        }}
       />
     </View>
   );

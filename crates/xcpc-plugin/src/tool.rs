@@ -127,7 +127,9 @@ impl PluginManager {
         };
         plugins
             .into_iter()
-            .filter(|p| p.enabled && p.manifest.has_capability(PluginCapability::Tool))
+            .filter(|p| {
+                p.enabled && !p.pending_trust && p.manifest.has_capability(PluginCapability::Tool)
+            })
             .map(|p| {
                 let has_ui = p.manifest.ui_entry.is_some();
                 PluginToolGroup {
@@ -212,7 +214,7 @@ impl PluginManager {
                 PluginError::InvalidPackage(format!("failed to resolve ui_entry '{ui_entry}': {e}"))
             })?;
             if !canonical_target.starts_with(&canonical_dir) {
-                return Err(PluginError::ZipSlip(format!(
+                return Err(PluginError::SymlinkEscape(format!(
                     "ui_entry '{ui_entry}' escapes plugin directory"
                 )));
             }

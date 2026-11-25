@@ -49,7 +49,10 @@ impl PluginManager {
         };
         let mut out = Vec::new();
         for p in plugins {
-            if !p.enabled || !p.manifest.has_capability(PluginCapability::Commands) {
+            if !p.enabled
+                || p.pending_trust
+                || !p.manifest.has_capability(PluginCapability::Commands)
+            {
                 continue;
             }
             for cmd in p.manifest.commands {

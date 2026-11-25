@@ -1,7 +1,7 @@
 {
   "name": "@xcpc/plugin-sdk",
   "version": "0.1.0",
-  "description": "TypeScript/JSX SDK and Vite build plugin for XCPC Workstation plugins.",
+  "description": "TypeScript SDK (QuickJS host + WebView bridge) and Vite single-file HTML build plugin for XCPC Workstation plugins.",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {

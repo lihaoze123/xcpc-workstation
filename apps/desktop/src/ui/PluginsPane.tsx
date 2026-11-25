@@ -25,7 +25,82 @@ import {
 } from "./store";
 import { MONO } from "./theme";
 import { showToast } from "./Toast";
+import { formatPluginError } from "./tools/pluginErrors";
 import { zhEn } from "./training/locale";
+
+type ExtendedPluginSummary = PluginSummaryJs & {
+  pendingTrust?: boolean;
+  overridesBuiltin?: boolean;
+  hasNetwork?: boolean;
+};
+
+function isOverridesBuiltin(p: ExtendedPluginSummary): boolean {
+  return Boolean(p.overridesBuiltin || p.origin === "local_override");
+}
+
+function hasNetworkAccess(p: ExtendedPluginSummary): boolean {
+  return Boolean(p.hasNetwork || (p.domains && p.domains.length > 0));
+}
+
+function isPendingTrust(p: ExtendedPluginSummary): boolean {
+  return Boolean(p.pendingTrust);
+}
+
+function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork?: boolean }) {
+  const p = () => props.plugin;
+  const showNetworkBadge = () =>
+    hasNetworkAccess(p()) && !(props.hideBuiltinNetwork && p().origin === "builtin");
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
+      <If when={Boolean(p().isLinked)}>
+        <View
+          testID={`plugin-badge-linked-${p().id}`}
+          class="bg-muted border border-border"
+          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          tooltip={p().linkTarget ? tip(p().linkTarget!) : undefined}
+        >
+          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+            {t("tools.devLink")}
+          </Text>
+        </View>
+      </If>
+      <If when={isOverridesBuiltin(p())}>
+        <View
+          testID={`plugin-badge-override-${p().id}`}
+          class="bg-muted border border-border"
+          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+        >
+          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+            {zhEn("覆写内置", "Overrides built-in")}
+          </Text>
+        </View>
+      </If>
+      <If when={showNetworkBadge()}>
+        <View
+          testID={`plugin-badge-network-${p().id}`}
+          class="bg-muted border border-border"
+          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          tooltip={p().domains.length > 0 ? tip(p().domains.join(", ")) : undefined}
+        >
+          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+            {zhEn("联网", "Network")}
+          </Text>
+        </View>
+      </If>
+      <If when={isPendingTrust(p())}>
+        <View
+          testID={`plugin-badge-untrusted-${p().id}`}
+          class="bg-muted border border-destructive/40"
+          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+        >
+          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-destructive">
+            {zhEn("待信任", "Untrusted")}
+          </Text>
+        </View>
+      </If>
+    </View>
+  );
+}
 
 const INPUT_CLASS =
   "h-8 px-2.5 rounded-md border border-border bg-card text-[12.5px] placeholder:text-muted-foreground focus:ring-1 focus:ring-inset focus:ring-ring transition-colors";
@@ -33,15 +108,11 @@ const INPUT_CLASS =
 const BUILTIN_DESC_KEYS: Record<string, MessageKey> = {
   codeforces: "settings.plugins.desc.codeforces",
   atcoder: "settings.plugins.desc.atcoder",
-  "graph-editor": "settings.plugins.desc.graphEditor",
-  "complexity-mem": "settings.plugins.desc.complexityMem",
-  "math-bitwise": "settings.plugins.desc.mathBitwise",
-  "string-lab": "settings.plugins.desc.stringLab",
 };
 
 function pluginDescription(plugin: PluginSummaryJs): string {
   const key = BUILTIN_DESC_KEYS[plugin.id];
-  if (key) return t(key);
+  if (key && plugin.origin === "builtin") return t(key);
   return plugin.description.trim();
 }
 
@@ -131,11 +202,12 @@ function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }
 
 /** Section 1 row: one OJ platform with handle input, inline fixed-width verify status slot, fixed error slot, switch, and ⋯ menu. */
 function OjAccountRow(props: {
-  plugin: PluginSummaryJs;
+  plugin: ExtendedPluginSummary;
   first?: boolean;
   onReload: () => void;
-  onUnlinkOrRevert: (plugin: PluginSummaryJs) => void;
-  onRequestUninstall: (plugin: PluginSummaryJs) => void;
+  onRequestTrust: (plugin: ExtendedPluginSummary) => void;
+  onUnlinkOrRevert: (plugin: ExtendedPluginSummary) => void;
+  onRequestUninstall: (plugin: ExtendedPluginSummary) => void;
 }) {
   const p = () => props.plugin;
   const handleDraft = signal(p().handle ?? "");
@@ -260,7 +332,7 @@ function OjAccountRow(props: {
         label: zhEn("取消开发链接", "Unlink dev plugin"),
         icon: "x",
       });
-    } else if (p().origin === "local_override") {
+    } else if (isOverridesBuiltin(p())) {
       items.push({
         id: "revert",
         label: zhEn("恢复内置版本", "Restore built-in"),
@@ -292,10 +364,13 @@ function OjAccountRow(props: {
       class="border-border"
     >
       <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
-        <View style={{ width: 210, minHeight: 32, justifyContent: "center", flexShrink: 0, gap: 2 }}>
-          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-            {p().name}
-          </Text>
+        <View style={{ width: 210, minHeight: 32, justifyContent: "center", flexShrink: 0, gap: 3 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              {p().name}
+            </Text>
+            <PluginBadges plugin={p()} hideBuiltinNetwork />
+          </View>
           <If when={desc().length > 0}>
             <Text
               style={{ fontSize: 11.5, lineHeight: 15, numberOfLines: 1, textOverflow: "ellipsis" }}
@@ -376,12 +451,25 @@ function OjAccountRow(props: {
         </View>
 
         <View style={{ height: 32, flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <Switch
-            checked={p().enabled}
-            onChange={(e) => toggleEnabled(e.checked)}
-            trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
-            thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
-          />
+          <If
+            when={isPendingTrust(p())}
+            else={
+              <Switch
+                checked={p().enabled}
+                onChange={(e) => toggleEnabled(e.checked)}
+                trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
+                thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
+              />
+            }
+          >
+            <Btn
+              testID={`plugin-trust-btn-${p().id}`}
+              variant="outline"
+              size="sm"
+              label={zhEn("确认信任", "Trust")}
+              onPress={() => props.onRequestTrust(p())}
+            />
+          </If>
           <If when={moreEntries().length > 0}>
             <AppMenu
               align="end"
@@ -403,13 +491,14 @@ function OjAccountRow(props: {
   );
 }
 
-/** Section 2 row: clean tool/extension row with toggle switch and ⋯ overflow menu. */
+/** Section 2 row: clean tool/extension row with status badges, trust confirmation, toggle switch and ⋯ overflow menu. */
 function ToolPluginRow(props: {
-  plugin: PluginSummaryJs;
+  plugin: ExtendedPluginSummary;
   first?: boolean;
   onReload: () => void;
-  onUnlinkOrRevert: (plugin: PluginSummaryJs) => void;
-  onRequestUninstall: (plugin: PluginSummaryJs) => void;
+  onRequestTrust: (plugin: ExtendedPluginSummary) => void;
+  onUnlinkOrRevert: (plugin: ExtendedPluginSummary) => void;
+  onRequestUninstall: (plugin: ExtendedPluginSummary) => void;
 }) {
   const p = () => props.plugin;
 
@@ -418,7 +507,7 @@ function ToolPluginRow(props: {
     if (res.ok) {
       props.onReload();
     } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
     }
   };
 
@@ -428,7 +517,7 @@ function ToolPluginRow(props: {
       showToast({ tone: "success", text: t("settings.plugins.exported") });
       props.onReload();
     } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
     }
   };
 
@@ -447,7 +536,7 @@ function ToolPluginRow(props: {
         label: zhEn("取消开发链接", "Unlink dev plugin"),
         icon: "x",
       });
-    } else if (p().origin === "local_override") {
+    } else if (isOverridesBuiltin(p())) {
       items.push({
         id: "revert",
         label: zhEn("恢复内置版本", "Restore built-in"),
@@ -480,21 +569,11 @@ function ToolPluginRow(props: {
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
               {p().name}
             </Text>
-            <If when={Boolean(p().isLinked)}>
-              <View
-                class="bg-muted border border-border"
-                style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
-                tooltip={p().linkTarget ? tip(p().linkTarget!) : undefined}
-              >
-                <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
-                  {t("tools.devLink")}
-                </Text>
-              </View>
-            </If>
+            <PluginBadges plugin={p()} />
           </View>
           <If when={desc().length > 0}>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
@@ -504,12 +583,25 @@ function ToolPluginRow(props: {
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <Switch
-            checked={p().enabled}
-            onChange={(e) => toggleEnabled(e.checked)}
-            trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
-            thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
-          />
+          <If
+            when={isPendingTrust(p())}
+            else={
+              <Switch
+                checked={p().enabled}
+                onChange={(e) => toggleEnabled(e.checked)}
+                trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
+                thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
+              />
+            }
+          >
+            <Btn
+              testID={`plugin-trust-btn-${p().id}`}
+              variant="outline"
+              size="sm"
+              label={zhEn("确认信任", "Trust")}
+              onPress={() => props.onRequestTrust(p())}
+            />
+          </If>
           <If when={moreEntries().length > 0}>
             <AppMenu
               align="end"
@@ -546,8 +638,8 @@ export function PluginsPane() {
   }
   const overview = signal<PluginsOverviewJs>(initial);
   const syncing = signal(false);
-  const pendingTrustPlugin = signal<PluginSummaryJs | undefined>(undefined);
-  const pendingUninstall = signal<PluginSummaryJs | undefined>(undefined);
+  const pendingTrustPlugin = signal<ExtendedPluginSummary | undefined>(undefined);
+  const pendingUninstall = signal<ExtendedPluginSummary | undefined>(undefined);
   const repoBrowserOpen = signal(false);
 
   const syncOverviewFromStore = (reload = false) => {
@@ -652,42 +744,31 @@ export function PluginsPane() {
       if (res.cancelled) return;
       if (res.ok) {
         const nextOverview = res.overview ?? refreshPluginsOverview(true);
-        const installed = res.pluginId
-          ? nextOverview.plugins.find((p) => p.id === res.pluginId)
-          : undefined;
-        const needsTrustConfirm =
-          installed !== undefined &&
-          installed.origin !== "builtin" &&
-          (installed.domains.length > 0 || installed.workspaceRead);
+        cachedPluginsOverview.set(nextOverview);
+        overview.set(nextOverview);
+        setGlobalLastSyncedAt(nextOverview.lastSyncedAt ?? null);
+        notifyPluginsChanged(res.pluginId ? [res.pluginId] : []);
 
-        if (needsTrustConfirm && installed) {
-          // Disable third-party plugin immediately until the user explicitly confirms trust.
-          preview.setPluginEnabled(installed.id, false);
-          syncOverviewFromStore(false);
-          notifyPluginsChanged();
+        const installed = res.pluginId
+          ? (nextOverview.plugins.find((p) => p.id === res.pluginId) as ExtendedPluginSummary | undefined)
+          : undefined;
+
+        if (installed && isPendingTrust(installed)) {
           pendingTrustPlugin.set(installed);
           return;
         }
 
-        if (res.overview) {
-          cachedPluginsOverview.set(res.overview);
-          overview.set(res.overview);
-          setGlobalLastSyncedAt(res.overview.lastSyncedAt ?? null);
-          notifyPluginsChanged();
-        } else {
-          reloadOverview();
-        }
         showToast({
           tone: "success",
           text: t("settings.plugins.installSuccess", { id: res.pluginId ?? "" }),
         });
       } else if (res.error) {
-        showToast({ tone: "issues", text: res.error });
+        showToast({ tone: "issues", text: formatPluginError(res.error) });
       }
     } catch (err) {
       showToast({
         tone: "issues",
-        text: err instanceof Error ? err.message : String(err),
+        text: formatPluginError(err instanceof Error ? err.message : String(err)),
       });
     }
   };
@@ -695,17 +776,17 @@ export function PluginsPane() {
   const confirmTrustPlugin = () => {
     const plugin = pendingTrustPlugin();
     if (!plugin) return;
-    const res = preview.setPluginEnabled(plugin.id, true);
+    const res = preview.trustPlugin(plugin.id);
     pendingTrustPlugin.set(undefined);
     syncOverviewFromStore(false);
-    notifyPluginsChanged();
+    notifyPluginsChanged([plugin.id]);
     if (res.ok) {
       showToast({
         tone: "success",
-        text: t("settings.plugins.installSuccess", { id: plugin.id }),
+        text: zhEn(`已信任并启用「${plugin.name}」`, `Trusted and enabled "${plugin.name}"`),
       });
     } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
     }
   };
 
@@ -714,11 +795,11 @@ export function PluginsPane() {
     pendingTrustPlugin.set(undefined);
     showToast({
       tone: "info",
-      text: zhEn("插件已安装但保持禁用", "Plugin installed and kept disabled"),
+      text: zhEn("插件已安装，待确认信任后可用", "Plugin installed; awaiting trust confirmation"),
     });
   };
 
-  const executeUninstall = (plugin: PluginSummaryJs) => {
+  const executeUninstall = (plugin: ExtendedPluginSummary) => {
     const res = preview.uninstallPlugin(plugin.id);
     if (res.ok) {
       if (plugin.isLinked) {
@@ -726,7 +807,7 @@ export function PluginsPane() {
           tone: "info",
           text: zhEn(`已取消开发链接「${plugin.name}」`, `Unlinked "${plugin.name}"`),
         });
-      } else if (plugin.origin === "local_override") {
+      } else if (isOverridesBuiltin(plugin)) {
         showToast({
           tone: "success",
           text: zhEn(`已恢复内置版本「${plugin.name}」`, `Restored built-in "${plugin.name}"`),
@@ -739,7 +820,7 @@ export function PluginsPane() {
       }
       reloadOverview();
     } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
     }
   };
 
@@ -758,10 +839,6 @@ export function PluginsPane() {
     { id: "zip", label: t("settings.plugins.installZip"), icon: "fileDown" },
   ];
 
-  const toolsMoreEntries = (): MenuEntry[] => [
-    { id: "reload", label: t("settings.plugins.reloadLocal"), icon: "rotateCcw" },
-  ];
-
   return (
     <View style={{ gap: 22 }}>
       {/* Section 1: OJ Accounts & Sync */}
@@ -773,12 +850,16 @@ export function PluginsPane() {
             </Text>
           </View>
         </If>
-        <Each of={ojPlugins()} key={(p) => `${p.id}:${p.origin}`}>
+        <Each
+          of={ojPlugins() as ExtendedPluginSummary[]}
+          key={(p) => `${p.id}:${p.origin}:${Boolean(p.pendingTrust)}`}
+        >
           {(plugin) => (
             <OjAccountRow
               plugin={plugin()}
               first={plugin().id === ojPlugins()[0]?.id}
               onReload={() => syncOverviewFromStore(false)}
+              onRequestTrust={(p) => pendingTrustPlugin.set(p)}
               onUnlinkOrRevert={executeUninstall}
               onRequestUninstall={(p) => pendingUninstall.set(p)}
             />
@@ -844,33 +925,23 @@ export function PluginsPane() {
       <Section
         title={t("settings.plugins.toolsSection")}
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <AppMenu
-              align="end"
-              entries={installMenuEntries()}
-              onSelect={(id) => {
-                if (id === "repo") repoBrowserOpen.set(true);
-                else if (id === "dir" || id === "zip") void installFromDialog(id);
-              }}
-              trigger={
-                <Btn
-                  testID="plugins-install-trigger"
-                  label={t("settings.plugins.installPlugin")}
-                  size="sm"
-                  variant="outline"
-                  icon="plus"
-                />
-              }
-            />
-            <AppMenu
-              align="end"
-              entries={toolsMoreEntries()}
-              onSelect={(id) => {
-                if (id === "reload") reloadOverview();
-              }}
-              trigger={<MoreTrigger testID="plugins-tools-more" />}
-            />
-          </View>
+          <AppMenu
+            align="end"
+            entries={installMenuEntries()}
+            onSelect={(id) => {
+              if (id === "repo") repoBrowserOpen.set(true);
+              else if (id === "dir" || id === "zip") void installFromDialog(id);
+            }}
+            trigger={
+              <Btn
+                testID="plugins-install-trigger"
+                label={t("settings.plugins.installPlugin")}
+                size="sm"
+                variant="outline"
+                icon="plus"
+              />
+            }
+          />
         }
       >
         <If when={toolPlugins().length === 0}>
@@ -880,12 +951,16 @@ export function PluginsPane() {
             </Text>
           </View>
         </If>
-        <Each of={toolPlugins()} key={(p) => `${p.id}:${p.origin}:${p.enabled}:${p.lastError ?? ""}`}>
+        <Each
+          of={toolPlugins() as ExtendedPluginSummary[]}
+          key={(p) => `${p.id}:${p.origin}:${p.enabled}:${Boolean(p.pendingTrust)}:${p.lastError ?? ""}`}
+        >
           {(plugin) => (
             <ToolPluginRow
               plugin={plugin()}
               first={plugin().id === toolPlugins()[0]?.id}
               onReload={reloadOverview}
+              onRequestTrust={(p) => pendingTrustPlugin.set(p)}
               onUnlinkOrRevert={executeUninstall}
               onRequestUninstall={(p) => pendingUninstall.set(p)}
             />
@@ -950,6 +1025,20 @@ export function PluginsPane() {
                   >
                     <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
                       {zhEn("请求只读访问当前工作区文件。", "Requests read-only access to the current workspace.")}
+                    </Text>
+                  </View>
+                </If>
+
+                <If when={plugin().credentials.length > 0}>
+                  <View
+                    class="bg-muted/60 border border-border"
+                    style={{ borderRadius: 8, padding: 10 }}
+                  >
+                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                      {zhEn(
+                        `请求读写凭据：${plugin().credentials.map((c) => c.label || c.name).join("、")}`,
+                        `Requests credential access: ${plugin().credentials.map((c) => c.label || c.name).join(", ")}`,
+                      )}
                     </Text>
                   </View>
                 </If>
@@ -1019,6 +1108,15 @@ export function PluginsPane() {
       <PluginRepoBrowserModal
         open={repoBrowserOpen()}
         onClose={() => repoBrowserOpen.set(false)}
+        onInstalled={(id) => {
+          const next = refreshPluginsOverview(false);
+          overview.set(next);
+          const installed = next.plugins.find((p) => p.id === id) as ExtendedPluginSummary | undefined;
+          if (installed && isPendingTrust(installed)) {
+            repoBrowserOpen.set(false);
+            pendingTrustPlugin.set(installed);
+          }
+        }}
       />
     </View>
   );

@@ -173,6 +173,40 @@ function filterSampleEditorials(queryJson: string) {
   };
 }
 
+function makeEmptyDashboard(): TrainingDashboardData {
+  return {
+    ...makeSampleDashboard(),
+    last_synced_at: null,
+    has_local_records: false,
+    local_solved_count: 0,
+    accounts: [],
+    kpi: {
+      today_ac: 0,
+      today_submissions: 0,
+      week_ac: 0,
+      week_submissions: 0,
+      month_ac: 0,
+      month_submissions: 0,
+      window_ac: 0,
+      window_submissions: 0,
+      total_ac: 0,
+      total_submissions: 0,
+      streak_days: 0,
+      longest_streak_days: 0,
+      unsolved_attempted_count: 0,
+      library_todo_count: 0,
+      library_attempted_count: 0,
+    },
+    heatmap: [],
+    rating_series: [],
+    difficulty_trend: [],
+    difficulty_buckets: [],
+    tag_distribution: [],
+    unsolved_problems: [],
+    workspace_backlog: [],
+  };
+}
+
 function TrainingTestHarness() {
   languagePref.set("zh-CN");
   const mode = signal("");
@@ -207,6 +241,13 @@ function TrainingTestHarness() {
                 error: null,
               };
             }}
+            fetchDashboard={() => makeEmptyDashboard()}
+            fetchOjSources={() => [
+              { id: "codeforces", name: "Codeforces", handle: "" },
+              { id: "atcoder", name: "AtCoder", handle: "" },
+            ]}
+            fetchContests={() => []}
+            fetchSubmissions={() => ({ total: 0, offset: 0, limit: 50, items: [] })}
             fetchEditorials={filterSampleEditorials}
           />
         </View>

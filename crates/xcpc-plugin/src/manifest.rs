@@ -137,7 +137,6 @@ pub struct PluginPermissionSummary {
     pub domains: Vec<String>,
     pub credentials: Vec<String>,
     pub workspace_read: bool,
-    pub has_unsandboxed_ui: bool,
 }
 
 impl PluginManifest {
@@ -189,13 +188,24 @@ impl PluginManifest {
             domains: self.permissions.domains.clone(),
             credentials: self.credentials.iter().map(|c| c.key.clone()).collect(),
             workspace_read: self.permissions.workspace_read,
-            has_unsandboxed_ui: self.ui_entry.is_some(),
         }
+    }
+
+    pub fn requires_trust(&self) -> bool {
+        requires_trust(self)
     }
 
     pub fn is_domain_allowed(&self, host: &str) -> bool {
         is_domain_allowed(&self.permissions.domains, host)
     }
+}
+
+/// Returns `true` if a non-builtin plugin with this manifest declares any sensitive permission
+/// (network domains, credentials, or workspace read access) and therefore requires explicit user trust.
+pub fn requires_trust(manifest: &PluginManifest) -> bool {
+    !manifest.permissions.domains.is_empty()
+        || !manifest.credentials.is_empty()
+        || manifest.permissions.workspace_read
 }
 
 pub fn validate_plugin_id(id: &str) -> Result<()> {

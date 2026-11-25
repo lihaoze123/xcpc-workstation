@@ -13,13 +13,16 @@ use crate::error::{PluginError, Result};
 use crate::http::{HttpClient, HttpRequest, MockHttpClient};
 use crate::kv::{KvStore, write_atomic};
 use crate::manifest::{
-    PluginCapability, PluginManifest, PluginPermissionSummary, validate_plugin_id,
+    PluginCapability, PluginManifest, PluginPermissionSummary, requires_trust, validate_plugin_id,
 };
 use crate::runtime::{HostContext, PluginLogEntry, PluginRuntime, SandboxLimits};
 use crate::workspace::WorkspaceReader;
 
 pub const OFFICIAL_PLUGIN_REPO_URL: &str =
+    "https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/index.json";
+pub const LEGACY_OFFICIAL_PLUGIN_REPO_URL: &str =
     "https://raw.githubusercontent.com/lihaoze123/xcpc-plugins/main/index.json";
+pub const OFFICIAL_PLUGIN_SDK_TARBALL_URL: &str = "https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/xcpc-plugin-sdk.tgz";
 pub const OFFICIAL_PLUGIN_REPO_NAME: &str = "XCPC Official";
 pub const OFFICIAL_PLUGIN_REPO_ENV: &str = "XCPC_OFFICIAL_PLUGIN_REPO";
 
@@ -47,6 +50,14 @@ pub struct InstalledPlugin {
     pub manifest: PluginManifest,
     pub origin: PluginOrigin,
     pub enabled: bool,
+    #[serde(default)]
+    pub pending_trust: bool,
+    #[serde(default)]
+    pub overrides_builtin: bool,
+    #[serde(default)]
+    pub has_network: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,11 +87,99 @@ pub struct LoadedPlugin {
     pub ui_source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+pub struct LoadedPluginUiHtml {
+    pub plugin_id: String,
+    pub html: String,
+    pub manifest: PluginManifest,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct TrustedPermissions {
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    credentials: Vec<String>,
+    #[serde(default)]
+    workspace_read: bool,
+}
+
+impl TrustedPermissions {
+    fn from_manifest(manifest: &PluginManifest) -> Self {
+        let mut domains: Vec<String> = manifest
+            .permissions
+            .domains
+            .iter()
+            .map(|d| d.trim().to_ascii_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
+        domains.sort();
+        domains.dedup();
+
+        let mut credentials: Vec<String> = manifest
+            .credentials
+            .iter()
+            .map(|c| c.key.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        credentials.sort();
+        credentials.dedup();
+
+        Self {
+            domains,
+            credentials,
+            workspace_read: manifest.permissions.workspace_read,
+        }
+    }
+
+    fn covers(&self, manifest: &PluginManifest) -> bool {
+        if manifest.permissions.workspace_read && !self.workspace_read {
+            return false;
+        }
+        for d in &manifest.permissions.domains {
+            let norm = d.trim().to_ascii_lowercase();
+            if !norm.is_empty() && !self.domains.iter().any(|td| td == &norm) {
+                return false;
+            }
+        }
+        for c in &manifest.credentials {
+            let key = c.key.trim();
+            if !key.is_empty() && !self.credentials.iter().any(|tk| tk == key) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PluginStateEntry {
+    #[serde(default = "default_true")]
     enabled: bool,
+    #[serde(default)]
+    pending_trust: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trusted_permissions: Option<TrustedPermissions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+}
+
+impl Default for PluginStateEntry {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            pending_trust: false,
+            trusted_permissions: None,
+            source_repo: None,
+            last_error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -126,6 +225,29 @@ pub struct RepoCatalog {
     pub name: String,
     #[serde(default)]
     pub plugins: Vec<RepoPluginEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoFetchError {
+    pub repo_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregatedRepoPlugin {
+    pub repo_url: String,
+    pub repo_name: String,
+    pub entry: RepoPluginEntry,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregatedRepoCatalog {
+    #[serde(default)]
+    pub plugins: Vec<AggregatedRepoPlugin>,
+    #[serde(default)]
+    pub errors: Vec<RepoFetchError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +382,7 @@ impl PluginManager {
         if meta.file_type().is_symlink() {
             let Some(reg) = links.iter().find(|l| l.id == dir_name) else {
                 // Unregistered symlink is strictly rejected.
-                return Err(PluginError::ZipSlip(format!(
+                return Err(PluginError::SymlinkEscape(format!(
                     "unregistered symlink plugin '{}'",
                     entry_path.display()
                 )));
@@ -278,7 +400,7 @@ impl PluginManager {
                 ))
             })?;
             if canonical_entry != canonical_registered || !canonical_entry.is_dir() {
-                return Err(PluginError::ZipSlip(format!(
+                return Err(PluginError::SymlinkEscape(format!(
                     "symlink '{}' does not match registered target '{}'",
                     entry_path.display(),
                     reg.target
@@ -288,7 +410,7 @@ impl PluginManager {
         } else if meta.is_dir() {
             let canonical_entry = std::fs::canonicalize(entry_path)?;
             if !canonical_entry.starts_with(canonical_plugins_dir) {
-                return Err(PluginError::ZipSlip(format!(
+                return Err(PluginError::SymlinkEscape(format!(
                     "plugin directory '{}' escapes plugins root",
                     entry_path.display()
                 )));
@@ -296,6 +418,63 @@ impl PluginManager {
             Ok(Some((canonical_entry, false, None)))
         } else {
             Ok(None)
+        }
+    }
+
+    fn compute_pending_trust(
+        manifest: &PluginManifest,
+        origin: PluginOrigin,
+        st: Option<&PluginStateEntry>,
+    ) -> bool {
+        if matches!(origin, PluginOrigin::Builtin) || !requires_trust(manifest) {
+            return false;
+        }
+        match st {
+            Some(entry) if !entry.pending_trust => !entry
+                .trusted_permissions
+                .as_ref()
+                .is_some_and(|tp| tp.covers(manifest)),
+            _ => true,
+        }
+    }
+
+    fn record_install_trust_state(
+        &self,
+        manifest: &PluginManifest,
+        source_repo: Option<&str>,
+    ) -> Result<()> {
+        let mut state = self.load_state()?;
+        let entry = state.plugins.entry(manifest.id.clone()).or_default();
+        let source_changed = entry.source_repo.as_deref() != source_repo;
+        entry.source_repo = source_repo.map(str::to_string);
+        if requires_trust(manifest) {
+            let already_trusted = !source_changed
+                && !entry.pending_trust
+                && entry
+                    .trusted_permissions
+                    .as_ref()
+                    .is_some_and(|tp| tp.covers(manifest));
+            if !already_trusted {
+                entry.pending_trust = true;
+                entry.trusted_permissions = None;
+            }
+        } else {
+            entry.pending_trust = false;
+            if source_changed {
+                entry.trusted_permissions = None;
+            }
+        }
+        self.save_state(&state)
+    }
+
+    fn clear_trust_state(&self, id: &str) {
+        if let Ok(mut state) = self.load_state()
+            && let Some(entry) = state.plugins.get_mut(id)
+        {
+            entry.pending_trust = false;
+            entry.trusted_permissions = None;
+            entry.source_repo = None;
+            let _ = self.save_state(&state);
         }
     }
 
@@ -308,12 +487,17 @@ impl PluginManager {
         for builtin in BUILTIN_PLUGINS {
             let manifest = PluginManifest::from_toml_str(builtin.manifest_toml)?;
             let st = state.plugins.get(&manifest.id);
+            let has_network = !manifest.permissions.domains.is_empty();
             by_id.insert(
                 manifest.id.clone(),
                 InstalledPlugin {
                     manifest,
                     origin: PluginOrigin::Builtin,
                     enabled: st.map(|s| s.enabled).unwrap_or(true),
+                    pending_trust: false,
+                    overrides_builtin: false,
+                    has_network,
+                    source_repo: None,
                     last_error: st.and_then(|s| s.last_error.clone()),
                     local_dir: None,
                     is_linked: false,
@@ -358,12 +542,19 @@ impl PluginManager {
                     PluginOrigin::Local
                 };
                 let st = state.plugins.get(&manifest.id);
+                let pending_trust = Self::compute_pending_trust(&manifest, origin, st);
+                let overrides_builtin = matches!(origin, PluginOrigin::LocalOverride);
+                let has_network = !manifest.permissions.domains.is_empty();
                 by_id.insert(
                     manifest.id.clone(),
                     InstalledPlugin {
                         manifest,
                         origin,
                         enabled: st.map(|s| s.enabled).unwrap_or(true),
+                        pending_trust,
+                        overrides_builtin,
+                        has_network,
+                        source_repo: st.and_then(|s| s.source_repo.clone()),
                         last_error: st.and_then(|s| s.last_error.clone()),
                         local_dir: Some(resolved_root),
                         is_linked,
@@ -377,6 +568,7 @@ impl PluginManager {
     }
 
     /// Loads a plugin's manifest and JS sources by ID.
+    /// Refuses to load any plugin that is pending user trust (`PLUGIN_UNTRUSTED`).
     pub fn load_plugin(&self, id: &str) -> Result<LoadedPlugin> {
         // Explicit check: if `<plugins_dir>/<id>` exists as an unregistered symlink, return a clear security error.
         let direct_path = self.plugins_dir().join(id);
@@ -393,6 +585,10 @@ impl PluginManager {
             .into_iter()
             .find(|p| p.manifest.id == id)
             .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+
+        if info.pending_trust {
+            return Err(PluginError::Untrusted(info.manifest.id));
+        }
 
         if let Some(ref dir) = info.local_dir {
             let entry_source = read_plugin_file_safe(dir, &info.manifest.entry, "entry")?;
@@ -414,6 +610,59 @@ impl PluginManager {
         } else {
             Err(PluginError::NotFound(id.to_string()))
         }
+    }
+
+    /// Loads a plugin's WebView HTML entry (`manifest.ui_entry`) safely from disk.
+    /// Enforces `enabled == true` and `pending_trust == false`, and rejects path traversal or symlink escapes.
+    pub fn load_plugin_ui_html(&self, id: &str) -> Result<LoadedPluginUiHtml> {
+        let direct_path = self.plugins_dir().join(id);
+        if let Ok(meta) = std::fs::symlink_metadata(&direct_path)
+            && meta.file_type().is_symlink()
+        {
+            let canonical_plugins_dir = std::fs::canonicalize(self.plugins_dir())?;
+            let links = self.list_links().unwrap_or_default();
+            let _ = self.validate_plugin_root(&direct_path, id, &canonical_plugins_dir, &links)?;
+        }
+
+        let plugins = self.list_plugins()?;
+        let info = plugins
+            .into_iter()
+            .find(|p| p.manifest.id == id)
+            .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+
+        if !info.enabled {
+            return Err(PluginError::Disabled(info.manifest.id));
+        }
+        if info.pending_trust {
+            return Err(PluginError::Untrusted(info.manifest.id));
+        }
+
+        let ui_rel = info.manifest.ui_entry.as_deref().ok_or_else(|| {
+            PluginError::InvalidPackage(format!(
+                "plugin '{}' does not declare ui_entry",
+                info.manifest.id
+            ))
+        })?;
+        let ui_lower = ui_rel.to_ascii_lowercase();
+        if !ui_lower.ends_with(".html") && !ui_lower.ends_with(".htm") {
+            return Err(PluginError::InvalidPackage(format!(
+                "UNSUPPORTED_UI_ENTRY: plugin '{}' uses legacy ui_entry '{}' (expected .html)",
+                info.manifest.id, ui_rel
+            )));
+        }
+        let dir = info.local_dir.as_deref().ok_or_else(|| {
+            PluginError::InvalidPackage(format!(
+                "plugin '{}' has no local directory for ui_entry",
+                info.manifest.id
+            ))
+        })?;
+
+        let html = read_plugin_file_safe(dir, ui_rel, "ui_entry")?;
+        Ok(LoadedPluginUiHtml {
+            plugin_id: info.manifest.id.clone(),
+            html,
+            manifest: info.manifest,
+        })
     }
 
     /// Links a local development plugin directory into `<dataDir>/plugins/<id>` and registers it in `plugin_links.json`.
@@ -459,6 +708,7 @@ impl PluginManager {
             target: canonical_target.to_string_lossy().to_string(),
         });
         self.save_links(&links)?;
+        self.record_install_trust_state(&manifest, None)?;
 
         let plugins = self.list_plugins()?;
         plugins
@@ -486,6 +736,9 @@ impl PluginManager {
             remove_symlink_path(&link_path)?;
             removed_link = true;
         }
+        if removed_reg || removed_link {
+            self.clear_trust_state(id);
+        }
         Ok(removed_reg || removed_link)
     }
 
@@ -507,6 +760,7 @@ impl PluginManager {
             if links.len() != before {
                 let _ = self.save_links(&links);
             }
+            self.clear_trust_state(id);
             return Ok(true);
         }
         Ok(false)
@@ -517,23 +771,34 @@ impl PluginManager {
     }
 
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        // Ensure plugin exists.
-        let _ = self.load_plugin(id)?;
+        // Ensure plugin exists (allow toggling even when pending_trust is true).
+        let plugins = self.list_plugins()?;
+        if !plugins.iter().any(|p| p.manifest.id == id) {
+            return Err(PluginError::NotFound(id.to_string()));
+        }
         let mut state = self.load_state()?;
         let entry = state.plugins.entry(id.to_string()).or_default();
         entry.enabled = enabled;
         self.save_state(&state)
     }
 
+    /// Explicitly marks an installed plugin (and its currently declared sensitive permissions) as trusted.
+    pub fn trust_plugin(&self, id: &str) -> Result<()> {
+        let plugins = self.list_plugins()?;
+        let plugin = plugins
+            .into_iter()
+            .find(|p| p.manifest.id == id)
+            .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+        let mut state = self.load_state()?;
+        let entry = state.plugins.entry(id.to_string()).or_default();
+        entry.pending_trust = false;
+        entry.trusted_permissions = Some(TrustedPermissions::from_manifest(&plugin.manifest));
+        self.save_state(&state)
+    }
+
     pub fn record_error(&self, id: &str, err_msg: impl Into<String>) -> Result<()> {
         let mut state = self.load_state()?;
-        let entry = state
-            .plugins
-            .entry(id.to_string())
-            .or_insert_with(|| PluginStateEntry {
-                enabled: true,
-                last_error: None,
-            });
+        let entry = state.plugins.entry(id.to_string()).or_default();
         entry.last_error = Some(err_msg.into());
         self.save_state(&state)
     }
@@ -560,11 +825,21 @@ impl PluginManager {
         if let Some(ui) = builtin.ui_js {
             write_atomic(&dest.join("ui.js"), ui.as_bytes())?;
         }
+        // Trust the initial exported copy's built-in permissions; any newly added permissions later will re-trigger trust.
+        let _ = self.trust_plugin(builtin.id);
         Ok(dest)
     }
 
     /// Installs a plugin from a local directory into `<dataDir>/plugins/<id>/`.
     pub fn install_from_dir(&self, src: &Path) -> Result<InstalledPlugin> {
+        self.install_from_dir_with_source(src, None)
+    }
+
+    fn install_from_dir_with_source(
+        &self,
+        src: &Path,
+        source_repo: Option<&str>,
+    ) -> Result<InstalledPlugin> {
         let manifest_path = src.join("manifest.toml");
         if !manifest_path.is_file() {
             return Err(PluginError::InvalidPackage(
@@ -638,6 +913,7 @@ impl PluginManager {
         if let Some(backup_path) = backup {
             let _ = std::fs::remove_dir_all(backup_path);
         }
+        self.record_install_trust_state(&manifest, source_repo)?;
 
         let plugins = self.list_plugins()?;
         plugins
@@ -658,7 +934,7 @@ impl PluginManager {
         zip_bytes: &[u8],
         expected_sha256: Option<&str>,
     ) -> Result<InstalledPlugin> {
-        self.install_from_zip_bytes_inner(zip_bytes, expected_sha256, None)
+        self.install_from_zip_bytes_inner(zip_bytes, expected_sha256, None, None)
     }
 
     fn install_from_zip_bytes_inner(
@@ -666,6 +942,7 @@ impl PluginManager {
         zip_bytes: &[u8],
         expected_sha256: Option<&str>,
         expected_id: Option<&str>,
+        source_repo: Option<&str>,
     ) -> Result<InstalledPlugin> {
         if let Some(expected) = expected_sha256 {
             let actual = sha256_hex(zip_bytes);
@@ -691,7 +968,7 @@ impl PluginManager {
                 )));
             }
         }
-        self.install_from_dir(&plugin_root)
+        self.install_from_dir_with_source(&plugin_root, source_repo)
     }
 
     // --- Decentralized Repo Subscriptions ---
@@ -704,21 +981,40 @@ impl PluginManager {
                 name: Some(OFFICIAL_PLUGIN_REPO_NAME.to_string()),
             }]);
         }
-        let raw = std::fs::read_to_string(path)?;
+        let raw = std::fs::read_to_string(&path)?;
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let file: PluginReposFile = serde_json::from_str(&raw)?;
+        let mut file: PluginReposFile = serde_json::from_str(&raw)?;
+        let mut migrated = false;
+        let current_official = official_repo_url();
+        for repo in &mut file.repos {
+            if repo.url == LEGACY_OFFICIAL_PLUGIN_REPO_URL {
+                repo.url = current_official.clone();
+                if repo.name.is_none() {
+                    repo.name = Some(OFFICIAL_PLUGIN_REPO_NAME.to_string());
+                }
+                migrated = true;
+            }
+        }
+        if migrated {
+            // Deduplicate URLs in case both legacy and new official URL were present.
+            let mut deduped: Vec<PluginRepoConfig> = Vec::with_capacity(file.repos.len());
+            for repo in file.repos {
+                if !deduped.iter().any(|r| r.url == repo.url) {
+                    deduped.push(repo);
+                }
+            }
+            file.repos = deduped;
+            let bytes = serde_json::to_vec_pretty(&file)?;
+            let _ = write_atomic(&path, &bytes);
+        }
         Ok(file.repos)
     }
 
     pub fn add_repo(&self, url: impl Into<String>, name: Option<String>) -> Result<()> {
         let url = url.into().trim().to_string();
-        if url.is_empty() {
-            return Err(PluginError::InvalidPackage(
-                "repo URL cannot be empty".into(),
-            ));
-        }
+        validate_repo_url(&url)?;
         let mut repos = self.list_repos()?;
         if let Some(existing) = repos.iter_mut().find(|r| r.url == url) {
             if name.is_some() {
@@ -743,22 +1039,119 @@ impl PluginManager {
         Ok(true)
     }
 
-    pub fn fetch_repo_catalog(&self, url: &str, http: &dyn HttpClient) -> Result<RepoCatalog> {
-        let resp = http.send(&HttpRequest {
-            url: url.to_string(),
-            method: "GET".to_string(),
-            headers: BTreeMap::new(),
-            body: None,
-            timeout_ms: Some(15_000),
-        })?;
-        if !(200..300).contains(&resp.status) {
-            return Err(PluginError::Http(format!(
-                "HTTP {} fetching repo catalog {url}",
-                resp.status
-            )));
+    /// Ensures the official plugin repository is subscribed (prepended at index 0 if missing).
+    /// Returns `true` if the official repo was restored, `false` if it was already present.
+    pub fn restore_official_repo(&self) -> Result<bool> {
+        let mut repos = self.list_repos()?;
+        let url = official_repo_url();
+        if repos.iter().any(|r| r.url == url) {
+            return Ok(false);
         }
-        let catalog: RepoCatalog = serde_json::from_str(&resp.body)?;
-        Ok(catalog)
+        repos.insert(
+            0,
+            PluginRepoConfig {
+                url,
+                name: Some(OFFICIAL_PLUGIN_REPO_NAME.to_string()),
+            },
+        );
+        let bytes = serde_json::to_vec_pretty(&PluginReposFile { repos })?;
+        write_atomic(&self.repos_path(), &bytes)?;
+        Ok(true)
+    }
+
+    pub fn fetch_repo_catalog(&self, url: &str, http: &dyn HttpClient) -> Result<RepoCatalog> {
+        const MAX_REPO_REDIRECTS: usize = 5;
+        let mut current_url = url.to_string();
+        for hop in 0..=MAX_REPO_REDIRECTS {
+            validate_repo_url(&current_url)?;
+            let resp = http.send(&HttpRequest {
+                url: current_url.clone(),
+                method: "GET".to_string(),
+                headers: BTreeMap::new(),
+                body: None,
+                timeout_ms: Some(15_000),
+            })?;
+            if matches!(resp.status, 301 | 302 | 303 | 307 | 308) {
+                let Some(loc) = resp
+                    .headers
+                    .get("location")
+                    .filter(|s| !s.trim().is_empty())
+                else {
+                    return Err(PluginError::Http(format!(
+                        "HTTP {} redirect without Location fetching repo catalog {current_url}",
+                        resp.status
+                    )));
+                };
+                if hop == MAX_REPO_REDIRECTS {
+                    return Err(PluginError::Http(format!(
+                        "too many redirects fetching repo catalog {url}"
+                    )));
+                }
+                let base = url::Url::parse(&current_url).map_err(|e| {
+                    PluginError::Http(format!("invalid repo catalog url '{current_url}': {e}"))
+                })?;
+                let next = base.join(loc.trim()).map_err(|e| {
+                    PluginError::Http(format!("invalid redirect location '{loc}': {e}"))
+                })?;
+                current_url = next.to_string();
+                continue;
+            }
+            if !(200..300).contains(&resp.status) {
+                return Err(PluginError::Http(format!(
+                    "HTTP {} fetching repo catalog {current_url}",
+                    resp.status
+                )));
+            }
+            let catalog: RepoCatalog = serde_json::from_str(&resp.body)?;
+            return Ok(catalog);
+        }
+        Err(PluginError::Http(format!(
+            "too many redirects fetching repo catalog {url}"
+        )))
+    }
+
+    /// Fetches all subscribed plugin repositories, returning both aggregated plugins and per-repo fetch errors.
+    /// Backfills missing/URL-default repo display names from fetched catalog names and persists `plugin_repos.json`.
+    pub fn fetch_all_repo_catalogs(&self, http: &dyn HttpClient) -> Result<AggregatedRepoCatalog> {
+        let mut repos = self.list_repos()?;
+        let mut repos_updated = false;
+        let mut plugins = Vec::new();
+        let mut errors = Vec::new();
+        for repo in &mut repos {
+            match self.fetch_repo_catalog(&repo.url, http) {
+                Ok(catalog) => {
+                    let catalog_name = catalog.name.trim();
+                    let repo_name = if !catalog_name.is_empty() {
+                        if repo.name.is_none() || repo.name.as_deref() == Some(repo.url.as_str()) {
+                            repo.name = Some(catalog_name.to_string());
+                            repos_updated = true;
+                        }
+                        catalog_name.to_string()
+                    } else {
+                        repo.name.clone().unwrap_or_else(|| repo.url.clone())
+                    };
+                    for entry in catalog.plugins {
+                        plugins.push(AggregatedRepoPlugin {
+                            repo_url: repo.url.clone(),
+                            repo_name: repo_name.clone(),
+                            entry,
+                        });
+                    }
+                }
+                Err(err) => {
+                    errors.push(RepoFetchError {
+                        repo_url: repo.url.clone(),
+                        repo_name: repo.name.clone(),
+                        error: err.to_string(),
+                    });
+                }
+            }
+        }
+        if repos_updated {
+            let bytes = serde_json::to_vec_pretty(&PluginReposFile { repos })?;
+            let _ = write_atomic(&self.repos_path(), &bytes);
+        }
+        Ok(AggregatedRepoCatalog { plugins, errors })
     }
 
     pub fn install_from_repo_entry(
@@ -766,8 +1159,84 @@ impl PluginManager {
         entry: &RepoPluginEntry,
         http: &dyn HttpClient,
     ) -> Result<InstalledPlugin> {
+        validate_repo_url(&entry.download_url)?;
         let zip_bytes = http.get_bytes(&entry.download_url)?;
-        self.install_from_zip_bytes_inner(&zip_bytes, Some(&entry.sha256), Some(&entry.id))
+        self.install_from_zip_bytes_inner(&zip_bytes, Some(&entry.sha256), Some(&entry.id), None)
+    }
+
+    /// Installs a plugin entry from a specific repository URL, recording `source_repo` for cross-repo trust isolation.
+    pub fn install_from_repo_entry_from_source(
+        &self,
+        repo_url: &str,
+        entry: &RepoPluginEntry,
+        http: &dyn HttpClient,
+    ) -> Result<InstalledPlugin> {
+        validate_repo_url(repo_url)?;
+        validate_repo_url(&entry.download_url)?;
+        let zip_bytes = http.get_bytes(&entry.download_url)?;
+        self.install_from_zip_bytes_inner(
+            &zip_bytes,
+            Some(&entry.sha256),
+            Some(&entry.id),
+            Some(repo_url),
+        )
+    }
+
+    /// Looks up `plugin_id` across all subscribed repositories and installs the matching entry.
+    pub fn install_from_repos(
+        &self,
+        plugin_id: &str,
+        http: &dyn HttpClient,
+    ) -> Result<InstalledPlugin> {
+        validate_plugin_id(plugin_id)?;
+        let aggregated = self.fetch_all_repo_catalogs(http)?;
+        if let Some(found) = aggregated.plugins.iter().find(|p| p.entry.id == plugin_id) {
+            return self.install_from_repo_entry_from_source(&found.repo_url, &found.entry, http);
+        }
+        if aggregated.plugins.is_empty() && !aggregated.errors.is_empty() {
+            let summary = aggregated
+                .errors
+                .iter()
+                .map(|e| format!("{}: {}", e.repo_url, e.error))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(PluginError::Http(format!(
+                "failed to fetch plugin repositories: {summary}"
+            )));
+        }
+        Err(PluginError::NotFound(plugin_id.to_string()))
+    }
+}
+
+/// Validates that a plugin repository or download URL uses HTTPS,
+/// allowing plaintext HTTP only for loopback hosts (`localhost`, `127.0.0.1`, `[::1]`).
+pub fn validate_repo_url(raw: &str) -> Result<()> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(PluginError::InvalidPackage(
+            "repo URL cannot be empty".into(),
+        ));
+    }
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|e| PluginError::InvalidPackage(format!("invalid repo URL '{trimmed}': {e}")))?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let is_loopback = match parsed.host() {
+                Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+                Some(url::Host::Ipv4(ip)) => ip == std::net::Ipv4Addr::LOCALHOST,
+                Some(url::Host::Ipv6(ip)) => ip == std::net::Ipv6Addr::LOCALHOST,
+                None => false,
+            };
+            if is_loopback {
+                Ok(())
+            } else {
+                Err(PluginError::HttpNotAllowed(trimmed.to_string()))
+            }
+        }
+        other => Err(PluginError::InvalidPackage(format!(
+            "unsupported repo URL scheme '{other}' (expected https://)"
+        ))),
     }
 }
 
@@ -786,8 +1255,24 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 const MAX_ZIP_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ZIP_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Reads a plugin-relative file after verifying its canonical path stays within `dir`.
+/// Reads a plugin-relative file after rejecting path traversal and verifying its canonical path stays within `dir`.
 fn read_plugin_file_safe(dir: &Path, rel_path: &str, field_name: &str) -> Result<String> {
+    if rel_path.trim().is_empty() || rel_path.contains('\\') || rel_path.starts_with('/') {
+        return Err(PluginError::ZipSlip(rel_path.to_string()));
+    }
+    let rel = Path::new(rel_path);
+    if rel.is_absolute() {
+        return Err(PluginError::ZipSlip(rel_path.to_string()));
+    }
+    for comp in rel.components() {
+        if matches!(
+            comp,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            return Err(PluginError::ZipSlip(rel_path.to_string()));
+        }
+    }
+
     let canonical_dir = std::fs::canonicalize(dir).map_err(|e| {
         PluginError::InvalidPackage(format!(
             "failed to resolve plugin directory '{}': {e}",
@@ -799,7 +1284,7 @@ fn read_plugin_file_safe(dir: &Path, rel_path: &str, field_name: &str) -> Result
         PluginError::InvalidPackage(format!("failed to read {field_name} '{rel_path}': {e}"))
     })?;
     if !canonical_file.starts_with(&canonical_dir) {
-        return Err(PluginError::ZipSlip(format!(
+        return Err(PluginError::SymlinkEscape(format!(
             "{field_name} '{rel_path}' escapes plugin directory"
         )));
     }
@@ -904,7 +1389,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
         let entry = entry?;
         let file_type = entry.file_type()?;
         if file_type.is_symlink() {
-            return Err(PluginError::ZipSlip(format!(
+            return Err(PluginError::SymlinkEscape(format!(
                 "symlink not permitted in plugin dir: {}",
                 entry.path().display()
             )));
@@ -921,263 +1406,17 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
 
 // --- DX Helpers ---
 
-const XCPC_PLUGIN_DTS: &str = r#"// XCPC Workstation Plugin Host API Definitions
-
-export interface HostHttpRequest {
-  url: string;
-  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD";
-  headers?: Record<string, string>;
-  body?: string;
-  credentialHeader?:
-    | { header: string; key: string; prefix?: string }
-    | Record<string, string>;
-  timeoutMs?: number;
-}
-
-export interface HostHttpResponse {
-  status: number;
-  headers: Record<string, string>;
-  body: string;
-}
-
-export interface HtmlElementMatch {
-  text: string;
-  html: string;
-  attrs: Record<string, string>;
-}
-
-export interface WorkspaceProblemSummary {
-  id: string;
-  title: string;
-  tags: string[];
-  difficulty?: string;
-}
-
-export interface WorkspaceProblemDetail extends WorkspaceProblemSummary {
-  statement_md?: string;
-  editorial_md?: string;
-}
-
-export interface RenderedRgba {
-  width: number;
-  height: number;
-  rgba_base64: string;
-}
-
-export type HighlightTokenKind =
-  | "keyword"
-  | "type"
-  | "string"
-  | "number"
-  | "comment"
-  | "operator"
-  | "ident"
-  | "plain";
-
-export interface HighlightToken {
-  kind: HighlightTokenKind;
-  text: string;
-}
-
-export interface HighlightLine {
-  tokens: HighlightToken[];
-}
-
-export interface HighlightResult {
-  language: string;
-  lines: HighlightLine[];
-}
-
-export interface GraphNode {
-  id: string;
-  label?: string;
-  x?: number;
-  y?: number;
-  color?: string;
-}
-
-export interface GraphEdge {
-  from: string;
-  to: string;
-  weight?: string;
-  label?: string;
-  directed?: boolean;
-}
-
-export type ToolOutputBlock =
-  | { type: "text"; title?: string; content: string; monospace?: boolean }
-  | { type: "markdown"; title?: string; content: string }
-  | { type: "table"; title?: string; headers: string[]; rows: string[][]; align?: string[] }
-  | {
-      type: "graph";
-      title?: string;
-      directed?: boolean;
-      weighted?: boolean;
-      one_indexed?: boolean;
-      nodes: GraphNode[];
-      edges: GraphEdge[];
-      layout?: string;
-    }
-  | { type: "svg"; title?: string; svg: string; width?: number; height?: number }
-  | { type: "image"; title?: string; png_base64: string; width?: number; height?: number };
-
-export interface ToolExecutionResult {
-  blocks: ToolOutputBlock[];
-  summary?: string;
-}
-
-export type PluginCommandAction =
-  | { type: "message"; text: string }
-  | { type: "open_tool"; plugin_id: string; tool_id?: string; initial_inputs?: unknown }
-  | { type: "tool_result"; result: ToolExecutionResult }
-  | { type: "none" };
-
-export interface ImportFileInput {
-  name: string;
-  content_base64: string;
-  text?: string;
-}
-
-export interface DraftSample {
-  input: string;
-  output: string;
-}
-
-export interface ProblemDraft {
-  id?: string;
-  title: string;
-  statement_md: string;
-  editorial_md?: string;
-  tags?: string[];
-  rating?: number;
-  time_limit?: string;
-  memory_limit?: string;
-  samples: DraftSample[];
-  source?: { platform: string; id: string; url?: string };
-  assets?: Record<string, string>;
-}
-
-export interface ContestDraft {
-  id?: string;
-  title: string;
-  subtitle?: string;
-  problems: ProblemDraft[];
-}
-
-export type ImportDraft =
-  | ({ kind: "problem" } & ProblemDraft)
-  | ({ kind: "contest" } & ContestDraft);
-
-export interface ExportContext {
-  kind: "problem" | "contest";
-  id: string;
-  title: string;
-  metadata: Record<string, unknown>;
-  statement_md?: string;
-  editorial_md?: string;
-  samples?: DraftSample[];
-  pdf_base64?: string;
-  problems?: ExportContext[];
-}
-
-export interface ExportFileEntry {
-  path: string;
-  content_base64?: string;
-  text?: string;
-}
-
-export interface ExportOutput {
-  files: ExportFileEntry[];
-  summary?: string;
-}
-
-export interface PluginModuleExports {
-  runTool?(
-    toolId: string,
-    inputs: Record<string, unknown>,
-    ctx?: { plugin_id: string; tool_id: string }
-  ): ToolExecutionResult | Promise<ToolExecutionResult>;
-  runCommand?(
-    commandId: string,
-    ctx?: Record<string, unknown>
-  ): PluginCommandAction | Promise<PluginCommandAction>;
-  importPackage?(
-    files: ImportFileInput[],
-    importerId?: string
-  ): ImportDraft | Promise<ImportDraft>;
-  exportPackage?(
-    ctx: ExportContext,
-    exporterId?: string
-  ): ExportOutput | Promise<ExportOutput>;
-}
-
-export interface HostApi {
-  readonly http: {
-    fetch(req: HostHttpRequest): HostHttpResponse;
-  };
-  readonly credentials: {
-    get(key: string): string | null;
-  };
-  readonly html: {
-    select(html: string, cssSelector: string): HtmlElementMatch[];
-  };
-  readonly kv: {
-    get(key: string): unknown | null;
-    set(key: string, value: unknown): void;
-    delete(key: string): boolean;
-  };
-  readonly workspace: {
-    listProblems(): WorkspaceProblemSummary[];
-    getProblem(id: string): WorkspaceProblemDetail | null;
-  };
-  readonly render: {
-    svgToPng(svg: string, scale?: number): string;
-    svgToRgba(svg: string, scale?: number): RenderedRgba;
-  };
-  highlight(
-    code: string,
-    lang?: "cpp" | "c" | "rust" | "python" | "js" | "ts" | "json" | "toml" | "text" | string
-  ): HighlightResult;
-  log(level: "debug" | "info" | "warn" | "error", msg: unknown): void;
-}
-
-declare global {
-  const host: HostApi;
-}
-"#;
-
-/// Scaffolds a new plugin directory with `manifest.toml`, `index.js`, and `xcpc-plugin.d.ts`.
+/// Scaffolds a new plain-JS plugin directory with `manifest.toml`, `index.js`, and (for Tool plugins) a zero-build `ui.html`.
 pub fn init_plugin_scaffold(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     std::fs::create_dir_all(dir)?;
-    let folder_name = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("my-plugin")
-        .to_ascii_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    let id = if folder_name
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-    {
-        folder_name
-    } else {
-        format!("p-{folder_name}")
-    };
+    let id = derive_scaffold_id(dir);
+    let display_name = title_case_id(&id);
 
-    let (manifest, index_js) = match kind {
+    let (manifest, index_js, ui_html) = match kind {
         ScaffoldKind::Oj => (
             format!(
                 r#"id = "{id}"
-name = "My OJ Plugin"
+name = "{display_name}"
 version = "0.1.0"
 description = "Custom OJ data source plugin."
 entry = "index.js"
@@ -1188,9 +1427,7 @@ domains = ["example.com"]
 workspace_read = false
 "#
             ),
-            r#"/// <reference path="./xcpc-plugin.d.ts" />
-
-function verify(ctx) {
+            r#"function verify(ctx) {
   return { ok: true, handle: ctx.handle };
 }
 
@@ -1214,14 +1451,16 @@ function parseProblemUrl(_url) {
 module.exports = { verify, syncSummary, normalizeRating, parseProblemUrl };
 "#
             .to_string(),
+            None,
         ),
         ScaffoldKind::Tool => (
             format!(
                 r#"id = "{id}"
-name = "My Tool Plugin"
+name = "{display_name}"
 version = "0.1.0"
 description = "Custom offline tool plugin."
 entry = "index.js"
+ui_entry = "ui.html"
 capabilities = ["tool"]
 
 [permissions]
@@ -1240,9 +1479,7 @@ kind = "string"
 required = true
 "#
             ),
-            r#"/// <reference path="./xcpc-plugin.d.ts" />
-
-function runTool(toolId, inputs) {
+            r#"function runTool(toolId, inputs) {
   if (toolId === "hello") {
     const text = String((inputs && inputs.text) || "");
     return {
@@ -1257,12 +1494,98 @@ function runTool(toolId, inputs) {
 module.exports = { runTool };
 "#
             .to_string(),
+            Some(format!(
+                r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{display_name}</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    body {{
+      margin: 0;
+      padding: 16px;
+      background: var(--xcpc-bg, transparent);
+      color: var(--xcpc-fg, inherit);
+    }}
+    .card {{
+      border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.25));
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }}
+    input {{
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.35));
+      background: var(--xcpc-surface, transparent);
+      color: inherit;
+      font: inherit;
+    }}
+    pre {{
+      margin: 0;
+      padding: 10px;
+      border-radius: 8px;
+      background: var(--xcpc-surface, rgba(128, 128, 128, 0.1));
+      white-space: pre-wrap;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <strong>{display_name}</strong>
+    <input id="text-input" type="text" placeholder="Type something..." />
+    <pre id="output">Loading...</pre>
+  </div>
+  <script>
+    (async function () {{
+      const input = document.getElementById("text-input");
+      const output = document.getElementById("output");
+      const xcpc = window.xcpc;
+
+      async function update(text) {{
+        if (!xcpc) {{
+          output.textContent = "Hello, " + (text || "world") + "!";
+          return;
+        }}
+        try {{
+          const res = await xcpc.runTool("hello", {{ text }});
+          const first = res && res.blocks && res.blocks[0];
+          output.textContent = first && first.content ? first.content : JSON.stringify(res, null, 2);
+        }} catch (err) {{
+          output.textContent = "Error: " + (err && err.message ? err.message : String(err));
+        }}
+      }}
+
+      const saved = xcpc ? await xcpc.storage.get("name") : null;
+      input.value = typeof saved === "string" ? saved : "XCPC";
+      await update(input.value);
+
+      input.addEventListener("input", () => {{
+        const next = input.value;
+        if (xcpc) xcpc.storage.set("name", next);
+        update(next);
+      }});
+    }})();
+  </script>
+</body>
+</html>
+"#
+            )),
         ),
     };
 
     write_atomic(&dir.join("manifest.toml"), manifest.as_bytes())?;
     write_atomic(&dir.join("index.js"), index_js.as_bytes())?;
-    write_atomic(&dir.join("xcpc-plugin.d.ts"), XCPC_PLUGIN_DTS.as_bytes())?;
+    if let Some(html) = ui_html {
+        write_atomic(&dir.join("ui.html"), html.as_bytes())?;
+    }
     Ok(())
 }
 
@@ -1365,10 +1688,30 @@ fn derive_scaffold_id(dir: &Path) -> String {
     }
 }
 
-/// Scaffolds a Vite + TypeScript/JSX plugin project using `@xcpc/plugin-sdk`.
+fn title_case_id(id: &str) -> String {
+    let words: Vec<String> = id
+        .split(['-', '_'])
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect();
+    if words.is_empty() {
+        "My Plugin".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+/// Scaffolds a Vite + TypeScript WebView plugin project using `@xcpc/plugin-sdk`.
 pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     std::fs::create_dir_all(dir.join("src"))?;
     let id = derive_scaffold_id(dir);
+    let display_name = title_case_id(&id);
 
     let package_json = format!(
         r#"{{
@@ -1382,7 +1725,7 @@ pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     "typecheck": "tsc --noEmit"
   }},
   "devDependencies": {{
-    "@xcpc/plugin-sdk": "^0.1.0",
+    "@xcpc/plugin-sdk": "{OFFICIAL_PLUGIN_SDK_TARBALL_URL}",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
   }}
@@ -1401,13 +1744,11 @@ export default defineConfig({
     let tsconfig_json = r#"{
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
-    "jsx": "react",
-    "jsxFactory": "h",
-    "jsxFragmentFactory": "Fragment",
     "skipLibCheck": true
   },
   "include": ["src", "vite.config.ts"]
@@ -1416,12 +1757,12 @@ export default defineConfig({
 
     let gitignore = "node_modules/\ndist/\n*.zip\n";
 
-    let (manifest_toml, index_ts, ui_tsx) = match kind {
+    let (manifest_toml, index_ts, web_files) = match kind {
         ScaffoldKind::Oj => (
             format!(
                 r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
 id = "{id}"
-name = "My OJ Plugin"
+name = "{display_name}"
 version = "0.1.0"
 description = "Custom OJ data source plugin."
 entry = "index.js"
@@ -1462,11 +1803,11 @@ export function parseProblemUrl(_url: string): ParsedProblemUrl | null {
             format!(
                 r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
 id = "{id}"
-name = "My Tool Plugin"
+name = "{display_name}"
 version = "0.1.0"
 description = "Custom offline tool plugin."
 entry = "index.js"
-ui_entry = "ui.js"
+ui_entry = "ui.html"
 capabilities = ["tool"]
 
 [permissions]
@@ -1504,36 +1845,112 @@ export function runTool(
 }
 "#
             .to_string(),
-            Some(
-                r#"import { h, signal, ui, useTool, storage } from "@xcpc/plugin-sdk/ui";
+            Some((
+                format!(
+                    r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{display_name}</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+"#
+                ),
+                format!(
+                    r#"import "./style.css";
+import {{ getXcpc }} from "@xcpc/plugin-sdk/ui";
 
-export function render() {
-  const name = signal<string>(storage.get<string>("name") ?? "XCPC");
-  const result = useTool("hello", () => ({ text: name() }));
+const xcpc = getXcpc();
+const root = document.getElementById("app")!;
 
-  return (
-    <ui.Col style={{ flex: 1, padding: 16, gap: 12 }}>
-      <ui.Card style={{ gap: 8 }}>
-        <ui.Text style={{ fontSize: 13, fontWeight: 600 }}>Hello Tool</ui.Text>
-        <ui.Input
-          value={name}
-          placeholder="Type something..."
-          onChangeText={(next) => {
-            name.set(next);
-            storage.set("name", next);
-          }}
-        />
-      </ui.Card>
-      <ui.Output
-        blocks={() => result.data()?.blocks ?? []}
-        summary={() => result.data()?.summary}
-      />
-    </ui.Col>
-  );
+root.innerHTML = `
+  <main class="card">
+    <h1>{display_name}</h1>
+    <input id="name-input" type="text" placeholder="Type something..." />
+    <pre id="result">Loading...</pre>
+  </main>
+`;
+
+const input = document.getElementById("name-input") as HTMLInputElement;
+const result = document.getElementById("result") as HTMLPreElement;
+
+async function run(text: string) {{
+  try {{
+    const out = await xcpc.runTool("hello", {{ text }});
+    const first = out.blocks[0];
+    result.textContent =
+      first && first.type === "text" ? first.content : JSON.stringify(out, null, 2);
+  }} catch (err) {{
+    result.textContent = err instanceof Error ? err.message : String(err);
+  }}
+}}
+
+async function init() {{
+  const saved = await xcpc.storage.get<string>("name");
+  input.value = saved ?? "XCPC";
+  await run(input.value);
+
+  input.addEventListener("input", () => {{
+    const next = input.value;
+    void xcpc.storage.set("name", next);
+    void run(next);
+  }});
+}}
+
+void init();
+"#
+                ),
+                r#":root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--xcpc-bg, transparent);
+  color: var(--xcpc-fg, inherit);
+}
+
+.card {
+  border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.25));
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.35));
+  background: var(--xcpc-surface, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+pre {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--xcpc-surface, rgba(128, 128, 128, 0.1));
+  white-space: pre-wrap;
 }
 "#
                 .to_string(),
-            ),
+            )),
         ),
     };
 
@@ -1543,8 +1960,10 @@ export function render() {
     write_atomic(&dir.join(".gitignore"), gitignore.as_bytes())?;
     write_atomic(&dir.join("manifest.toml"), manifest_toml.as_bytes())?;
     write_atomic(&dir.join("src/index.ts"), index_ts.as_bytes())?;
-    if let Some(ui) = ui_tsx {
-        write_atomic(&dir.join("src/ui.tsx"), ui.as_bytes())?;
+    if let Some((index_html, main_ts, style_css)) = web_files {
+        write_atomic(&dir.join("index.html"), index_html.as_bytes())?;
+        write_atomic(&dir.join("src/main.ts"), main_ts.as_bytes())?;
+        write_atomic(&dir.join("src/style.css"), style_css.as_bytes())?;
     }
     Ok(())
 }
@@ -1553,10 +1972,12 @@ export function render() {
 pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
     let mut issues: Vec<PluginCheckIssue> = Vec::new();
     let push_err = |issues: &mut Vec<PluginCheckIssue>, code: &str, msg: String| {
+        let prefix = format!("{code}: ");
+        let clean_msg = msg.strip_prefix(&prefix).unwrap_or(&msg).to_string();
         issues.push(PluginCheckIssue {
             severity: "error".to_string(),
             code: code.to_string(),
-            message: msg,
+            message: clean_msg,
         });
     };
 
@@ -1579,7 +2000,7 @@ pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
     let manifest_raw = match read_plugin_file_safe(dir, "manifest.toml", "manifest") {
         Ok(raw) => raw,
         Err(e) => {
-            push_err(&mut issues, e.code(), e.to_string());
+            push_err(&mut issues, e.code(), e.detail());
             return PluginCheckReport {
                 ok: false,
                 plugin_id: None,
@@ -1594,7 +2015,7 @@ pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
     let manifest = match PluginManifest::from_toml_str(&manifest_raw) {
         Ok(m) => m,
         Err(e) => {
-            push_err(&mut issues, e.code(), e.to_string());
+            push_err(&mut issues, e.code(), e.detail());
             return PluginCheckReport {
                 ok: false,
                 plugin_id: None,
@@ -1690,36 +2111,29 @@ pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
                     }
                 }
                 Err(e) => {
-                    push_err(&mut issues, e.code(), e.to_string());
+                    push_err(&mut issues, e.code(), e.detail());
                 }
             }
         }
         Err(e) => {
-            push_err(&mut issues, e.code(), e.to_string());
+            push_err(&mut issues, e.code(), e.detail());
         }
     }
 
-    // Check optional ui_entry syntax and render(sdk) export contract.
+    // Check optional WebView HTML ui_entry existence, path safety, and non-empty UTF-8 content.
     if let Some(ref ui_rel) = manifest.ui_entry {
         match read_plugin_file_safe(dir, ui_rel, "ui_entry") {
-            Ok(ui_source) => {
-                let ui_filename = format!("xcpc-plugin://{plugin_id}/{ui_rel}");
-                match PluginRuntime::check_ui_source(&ui_source, &ui_filename) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        push_err(
-                            &mut issues,
-                            "MISSING_UI_RENDER",
-                            format!("ui_entry '{ui_rel}' must export a render(sdk) function"),
-                        );
-                    }
-                    Err(e) => {
-                        push_err(&mut issues, e.code(), format!("ui_entry '{ui_rel}': {e}"));
-                    }
+            Ok(html) => {
+                if html.trim().is_empty() {
+                    push_err(
+                        &mut issues,
+                        "EMPTY_UI_HTML",
+                        format!("ui_entry '{ui_rel}' must be non-empty UTF-8 HTML"),
+                    );
                 }
             }
             Err(e) => {
-                push_err(&mut issues, e.code(), e.to_string());
+                push_err(&mut issues, e.code(), e.detail());
             }
         }
     }
@@ -1762,7 +2176,7 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
         let candidate = canonical_dir.join(&normalized);
         let canonical = std::fs::canonicalize(&candidate)?;
         if !canonical.starts_with(&canonical_dir) {
-            return Err(PluginError::ZipSlip(format!(
+            return Err(PluginError::SymlinkEscape(format!(
                 "file '{normalized}' escapes plugin directory"
             )));
         }
@@ -1785,7 +2199,13 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
 
     let out_path = match out_zip {
         Some(p) => p.to_path_buf(),
-        None => dir.join(format!("{}-{}.zip", manifest.id, manifest.version)),
+        None => {
+            let filename = format!("{}-{}.zip", manifest.id, manifest.version);
+            canonical_dir
+                .parent()
+                .map(|p| p.join(&filename))
+                .unwrap_or_else(|| PathBuf::from(&filename))
+        }
     };
 
     let mut zip_buf = Cursor::new(Vec::new());

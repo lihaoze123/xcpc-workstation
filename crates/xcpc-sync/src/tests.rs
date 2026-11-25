@@ -358,6 +358,7 @@ module.exports = { syncSummary };
 
     let pm = PluginManager::new(data_dir.path());
     pm.install_from_dir(plugin_src.path()).unwrap();
+    pm.trust_plugin("luogu-lite").unwrap();
 
     let http = Arc::new(MockHttpClient::new(|req| {
         Err(PluginError::Http(format!("unexpected HTTP: {}", req.url)))
@@ -583,9 +584,9 @@ module.exports = { parseProblemUrl, fetchProblem, normalizeRating };
 "#,
     )
     .unwrap();
-    PluginManager::new(data_dir.path())
-        .install_from_dir(custom_dir.path())
-        .unwrap();
+    let pm = PluginManager::new(data_dir.path());
+    pm.install_from_dir(custom_dir.path()).unwrap();
+    pm.trust_plugin("customoj").unwrap();
 
     let http = Arc::new(MockHttpClient::new(|req| {
         Err(PluginError::Http(format!("unexpected HTTP: {}", req.url)))

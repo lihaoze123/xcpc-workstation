@@ -11,7 +11,6 @@ pub mod oj;
 pub mod render;
 pub mod runtime;
 pub mod tool;
-pub mod ui_session;
 pub mod workspace;
 
 pub use commands::{PluginCommandAction, RegisteredPluginCommand};
@@ -25,16 +24,18 @@ pub use io_ext::{
 };
 pub use kv::KvStore;
 pub use manager::{
-    InstalledPlugin, LoadedPlugin, OFFICIAL_PLUGIN_REPO_ENV, OFFICIAL_PLUGIN_REPO_NAME,
-    OFFICIAL_PLUGIN_REPO_URL, PluginCheckIssue, PluginCheckReport, PluginLinkEntry, PluginManager,
-    PluginOrigin, PluginPackReport, PluginRepoConfig, PluginTestReport, RepoCatalog,
-    RepoPluginEntry, ScaffoldKind, check_plugin_dir, extract_zip_safe, init_plugin_scaffold,
-    init_plugin_scaffold_vite, official_repo_url, pack_plugin_dir, sha256_hex, test_plugin_dir,
+    AggregatedRepoCatalog, AggregatedRepoPlugin, InstalledPlugin, LEGACY_OFFICIAL_PLUGIN_REPO_URL,
+    LoadedPlugin, LoadedPluginUiHtml, OFFICIAL_PLUGIN_REPO_ENV, OFFICIAL_PLUGIN_REPO_NAME,
+    OFFICIAL_PLUGIN_REPO_URL, OFFICIAL_PLUGIN_SDK_TARBALL_URL, PluginCheckIssue, PluginCheckReport,
+    PluginLinkEntry, PluginManager, PluginOrigin, PluginPackReport, PluginRepoConfig,
+    PluginTestReport, RepoCatalog, RepoFetchError, RepoPluginEntry, ScaffoldKind, check_plugin_dir,
+    extract_zip_safe, init_plugin_scaffold, init_plugin_scaffold_vite, official_repo_url,
+    pack_plugin_dir, sha256_hex, test_plugin_dir, validate_repo_url,
 };
 pub use manifest::{
     CommandContext, CommandSpec, CredentialFieldSpec, ExporterSpec, ImporterSpec, PluginCapability,
     PluginManifest, PluginPermissionSummary, PluginPermissions, ToolInputSpec, ToolSpec,
-    is_domain_allowed,
+    is_domain_allowed, requires_trust,
 };
 pub use oj::{
     OjAccountSync, OjContest, OjContext, OjPluginClient, OjProblemDetail, OjRatingChange, OjSample,
@@ -46,10 +47,6 @@ pub use render::{
 };
 pub use runtime::{CallResult, HostContext, PluginLogEntry, PluginRuntime, SandboxLimits};
 pub use tool::{GraphEdge, GraphNode, PluginToolGroup, ToolExecutionResult, ToolOutputBlock};
-pub use ui_session::{
-    PluginUiSession, UI_SESSION_MEMORY_LIMIT_BYTES, UI_SESSION_TURN_TIMEOUT_MS, UiHostEffect,
-    UiRenderOutput, UiShortcutSpec, UiWorkspaceBridge,
-};
 pub use workspace::{WorkspaceProblemDetail, WorkspaceProblemSummary, WorkspaceReader};
 
 #[cfg(test)]

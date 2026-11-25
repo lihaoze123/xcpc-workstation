@@ -153,7 +153,7 @@ extension = ".zip"
     );
     assert_eq!(summary.credentials, vec!["api_token"]);
     assert!(summary.workspace_read);
-    assert!(summary.has_unsandboxed_ui);
+    assert!(m.requires_trust());
 
     // Domain matching edge cases
     assert!(is_domain_allowed(&m.permissions.domains, "API.EXAMPLE.COM"));
@@ -884,7 +884,9 @@ fn scaffold_and_test_plugin_dir() {
     init_plugin_scaffold(&tool_dir, ScaffoldKind::Tool).unwrap();
     assert!(tool_dir.join("manifest.toml").is_file());
     assert!(tool_dir.join("index.js").is_file());
-    assert!(tool_dir.join("xcpc-plugin.d.ts").is_file());
+    assert!(!tool_dir.join("xcpc-plugin.d.ts").exists());
+    let manifest = PluginManifest::from_file(&tool_dir.join("manifest.toml")).unwrap();
+    assert_eq!(manifest.name, "My Tool");
 
     let report = test_plugin_dir(
         &tool_dir,
@@ -1858,8 +1860,8 @@ capabilities = ["tool"]
     let mgr = PluginManager::new(data_dir.path());
     let err = mgr.load_plugin("sym-evil").unwrap_err();
     assert!(
-        matches!(err, PluginError::ZipSlip(_)),
-        "expected ZipSlip for symlink escape in load_plugin, got: {err:?}"
+        matches!(err, PluginError::SymlinkEscape(_)),
+        "expected SymlinkEscape for symlink escape in load_plugin, got: {err:?}"
     );
 }
 
@@ -1910,8 +1912,8 @@ capabilities = ["tool"]
     symlink(&rogue_dir, mgr.plugins_dir().join("rogue")).unwrap();
     let rogue_err = mgr.load_plugin("rogue").unwrap_err();
     assert!(
-        matches!(rogue_err, PluginError::ZipSlip(_)),
-        "expected ZipSlip for unregistered symlink, got: {rogue_err:?}"
+        matches!(rogue_err, PluginError::SymlinkEscape(_)),
+        "expected SymlinkEscape for unregistered symlink, got: {rogue_err:?}"
     );
     // `list_plugins` must also omit unregistered symlinks.
     assert!(
@@ -1928,8 +1930,8 @@ capabilities = ["tool"]
     symlink(&secret, dev_dir.join("index.js")).unwrap();
     let escape_err = mgr.load_plugin("my-dev-tool").unwrap_err();
     assert!(
-        matches!(escape_err, PluginError::ZipSlip(_)),
-        "expected ZipSlip for inner symlink escape, got: {escape_err:?}"
+        matches!(escape_err, PluginError::SymlinkEscape(_)),
+        "expected SymlinkEscape for inner symlink escape, got: {escape_err:?}"
     );
 
     // 4. Unlink removes symlink and registration without deleting dev_dir.
@@ -2001,6 +2003,7 @@ fn check_and_pack_plugin_dir_and_vite_scaffold() {
     assert_eq!(packed.sha256.len(), 64);
     assert!(packed.files.contains(&"manifest.toml".to_string()));
     assert!(packed.files.contains(&"index.js".to_string()));
+    assert!(packed.files.contains(&"ui.html".to_string()));
     assert!(
         !packed
             .files
@@ -2015,151 +2018,558 @@ fn check_and_pack_plugin_dir_and_vite_scaffold() {
     assert!(bad_report.issues.iter().any(|i| i.code == "MISSING_EXPORT"));
     assert!(crate::pack_plugin_dir(&plugin_dir, Some(&out_zip)).is_err());
 
-    // Vite scaffold generates expected TypeScript/JSX project layout.
+    // Vite scaffold generates expected pure-Web TypeScript project layout.
     let vite_dir = tmp.path().join("vite-tool");
     crate::init_plugin_scaffold_vite(&vite_dir, ScaffoldKind::Tool).unwrap();
     assert!(vite_dir.join("package.json").is_file());
     assert!(vite_dir.join("vite.config.ts").is_file());
     assert!(vite_dir.join("tsconfig.json").is_file());
     assert!(vite_dir.join("manifest.toml").is_file());
+    assert!(vite_dir.join("index.html").is_file());
     assert!(vite_dir.join("src/index.ts").is_file());
-    assert!(vite_dir.join("src/ui.tsx").is_file());
+    assert!(vite_dir.join("src/main.ts").is_file());
+    assert!(vite_dir.join("src/style.css").is_file());
+    let vite_manifest = PluginManifest::from_file(&vite_dir.join("manifest.toml")).unwrap();
+    assert_eq!(vite_manifest.ui_entry.as_deref(), Some("ui.html"));
 }
 
 #[test]
-fn persistent_ui_session_renders_signals_canvas_recorder_and_events() {
-    let manifest = PluginManifest::from_toml_str(
+fn pending_trust_enforced_across_install_link_reload_and_ui_html_load() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    let plugin_dir = src.path().join("net-tool");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("manifest.toml"),
         r#"
-id = "demo-canvas"
-name = "Demo Canvas"
-version = "1.0.0"
+id = "net-tool"
+name = "Net Tool"
+version = "0.1.0"
 entry = "index.js"
-ui_entry = "ui.js"
+ui_entry = "ui.html"
+capabilities = ["tool"]
+
+[permissions]
+domains = ["api.example.com"]
+workspace_read = false
+
+[[tools]]
+id = "ping"
+name = "Ping"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_dir.join("index.js"),
+        r#"module.exports = { runTool() { return { blocks: [{ type: "text", content: "pong" }] }; } };"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_dir.join("ui.html"),
+        r#"<!doctype html><html><body><h1>Net Tool</h1></body></html>"#,
+    )
+    .unwrap();
+
+    let mgr = PluginManager::new(data_dir.path());
+
+    // 1. Built-in plugins are never pending_trust, and report has_network accurately.
+    let builtins = mgr.list_plugins().unwrap();
+    let cf = builtins
+        .iter()
+        .find(|p| p.manifest.id == "codeforces")
+        .unwrap();
+    assert!(!cf.pending_trust);
+    assert!(!cf.overrides_builtin);
+    assert!(cf.has_network);
+
+    // 2. Installing external plugin with declared domain sets pending_trust = true.
+    let installed = mgr.install_from_dir(&plugin_dir).unwrap();
+    assert!(installed.pending_trust);
+    assert!(installed.has_network);
+    assert!(!installed.overrides_builtin);
+    assert!(installed.source_repo.is_none());
+
+    // 3. Core refuses load_plugin, load_plugin_ui_html, run_tool, and omits from list_tools.
+    assert!(matches!(
+        mgr.load_plugin("net-tool"),
+        Err(PluginError::Untrusted(_))
+    ));
+    assert_eq!(
+        mgr.load_plugin_ui_html("net-tool").unwrap_err().code(),
+        "PLUGIN_UNTRUSTED"
+    );
+    assert_eq!(
+        mgr.run_tool("net-tool", "ping", serde_json::json!({}), None)
+            .unwrap_err()
+            .code(),
+        "PLUGIN_UNTRUSTED"
+    );
+    assert!(mgr.list_tools().is_empty());
+
+    // 4. trust_plugin clears pending_trust and allows both run_tool and load_plugin_ui_html.
+    mgr.trust_plugin("net-tool").unwrap();
+    let trusted_list = mgr.list_plugins().unwrap();
+    let trusted = trusted_list
+        .iter()
+        .find(|p| p.manifest.id == "net-tool")
+        .unwrap();
+    assert!(!trusted.pending_trust);
+    let loaded_html = mgr.load_plugin_ui_html("net-tool").unwrap();
+    assert_eq!(loaded_html.plugin_id, "net-tool");
+    assert!(loaded_html.html.contains("<h1>Net Tool</h1>"));
+
+    let res = mgr
+        .run_tool("net-tool", "ping", serde_json::json!({}), None)
+        .unwrap();
+    assert_eq!(res.blocks.len(), 1);
+
+    // 5. Disabling the plugin causes load_plugin_ui_html to return PLUGIN_DISABLED.
+    mgr.set_enabled("net-tool", false).unwrap();
+    assert_eq!(
+        mgr.load_plugin_ui_html("net-tool").unwrap_err().code(),
+        "PLUGIN_DISABLED"
+    );
+    mgr.set_enabled("net-tool", true).unwrap();
+
+    // 6. Uninstall + link with permission expansion on reload re-triggers pending_trust.
+    mgr.uninstall_plugin("net-tool").unwrap();
+    let linked = mgr.link_plugin_dir(&plugin_dir).unwrap();
+    assert!(linked.pending_trust);
+    mgr.trust_plugin("net-tool").unwrap();
+    assert!(mgr.load_plugin("net-tool").is_ok());
+    assert!(mgr.load_plugin_ui_html("net-tool").is_ok());
+
+    // Edit linked manifest to add a new sensitive permission (workspace_read = true).
+    std::fs::write(
+        plugin_dir.join("manifest.toml"),
+        r#"
+id = "net-tool"
+name = "Net Tool"
+version = "0.1.0"
+entry = "index.js"
+ui_entry = "ui.html"
+capabilities = ["tool"]
+
+[permissions]
+domains = ["api.example.com"]
+workspace_read = true
+"#,
+    )
+    .unwrap();
+    let reloaded = mgr
+        .list_plugins()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.manifest.id == "net-tool")
+        .unwrap();
+    assert!(reloaded.pending_trust);
+    assert!(matches!(
+        mgr.load_plugin("net-tool"),
+        Err(PluginError::Untrusted(_))
+    ));
+    assert_eq!(
+        mgr.load_plugin_ui_html("net-tool").unwrap_err().code(),
+        "PLUGIN_UNTRUSTED"
+    );
+}
+
+#[test]
+fn repo_https_enforcement_legacy_migration_restore_and_fetch_errors() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    // 1. Plaintext HTTP rejected for non-loopback hosts with HTTP_NOT_ALLOWED.
+    let err = mgr
+        .add_repo("http://evil.example.com/index.json", None)
+        .unwrap_err();
+    assert_eq!(err.code(), "HTTP_NOT_ALLOWED");
+
+    // 2. Loopback HTTP allowed (localhost, 127.0.0.1, [::1]).
+    mgr.add_repo("http://localhost:8080/index.json", Some("Local".into()))
+        .unwrap();
+    mgr.add_repo("http://127.0.0.1:8081/index.json", None)
+        .unwrap();
+    mgr.add_repo("http://[::1]:8082/index.json", None).unwrap();
+
+    // 3. Remove official repo, then restore_official_repo brings it back at index 0.
+    let official = crate::official_repo_url();
+    assert!(mgr.remove_repo(&official).unwrap());
+    assert!(!mgr.list_repos().unwrap().iter().any(|r| r.url == official));
+    assert!(mgr.restore_official_repo().unwrap());
+    assert_eq!(mgr.list_repos().unwrap()[0].url, official);
+    assert!(!mgr.restore_official_repo().unwrap());
+
+    // 4. Legacy raw.githubusercontent.com URL auto-migrates to official-latest release URL.
+    let legacy_json = serde_json::json!({
+        "repos": [
+            { "url": crate::LEGACY_OFFICIAL_PLUGIN_REPO_URL, "name": "XCPC Official" },
+            { "url": "https://broken.example.com/index.json", "name": "Broken Repo" }
+        ]
+    });
+    std::fs::write(
+        data_dir.path().join("plugin_repos.json"),
+        serde_json::to_vec_pretty(&legacy_json).unwrap(),
+    )
+    .unwrap();
+    let migrated = mgr.list_repos().unwrap();
+    assert_eq!(migrated[0].url, official);
+    assert_eq!(migrated[1].url, "https://broken.example.com/index.json");
+
+    // 5. fetch_all_repo_catalogs returns per-repo errors without swallowing them.
+    let mock_http = MockHttpClient::new(move |req| {
+        if req.url == official {
+            ok_json(
+                r#"{
+                    "name": "XCPC Official",
+                    "plugins": [{
+                        "id": "demo-tool",
+                        "name": "Demo Tool",
+                        "version": "1.0.0",
+                        "description": "Demo",
+                        "download_url": "https://example.com/demo-tool-1.0.0.zip",
+                        "sha256": "deadbeef",
+                        "capabilities": ["tool"],
+                        "has_ui": false,
+                        "official": true
+                    }]
+                }"#,
+            )
+        } else {
+            Err(PluginError::Http("connection refused".into()))
+        }
+    });
+    let aggregated = mgr.fetch_all_repo_catalogs(&mock_http).unwrap();
+    assert_eq!(aggregated.plugins.len(), 1);
+    assert_eq!(aggregated.plugins[0].entry.id, "demo-tool");
+    assert_eq!(aggregated.errors.len(), 1);
+    assert_eq!(
+        aggregated.errors[0].repo_url,
+        "https://broken.example.com/index.json"
+    );
+    assert_eq!(
+        aggregated.errors[0].repo_name.as_deref(),
+        Some("Broken Repo")
+    );
+}
+
+#[test]
+fn check_validates_ui_html_and_pack_defaults_outside_plugin_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bad_ui_dir = tmp.path().join("bad-ui");
+    std::fs::create_dir_all(&bad_ui_dir).unwrap();
+    std::fs::write(
+        bad_ui_dir.join("manifest.toml"),
+        r#"
+id = "bad-ui"
+name = "Bad UI"
+version = "0.1.0"
+entry = "index.js"
+ui_entry = "ui.html"
 capabilities = ["tool"]
 "#,
     )
     .unwrap();
-    let loaded = crate::LoadedPlugin {
-        info: crate::InstalledPlugin {
-            manifest,
-            origin: PluginOrigin::Local,
-            enabled: true,
-            last_error: None,
-            local_dir: None,
-            is_linked: false,
-            link_target: None,
-        },
-        entry_source: r#"
-module.exports = {
-  runTool(id, inputs) {
-    return { blocks: [{ type: "text", content: "sum=" + ((inputs.a || 0) + 1) }] };
-  }
-};
-"#
-        .to_string(),
-        ui_source: Some(
-            r#"
-function render(sdk) {
-  const { h, signal, ui, useTool, storage, toast } = sdk;
-  const count = signal(storage.get("count") ?? 1);
-  const dragX = signal(50);
-  const res = useTool("add", () => ({ a: count() }));
-  return h(ui.Col, { gap: 8 },
-    h(ui.Text, { testID: "counter" }, () => "n=" + count()),
-    h(ui.Button, {
-      testID: "inc",
-      onPress: () => {
-        const next = count() + 1;
-        count.set(next);
-        storage.set("count", next);
-        toast("clicked " + next);
-      }
-    }, "+1"),
-    h(ui.Canvas, {
-      testID: "cv",
-      onMouseMove: (ev) => {
-        if (ev && ev.position) dragX.set(ev.position.x);
-      },
-      draw: (cx, sz) => {
-        cx.clearRect(0, 0, sz.width, sz.height);
-        cx.beginPath();
-        cx.arc(dragX(), 50, 10 + count(), 0, Math.PI * 2);
-        cx.fill();
-      }
-    }),
-    h(ui.Output, { blocks: () => (res.data() && res.data().blocks) || [] })
-  );
-}
-module.exports = { render };
-"#
-            .to_string(),
-        ),
-    };
-
-    let kv = Arc::new(KvStore::in_memory());
-    let (session, out1) = crate::PluginUiSession::mount(
-        loaded,
-        Arc::clone(&kv),
-        None,
-        None,
-        None,
-        None,
-        None,
-        r##"{"background":"#ffffff"}"##,
-        "light",
+    std::fs::write(
+        bad_ui_dir.join("index.js"),
+        "module.exports = { runTool() { return { blocks: [] }; } };",
     )
     .unwrap();
+    // Empty ui.html must fail check.
+    std::fs::write(bad_ui_dir.join("ui.html"), "   \n  ").unwrap();
 
-    // Initial render: counter text = "n=1", Output has "sum=2", Canvas has recorded canvas_ops, stable IDs.
-    assert!(!out1.tree_unchanged);
-    let tree1 = out1.tree.as_ref().expect("initial frame must include tree");
-    assert_eq!(tree1["id"], "root");
-    let children = tree1["children"].as_array().unwrap();
-    assert_eq!(children[0]["props"]["text"], "n=1");
-    let inc_cb = children[1]["props"]["onPress"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let move_cb = children[2]["props"]["onMouseMove"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let draw_ops = out1.canvas_ops["cv"].as_array().unwrap();
+    let report = crate::check_plugin_dir(&bad_ui_dir);
     assert!(
-        draw_ops
-            .iter()
-            .any(|op| op[0] == "arc" && op[1] == 50.0 && op[3] == 11.0)
+        !report.ok,
+        "check_plugin_dir must fail when ui.html is empty"
     );
-    assert_eq!(children[3]["props"]["blocks"][0]["content"], "sum=2");
+    assert!(
+        report.issues.iter().any(|i| i.code == "EMPTY_UI_HTML"),
+        "expected EMPTY_UI_HTML in issues, got: {:?}",
+        report.issues
+    );
 
-    // Canvas-only mouseMove -> treeUnchanged fast path skips VNode tree payload, updates canvas_ops only.
-    let out_drag = session
-        .dispatch_event(&move_cb, Some(r#"{"position":{"x":123,"y":50}}"#))
+    // Valid non-empty UTF-8 HTML passes check.
+    std::fs::write(bad_ui_dir.join("ui.html"), "<!doctype html><h1>OK</h1>").unwrap();
+    let ok_report = crate::check_plugin_dir(&bad_ui_dir);
+    assert!(ok_report.ok, "unexpected issues: {:?}", ok_report.issues);
+    assert!(ok_report.has_ui);
+
+    // Symlink escape in ui_entry must fail with SYMLINK_ESCAPE.
+    #[cfg(unix)]
+    {
+        let secret = tmp.path().join("outside.html");
+        std::fs::write(&secret, "<h1>outside</h1>").unwrap();
+        std::fs::remove_file(bad_ui_dir.join("ui.html")).unwrap();
+        std::os::unix::fs::symlink(&secret, bad_ui_dir.join("ui.html")).unwrap();
+        let esc_report = crate::check_plugin_dir(&bad_ui_dir);
+        assert!(!esc_report.ok);
+        assert!(
+            esc_report.issues.iter().any(|i| i.code == "SYMLINK_ESCAPE"),
+            "expected SYMLINK_ESCAPE, got: {:?}",
+            esc_report.issues
+        );
+    }
+
+    // Vite scaffold uses official release tarball URL and title-cased display name.
+    let vite_dir = tmp.path().join("cool-graph-tool");
+    crate::init_plugin_scaffold_vite(&vite_dir, ScaffoldKind::Tool).unwrap();
+    let pkg = std::fs::read_to_string(vite_dir.join("package.json")).unwrap();
+    assert!(pkg.contains(crate::OFFICIAL_PLUGIN_SDK_TARBALL_URL));
+    let vite_manifest = PluginManifest::from_file(&vite_dir.join("manifest.toml")).unwrap();
+    assert_eq!(vite_manifest.name, "Cool Graph Tool");
+    assert_eq!(vite_manifest.ui_entry.as_deref(), Some("ui.html"));
+
+    // pack_plugin_dir default output is in parent directory (outside plugin dir).
+    let good_dir = tmp.path().join("pack-me");
+    init_plugin_scaffold(&good_dir, ScaffoldKind::Tool).unwrap();
+    let packed = crate::pack_plugin_dir(&good_dir, None).unwrap();
+    assert_eq!(packed.output_path, tmp.path().join("pack-me-0.1.0.zip"));
+    assert!(packed.output_path.is_file());
+    assert!(!good_dir.join("pack-me-0.1.0.zip").exists());
+}
+
+#[test]
+fn cross_repo_trust_isolation_resets_pending_trust_on_source_change() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    let make_zip = |version: &str, name: &str| -> (Vec<u8>, String) {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("manifest.toml", opts).unwrap();
+            let manifest = format!(
+                r#"id = "net-iso"
+name = "{name}"
+version = "{version}"
+entry = "index.js"
+capabilities = ["tool"]
+
+[permissions]
+domains = ["api.example.com"]
+workspace_read = false
+"#
+            );
+            std::io::Write::write_all(&mut zip, manifest.as_bytes()).unwrap();
+            zip.start_file("index.js", opts).unwrap();
+            std::io::Write::write_all(
+                &mut zip,
+                b"module.exports = { runTool() { return { blocks: [] }; } };",
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+        let bytes = buf.into_inner();
+        let sha = crate::sha256_hex(&bytes);
+        (bytes, sha)
+    };
+
+    let (zip_v1, sha_v1) = make_zip("1.0.0", "Net Iso v1");
+    let (zip_v2, sha_v2) = make_zip("2.0.0", "Net Iso v2");
+    let (zip_evil, sha_evil) = make_zip("3.0.0", "Net Iso (Replaced)");
+
+    let repo_a = "https://repo-a.example.com/index.json";
+    let repo_b = "https://repo-b.example.com/index.json";
+
+    let z1 = zip_v1.clone();
+    let z2 = zip_v2.clone();
+    let ze = zip_evil.clone();
+    let http = MockHttpClient::new(|_| Err(PluginError::Http("unused".into()))).with_bytes_handler(
+        move |url| match url {
+            "https://repo-a.example.com/v1.zip" => Ok(z1.clone()),
+            "https://repo-a.example.com/v2.zip" => Ok(z2.clone()),
+            "https://repo-b.example.com/v3.zip" => Ok(ze.clone()),
+            other => Err(PluginError::Http(format!("unexpected {other}"))),
+        },
+    );
+
+    let entry_a1 = crate::RepoPluginEntry {
+        id: "net-iso".into(),
+        name: "Net Iso v1".into(),
+        version: "1.0.0".into(),
+        description: String::new(),
+        download_url: "https://repo-a.example.com/v1.zip".into(),
+        sha256: sha_v1,
+        capabilities: vec![PluginCapability::Tool],
+        has_ui: false,
+        official: false,
+        permissions: None,
+    };
+
+    // 1. Install from repo A -> pending_trust = true, source_repo = Some(repo_a).
+    let inst1 = mgr
+        .install_from_repo_entry_from_source(repo_a, &entry_a1, &http)
         .unwrap();
-    assert!(out_drag.tree_unchanged);
-    assert!(out_drag.tree.is_none());
-    let drag_ops = out_drag.canvas_ops["cv"].as_array().unwrap();
-    assert!(
-        drag_ops
-            .iter()
-            .any(|op| op[0] == "arc" && op[1] == 123.0 && op[3] == 11.0)
-    );
+    assert!(inst1.pending_trust);
+    assert_eq!(inst1.source_repo.as_deref(), Some(repo_a));
 
-    // Dispatch button press -> signal updates to 2, storage persists 2, toast effect queued, Canvas re-recorded.
-    let out2 = session.dispatch_event(&inc_cb, None).unwrap();
-    assert!(!out2.tree_unchanged);
-    let ch2 = out2.tree.as_ref().unwrap()["children"].as_array().unwrap();
-    assert_eq!(ch2[0]["props"]["text"], "n=2");
-    assert_eq!(ch2[3]["props"]["blocks"][0]["content"], "sum=3");
-    assert!(
-        out2.canvas_ops["cv"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|op| op[0] == "arc" && op[1] == 123.0 && op[3] == 12.0)
-    );
-    assert_eq!(kv.get("count").unwrap(), Some(serde_json::json!(2)));
-    assert!(out2.effects.iter().any(|e| e.kind == "toast"));
+    // 2. Trust plugin.
+    mgr.trust_plugin("net-iso").unwrap();
 
-    session.dispose();
+    // 3. Same-repo update with same permissions preserves trust.
+    let entry_a2 = crate::RepoPluginEntry {
+        version: "2.0.0".into(),
+        name: "Net Iso v2".into(),
+        download_url: "https://repo-a.example.com/v2.zip".into(),
+        sha256: sha_v2,
+        ..entry_a1.clone()
+    };
+    let inst2 = mgr
+        .install_from_repo_entry_from_source(repo_a, &entry_a2, &http)
+        .unwrap();
+    assert!(!inst2.pending_trust);
+    assert_eq!(inst2.source_repo.as_deref(), Some(repo_a));
+
+    // 4. Different-repo install (repo B) with identical permissions MUST reset pending_trust!
+    let entry_b3 = crate::RepoPluginEntry {
+        version: "3.0.0".into(),
+        name: "Net Iso (Replaced)".into(),
+        download_url: "https://repo-b.example.com/v3.zip".into(),
+        sha256: sha_evil,
+        ..entry_a1.clone()
+    };
+    let inst3 = mgr
+        .install_from_repo_entry_from_source(repo_b, &entry_b3, &http)
+        .unwrap();
+    assert!(inst3.pending_trust);
+    assert_eq!(inst3.source_repo.as_deref(), Some(repo_b));
+
+    // 5. Trust repo B, then install locally (source_repo = None) -> MUST also reset pending_trust!
+    mgr.trust_plugin("net-iso").unwrap();
+    let inst_local = mgr.install_from_zip_bytes(&zip_v1, None).unwrap();
+    assert!(inst_local.pending_trust);
+    assert!(inst_local.source_repo.is_none());
+}
+
+#[test]
+fn ureq_get_bytes_follows_loopback_redirects_and_blocks_http_downgrade() {
+    use crate::http::HttpClient as _;
+    use std::io::{Read, Write as _};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let target_ok = format!("{base}/payload.bin");
+
+    let handle = std::thread::spawn(move || {
+        for _ in 0..3 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let first = req.lines().next().unwrap_or("");
+            if first.contains("/redirect-ok") {
+                let resp = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {target_ok}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            } else if first.contains("/payload.bin") {
+                let body = b"hello-zip";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.write_all(body);
+            } else if first.contains("/redirect-downgrade") {
+                let resp = "HTTP/1.1 302 Found\r\nLocation: http://evil.example.com/pkg.zip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        }
+    });
+
+    let client = crate::UreqHttpClient::new();
+    let bytes = client.get_bytes(&format!("{base}/redirect-ok")).unwrap();
+    assert_eq!(bytes, b"hello-zip");
+
+    let err = client
+        .get_bytes(&format!("{base}/redirect-downgrade"))
+        .unwrap_err();
+    assert_eq!(err.code(), "HTTP_NOT_ALLOWED");
+
+    let _ = handle.join();
+}
+
+#[test]
+fn fetch_all_repo_catalogs_backfills_missing_or_url_repo_name() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+    let official = crate::official_repo_url();
+    mgr.remove_repo(&official).unwrap();
+
+    let url1 = "https://repo1.example.com/index.json";
+    let url2 = "https://repo2.example.com/index.json";
+    let url3 = "https://repo3.example.com/index.json";
+    mgr.add_repo(url1, None).unwrap();
+    mgr.add_repo(url2, Some(url2.to_string())).unwrap();
+    mgr.add_repo(url3, Some("User Custom Name".to_string()))
+        .unwrap();
+
+    let mock_http = MockHttpClient::new(move |req| match req.url.as_str() {
+        u if u == url1 => ok_json(r#"{"name": "Backfilled Repo 1", "plugins": []}"#),
+        u if u == url2 => ok_json(r#"{"name": "Backfilled Repo 2", "plugins": []}"#),
+        u if u == url3 => ok_json(r#"{"name": "Remote Name 3", "plugins": []}"#),
+        other => Err(PluginError::Http(format!("unexpected {other}"))),
+    });
+
+    let _ = mgr.fetch_all_repo_catalogs(&mock_http).unwrap();
+    let saved = mgr.list_repos().unwrap();
+    assert_eq!(saved[0].name.as_deref(), Some("Backfilled Repo 1"));
+    assert_eq!(saved[1].name.as_deref(), Some("Backfilled Repo 2"));
+    assert_eq!(saved[2].name.as_deref(), Some("User Custom Name"));
+}
+
+#[test]
+fn fetch_repo_catalog_follows_https_redirects_and_blocks_http_downgrade() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+
+    // 1. HTTPS -> HTTPS 302 redirect (e.g. GitHub Release asset download) succeeds.
+    let mock_http = MockHttpClient::new(|req| {
+        if req.url == "https://github.com/org/repo/releases/download/latest/index.json" {
+            let mut headers = std::collections::BTreeMap::new();
+            headers.insert(
+                "location".to_string(),
+                "https://objects.githubusercontent.com/assets/index.json".to_string(),
+            );
+            Ok(HttpResponse {
+                status: 302,
+                headers,
+                body: String::new(),
+            })
+        } else if req.url == "https://objects.githubusercontent.com/assets/index.json" {
+            ok_json(r#"{"name": "XCPC Official", "plugins": []}"#)
+        } else {
+            Err(PluginError::Http(format!("unexpected url {}", req.url)))
+        }
+    });
+    let cat = mgr
+        .fetch_repo_catalog(
+            "https://github.com/org/repo/releases/download/latest/index.json",
+            &mock_http,
+        )
+        .unwrap();
+    assert_eq!(cat.name, "XCPC Official");
+
+    // 2. HTTPS -> plaintext HTTP redirect must be rejected with HTTP_NOT_ALLOWED.
+    let downgrade_http = MockHttpClient::new(|_req| {
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert(
+            "location".to_string(),
+            "http://evil.example.com/index.json".to_string(),
+        );
+        Ok(HttpResponse {
+            status: 302,
+            headers,
+            body: String::new(),
+        })
+    });
+    let err = mgr
+        .fetch_repo_catalog("https://github.com/org/repo/index.json", &downgrade_http)
+        .unwrap_err();
+    assert_eq!(err.code(), "HTTP_NOT_ALLOWED");
 }

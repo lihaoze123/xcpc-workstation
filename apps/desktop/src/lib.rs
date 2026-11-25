@@ -39,8 +39,8 @@ use crate::state::State;
 pub use crate::page_image::{PageImage, PageImageProps};
 pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
-    AboutInfoJs, ActionResult, AddedTestResultJs, AdoptSolutionResultJs, AppPrefsJs,
-    AssetReferenceJs, BatchDeleteItemJs, BatchDeleteResultJs, BatchExportRequestJs,
+    AboutInfoJs, ActionResult, AddedTestResultJs, AdoptSolutionResultJs, AggregatedRepoPluginJs,
+    AppPrefsJs, AssetReferenceJs, BatchDeleteItemJs, BatchDeleteResultJs, BatchExportRequestJs,
     BatchItemResultJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
     BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
     ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
@@ -52,16 +52,16 @@ pub use crate::types::{
     PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
     PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs,
     PluginCredentialFieldJs, PluginKvResultJs, PluginPickFileResultJs, PluginRenderPngResultJs,
-    PluginRepoConfigJs, PluginSummaryJs, PluginUiFrameJs, PluginUiSourceResultJs,
-    PluginWatchEventJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer,
-    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
-    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
-    ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs,
-    RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs,
-    SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
-    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    PluginRepoCatalogJs, PluginRepoConfigJs, PluginSummaryJs, PluginUiHtmlJs, PluginWatchEventJs,
+    PluginWorkspaceResultJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic,
+    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
+    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
+    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoFetchErrorJs,
+    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
+    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
+    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
+    TrainingSubmissionsQueryJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
     WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
@@ -94,7 +94,6 @@ impl Drop for Preview {
         // wakes up immediately and never leaks.
         self.state.stop_batch_task();
         self.state.stop_plugin_watcher();
-        self.state.stop_plugin_ui_worker();
         let old_watcher = self.state.stop_watcher();
         drop(old_watcher);
     }
@@ -2182,6 +2181,11 @@ impl Preview {
         self.state.set_plugin_enabled(&id, enabled)
     }
 
+    /// Explicitly trusts a plugin awaiting permission confirmation (`pendingTrust = false`).
+    pub fn trust_plugin(&self, id: String) -> ActionResult {
+        self.state.trust_plugin(&id)
+    }
+
     /// Re-scans `<dataDir>/plugins/` and returns the refreshed plugins overview.
     pub fn reload_plugins(&self) -> PluginsOverviewJs {
         self.state.get_plugins_overview()
@@ -2290,6 +2294,11 @@ impl Preview {
         self.state.remove_plugin_repo(&url)
     }
 
+    /// Restores the official plugin repository subscription if it was removed.
+    pub fn restore_official_plugin_repo(&self) -> ActionResult {
+        self.state.restore_official_plugin_repo()
+    }
+
     /// Fetches a decentralized plugin repository's `index.json` catalog off the UI thread.
     pub async fn fetch_plugin_repo_catalog(
         this: Instance<Self>,
@@ -2308,6 +2317,26 @@ impl Preview {
             .unwrap_or_else(|e| RepoCatalogResultJs {
                 ok: false,
                 error: Some(format!("fetch repo catalog failed: {e}")),
+                ..Default::default()
+            })
+    }
+
+    /// Fetches all subscribed plugin repositories' catalogs off the UI thread, returning
+    /// aggregated plugin entries alongside per-repository fetch errors.
+    pub async fn fetch_all_plugin_repo_catalogs(this: Instance<Self>) -> PluginRepoCatalogJs {
+        if this.is_disposed() {
+            return PluginRepoCatalogJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.fetch_all_plugin_repo_catalogs())
+            .await
+            .unwrap_or_else(|e| PluginRepoCatalogJs {
+                ok: false,
+                error: Some(format!("fetch all repo catalogs failed: {e}")),
                 ..Default::default()
             })
     }
@@ -2526,9 +2555,22 @@ impl Preview {
             .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run tool failed: {e}")))
     }
 
-    /// Reads the `ui.js` source for an enabled desktop UI plugin.
-    pub fn plugin_ui_source(&self, plugin_id: String) -> PluginUiSourceResultJs {
-        self.state.plugin_ui_source(&plugin_id)
+    /// Loads the pure-Web HTML entry (`ui.html`) for an enabled, trusted UI plugin.
+    pub fn load_plugin_ui_html(&self, plugin_id: String) -> PluginUiHtmlJs {
+        self.state.load_plugin_ui_html(&plugin_id)
+    }
+
+    /// Executes a permission-checked read-only workspace query (`listProblems`, `getProblem`,
+    /// `listContests`, `getContest`) on behalf of a plugin (`pending_trust == false` and
+    /// `manifest.permissions.workspace_read == true` are enforced in Core).
+    pub fn plugin_workspace_query(
+        &self,
+        plugin_id: String,
+        method: String,
+        args_json: Option<String>,
+    ) -> PluginWorkspaceResultJs {
+        self.state
+            .plugin_workspace_query(&plugin_id, &method, args_json.as_deref())
     }
 
     /// Renders an SVG string to a PNG image (base64-encoded) via `resvg` + `tiny-skia`.
@@ -2704,65 +2746,15 @@ impl Preview {
         self.state.plugin_kv_set(&plugin_id, &key, &value_json)
     }
 
-    /// Synchronously deletes a key from the plugin's persistent KV store.
-    pub fn plugin_kv_delete(&self, plugin_id: String, key: String) -> PluginKvResultJs {
-        self.state.plugin_kv_delete(&plugin_id, &key)
+    /// Synchronously removes a key from the plugin's persistent KV store.
+    pub fn plugin_kv_remove(&self, plugin_id: String, key: String) -> ActionResult {
+        self.state.plugin_kv_remove(&plugin_id, &key)
     }
 
     /// Uninstalls a locally installed plugin, unlinks a dev-linked plugin (never deleting source dir),
     /// or reverts a local override back to the built-in version.
     pub fn uninstall_plugin(&self, id: String) -> InstallPluginResultJs {
         self.state.uninstall_plugin(&id)
-    }
-
-    /// Mounts a plugin's `ui.js` inside a sandboxed Core QuickJS UI session and returns the initial VNode frame.
-    pub fn plugin_ui_mount(
-        &self,
-        plugin_id: String,
-        payload_json: Option<String>,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        self.state
-            .plugin_ui_mount(&plugin_id, payload_json, theme_tokens_json, color_scheme)
-    }
-
-    /// Dispatches a UI callback or shortcut event into an active Core QuickJS UI session.
-    pub fn plugin_ui_dispatch(
-        &self,
-        session_id: u32,
-        callback_id: String,
-        payload_json: Option<String>,
-    ) -> PluginUiFrameJs {
-        self.state
-            .plugin_ui_dispatch(session_id, callback_id, payload_json)
-    }
-
-    /// Resolves an async host effect (e.g. `pickFile`, `readClipboard`, `savePng`) into a UI session.
-    pub fn plugin_ui_resolve_effect(
-        &self,
-        session_id: u32,
-        effect_id: u32,
-        result_json: String,
-    ) -> PluginUiFrameJs {
-        self.state
-            .plugin_ui_resolve_effect(session_id, effect_id, result_json)
-    }
-
-    /// Pushes updated theme tokens & color scheme into an active UI session.
-    pub fn plugin_ui_update_theme(
-        &self,
-        session_id: u32,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        self.state
-            .plugin_ui_update_theme(session_id, theme_tokens_json, color_scheme)
-    }
-
-    /// Disposes a Core QuickJS UI session and invokes its `onCleanup` callbacks.
-    pub fn plugin_ui_dispose(&self, session_id: u32) -> ActionResult {
-        self.state.plugin_ui_dispose(session_id)
     }
 
     /// Prompts the user to pick a single local file (up to 16 MiB) and returns its UTF-8 text (when valid)
@@ -2846,45 +2838,33 @@ impl Preview {
         }
     }
 
-    /// Long-polling async notification when plugin files (`manifest.toml`, `index.js`, `ui.js`,
-    /// or `plugin_links.json`) change in `<dataDir>/plugins/` or any registered linked target dir.
+    /// Long-polling async notification when plugin files (`manifest.toml`, `index.js`, `ui.html`,
+    /// `ui.js`, or `plugin_links.json`) change in `<dataDir>/plugins/` or any registered linked target dir.
     pub async fn next_plugin_change(this: Instance<Self>) -> PluginWatchEventJs {
+        let closed = || PluginWatchEventJs {
+            kind: "closed".into(),
+            paths: Vec::new(),
+            changed_plugin_ids: Vec::new(),
+        };
         if this.is_disposed() {
-            return PluginWatchEventJs {
-                kind: "closed".into(),
-                paths: Vec::new(),
-            };
+            return closed();
         }
         let rx = this.with(|p| p.state.ensure_plugin_watcher());
         let Some(rx) = rx else {
-            return PluginWatchEventJs {
-                kind: "closed".into(),
-                paths: Vec::new(),
-            };
+            return closed();
         };
         blocking(move || {
             let guard = match rx.lock() {
                 Ok(g) => g,
-                Err(_) => {
-                    return PluginWatchEventJs {
-                        kind: "closed".into(),
-                        paths: Vec::new(),
-                    };
-                }
+                Err(_) => return closed(),
             };
             match guard.recv() {
                 Ok(ev) => ev,
-                Err(_) => PluginWatchEventJs {
-                    kind: "closed".into(),
-                    paths: Vec::new(),
-                },
+                Err(_) => closed(),
             }
         })
         .await
-        .unwrap_or_else(|_| PluginWatchEventJs {
-            kind: "closed".into(),
-            paths: Vec::new(),
-        })
+        .unwrap_or_else(|_| closed())
     }
 
     /// Runs a plugin command `runCommand(commandId, ctx)` off the UI thread.

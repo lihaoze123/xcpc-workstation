@@ -144,7 +144,10 @@ impl PluginManager {
         };
         let mut out = Vec::new();
         for p in plugins {
-            if !p.enabled || !p.manifest.has_capability(PluginCapability::Importer) {
+            if !p.enabled
+                || p.pending_trust
+                || !p.manifest.has_capability(PluginCapability::Importer)
+            {
                 continue;
             }
             for importer in p.manifest.importers {
@@ -165,7 +168,10 @@ impl PluginManager {
         };
         let mut out = Vec::new();
         for p in plugins {
-            if !p.enabled || !p.manifest.has_capability(PluginCapability::Exporter) {
+            if !p.enabled
+                || p.pending_trust
+                || !p.manifest.has_capability(PluginCapability::Exporter)
+            {
                 continue;
             }
             for exporter in p.manifest.exporters {

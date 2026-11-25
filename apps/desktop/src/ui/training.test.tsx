@@ -295,13 +295,15 @@ describe("Training UI headless layout & interaction tests (960x980)", () => {
     expect(app.shows("id:training-tab-contests")).toBe(true);
     expect(app.shows("id:training-tab-submissions")).toBe(true);
     expect(app.shows("id:training-tab-editorials")).toBe(true);
-    expect(app.shows("id:training-manual-log-btn")).toBe(true);
+    // On empty onboarding overview, avoid duplicate manual-log buttons (card CTA is the single entry)
+    expect(app.shows("id:training-onboarding-manual-log-btn")).toBe(true);
+    expect(app.shows("id:training-manual-log-btn")).toBe(false);
     // Sync button & last-synced label are hidden when no OJ accounts are configured
     expect(app.shows("id:training-sync-btn")).toBe(false);
     expect(app.shows("id:training-last-synced")).toBe(false);
 
-    // Open ManualLogModal, type a title, and submit
-    await app.press("id:training-manual-log-btn");
+    // Open ManualLogModal from the single onboarding entry, type a title, and submit
+    await app.press("id:training-onboarding-manual-log-btn");
     expect(app.shows("id:manual-log-modal")).toBe(true);
     await app.type("id:manual-log-problem-input", "My Custom DP Problem");
     await app.press("id:manual-log-save");

@@ -11,7 +11,7 @@ import { Btn, IconBtn, RatingBadge, Segmented } from "../kit";
 import { DialogHeader, Modal } from "../Modal";
 import { colorTransition } from "../motion";
 import { preview, refresh } from "../store";
-import { MONO } from "../theme";
+import { MONO, popoverShadow } from "../theme";
 import type { ManualLogStatus } from "./types";
 
 export interface ManualLogModalProps {
@@ -206,7 +206,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
         />
 
         {/* Required: Problem title / URL / workspace picker */}
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: 6, position: "relative", zIndex: 20 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
               {t("training.manualLog.problemLabel")}
@@ -243,105 +243,117 @@ export function ManualLogModal(props: ManualLogModalProps) {
             </If>
           </View>
 
-          <View
-            class="bg-background border border-border focus-within:border-input"
-            style={{
-              height: 34,
-              borderRadius: 7,
-              paddingLeft: 10,
-              paddingRight: 8,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <Input
-              testID="manual-log-problem-input"
-              class="bg-transparent placeholder:text-muted-foreground"
-              style={{ flex: 1, height: 28, fontSize: 13 }}
-              value={problemInput()}
-              placeholder={t("training.manualLog.problemPlaceholder")}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onFocus={() => {
-                if (!linkedProblemId()) showSuggestions.set(true);
+          <View style={{ position: "relative", zIndex: 30 }}>
+            <View
+              class="bg-background border border-border focus-within:border-input"
+              style={{
+                height: 34,
+                borderRadius: 7,
+                paddingLeft: 10,
+                paddingRight: 8,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
               }}
-              onChange={(e) => {
-                const val = e.value;
-                problemInput.set(val);
-                errorMsg.set("");
-                if (linkedProblemId()) {
-                  linkedProblemId.set(undefined);
-                }
-                if (looksLikeUrl(val) && !urlInput().trim()) {
-                  urlInput.set(val.trim());
-                }
-                showSuggestions.set(true);
-              }}
-            />
-            <If when={problemInput().length > 0}>
-              <IconBtn
-                icon="x"
-                size={18}
-                iconSize={11}
-                tone="muted-foreground"
-                onPress={() => {
-                  problemInput.set("");
-                  linkedProblemId.set(undefined);
+            >
+              <Input
+                testID="manual-log-problem-input"
+                class="bg-transparent placeholder:text-muted-foreground"
+                style={{ flex: 1, height: 28, fontSize: 13 }}
+                value={problemInput()}
+                placeholder={t("training.manualLog.problemPlaceholder")}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onFocus={() => {
+                  if (!linkedProblemId()) showSuggestions.set(true);
+                }}
+                onChange={(e) => {
+                  const val = e.value;
+                  problemInput.set(val);
+                  errorMsg.set("");
+                  if (linkedProblemId()) {
+                    linkedProblemId.set(undefined);
+                  }
+                  if (looksLikeUrl(val) && !urlInput().trim()) {
+                    urlInput.set(val.trim());
+                  }
                   showSuggestions.set(true);
                 }}
               />
+              <If when={problemInput().length > 0}>
+                <IconBtn
+                  icon="x"
+                  size={18}
+                  iconSize={11}
+                  tone="muted-foreground"
+                  onPress={() => {
+                    problemInput.set("");
+                    linkedProblemId.set(undefined);
+                    showSuggestions.set(true);
+                  }}
+                />
+              </If>
+            </View>
+
+            {/* Live workspace problem suggestions (floating overlay: never shifts modal height or input) */}
+            <If when={suggestions().length > 0}>
+              <View
+                testID="manual-log-suggestions"
+                class="bg-popover border border-border"
+                style={{
+                  position: "absolute",
+                  top: 38,
+                  left: 0,
+                  right: 0,
+                  zIndex: 50,
+                  borderRadius: 8,
+                  maxHeight: 168,
+                  overflow: "hidden",
+                  boxShadow: popoverShadow(),
+                }}
+              >
+                <Scroll style={{ maxHeight: 168 }}>
+                  <Each of={suggestions()} key={(p) => p.id}>
+                    {(prob, idx) => (
+                      <View>
+                        <If when={idx() > 0}>
+                          <View style={{ height: 1, marginLeft: 10, marginRight: 10 }} class="bg-border" />
+                        </If>
+                        <View
+                          testID={`manual-log-suggestion-${prob().id}`}
+                          onPress={() => pickWorkspaceProblem(prob())}
+                          class="hover:bg-muted active:bg-accent"
+                          style={{
+                            paddingTop: 7,
+                            paddingBottom: 7,
+                            paddingLeft: 10,
+                            paddingRight: 10,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 8,
+                            ...colorTransition(100),
+                          }}
+                        >
+                          <Text
+                            style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                            class="text-foreground"
+                          >
+                            {prob().title || prob().id}
+                          </Text>
+                          <Text style={{ fontSize: 11, fontFamily: MONO, flexShrink: 0 }} class="text-muted-foreground">
+                            {prob().id}
+                          </Text>
+                          <If when={prob().rating != null}>
+                            <RatingBadge rating={prob().rating} />
+                          </If>
+                        </View>
+                      </View>
+                    )}
+                  </Each>
+                </Scroll>
+              </View>
             </If>
           </View>
-
-          {/* Live workspace problem suggestions */}
-          <If when={suggestions().length > 0}>
-            <View
-              testID="manual-log-suggestions"
-              class="bg-background border border-border"
-              style={{ borderRadius: 8, maxHeight: 168, overflow: "hidden" }}
-            >
-              <Scroll style={{ maxHeight: 168 }}>
-                <Each of={suggestions()} key={(p) => p.id}>
-                  {(prob, idx) => (
-                    <View>
-                      <If when={idx() > 0}>
-                        <View style={{ height: 1, marginLeft: 10, marginRight: 10 }} class="bg-border" />
-                      </If>
-                      <View
-                        testID={`manual-log-suggestion-${prob().id}`}
-                        onPress={() => pickWorkspaceProblem(prob())}
-                        class="hover:bg-muted active:bg-accent"
-                        style={{
-                          paddingTop: 7,
-                          paddingBottom: 7,
-                          paddingLeft: 10,
-                          paddingRight: 10,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 8,
-                          ...colorTransition(100),
-                        }}
-                      >
-                        <Text
-                          style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
-                          class="text-foreground"
-                        >
-                          {prob().title || prob().id}
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: MONO, flexShrink: 0 }} class="text-muted-foreground">
-                          {prob().id}
-                        </Text>
-                        <If when={prob().rating != null}>
-                          <RatingBadge rating={prob().rating} />
-                        </If>
-                      </View>
-                    </View>
-                  )}
-                </Each>
-              </Scroll>
-            </View>
-          </If>
         </View>
 
         {/* Required: Status segmented control */}

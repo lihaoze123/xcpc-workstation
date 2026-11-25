@@ -66,6 +66,14 @@ export interface TrainingViewProps {
     availableTags: string[];
     error?: string | null;
   };
+  fetchDashboard?: (
+    window: TimeWindow,
+    year: number | null,
+    tagMinRating: number | null,
+  ) => TrainingDashboardData | undefined;
+  fetchOjSources?: () => OnboardingOjSource[];
+  fetchContests?: (platform: string | null, includeFinished: boolean) => ContestCalendarItem[];
+  fetchSubmissions?: (filter: SubmissionsFilter, offset: number) => SubmissionsPage;
 }
 
 export function TrainingView(props: TrainingViewProps) {
@@ -97,6 +105,10 @@ export function TrainingView(props: TrainingViewProps) {
 
   const loadOjSources = () => {
     try {
+      if (props.fetchOjSources) {
+        ojSources.set(props.fetchOjSources());
+        return;
+      }
       const ov = refreshPluginsOverview(false);
       const sources: OnboardingOjSource[] = (ov.plugins ?? [])
         .filter((p) => p.enabled && p.capabilities.includes("oj_source"))
@@ -113,6 +125,12 @@ export function TrainingView(props: TrainingViewProps) {
 
   const loadDashboard = () => {
     try {
+      if (props.fetchDashboard) {
+        const next = props.fetchDashboard(windowVal(), heatmapYear(), tagMinRating());
+        dashboard.set(next);
+        if (next) setGlobalLastSyncedAt(next.last_synced_at);
+        return;
+      }
       const res = preview.trainingDashboard(windowVal(), heatmapYear(), tagMinRating());
       if (res.ok && res.reportJson) {
         const next = JSON.parse(res.reportJson) as TrainingDashboardData;
@@ -127,6 +145,21 @@ export function TrainingView(props: TrainingViewProps) {
   const loadContests = () => {
     try {
       const plat = contestsPlatform().trim();
+      if (props.fetchContests) {
+        const items = props.fetchContests(plat || null, includeFinished());
+        contests.set(items);
+        if (items.length > 0) {
+          const prev = seenContestPlatforms();
+          const merged = new Set<string>(prev);
+          for (const c of items) {
+            if (c.platform) merged.add(c.platform);
+          }
+          if (merged.size !== prev.length) {
+            seenContestPlatforms.set([...merged].sort());
+          }
+        }
+        return;
+      }
       const res = preview.trainingContests(plat || null, includeFinished());
       if (res.ok && res.reportJson) {
         const items = JSON.parse(res.reportJson) as ContestCalendarItem[];
@@ -150,6 +183,10 @@ export function TrainingView(props: TrainingViewProps) {
   const loadSubmissions = () => {
     try {
       const f = subFilter();
+      if (props.fetchSubmissions) {
+        submissions.set(props.fetchSubmissions(f, subOffset()));
+        return;
+      }
       const res = preview.trainingSubmissions({
         byProblem: f.byProblem,
         platform: f.platform || null,
@@ -234,6 +271,20 @@ export function TrainingView(props: TrainingViewProps) {
     if ((dashboard()?.accounts.length ?? 0) > 0) return true;
     return ojSources().some((s) => s.handle.length > 0);
   });
+
+  const hasAnyOverviewData = computed(() => {
+    const cur = dashboard();
+    if (!cur) return false;
+    return (
+      cur.accounts.length > 0 ||
+      Boolean(cur.has_local_records) ||
+      cur.kpi.total_ac > 0 ||
+      cur.kpi.total_submissions > 0 ||
+      cur.rating_series.length > 0
+    );
+  });
+
+  const showingOnboarding = computed(() => tab() === "overview" && !hasAnyOverviewData());
 
   const knownContestPlatforms = computed(() => {
     const set = new Set<string>(seenContestPlatforms());
@@ -399,14 +450,16 @@ export function TrainingView(props: TrainingViewProps) {
             />
           </If>
 
-          <Btn
-            testID="training-manual-log-btn"
-            label={t("training.manualLog.button")}
-            icon="plus"
-            variant="outline"
-            disabled={readOnly()}
-            onPress={() => manualLogOpen.set(true)}
-          />
+          <If when={!showingOnboarding()}>
+            <Btn
+              testID="training-manual-log-btn"
+              label={t("training.manualLog.button")}
+              icon="plus"
+              variant="outline"
+              disabled={readOnly()}
+              onPress={() => manualLogOpen.set(true)}
+            />
+          </If>
         </View>
       </View>
 

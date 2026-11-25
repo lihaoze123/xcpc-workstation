@@ -28,13 +28,14 @@ use xcpc_sync::{
 
 use crate::state::State;
 use crate::types::{
-    ActionResult, CreateProblemFromUrlResultJs, EditorialListResultJs, EditorialSummaryJs,
-    ExportPluginResultJs, IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs,
-    JsonReportResultJs, ManualLogResultJs, PlatformSyncReportJs, PluginCredentialFieldJs,
-    PluginKvResultJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginUiFrameJs, PluginUiSourceResultJs, PluginWatchEventJs, PluginsOverviewJs,
-    ProblemSourceJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
-    ResolvedProblemUrlJs, SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
+    ActionResult, AggregatedRepoPluginJs, CreateProblemFromUrlResultJs, EditorialListResultJs,
+    EditorialSummaryJs, ExportPluginResultJs, IngestProblemRequestJs, IngestProblemResultJs,
+    InstallPluginResultJs, JsonReportResultJs, ManualLogResultJs, PlatformSyncReportJs,
+    PluginCredentialFieldJs, PluginKvResultJs, PluginRenderPngResultJs, PluginRepoCatalogJs,
+    PluginRepoConfigJs, PluginSummaryJs, PluginUiHtmlJs, PluginWatchEventJs,
+    PluginWorkspaceResultJs, PluginsOverviewJs, ProblemSourceJs, RepoCatalogResultJs,
+    RepoFetchErrorJs, RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs,
+    SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
 };
 
 fn origin_str(origin: PluginOrigin) -> &'static str {
@@ -378,6 +379,9 @@ impl State {
                     description: m.description,
                     origin: origin_str(p.origin).to_owned(),
                     enabled: p.enabled,
+                    pending_trust: p.pending_trust,
+                    overrides_builtin: p.overrides_builtin,
+                    has_network: p.has_network,
                     capabilities: m
                         .capabilities
                         .iter()
@@ -385,9 +389,10 @@ impl State {
                         .collect(),
                     domains: m.permissions.domains,
                     workspace_read: m.permissions.workspace_read,
-                    has_unsandboxed_ui: m.ui_entry.is_some(),
+                    has_ui: m.ui_entry.is_some(),
                     is_linked: p.is_linked,
                     link_target: p.link_target.map(|t| t.to_string_lossy().into_owned()),
+                    source_repo: p.source_repo,
                     credentials,
                     handle,
                     last_error: p.last_error,
@@ -412,7 +417,19 @@ impl State {
         let pm = PluginManager::new(dir);
         match pm.set_enabled(id, enabled) {
             Ok(()) => ActionResult::ok(),
-            Err(e) => ActionResult::err("plugin_error", e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn trust_plugin(&self, id: &str) -> ActionResult {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return ActionResult::err("data_dir", err),
+        };
+        let pm = PluginManager::new(dir);
+        match pm.trust_plugin(id) {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
         }
     }
 
@@ -497,7 +514,7 @@ impl State {
         let pm = PluginManager::new(dir);
         match pm.add_repo(url, None) {
             Ok(()) => ActionResult::ok(),
-            Err(e) => ActionResult::err("plugin_error", e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
         }
     }
 
@@ -509,7 +526,19 @@ impl State {
         let pm = PluginManager::new(dir);
         match pm.remove_repo(url) {
             Ok(_) => ActionResult::ok(),
-            Err(e) => ActionResult::err("plugin_error", e.to_string()),
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
+        }
+    }
+
+    pub(crate) fn restore_official_plugin_repo(&self) -> ActionResult {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return ActionResult::err("data_dir", err),
+        };
+        let pm = PluginManager::new(dir);
+        match pm.restore_official_repo() {
+            Ok(_) => ActionResult::ok(),
+            Err(e) => ActionResult::err(e.code(), e.to_string()),
         }
     }
 
@@ -547,15 +576,11 @@ impl State {
                             .iter()
                             .map(|c| capability_str(*c).to_owned())
                             .collect(),
-                        has_ui: p.has_ui
-                            || p.permissions
-                                .as_ref()
-                                .is_some_and(|perm| perm.has_unsandboxed_ui),
+                        has_ui: p.has_ui,
                         official: p.official,
                         permissions: p.permissions.map(|perm| RepoPluginPermissionJs {
                             domains: perm.domains,
                             workspace_read: perm.workspace_read,
-                            has_unsandboxed_ui: perm.has_unsandboxed_ui,
                         }),
                     })
                     .collect();
@@ -567,6 +592,75 @@ impl State {
                 }
             }
             Err(e) => RepoCatalogResultJs {
+                ok: false,
+                error: Some(e.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn fetch_all_plugin_repo_catalogs(&self) -> PluginRepoCatalogJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return PluginRepoCatalogJs {
+                    ok: false,
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let pm = PluginManager::new(dir);
+        let http = UreqHttpClient::new();
+        match pm.fetch_all_repo_catalogs(&http) {
+            Ok(agg) => {
+                let plugins = agg
+                    .plugins
+                    .into_iter()
+                    .map(|item| {
+                        let p = item.entry;
+                        AggregatedRepoPluginJs {
+                            repo_url: item.repo_url,
+                            repo_name: item.repo_name,
+                            entry: RepoPluginEntryJs {
+                                id: p.id,
+                                name: p.name,
+                                version: p.version,
+                                description: p.description,
+                                download_url: p.download_url,
+                                sha256: p.sha256,
+                                capabilities: p
+                                    .capabilities
+                                    .iter()
+                                    .map(|c| capability_str(*c).to_owned())
+                                    .collect(),
+                                has_ui: p.has_ui,
+                                official: p.official,
+                                permissions: p.permissions.map(|perm| RepoPluginPermissionJs {
+                                    domains: perm.domains,
+                                    workspace_read: perm.workspace_read,
+                                }),
+                            },
+                        }
+                    })
+                    .collect();
+                let errors = agg
+                    .errors
+                    .into_iter()
+                    .map(|e| RepoFetchErrorJs {
+                        repo_url: e.repo_url,
+                        repo_name: e.repo_name,
+                        error: e.error,
+                    })
+                    .collect();
+                PluginRepoCatalogJs {
+                    ok: true,
+                    plugins,
+                    errors,
+                    error: None,
+                }
+            }
+            Err(e) => PluginRepoCatalogJs {
                 ok: false,
                 error: Some(e.to_string()),
                 ..Default::default()
@@ -608,7 +702,7 @@ impl State {
                 ..Default::default()
             };
         };
-        match pm.install_from_repo_entry(entry, &http) {
+        match pm.install_from_repo_entry_from_source(repo_url.trim(), entry, &http) {
             Ok(installed) => {
                 self.refresh_plugin_watcher();
                 InstallPluginResultJs {
@@ -1265,29 +1359,271 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_ui_source(&self, plugin_id: &str) -> PluginUiSourceResultJs {
+    pub(crate) fn load_plugin_ui_html(&self, plugin_id: &str) -> PluginUiHtmlJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
-                return PluginUiSourceResultJs {
+                return PluginUiHtmlJs {
                     ok: false,
-                    source: None,
                     error: Some(err),
+                    error_code: Some("DATA_DIR".to_owned()),
+                    ..Default::default()
                 };
             }
         };
         let pm = PluginManager::new(&dir);
-        match pm.read_ui_source(plugin_id) {
-            Ok(source) => PluginUiSourceResultJs {
+        match pm.load_plugin_ui_html(plugin_id) {
+            Ok(loaded) => PluginUiHtmlJs {
                 ok: true,
-                source,
+                html: Some(loaded.html),
+                plugin_id: Some(loaded.plugin_id),
+                workspace_read: Some(loaded.manifest.permissions.workspace_read),
                 error: None,
+                error_code: None,
             },
-            Err(err) => PluginUiSourceResultJs {
+            Err(err) => PluginUiHtmlJs {
                 ok: false,
-                source: None,
+                html: None,
+                plugin_id: Some(plugin_id.to_owned()),
+                workspace_read: None,
                 error: Some(err.to_string()),
+                error_code: Some(err.code().to_owned()),
             },
+        }
+    }
+
+    pub(crate) fn plugin_workspace_query(
+        &self,
+        plugin_id: &str,
+        method: &str,
+        args_json: Option<&str>,
+    ) -> PluginWorkspaceResultJs {
+        let err_res = |code: &str, msg: String| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(msg),
+            error_code: Some(code.to_owned()),
+        };
+
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return err_res("DATA_DIR", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let plugins = match pm.list_plugins() {
+            Ok(list) => list,
+            Err(err) => return err_res(err.code(), err.to_string()),
+        };
+        let Some(plugin) = plugins.into_iter().find(|p| p.manifest.id == plugin_id) else {
+            return err_res(
+                "PLUGIN_NOT_FOUND",
+                format!("PLUGIN_NOT_FOUND: plugin '{plugin_id}' not found"),
+            );
+        };
+        if !plugin.enabled {
+            return err_res(
+                "PLUGIN_DISABLED",
+                format!("PLUGIN_DISABLED: plugin '{plugin_id}' is disabled"),
+            );
+        }
+        if plugin.pending_trust {
+            return err_res(
+                "PLUGIN_UNTRUSTED",
+                format!(
+                    "PLUGIN_UNTRUSTED: plugin '{plugin_id}' requires user trust before execution"
+                ),
+            );
+        }
+        if !plugin.manifest.permissions.workspace_read {
+            return err_res(
+                "PERMISSION_DENIED",
+                format!(
+                    "PERMISSION_DENIED: plugin '{plugin_id}' lacks permission 'workspace_read'"
+                ),
+            );
+        }
+
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return err_res("NO_WORKSPACE", "no workspace is open".to_owned());
+        };
+
+        let parse_id_arg = |raw: Option<&str>| -> Result<String, PluginWorkspaceResultJs> {
+            let text = raw.map(str::trim).unwrap_or("");
+            if text.is_empty() {
+                return Err(err_res(
+                    "INVALID_ARGS",
+                    "missing required 'id' argument".to_owned(),
+                ));
+            }
+            let val: serde_json::Value = serde_json::from_str(text)
+                .map_err(|e| err_res("INVALID_ARGS", format!("invalid argsJson: {e}")))?;
+            let id = match val {
+                serde_json::Value::String(s) => Some(s),
+                serde_json::Value::Object(mut obj) => {
+                    obj.remove("id").and_then(|v| v.as_str().map(str::to_owned))
+                }
+                _ => None,
+            };
+            match id.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
+                Some(s) => Ok(s),
+                None => Err(err_res(
+                    "INVALID_ARGS",
+                    "missing required 'id' argument".to_owned(),
+                )),
+            }
+        };
+
+        let payload = match method.trim() {
+            "listProblems" | "list_problems" => {
+                let ids = ws.list_problems().unwrap_or_default();
+                let mut items = Vec::with_capacity(ids.len());
+                for id in ids {
+                    if let Ok(p) = ws.load_problem(&id) {
+                        items.push(serde_json::json!({
+                            "id": p.id,
+                            "title": p.meta.title,
+                            "tags": p.meta.tags,
+                            "rating": p.meta.rating,
+                        }));
+                    }
+                }
+                serde_json::Value::Array(items)
+            }
+            "getProblem" | "get_problem" => {
+                let id = match parse_id_arg(args_json) {
+                    Ok(id) => id,
+                    Err(e) => return e,
+                };
+                match ws.load_problem(&id) {
+                    Ok(p) => {
+                        let samples: Vec<_> = p
+                            .samples
+                            .iter()
+                            .map(|s| serde_json::json!({ "input": s.input, "answer": s.output }))
+                            .collect();
+                        let lang = p.default_language();
+                        let stmt_rel = p
+                            .statement(lang)
+                            .map(|s| s.file.path.clone())
+                            .unwrap_or_else(|| format!("{}/statement.md", p.dir));
+                        let statement_md = ws.read_text(&stmt_rel).unwrap_or_default();
+                        let editorial_md = ws
+                            .read_text(&format!("{}/editorial.md", p.dir))
+                            .unwrap_or_default();
+                        serde_json::json!({
+                            "id": p.id,
+                            "title": p.meta.title,
+                            "tags": p.meta.tags,
+                            "rating": p.meta.rating,
+                            "statementMd": statement_md,
+                            "editorialMd": editorial_md,
+                            "samples": samples,
+                        })
+                    }
+                    Err(xcpc_storage::Error::NotFound(_)) => serde_json::Value::Null,
+                    Err(e) => return err_res(e.code(), e.to_string()),
+                }
+            }
+            "listContests" | "list_contests" => {
+                let ids = ws.list_contests().unwrap_or_default();
+                let mut items = Vec::with_capacity(ids.len());
+                for id in ids {
+                    if let Ok(c) = ws.load_contest(&id) {
+                        let problems: Vec<_> = c
+                            .meta
+                            .problems
+                            .iter()
+                            .map(|item| {
+                                let title = item
+                                    .title
+                                    .clone()
+                                    .or_else(|| {
+                                        ws.load_problem(&item.id).ok().map(|p| p.meta.title)
+                                    })
+                                    .unwrap_or_else(|| item.id.clone());
+                                serde_json::json!({
+                                    "label": item.label,
+                                    "id": item.id,
+                                    "title": title,
+                                })
+                            })
+                            .collect();
+                        items.push(serde_json::json!({
+                            "id": c.id,
+                            "name": c.meta.name,
+                            "date": c.meta.date,
+                            "location": c.meta.location,
+                            "frozen": c.meta.frozen,
+                            "archived": c.meta.archived,
+                            "problemCount": problems.len(),
+                            "items": problems,
+                        }));
+                    }
+                }
+                serde_json::Value::Array(items)
+            }
+            "getContest" | "get_contest" => {
+                let id = match parse_id_arg(args_json) {
+                    Ok(id) => id,
+                    Err(e) => return e,
+                };
+                match ws.load_contest(&id) {
+                    Ok(c) => {
+                        let problems: Vec<_> = c
+                            .meta
+                            .problems
+                            .iter()
+                            .map(|item| {
+                                let title = item
+                                    .title
+                                    .clone()
+                                    .or_else(|| {
+                                        ws.load_problem(&item.id).ok().map(|p| p.meta.title)
+                                    })
+                                    .unwrap_or_else(|| item.id.clone());
+                                serde_json::json!({
+                                    "label": item.label,
+                                    "id": item.id,
+                                    "title": title,
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "id": c.id,
+                            "name": c.meta.name,
+                            "date": c.meta.date,
+                            "location": c.meta.location,
+                            "author": c.meta.author,
+                            "language": c.meta.language.name(),
+                            "frozen": c.meta.frozen,
+                            "archived": c.meta.archived,
+                            "items": problems,
+                        })
+                    }
+                    Err(xcpc_storage::Error::NotFound(_)) => serde_json::Value::Null,
+                    Err(e) => return err_res(e.code(), e.to_string()),
+                }
+            }
+            other => {
+                return err_res(
+                    "INVALID_METHOD",
+                    format!("unknown workspace query method '{other}'"),
+                );
+            }
+        };
+
+        match serde_json::to_string(&payload) {
+            Ok(data_json) => PluginWorkspaceResultJs {
+                ok: true,
+                data_json: Some(data_json),
+                error: None,
+                error_code: None,
+            },
+            Err(err) => err_res("SERIALIZE_ERROR", err.to_string()),
         }
     }
 
@@ -1752,45 +2088,96 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_kv_delete(&self, plugin_id: &str, key: &str) -> PluginKvResultJs {
+    pub(crate) fn plugin_kv_remove(&self, plugin_id: &str, key: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
-            Err(err) => {
-                return PluginKvResultJs {
-                    ok: false,
-                    found: false,
-                    value_json: None,
-                    error: Some(err),
-                };
-            }
+            Err(err) => return ActionResult::err("data_dir", err),
         };
         let pm = PluginManager::new(dir);
         let store = match pm.kv_store(plugin_id) {
             Ok(s) => s,
-            Err(e) => {
-                return PluginKvResultJs {
-                    ok: false,
-                    found: false,
-                    value_json: None,
-                    error: Some(e.to_string()),
-                };
-            }
+            Err(e) => return ActionResult::err("plugin_error", e.to_string()),
         };
         match store.delete(key) {
-            Ok(removed) => PluginKvResultJs {
-                ok: true,
-                found: removed,
-                value_json: None,
-                error: None,
-            },
-            Err(e) => PluginKvResultJs {
-                ok: false,
-                found: false,
-                value_json: None,
-                error: Some(e.to_string()),
-            },
+            Ok(_) => ActionResult::ok(),
+            Err(e) => ActionResult::err("plugin_error", e.to_string()),
         }
     }
+}
+
+/// Returns `true` only for filesystem mutation events that can actually change plugin
+/// files or directory entries. Explicitly ignores `Access` (OPEN/READ/CLOSE_NOWRITE)
+/// and `Modify(Metadata)` events to prevent self-triggering reload loops on Linux inotify,
+/// while accepting `Modify(Any)` so Windows `FILE_ACTION_MODIFIED` triggers hot reload.
+pub(crate) fn is_relevant_plugin_watch_event(kind: &notify::EventKind) -> bool {
+    use notify::EventKind;
+    use notify::event::ModifyKind;
+
+    matches!(
+        kind,
+        EventKind::Create(_)
+            | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_) | ModifyKind::Any)
+            | EventKind::Remove(_)
+    )
+}
+
+/// Extracts affected plugin IDs from watcher `changed_paths` by matching `<dataDir>/plugins/<id>/...`
+/// and registered dev-link target roots.
+pub(crate) fn extract_changed_plugin_ids(
+    data_dir: &Path,
+    links: &[(String, PathBuf)],
+    changed_paths: &[String],
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+    use std::path::Component;
+
+    let plugins_dir = data_dir.join("plugins");
+    let canon_plugins_dir = std::fs::canonicalize(&plugins_dir).ok();
+    let link_roots: Vec<(&str, &Path, Option<PathBuf>)> = links
+        .iter()
+        .map(|(id, target)| {
+            (
+                id.as_str(),
+                target.as_path(),
+                std::fs::canonicalize(target).ok(),
+            )
+        })
+        .collect();
+
+    let mut ids = BTreeSet::new();
+    for raw in changed_paths {
+        let path = Path::new(raw);
+        let canon_path = std::fs::canonicalize(path).ok();
+
+        let rel_under_plugins = path.strip_prefix(&plugins_dir).ok().or_else(|| {
+            canon_plugins_dir.as_deref().and_then(|cp| {
+                path.strip_prefix(cp)
+                    .ok()
+                    .or_else(|| canon_path.as_deref().and_then(|p| p.strip_prefix(cp).ok()))
+            })
+        });
+        if let Some(rel) = rel_under_plugins
+            && let Some(Component::Normal(first)) = rel.components().next()
+        {
+            let name = first.to_string_lossy();
+            if !name.is_empty() {
+                ids.insert(name.into_owned());
+            }
+        }
+
+        for (id, root, canon_root) in &link_roots {
+            let matched = path.starts_with(root)
+                || canon_root.as_deref().is_some_and(|cr| {
+                    path.starts_with(cr)
+                        || canon_path.as_deref().is_some_and(|cp| cp.starts_with(cr))
+                });
+            if matched {
+                ids.insert((*id).to_owned());
+            }
+        }
+    }
+
+    ids.into_iter().collect()
 }
 
 enum PluginWatchControl {
@@ -1799,7 +2186,7 @@ enum PluginWatchControl {
 }
 
 /// Watches `<dataDir>/plugins/`, `<dataDir>/plugin_links.json`, and all registered symlinked
-/// development plugin target directories for `manifest.toml` / `index.js` / `ui.js` changes.
+/// development plugin target directories for `manifest.toml` / `index.js` / `ui.html` / `ui.js` changes.
 pub(crate) struct PluginFileWatcher {
     ctrl_tx: std::sync::mpsc::Sender<PluginWatchControl>,
     event_rx: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PluginWatchEventJs>>>,
@@ -1821,46 +2208,51 @@ impl PluginFileWatcher {
         let (ctrl_tx, ctrl_rx) = mpsc::channel::<PluginWatchControl>();
         let (event_tx, event_rx) = mpsc::channel::<PluginWatchEventJs>();
 
-        let sync_watches =
-            |w: &mut RecommendedWatcher, watched: &mut BTreeSet<PathBuf>, data_dir: &Path| {
-                let mut desired: BTreeSet<PathBuf> = BTreeSet::new();
-                if data_dir.is_dir() {
-                    desired.insert(data_dir.to_path_buf());
-                }
-                let plugins_dir = data_dir.join("plugins");
-                if plugins_dir.is_dir() {
-                    desired.insert(plugins_dir.clone());
-                }
-                let pm = PluginManager::new(data_dir);
-                if let Ok(links) = pm.list_links() {
-                    for link in links {
-                        let p = PathBuf::from(&link.target);
-                        if p.is_dir() {
-                            desired.insert(p);
-                        }
+        let sync_watches = |w: &mut RecommendedWatcher,
+                            watched: &mut BTreeSet<PathBuf>,
+                            active_links: &mut Vec<(String, PathBuf)>,
+                            data_dir: &Path| {
+            let mut desired: BTreeSet<PathBuf> = BTreeSet::new();
+            if data_dir.is_dir() {
+                desired.insert(data_dir.to_path_buf());
+            }
+            let plugins_dir = data_dir.join("plugins");
+            if plugins_dir.is_dir() {
+                desired.insert(plugins_dir.clone());
+            }
+            active_links.clear();
+            let pm = PluginManager::new(data_dir);
+            if let Ok(links) = pm.list_links() {
+                for link in links {
+                    let p = PathBuf::from(&link.target);
+                    active_links.push((link.id, p.clone()));
+                    if p.is_dir() {
+                        desired.insert(p);
                     }
                 }
-                // Unwatch removed targets.
-                for old in watched.difference(&desired) {
-                    let _ = w.unwatch(old);
-                }
-                // Watch newly added targets.
-                for new_path in desired.difference(watched) {
-                    let mode = if new_path == data_dir {
-                        RecursiveMode::NonRecursive
-                    } else {
-                        RecursiveMode::Recursive
-                    };
-                    let _ = w.watch(new_path, mode);
-                }
-                *watched = desired;
-            };
+            }
+            // Unwatch removed targets.
+            for old in watched.difference(&desired) {
+                let _ = w.unwatch(old);
+            }
+            // Watch newly added targets.
+            for new_path in desired.difference(watched) {
+                let mode = if new_path == data_dir {
+                    RecursiveMode::NonRecursive
+                } else {
+                    RecursiveMode::Recursive
+                };
+                let _ = w.watch(new_path, mode);
+            }
+            *watched = desired;
+        };
 
         std::thread::Builder::new()
             .name("xcpc-plugin-watcher".into())
             .spawn(move || {
                 let mut watched = BTreeSet::new();
-                sync_watches(&mut watcher, &mut watched, &data_dir);
+                let mut active_links: Vec<(String, PathBuf)> = Vec::new();
+                sync_watches(&mut watcher, &mut watched, &mut active_links, &data_dir);
 
                 let is_relevant_path = |p: &Path| -> bool {
                     let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
@@ -1868,7 +2260,7 @@ impl PluginFileWatcher {
                     };
                     matches!(
                         name,
-                        "manifest.toml" | "index.js" | "ui.js" | "plugin_links.json"
+                        "manifest.toml" | "index.js" | "ui.html" | "ui.js" | "plugin_links.json"
                     )
                 };
 
@@ -1877,7 +2269,12 @@ impl PluginFileWatcher {
                     while let Ok(cmd) = ctrl_rx.try_recv() {
                         match cmd {
                             PluginWatchControl::Refresh => {
-                                sync_watches(&mut watcher, &mut watched, &data_dir);
+                                sync_watches(
+                                    &mut watcher,
+                                    &mut watched,
+                                    &mut active_links,
+                                    &data_dir,
+                                );
                             }
                             PluginWatchControl::Stop => {
                                 return;
@@ -1887,6 +2284,9 @@ impl PluginFileWatcher {
 
                     match raw_rx.recv_timeout(Duration::from_millis(200)) {
                         Ok(Ok(ev)) => {
+                            if !is_relevant_plugin_watch_event(&ev.kind) {
+                                continue;
+                            }
                             let mut changed_paths: BTreeSet<String> = BTreeSet::new();
                             let mut links_changed = false;
                             for p in &ev.paths {
@@ -1909,7 +2309,9 @@ impl PluginFileWatcher {
                             // 150ms debounce window to coalesce `vite build --watch` multi-file writes.
                             let debounce = Duration::from_millis(150);
                             while let Ok(next_res) = raw_rx.recv_timeout(debounce) {
-                                if let Ok(next_ev) = next_res {
+                                if let Ok(next_ev) = next_res
+                                    && is_relevant_plugin_watch_event(&next_ev.kind)
+                                {
                                     for p in &next_ev.paths {
                                         if is_relevant_path(p) {
                                             if p.file_name().and_then(|n| n.to_str())
@@ -1918,17 +2320,31 @@ impl PluginFileWatcher {
                                                 links_changed = true;
                                             }
                                             changed_paths.insert(p.to_string_lossy().into_owned());
+                                        } else if p.parent()
+                                            == Some(data_dir.join("plugins").as_path())
+                                        {
+                                            links_changed = true;
+                                            changed_paths.insert(p.to_string_lossy().into_owned());
                                         }
                                     }
                                 }
                             }
                             if links_changed {
-                                sync_watches(&mut watcher, &mut watched, &data_dir);
+                                sync_watches(
+                                    &mut watcher,
+                                    &mut watched,
+                                    &mut active_links,
+                                    &data_dir,
+                                );
                             }
+                            let paths: Vec<String> = changed_paths.into_iter().collect();
+                            let changed_plugin_ids =
+                                extract_changed_plugin_ids(&data_dir, &active_links, &paths);
                             if event_tx
                                 .send(PluginWatchEventJs {
                                     kind: "changed".to_owned(),
-                                    paths: changed_paths.into_iter().collect(),
+                                    paths,
+                                    changed_plugin_ids,
                                 })
                                 .is_err()
                             {
@@ -1970,7 +2386,7 @@ impl Drop for PluginFileWatcher {
     }
 }
 
-// ---- Phase 4D+: Uninstall & Persistent Core QuickJS UI Session Worker ------------------
+// ---- Phase 4D+: Uninstall --------------------------------------------------------------
 
 impl State {
     pub(crate) fn uninstall_plugin(&self, id: &str) -> InstallPluginResultJs {
@@ -2017,557 +2433,122 @@ impl State {
             },
         }
     }
+}
 
-    fn with_ui_worker<F, R>(&self, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&PluginUiWorker) -> R,
-    {
-        let mut slot = self
-            .plugin_ui_worker
-            .lock()
-            .map_err(|_| "plugin UI worker lock poisoned".to_owned())?;
-        if slot.is_none() {
-            *slot = Some(PluginUiWorker::start()?);
-        }
-        Ok(f(slot.as_ref().unwrap()))
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    pub(crate) fn plugin_ui_mount(
-        &self,
-        plugin_id: &str,
-        payload_json: Option<String>,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        let dir = match self.effective_data_dir() {
-            Ok(d) => d,
-            Err(err) => {
-                return PluginUiFrameJs {
-                    ok: false,
-                    error: Some(err),
-                    ..Default::default()
-                };
-            }
+    #[test]
+    fn plugin_watch_event_filter_ignores_reads_and_metadata_and_accepts_mutations() {
+        use notify::EventKind;
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind,
+            RenameMode,
         };
-        let pm = PluginManager::new(&dir);
-        let loaded = match pm.load_plugin(plugin_id) {
-            Ok(l) => l,
-            Err(e) => {
-                return PluginUiFrameJs {
-                    ok: false,
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                };
-            }
-        };
-        let kv = match pm.kv_store(plugin_id) {
-            Ok(k) => Arc::new(k),
-            Err(e) => {
-                return PluginUiFrameJs {
-                    ok: false,
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                };
-            }
-        };
-        let ws = self.core.lock().ok().and_then(|c| c.workspace.clone());
-        let ws_reader: Option<Arc<dyn WorkspaceReader>> = ws
-            .clone()
-            .map(|w| Arc::new(DesktopWorkspaceReader(w)) as Arc<dyn WorkspaceReader>);
-        let ui_ws: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>> = ws.map(|w| {
-            Arc::new(DesktopUiWorkspaceBridge { ws: w }) as Arc<dyn xcpc_plugin::UiWorkspaceBridge>
-        });
-        let creds = Arc::clone(&self.credentials);
 
-        match self.with_ui_worker(|w| {
-            w.mount(
-                loaded,
-                kv,
-                creds,
-                ws_reader,
-                ui_ws,
-                payload_json,
-                theme_tokens_json,
-                color_scheme,
-            )
-        }) {
-            Ok(frame) => frame,
-            Err(err) => PluginUiFrameJs {
-                ok: false,
-                error: Some(err),
-                ..Default::default()
-            },
-        }
+        // Access events (Linux inotify OPEN / ACCESS / CLOSE_NOWRITE) MUST be ignored
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Any
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Read
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Open(AccessMode::Any)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Open(AccessMode::Read)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Close(AccessMode::Read)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Close(AccessMode::Write)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Access(
+            AccessKind::Close(AccessMode::Any)
+        )));
+
+        // Metadata-only and non-mutation events MUST be ignored
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Metadata(MetadataKind::Any)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Metadata(MetadataKind::AccessTime)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Metadata(MetadataKind::WriteTime)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Metadata(MetadataKind::Permissions)
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Other
+        )));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Any));
+        assert!(!is_relevant_plugin_watch_event(&EventKind::Other));
+
+        // Real mutations MUST be accepted (including ModifyKind::Any for Windows FILE_ACTION_MODIFIED)
+        assert!(is_relevant_plugin_watch_event(&EventKind::Create(
+            CreateKind::File
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Create(
+            CreateKind::Folder
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Create(
+            CreateKind::Any
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Any
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Data(DataChange::Content)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Data(DataChange::Size)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Data(DataChange::Any)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Name(RenameMode::Any)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Name(RenameMode::To)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Name(RenameMode::From)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Modify(
+            ModifyKind::Name(RenameMode::Both)
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Remove(
+            RemoveKind::File
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Remove(
+            RemoveKind::Folder
+        )));
+        assert!(is_relevant_plugin_watch_event(&EventKind::Remove(
+            RemoveKind::Any
+        )));
     }
 
-    pub(crate) fn plugin_ui_dispatch(
-        &self,
-        session_id: u32,
-        callback_id: String,
-        payload_json: Option<String>,
-    ) -> PluginUiFrameJs {
-        match self.with_ui_worker(|w| w.dispatch(session_id, callback_id, payload_json)) {
-            Ok(frame) => frame,
-            Err(err) => PluginUiFrameJs {
-                ok: false,
-                error: Some(err),
-                ..Default::default()
-            },
-        }
-    }
+    #[test]
+    fn extract_changed_plugin_ids_matches_plugins_dir_and_dev_links() {
+        let data_dir = PathBuf::from("/tmp/xcpc-data-test");
+        let links = vec![(
+            "dev-tool".to_owned(),
+            PathBuf::from("/home/dev/my-plugin/dist"),
+        )];
+        let changed_paths = vec![
+            "/tmp/xcpc-data-test/plugins/math-bitwise/ui.html".to_owned(),
+            "/tmp/xcpc-data-test/plugins/graph-editor".to_owned(),
+            "/home/dev/my-plugin/dist/ui.html".to_owned(),
+            "/tmp/xcpc-data-test/plugin_links.json".to_owned(),
+        ];
 
-    pub(crate) fn plugin_ui_resolve_effect(
-        &self,
-        session_id: u32,
-        effect_id: u32,
-        result_json: String,
-    ) -> PluginUiFrameJs {
-        match self.with_ui_worker(|w| w.resolve_effect(session_id, effect_id as u64, result_json)) {
-            Ok(frame) => frame,
-            Err(err) => PluginUiFrameJs {
-                ok: false,
-                error: Some(err),
-                ..Default::default()
-            },
-        }
-    }
-
-    pub(crate) fn plugin_ui_update_theme(
-        &self,
-        session_id: u32,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        match self.with_ui_worker(|w| w.update_theme(session_id, theme_tokens_json, color_scheme)) {
-            Ok(frame) => frame,
-            Err(err) => PluginUiFrameJs {
-                ok: false,
-                error: Some(err),
-                ..Default::default()
-            },
-        }
-    }
-
-    pub(crate) fn plugin_ui_dispose(&self, session_id: u32) -> ActionResult {
-        if let Ok(slot) = self.plugin_ui_worker.lock()
-            && let Some(ref worker) = *slot
-        {
-            worker.dispose(session_id);
-        }
-        ActionResult::ok()
-    }
-}
-
-struct DesktopUiWorkspaceBridge {
-    ws: Workspace,
-}
-
-impl xcpc_plugin::UiWorkspaceBridge for DesktopUiWorkspaceBridge {
-    fn has_workspace(&self) -> bool {
-        true
-    }
-
-    fn current_problem_id(&self) -> Option<String> {
-        None
-    }
-
-    fn list_problems_json(&self) -> String {
-        let Ok(ids) = self.ws.list_problems() else {
-            return "[]".to_owned();
-        };
-        let mut items = Vec::new();
-        for id in ids {
-            if let Ok(p) = self.ws.load_problem(&id) {
-                items.push(serde_json::json!({
-                    "id": p.id,
-                    "title": p.meta.title,
-                    "tags": p.meta.tags,
-                    "rating": p.meta.rating,
-                }));
-            }
-        }
-        serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_owned())
-    }
-
-    fn get_problem_json(&self, id: &str) -> String {
-        let Ok(p) = self.ws.load_problem(id) else {
-            return "null".to_owned();
-        };
-        let samples: Vec<_> = p
-            .samples
-            .iter()
-            .map(|s| serde_json::json!({ "input": s.input, "answer": s.output }))
-            .collect();
-        let lang = p.default_language();
-        let stmt_rel = p
-            .statement(lang)
-            .map(|s| s.file.path.clone())
-            .unwrap_or_else(|| format!("{}/statement.md", p.dir));
-        let statement_md = self.ws.read_text(&stmt_rel).unwrap_or_default();
-        let editorial_md = self
-            .ws
-            .read_text(&format!("{}/editorial.md", p.dir))
-            .unwrap_or_default();
-        serde_json::to_string(&serde_json::json!({
-            "id": p.id,
-            "title": p.meta.title,
-            "tags": p.meta.tags,
-            "rating": p.meta.rating,
-            "statementMd": statement_md,
-            "editorialMd": editorial_md,
-            "samples": samples,
-        }))
-        .unwrap_or_else(|_| "null".to_owned())
-    }
-}
-
-enum UiWorkerCmd {
-    Mount {
-        loaded: xcpc_plugin::LoadedPlugin,
-        kv: Arc<xcpc_plugin::KvStore>,
-        credentials: Arc<dyn xcpc_plugin::CredentialStore>,
-        workspace_reader: Option<Arc<dyn WorkspaceReader>>,
-        ui_workspace: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>>,
-        payload_json: Option<String>,
-        theme_tokens_json: String,
-        color_scheme: String,
-        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
-    },
-    Dispatch {
-        session_id: u32,
-        callback_id: String,
-        payload_json: Option<String>,
-        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
-    },
-    ResolveEffect {
-        session_id: u32,
-        effect_id: u64,
-        result_json: String,
-        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
-    },
-    UpdateTheme {
-        session_id: u32,
-        theme_tokens_json: String,
-        color_scheme: String,
-        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
-    },
-    Dispose {
-        session_id: u32,
-    },
-    Stop,
-}
-
-pub(crate) struct PluginUiWorker {
-    tx: std::sync::mpsc::Sender<UiWorkerCmd>,
-}
-
-impl PluginUiWorker {
-    fn start() -> Result<Self, String> {
-        use std::collections::HashMap;
-        use std::sync::mpsc;
-
-        let (tx, rx) = mpsc::channel::<UiWorkerCmd>();
-        std::thread::Builder::new()
-            .name("xcpc-plugin-ui-worker".into())
-            .spawn(move || {
-                let mut sessions: HashMap<u32, xcpc_plugin::PluginUiSession> = HashMap::new();
-                let mut next_id: u32 = 1;
-
-                while let Ok(cmd) = rx.recv() {
-                    match cmd {
-                        UiWorkerCmd::Mount {
-                            loaded,
-                            kv,
-                            credentials,
-                            workspace_reader,
-                            ui_workspace,
-                            payload_json,
-                            theme_tokens_json,
-                            color_scheme,
-                            reply,
-                        } => {
-                            let res = match xcpc_plugin::PluginUiSession::mount_raw(
-                                loaded,
-                                kv,
-                                Some(Arc::new(UreqHttpClient::new())),
-                                Some(credentials),
-                                workspace_reader,
-                                ui_workspace,
-                                payload_json.as_deref(),
-                                &theme_tokens_json,
-                                &color_scheme,
-                            ) {
-                                Ok((session, frame_json)) => {
-                                    let sid = next_id;
-                                    next_id = next_id.wrapping_add(1).max(1);
-                                    sessions.insert(sid, session);
-                                    PluginUiFrameJs {
-                                        ok: true,
-                                        session_id: Some(sid),
-                                        frame_json: Some(frame_json),
-                                        error: None,
-                                    }
-                                }
-                                Err(e) => PluginUiFrameJs {
-                                    ok: false,
-                                    error: Some(e.to_string()),
-                                    ..Default::default()
-                                },
-                            };
-                            let _ = reply.send(res);
-                        }
-                        UiWorkerCmd::Dispatch {
-                            session_id,
-                            callback_id,
-                            payload_json,
-                            reply,
-                        } => {
-                            let res = match sessions.get(&session_id) {
-                                Some(sess) => {
-                                    match sess
-                                        .dispatch_event_raw(&callback_id, payload_json.as_deref())
-                                    {
-                                        Ok(frame_json) => PluginUiFrameJs {
-                                            ok: true,
-                                            session_id: Some(session_id),
-                                            frame_json: Some(frame_json),
-                                            error: None,
-                                        },
-                                        Err(e) => PluginUiFrameJs {
-                                            ok: false,
-                                            session_id: Some(session_id),
-                                            frame_json: None,
-                                            error: Some(e.to_string()),
-                                        },
-                                    }
-                                }
-                                None => PluginUiFrameJs {
-                                    ok: false,
-                                    error: Some("plugin UI session not found".to_owned()),
-                                    ..Default::default()
-                                },
-                            };
-                            let _ = reply.send(res);
-                        }
-                        UiWorkerCmd::ResolveEffect {
-                            session_id,
-                            effect_id,
-                            result_json,
-                            reply,
-                        } => {
-                            let res = match sessions.get(&session_id) {
-                                Some(sess) => {
-                                    match sess.resolve_effect_raw(effect_id, &result_json) {
-                                        Ok(frame_json) => PluginUiFrameJs {
-                                            ok: true,
-                                            session_id: Some(session_id),
-                                            frame_json: Some(frame_json),
-                                            error: None,
-                                        },
-                                        Err(e) => PluginUiFrameJs {
-                                            ok: false,
-                                            session_id: Some(session_id),
-                                            frame_json: None,
-                                            error: Some(e.to_string()),
-                                        },
-                                    }
-                                }
-                                None => PluginUiFrameJs {
-                                    ok: false,
-                                    error: Some("plugin UI session not found".to_owned()),
-                                    ..Default::default()
-                                },
-                            };
-                            let _ = reply.send(res);
-                        }
-                        UiWorkerCmd::UpdateTheme {
-                            session_id,
-                            theme_tokens_json,
-                            color_scheme,
-                            reply,
-                        } => {
-                            let res = match sessions.get(&session_id) {
-                                Some(sess) => {
-                                    match sess.update_theme_raw(&theme_tokens_json, &color_scheme) {
-                                        Ok(frame_json) => PluginUiFrameJs {
-                                            ok: true,
-                                            session_id: Some(session_id),
-                                            frame_json: Some(frame_json),
-                                            error: None,
-                                        },
-                                        Err(e) => PluginUiFrameJs {
-                                            ok: false,
-                                            session_id: Some(session_id),
-                                            frame_json: None,
-                                            error: Some(e.to_string()),
-                                        },
-                                    }
-                                }
-                                None => PluginUiFrameJs {
-                                    ok: false,
-                                    error: Some("plugin UI session not found".to_owned()),
-                                    ..Default::default()
-                                },
-                            };
-                            let _ = reply.send(res);
-                        }
-                        UiWorkerCmd::Dispose { session_id } => {
-                            if let Some(sess) = sessions.remove(&session_id) {
-                                sess.dispose();
-                            }
-                        }
-                        UiWorkerCmd::Stop => {
-                            for (_, sess) in sessions.drain() {
-                                sess.dispose();
-                            }
-                            break;
-                        }
-                    }
-                }
-            })
-            .map_err(|e| format!("failed to spawn plugin UI worker thread: {e}"))?;
-
-        Ok(Self { tx })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn mount(
-        &self,
-        loaded: xcpc_plugin::LoadedPlugin,
-        kv: Arc<xcpc_plugin::KvStore>,
-        credentials: Arc<dyn xcpc_plugin::CredentialStore>,
-        workspace_reader: Option<Arc<dyn WorkspaceReader>>,
-        ui_workspace: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>>,
-        payload_json: Option<String>,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        if self
-            .tx
-            .send(UiWorkerCmd::Mount {
-                loaded,
-                kv,
-                credentials,
-                workspace_reader,
-                ui_workspace,
-                payload_json,
-                theme_tokens_json,
-                color_scheme,
-                reply,
-            })
-            .is_err()
-        {
-            return PluginUiFrameJs {
-                ok: false,
-                error: Some("plugin UI worker stopped".to_owned()),
-                ..Default::default()
-            };
-        }
-        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
-            ok: false,
-            error: Some("plugin UI worker disconnected".to_owned()),
-            ..Default::default()
-        })
-    }
-
-    fn dispatch(
-        &self,
-        session_id: u32,
-        callback_id: String,
-        payload_json: Option<String>,
-    ) -> PluginUiFrameJs {
-        let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        if self
-            .tx
-            .send(UiWorkerCmd::Dispatch {
-                session_id,
-                callback_id,
-                payload_json,
-                reply,
-            })
-            .is_err()
-        {
-            return PluginUiFrameJs {
-                ok: false,
-                error: Some("plugin UI worker stopped".to_owned()),
-                ..Default::default()
-            };
-        }
-        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
-            ok: false,
-            error: Some("plugin UI worker disconnected".to_owned()),
-            ..Default::default()
-        })
-    }
-
-    fn resolve_effect(
-        &self,
-        session_id: u32,
-        effect_id: u64,
-        result_json: String,
-    ) -> PluginUiFrameJs {
-        let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        if self
-            .tx
-            .send(UiWorkerCmd::ResolveEffect {
-                session_id,
-                effect_id,
-                result_json,
-                reply,
-            })
-            .is_err()
-        {
-            return PluginUiFrameJs {
-                ok: false,
-                error: Some("plugin UI worker stopped".to_owned()),
-                ..Default::default()
-            };
-        }
-        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
-            ok: false,
-            error: Some("plugin UI worker disconnected".to_owned()),
-            ..Default::default()
-        })
-    }
-
-    fn update_theme(
-        &self,
-        session_id: u32,
-        theme_tokens_json: String,
-        color_scheme: String,
-    ) -> PluginUiFrameJs {
-        let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        if self
-            .tx
-            .send(UiWorkerCmd::UpdateTheme {
-                session_id,
-                theme_tokens_json,
-                color_scheme,
-                reply,
-            })
-            .is_err()
-        {
-            return PluginUiFrameJs {
-                ok: false,
-                error: Some("plugin UI worker stopped".to_owned()),
-                ..Default::default()
-            };
-        }
-        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
-            ok: false,
-            error: Some("plugin UI worker disconnected".to_owned()),
-            ..Default::default()
-        })
-    }
-
-    fn dispose(&self, session_id: u32) {
-        let _ = self.tx.send(UiWorkerCmd::Dispose { session_id });
-    }
-}
-
-impl Drop for PluginUiWorker {
-    fn drop(&mut self) {
-        let _ = self.tx.send(UiWorkerCmd::Stop);
+        let ids = extract_changed_plugin_ids(&data_dir, &links, &changed_paths);
+        assert_eq!(ids, vec!["dev-tool", "graph-editor", "math-bitwise"]);
     }
 }

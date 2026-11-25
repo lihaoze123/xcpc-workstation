@@ -1,20 +1,34 @@
 import { describe, expect, open, test } from "nsh/test";
 import { Preview } from "xcpc-workstation/native";
 import { spaceName, windowTitle } from "./logic";
-import { goSpace, info, openToolPlugin, activeToolPluginId, activeToolPayload, space, preview } from "./store";
+import {
+  activeToolPayload,
+  activeToolPluginId,
+  goSpace,
+  info,
+  notifyPluginsChanged,
+  openToolPlugin,
+  pluginRevisionFor,
+  preview,
+  space,
+} from "./store";
 import { computeTableColumnSpecs, isMonoTableCell } from "./tools/OutputRenderer";
-import { replayCanvasOps } from "./tools/PluginUiRenderer";
-import { createPluginUiSdk, createPluginUiSdkWithCleanup, fitBounds, mountPluginUi } from "./tools/pluginSdk";
+import { classifyPluginUiError, formatPluginError } from "./tools/pluginErrors";
+import {
+  buildThemeCssVars,
+  injectPluginHtml,
+  isAllowedExternalUrl,
+  PLUGIN_WEBVIEW_CSP,
+} from "./tools/PluginWebView";
 import {
   coerceToolInputs,
   defaultInputsForTool,
   parseJsonReport,
   type PluginToolGroup,
-  type ToolExecutionResult,
   type ToolSpec,
 } from "./tools/types";
 
-describe("Phase 4C/4D Pure Tools space & Plugin SDK", () => {
+describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
   test("tools space is always navigable even without a workspace or with training disabled", () => {
     const prevInfo = info();
     const prevSpace = space();
@@ -61,13 +75,65 @@ describe("Phase 4C/4D Pure Tools space & Plugin SDK", () => {
     expect(groups.filter((g) => g.is_builtin).length).toBe(0);
   });
 
-  test("Plugin UI SDK catches malformed ui.js errors inside boundary", () => {
-    const sdk = createPluginUiSdk({ pluginId: "broken-ui" });
-    const badSyntax = mountPluginUi("function (", sdk, { pluginId: "broken-ui" });
-    expect(badSyntax.ok).toBe(false);
+  test("PluginWebView injects strict CSP, theme CSS vars, and window.xcpc bridge safely", () => {
+    const lightVars = buildThemeCssVars("light");
+    const darkVars = buildThemeCssVars("dark");
+    expect(lightVars["--xcpc-bg"]).not.toBe(darkVars["--xcpc-bg"]);
+    expect(lightVars["--xcpc-primary"]).toBeTruthy();
+    expect(darkVars["--xcpc-border"]).toBeTruthy();
 
-    const noRender = mountPluginUi("module.exports = {};", sdk, { pluginId: "broken-ui" });
-    expect(noRender.ok).toBe(false);
+    const raw = `<!doctype html><html><head><title>Bitwise</title></head><body><div id="app"></div></body></html>`;
+    const injected = injectPluginHtml(raw, {
+      pluginId: "math-bitwise",
+      theme: "dark",
+      cssVars: darkVars,
+      initialPayload: { note: "test </script> <!-- safe" },
+    });
+
+    expect(injected).toContain(`<meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">`);
+    expect(injected).toContain("connect-src 'none'");
+    expect(injected).toContain('id="xcpc-host-theme"');
+    expect(injected).toContain("--xcpc-bg:");
+    expect(injected).toContain("window.nsh.postMessage");
+    expect(injected).toContain('Object.defineProperty(window,"xcpc"');
+    // Payload with `</script>` must be safely escaped so it cannot break out of the injected script tag.
+    expect(injected).toContain("<\\/script>");
+    expect(injected).not.toContain('test </script>');
+
+    // Fragment HTML without `<head>` still gets a cleanly prepended `<head>`.
+    const fragment = injectPluginHtml("<main>Hello</main>", {
+      pluginId: "frag",
+      theme: "light",
+      cssVars: lightVars,
+    });
+    expect(fragment.startsWith("<head>")).toBe(true);
+    expect(fragment).toContain("<main>Hello</main>");
+
+    // External URL validator only allows http(s).
+    expect(isAllowedExternalUrl("https://codeforces.com")).toBe(true);
+    expect(isAllowedExternalUrl("http://127.0.0.1:8080")).toBe(true);
+    expect(isAllowedExternalUrl("javascript:alert(1)")).toBe(false);
+    expect(isAllowedExternalUrl("file:///etc/passwd")).toBe(false);
+  });
+
+  test("New Issue C: per-plugin revision isolates unrelated plugin changes", () => {
+    const bitBefore = pluginRevisionFor("math-bitwise");
+    const graphBefore = pluginRevisionFor("graph-editor");
+
+    // Modifying or installing an unrelated plugin must NOT bump `math-bitwise` or `graph-editor`.
+    notifyPluginsChanged(["some-other-plugin"]);
+    expect(pluginRevisionFor("math-bitwise")).toBe(bitBefore);
+    expect(pluginRevisionFor("graph-editor")).toBe(graphBefore);
+
+    // Modifying `math-bitwise` bumps ONLY `math-bitwise`.
+    notifyPluginsChanged(["math-bitwise"]);
+    expect(pluginRevisionFor("math-bitwise")).toBe(bitBefore + 1);
+    expect(pluginRevisionFor("graph-editor")).toBe(graphBefore);
+
+    // Full rescan (`undefined`) bumps all tracked plugins.
+    notifyPluginsChanged(undefined);
+    expect(pluginRevisionFor("math-bitwise")).toBe(bitBefore + 2);
+    expect(pluginRevisionFor("graph-editor")).toBe(graphBefore + 1);
   });
 
   test("SVG->PNG rasterization bridge works end to end", () => {
@@ -77,6 +143,11 @@ describe("Phase 4C/4D Pure Tools space & Plugin SDK", () => {
     );
     expect(png.ok).toBe(true);
     expect((png.pngBase64 ?? "").length).toBeGreaterThan(20);
+  });
+
+  test("Built-in plugins cannot be uninstalled", () => {
+    const uninstBuiltin = preview.uninstallPlugin("codeforces");
+    expect(uninstBuiltin.ok).toBe(false);
   });
 
   test("A3: HeadlessToolRunner boolean switch toggles repeatedly (true -> false -> true)", async () => {
@@ -133,164 +204,51 @@ describe("Phase 4C/4D Pure Tools space & Plugin SDK", () => {
     expect(kmpSpecs[0].flexWeight).toBeGreaterThan(0);
   });
 
-  test("Phase 4D SDK primitives: fitBounds, onCleanup reverse order, storage, and useTool race drop", async () => {
-    const emptyFit = fitBounds([], { width: 400, height: 300 });
-    expect(emptyFit.scale).toBe(1);
-    expect(emptyFit.offsetX).toBe(200);
-    expect(emptyFit.offsetY).toBe(150);
+  test("Awkward 7, 10 & New Issue D: plugin error mapper formats raw codes, Chinese locale network errors, and ureq errors", () => {
+    expect(formatPluginError("CHECKSUM_MISMATCH: expected sha256 '000'")).toContain("校验失败");
+    expect(formatPluginError("SYMLINK_ESCAPE: /etc/passwd")).toContain("符号链接");
+    expect(formatPluginError("ZIP_SLIP: ../evil")).toContain("非法文件路径");
+    expect(formatPluginError("PLUGIN_UNTRUSTED: demo")).toContain("确认信任");
+    expect(formatPluginError("HTTP_NOT_ALLOWED: http://example.com")).toContain("HTTPS");
 
-    const fit = fitBounds(
-      [
-        { x: 0, y: 0 },
-        { x: 200, y: 100 },
-      ],
-      { width: 400, height: 300 },
-      20,
-    );
-    expect(fit.centerX).toBe(100);
-    expect(fit.centerY).toBe(50);
-    expect(fit.scale).toBeGreaterThan(1);
+    // New Issue D: Chinese OS locale errors & ureq transport errors
+    expect(
+      formatPluginError(
+        "HTTP_ERROR: http://127.0.0.1:18767/index.json: Connection Failed: Connect error: 连接被拒绝 (os error 111)",
+      ),
+    ).toContain("网络连接失败");
+    expect(formatPluginError("无法连接到远程主机")).toContain("网络连接失败");
+    expect(formatPluginError("连接超时 (os error 110)")).toContain("网络连接失败");
+    expect(formatPluginError("名称解析失败")).toContain("网络连接失败");
+    expect(formatPluginError("HTTP_ERROR: dns failed for example.invalid")).toContain("网络连接失败");
+    expect(formatPluginError("HTTP_ERROR: unexpected status 503")).toBe("unexpected status 503");
 
-    const order: string[] = [];
-    const mem = new Map<string, unknown>();
-    let resolveFirst: ((r: ToolExecutionResult) => void) | undefined;
-    let resolveSecond: ((r: ToolExecutionResult) => void) | undefined;
-    let calls = 0;
+    const mountErr = classifyPluginUiError("SyntaxError: bad token\n    at xcpc-plugin://bad/ui.html:1:5", "mount");
+    expect(mountErr.title).toBe("插件界面加载失败");
+    expect(mountErr.details).toContain("xcpc-plugin://bad/ui.html:1:5");
 
-    const { sdk, cleanup } = createPluginUiSdkWithCleanup({
-      pluginId: "sdk-test-plugin",
-      storageOverride: {
-        get: <T,>(k: string) => mem.get(k) as T | undefined,
-        set: (k: string, v: unknown) => {
-          mem.set(k, v);
-        },
-        delete: (k: string) => mem.delete(k),
-      },
-      runToolOverride: (_toolId, inputs) =>
-        new Promise<ToolExecutionResult>((resolve) => {
-          calls += 1;
-          const idx = calls;
-          const handler = (res: ToolExecutionResult) => resolve(res);
-          if (idx === 1) resolveFirst = handler;
-          else resolveSecond = handler;
-          void inputs;
-        }),
-    });
+    const timeoutErr = classifyPluginUiError("TIMEOUT: script interrupted after 2000ms", "action");
+    expect(timeoutErr.title).toBe("插件操作超时");
+    expect(timeoutErr.summary).toContain("超时");
 
-    expect(typeof sdk.ui.Each).toBe("function");
-    expect(typeof sdk.ui.Row).toBe("function");
-    expect(typeof sdk.ui.Col).toBe("function");
-    expect(typeof sdk.ui.Card).toBe("function");
-    expect(typeof sdk.ui.Switch).toBe("function");
-    expect(typeof sdk.ui.Select).toBe("function");
-    expect(typeof sdk.ui.Badge).toBe("function");
-    expect(typeof sdk.ui.Menu).toBe("function");
-    expect(typeof sdk.ui.Modal).toBe("function");
-    expect(typeof sdk.ui.Image).toBe("function");
-    expect(typeof sdk.ui.CodeEditor).toBe("function");
-    expect(typeof sdk.canvas.fitBounds).toBe("function");
-    expect(typeof sdk.pickFile).toBe("function");
-    expect(typeof sdk.readClipboard).toBe("function");
-    expect(typeof sdk.openExternal).toBe("function");
-    expect(typeof sdk.openTool).toBe("function");
-    expect(typeof sdk.onShortcut).toBe("function");
-    expect(typeof sdk.workspace.listProblems).toBe("function");
-    expect(typeof sdk.workspace.getProblem).toBe("function");
-
-    // openExternal must reject non-http(s) URLs
-    expect(() => sdk.openExternal("javascript:alert(1)")).toThrow();
-    expect(() => sdk.openExternal("file:///etc/passwd")).toThrow();
-
-    // onShortcut registers and cleans up cleanly
-    const unbind = sdk.onShortcut("mod+shift+9", () => {});
-    expect(typeof unbind).toBe("function");
-
-    expect(sdk.storage.get("k")).toBeUndefined();
-    sdk.storage.set("k", { n: 42 });
-    expect(sdk.storage.get<{ n: number }>("k")).toEqual({ n: 42 });
-    expect(sdk.storage.delete("k")).toBe(true);
-    expect(sdk.storage.get("k")).toBeUndefined();
-
-    const q = sdk.signal("first");
-    const handle = sdk.useTool("echo", () => ({ q: q() }), { debounceMs: 0, immediate: true });
-    expect(calls).toBe(1);
-    q.set("second");
-    expect(calls).toBe(2);
-    resolveSecond?.({ blocks: [{ type: "text", content: "second-result" }] });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(handle.data()?.blocks[0]).toEqual({ type: "text", content: "second-result" });
-    resolveFirst?.({ blocks: [{ type: "text", content: "stale-first" }] });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(handle.data()?.blocks[0]).toEqual({ type: "text", content: "second-result" });
-
-    sdk.onCleanup(() => order.push("first"));
-    sdk.onCleanup(() => order.push("second"));
-    cleanup();
-    cleanup();
-    expect(order).toEqual(["second", "first"]);
+    const untrustedErr = classifyPluginUiError("PLUGIN_UNTRUSTED: net-plugin", "mount");
+    expect(untrustedErr.untrusted).toBe(true);
+    expect(untrustedErr.title).toBe("插件尚未信任");
   });
 
-  test("Core QuickJS declarative UI protocol: replayCanvasOps & native bridge safety", () => {
-    const calls: string[] = [];
-    const mockCx = {
-      fillStyle: "",
-      strokeStyle: "",
-      lineWidth: 1,
-      font: "",
-      textAlign: "left",
-      textBaseline: "alphabetic",
-      save: () => calls.push("save"),
-      restore: () => calls.push("restore"),
-      beginPath: () => calls.push("beginPath"),
-      moveTo: (x: number, y: number) => calls.push(`moveTo(${x},${y})`),
-      lineTo: (x: number, y: number) => calls.push(`lineTo(${x},${y})`),
-      arc: (x: number, y: number, r: number) => calls.push(`arc(${x},${y},${r})`),
-      fill: () => calls.push("fill"),
-      stroke: () => calls.push("stroke"),
-      fillText: (text: string, x: number, y: number) => calls.push(`fillText(${text},${x},${y})`),
-      setLineDash: (segs: number[]) => calls.push(`setLineDash(${segs.join(",")})`),
-    };
+  test("Blocker 1: typing into a plugin tool input works cleanly with plugin watching active", async () => {
+    const app = await open("./tools/testHarness.tsx", {
+      width: 960,
+      height: 820,
+      platform: "linux",
+    });
 
-    replayCanvasOps(mockCx, [
-      ["save"],
-      ["fillStyle", "#0b6989"],
-      ["strokeStyle", "#333333"],
-      ["lineWidth", 2],
-      ["setLineDash", [4, 2]],
-      ["beginPath"],
-      ["moveTo", 10, 20],
-      ["lineTo", 50, 60],
-      ["stroke"],
-      ["beginPath"],
-      ["arc", 30, 40, 12, 0, Math.PI * 2],
-      ["fill"],
-      ["fillText", "A", 30, 40],
-      ["restore"],
-    ]);
+    await app.waitFor("id:harness-switch-watch");
+    await app.press("id:harness-switch-watch");
+    await app.waitFor("id:tool-field-n");
 
-    expect(mockCx.fillStyle).toBe("#0b6989");
-    expect(mockCx.strokeStyle).toBe("#333333");
-    expect(mockCx.lineWidth).toBe(2);
-    expect(calls).toEqual([
-      "save",
-      "setLineDash(4,2)",
-      "beginPath",
-      "moveTo(10,20)",
-      "lineTo(50,60)",
-      "stroke",
-      "beginPath",
-      "arc(30,40,12)",
-      "fill",
-      "fillText(A,30,40)",
-      "restore",
-    ]);
-
-    // Mounting a non-existent plugin fails gracefully without throwing or needing `new Function`.
-    const missing = preview.pluginUiMount("does-not-exist", "light", "{}", "");
-    expect(missing.ok).toBe(false);
-
-    // Built-in plugins cannot be uninstalled.
-    const uninstBuiltin = preview.uninstallPlugin("codeforces");
-    expect(uninstBuiltin.ok).toBe(false);
+    await app.type("id:tool-field-n", "7");
+    await new Promise((r) => setTimeout(r, 250));
+    expect(app.value("id:tool-field-n") ?? "").toContain("7");
   });
 });

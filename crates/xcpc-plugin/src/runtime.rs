@@ -395,39 +395,6 @@ impl PluginRuntime {
         let names: Vec<String> = serde_json::from_str(&json)?;
         Ok(names)
     }
-
-    /// Validates `ui.js` syntax and checks whether it exports a `render(sdk)` (or `default`) function.
-    /// Runs in a minimal isolated QuickJS sandbox without invoking `render()`.
-    pub fn check_ui_source(source: &str, filename: &str) -> Result<bool> {
-        let rt = Runtime::new().map_err(|e| PluginError::JsError(e.to_string()))?;
-        rt.set_memory_limit(16 * 1024 * 1024);
-        rt.set_max_stack_size(512 * 1024);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
-        let ctx = Context::full(&rt).map_err(|e| PluginError::JsError(e.to_string()))?;
-        ctx.with(|ctx| {
-            // 1. Parse-only syntax check using the real filename for accurate line numbers.
-            let wrapped = format!("(function(sdk, module, exports) {{{source}\n}});");
-            eval_checked_with_filename(&ctx, &wrapped, filename)?;
-
-            // 2. Execute top-level module factory with a harmless proxy `sdk` to verify `render` export.
-            let probe = format!(
-                "(function() {{ const mod = {{ exports: {{}} }}; const noop = function() {{ return null; }}; const sdkProxy = new Proxy({{}}, {{ get: function() {{ return noop; }} }}); (function(sdk, module, exports) {{{source}\n}})(sdkProxy, mod, mod.exports); return typeof mod.exports.render === 'function' || typeof mod.exports.default === 'function'; }})()"
-            );
-            let mut opts = EvalOptions::default();
-            opts.global = true;
-            opts.filename = Some(filename.to_string());
-            match ctx.eval_with_options::<bool, _>(probe, opts).catch(&ctx) {
-                Ok(has_render) => Ok(has_render),
-                Err(_) => {
-                    // Fallback: if top-level accessed nested `sdk.*` properties, check statically.
-                    Ok(source.contains("exports.render")
-                        || source.contains("module.exports")
-                        || source.contains("exports.default"))
-                }
-            }
-        })
-    }
 }
 
 fn classify_js_error(

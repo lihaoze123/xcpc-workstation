@@ -43,6 +43,7 @@ const BUNDLED_FONTS: &[&str] = &[
 
 fn main() {
     println!("cargo:rerun-if-env-changed=XCPC_FONT_DIRS");
+    println!("cargo:rerun-if-env-changed=XCPC_SKIP_EMBED_FONTS");
 
     let is_release = env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_none();
     let is_feature = env::var_os("CARGO_FEATURE_BUNDLED_FONTS").is_some();
@@ -50,10 +51,26 @@ fn main() {
         return;
     }
 
+    let out_fonts = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR")).join("fonts");
+    fs::create_dir_all(&out_fonts).expect("create OUT_DIR/fonts");
+
+    if matches!(
+        env::var("XCPC_SKIP_EMBED_FONTS").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
+    ) {
+        for &name in BUNDLED_FONTS {
+            let dst = out_fonts.join(name);
+            let _ = fs::remove_file(&dst);
+            fs::write(&dst, [])
+                .unwrap_or_else(|e| panic!("failed to write empty `{}`: {e}", dst.display()));
+        }
+        return;
+    }
+
     let font_dirs = env::var_os("XCPC_FONT_DIRS").unwrap_or_else(|| {
         panic!(
             "XCPC_FONT_DIRS must be set when building xcpc-engine with bundled fonts \
-             (run inside `nix develop`)"
+             (run inside `nix develop`, or set XCPC_SKIP_EMBED_FONTS=1)"
         );
     });
 
@@ -63,9 +80,6 @@ fn main() {
             collect_fonts(&dir, &mut found);
         }
     }
-
-    let out_fonts = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR")).join("fonts");
-    fs::create_dir_all(&out_fonts).expect("create OUT_DIR/fonts");
 
     for &name in BUNDLED_FONTS {
         let src = found.get(name).unwrap_or_else(|| {

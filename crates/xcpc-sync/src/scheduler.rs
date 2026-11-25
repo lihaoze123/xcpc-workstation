@@ -184,6 +184,9 @@ impl SyncEngine {
             {
                 continue;
             }
+            if options.platform.is_none() && plugin.pending_trust {
+                continue;
+            }
             let platform_id = plugin.manifest.id.clone();
             if let Some(ref target) = options.platform
                 && !platform_id.eq_ignore_ascii_case(target.trim())
@@ -278,6 +281,9 @@ impl SyncEngine {
                     .capabilities
                     .contains(&PluginCapability::OjSource)
             {
+                continue;
+            }
+            if platform.is_none() && plugin.pending_trust {
                 continue;
             }
             let platform_id = plugin.manifest.id.clone();
@@ -550,6 +556,7 @@ fn resolve_problem_url_inner(
 
     for plugin in plugins {
         if !plugin.enabled
+            || plugin.pending_trust
             || !plugin
                 .manifest
                 .capabilities

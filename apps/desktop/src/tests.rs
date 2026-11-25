@@ -3440,10 +3440,13 @@ fn phase4a_plugins_overview_handles_repos_and_export() {
 
     let updated = preview.reload_plugins();
     assert!(!updated.auto_sync_on_startup);
-    assert_eq!(updated.repos.len(), 1);
-    assert_eq!(
-        updated.repos[0].url,
-        "https://example.com/plugins/index.json"
+    // Fresh data_dir subscribes to the official plugin repo by default, plus the custom repo added above.
+    assert_eq!(updated.repos.len(), 2);
+    assert!(
+        updated
+            .repos
+            .iter()
+            .any(|r| r.url == "https://example.com/plugins/index.json")
     );
 
     let cf = updated
@@ -3462,7 +3465,14 @@ fn phase4a_plugins_overview_handles_repos_and_export() {
             .remove_plugin_repo("https://example.com/plugins/index.json".into())
             .ok
     );
-    assert!(preview.get_plugins_overview().repos.is_empty());
+    let after_remove = preview.get_plugins_overview();
+    assert_eq!(after_remove.repos.len(), 1);
+    assert!(
+        !after_remove
+            .repos
+            .iter()
+            .any(|r| r.url == "https://example.com/plugins/index.json")
+    );
 }
 
 // ---- Phase 4B: Training Dashboard, Contests, Submissions & Ingest bridge tests ---------
@@ -3641,81 +3651,204 @@ fn phase4b_training_dashboard_contests_submissions_and_ingest() {
 #[test]
 fn phase4c_plugin_toolbox_commands_and_render_bridge() {
     let data_dir = TempDir::new("phase4c-toolbox");
+    let ws_dir = TempDir::new("phase4c-toolbox-ws");
     let preview = Preview::new(Some(data_dir.0.display().to_string()));
+    let ws_info = preview.init_workspace(ws_dir.0.display().to_string(), None);
+    assert!(ws_info.error.is_none());
+    assert!(
+        preview
+            .create_problem("alpha".into(), "Alpha Problem".into())
+            .ok
+    );
 
-    // 1. plugin_list_tools returns all 4 official built-in tool plugins.
+    // Install two local tool plugins (official tools live in the remote official repo):
+    // 1. `demo-headless`: zero-permission headless tool + global command, no UI entry.
+    let headless_src = TempDir::new("phase4c-headless-src");
+    std::fs::write(
+        headless_src.0.join("manifest.toml"),
+        r#"id = "demo-headless"
+name = "Demo Headless"
+version = "0.1.0"
+description = "Headless tool"
+capabilities = ["tool", "commands"]
+entry = "index.js"
+
+[[tools]]
+id = "echo"
+name = "Echo"
+description = "Echoes text"
+
+[[commands]]
+id = "open-echo"
+title = "Open Echo"
+context = "global"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        headless_src.0.join("index.js"),
+        r#"exports.runTool = function(toolId, inputs) {
+  return { blocks: [{ type: "text", content: "echo:" + (inputs.text || "") }] };
+};
+exports.runCommand = function() {
+  return { kind: "toast", message: "ok" };
+};
+"#,
+    )
+    .unwrap();
+    let inst1 = preview
+        .state
+        .install_plugin_from_path(&headless_src.0, false);
+    assert!(inst1.ok, "install demo-headless failed: {:?}", inst1.error);
+
+    // 2. `demo-web-ui`: pure-Web `ui.html` plugin declaring `workspace_read = true` (starts pending_trust).
+    let webui_src = TempDir::new("phase4c-webui-src");
+    std::fs::write(
+        webui_src.0.join("manifest.toml"),
+        r#"id = "demo-web-ui"
+name = "Demo Web UI"
+version = "0.1.0"
+description = "WebView tool"
+capabilities = ["tool", "commands"]
+ui_entry = "ui.html"
+
+[permissions]
+workspace_read = true
+
+[[commands]]
+id = "open-ui"
+title = "Open Web UI"
+context = "global"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        webui_src.0.join("index.js"),
+        r#"exports.runCommand = function() { return { kind: "open_tool", plugin_id: "demo-web-ui" }; };"#,
+    )
+    .unwrap();
+    std::fs::write(
+        webui_src.0.join("ui.html"),
+        "<!doctype html><html><body><h1>Demo Web UI</h1></body></html>",
+    )
+    .unwrap();
+    let inst2 = preview.state.install_plugin_from_path(&webui_src.0, false);
+    assert!(inst2.ok, "install demo-web-ui failed: {:?}", inst2.error);
+
+    // 1. Before trusting demo-web-ui, plugin_list_tools only returns trusted demo-headless,
+    //    and load_plugin_ui_html + plugin_workspace_query return PLUGIN_UNTRUSTED.
+    let listed_before = preview.plugin_list_tools();
+    assert!(
+        listed_before.ok,
+        "list tools error: {:?}",
+        listed_before.error
+    );
+    let groups_before: serde_json::Value =
+        serde_json::from_str(&listed_before.report_json.unwrap()).unwrap();
+    let ids_before: HashSet<&str> = groups_before
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|g| g["plugin_id"].as_str())
+        .collect();
+    assert!(
+        ids_before.contains("demo-headless"),
+        "missing demo-headless: {ids_before:?}"
+    );
+    assert!(
+        !ids_before.contains("demo-web-ui"),
+        "untrusted demo-web-ui should not appear in list_tools: {ids_before:?}"
+    );
+
+    let untrusted_ui = preview.load_plugin_ui_html("demo-web-ui".into());
+    assert!(!untrusted_ui.ok);
+    assert_eq!(untrusted_ui.error_code.as_deref(), Some("PLUGIN_UNTRUSTED"));
+
+    let untrusted_ws =
+        preview.plugin_workspace_query("demo-web-ui".into(), "listProblems".into(), None);
+    assert!(!untrusted_ws.ok);
+    assert_eq!(untrusted_ws.error_code.as_deref(), Some("PLUGIN_UNTRUSTED"));
+
+    // 2. Trust demo-web-ui: now it appears in plugin_list_tools, and load_plugin_ui_html +
+    //    plugin_workspace_query succeed.
+    assert!(preview.trust_plugin("demo-web-ui".into()).ok);
     let listed = preview.plugin_list_tools();
     assert!(listed.ok, "list tools error: {:?}", listed.error);
     let groups: serde_json::Value = serde_json::from_str(&listed.report_json.unwrap()).unwrap();
     let arr = groups.as_array().unwrap();
     let ids: HashSet<&str> = arr.iter().filter_map(|g| g["plugin_id"].as_str()).collect();
     assert!(
-        ids.contains("graph-editor"),
-        "missing graph-editor: {ids:?}"
+        ids.contains("demo-headless"),
+        "missing demo-headless: {ids:?}"
     );
-    assert!(
-        ids.contains("math-bitwise"),
-        "missing math-bitwise: {ids:?}"
-    );
-    assert!(
-        ids.contains("complexity-mem"),
-        "missing complexity-mem: {ids:?}"
-    );
-    assert!(ids.contains("string-lab"), "missing string-lab: {ids:?}");
+    assert!(ids.contains("demo-web-ui"), "missing demo-web-ui: {ids:?}");
 
-    // 2. plugin_run_tool runs headless tool (string-lab / analyze) cleanly.
-    let run_res = preview.state.plugin_run_tool(
-        "string-lab",
-        "analyze",
-        r#"{"text":"abacaba","pattern":"aba"}"#,
-    );
+    // 3. plugin_run_tool runs headless tool cleanly.
+    let run_res = preview
+        .state
+        .plugin_run_tool("demo-headless", "echo", r#"{"text":"hello"}"#);
     assert!(run_res.ok, "run_tool error: {:?}", run_res.error);
     let exec_json: serde_json::Value = serde_json::from_str(&run_res.report_json.unwrap()).unwrap();
-    let blocks = exec_json["blocks"].as_array().unwrap();
-    assert!(!blocks.is_empty());
+    assert_eq!(exec_json["blocks"][0]["content"], "echo:hello");
 
-    // 3. plugin_ui_source returns non-empty ui.js for graph-editor and math-bitwise, None for string-lab.
-    let graph_ui = preview.plugin_ui_source("graph-editor".into());
-    assert!(graph_ui.ok, "graph-editor ui error: {:?}", graph_ui.error);
+    let web_ui = preview.load_plugin_ui_html("demo-web-ui".into());
+    assert!(web_ui.ok, "load_plugin_ui_html error: {:?}", web_ui.error);
+    assert_eq!(web_ui.plugin_id.as_deref(), Some("demo-web-ui"));
+    assert_eq!(web_ui.workspace_read, Some(true));
     assert!(
-        graph_ui
-            .source
+        web_ui
+            .html
             .as_deref()
             .unwrap_or("")
-            .contains("function render(sdk)")
+            .contains("<h1>Demo Web UI</h1>")
     );
 
-    let math_ui = preview.plugin_ui_source("math-bitwise".into());
-    assert!(math_ui.ok, "math-bitwise ui error: {:?}", math_ui.error);
+    let ws_list = preview.plugin_workspace_query("demo-web-ui".into(), "listProblems".into(), None);
+    assert!(ws_list.ok, "workspace query error: {:?}", ws_list.error);
+    let ws_problems: serde_json::Value = serde_json::from_str(&ws_list.data_json.unwrap()).unwrap();
+    assert_eq!(ws_problems.as_array().unwrap().len(), 1);
+    assert_eq!(ws_problems[0]["id"], "alpha");
+
+    // demo-headless does not declare workspace_read -> PERMISSION_DENIED.
+    let denied_ws =
+        preview.plugin_workspace_query("demo-headless".into(), "listProblems".into(), None);
+    assert!(!denied_ws.ok);
+    assert_eq!(denied_ws.error_code.as_deref(), Some("PERMISSION_DENIED"));
+
+    // 4. plugin_kv_{get,set,remove} roundtrip.
     assert!(
-        math_ui
-            .source
-            .as_deref()
-            .unwrap_or("")
-            .contains("function render(sdk)")
+        preview
+            .plugin_kv_set("demo-web-ui".into(), "state".into(), r#"{"n":42}"#.into())
+            .ok
     );
+    let got = preview.plugin_kv_get("demo-web-ui".into(), "state".into());
+    assert!(got.ok && got.found);
+    assert_eq!(got.value_json.as_deref(), Some(r#"{"n":42}"#));
+    assert!(
+        preview
+            .plugin_kv_remove("demo-web-ui".into(), "state".into())
+            .ok
+    );
+    let after_rm = preview.plugin_kv_get("demo-web-ui".into(), "state".into());
+    assert!(after_rm.ok && !after_rm.found);
 
-    let string_ui = preview.plugin_ui_source("string-lab".into());
-    assert!(string_ui.ok);
-    assert!(string_ui.source.is_none());
-
-    // 4. plugin_render_svg_png rasterizes valid SVG into non-empty base64 PNG.
+    // 5. plugin_render_svg_png rasterizes valid SVG into non-empty base64 PNG.
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#0b6989"/></svg>"##;
     let png_res = Preview::plugin_render_svg_png(svg.into(), Some(2.0));
     assert!(png_res.ok, "svg_to_png error: {:?}", png_res.error);
     let b64 = png_res.png_base64.unwrap();
     assert!(!b64.is_empty());
 
-    // 5. plugin_list_commands lists built-in tool commands and respects disabling.
+    // 6. plugin_list_commands lists installed commands and respects disabling.
     let cmds = preview.plugin_list_commands(Some("global".into()));
     assert!(cmds.ok, "list commands error: {:?}", cmds.error);
     let cmds_json: serde_json::Value = serde_json::from_str(&cmds.report_json.unwrap()).unwrap();
     let cmd_arr = cmds_json.as_array().unwrap();
-    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "graph-editor"));
-    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "math-bitwise"));
+    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "demo-headless"));
+    assert!(cmd_arr.iter().any(|c| c["plugin_id"] == "demo-web-ui"));
 
-    // Disabling graph-editor removes it from both list_tools and list_commands.
-    let dis = preview.set_plugin_enabled("graph-editor".into(), false);
+    // Disabling demo-web-ui removes it from both list_tools and list_commands.
+    let dis = preview.set_plugin_enabled("demo-web-ui".into(), false);
     assert!(dis.ok);
     let listed_after = preview.plugin_list_tools();
     let groups_after: serde_json::Value =
@@ -3725,6 +3858,6 @@ fn phase4c_plugin_toolbox_commands_and_render_bridge() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|g| g["plugin_id"] == "graph-editor")
+            .any(|g| g["plugin_id"] == "demo-web-ui")
     );
 }

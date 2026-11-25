@@ -502,10 +502,10 @@ enum TemplateCommand {
 enum PluginCommand {
     /// List all built-in and locally installed plugins.
     List,
-    /// Install a plugin from a local directory or `.zip` archive.
+    /// Install a plugin from a local directory, `.zip` archive, or subscribed repository plugin ID.
     Install {
-        /// Path to a plugin directory or `.zip` archive.
-        path: PathBuf,
+        /// Path to a plugin directory / `.zip` archive, or a plugin ID from subscribed repositories.
+        target: String,
     },
     /// Uninstall a locally installed plugin (or unlink a dev-linked plugin / revert a built-in override).
     Uninstall {
@@ -522,6 +522,11 @@ enum PluginCommand {
         /// Plugin ID.
         id: String,
     },
+    /// Trust an installed plugin that declares sensitive permissions (network, credentials, or workspace read).
+    Trust {
+        /// Plugin ID.
+        id: String,
+    },
     /// Export a built-in plugin to `<dataDir>/plugins/<id>/` for local customization.
     Export {
         /// Built-in plugin ID.
@@ -531,8 +536,8 @@ enum PluginCommand {
     Init {
         /// Target directory to scaffold into.
         dir: PathBuf,
-        /// Plugin template kind (`oj` or `tool`).
-        #[arg(long, default_value = "oj")]
+        /// Plugin template kind (`tool` or `oj`).
+        #[arg(long, default_value = "tool")]
         kind: PluginScaffoldKind,
         /// Generate a Vite + TypeScript/JSX project using `@xcpc/plugin-sdk`.
         #[arg(long)]
@@ -557,7 +562,7 @@ enum PluginCommand {
     Pack {
         /// Path to the plugin directory (e.g. `dist/`).
         dir: PathBuf,
-        /// Optional output `.zip` path (defaults to `<dir>/<id>-<version>.zip`).
+        /// Optional output `.zip` path (defaults to `<parent>/<id>-<version>.zip`).
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
     },
@@ -582,6 +587,11 @@ enum PluginCommand {
 enum PluginRepoCommand {
     /// List configured plugin repository URLs.
     List,
+    /// List or search plugins available in subscribed repositories.
+    Catalog {
+        /// Optional search query matching plugin ID, name, or description.
+        query: Option<String>,
+    },
     /// Add or update a plugin repository URL.
     Add {
         /// Repository `index.json` URL.
@@ -3840,9 +3850,13 @@ fn plugin_summary_json(p: &xcpc_plugin::InstalledPlugin) -> serde_json::Value {
         "description": p.manifest.description,
         "origin": p.origin,
         "enabled": p.enabled,
+        "pending_trust": p.pending_trust,
+        "overrides_builtin": p.overrides_builtin,
+        "has_network": p.has_network,
+        "source_repo": p.source_repo,
         "capabilities": p.manifest.capabilities,
         "domains": p.manifest.permissions.domains,
-        "has_unsandboxed_ui": p.manifest.ui_entry.is_some(),
+        "has_ui": p.manifest.ui_entry.is_some(),
         "is_linked": p.is_linked,
         "link_target": p.link_target.as_ref().map(|d| d.display().to_string()),
         "last_error": p.last_error,
@@ -3902,8 +3916,8 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                     } else {
                         p.manifest.permissions.domains.join(",")
                     };
-                    let ui_flag = if p.manifest.ui_entry.is_some() {
-                        "\t[unsandboxed-ui]"
+                    let trust_flag = if p.pending_trust {
+                        "\t[pending-trust]"
                     } else {
                         ""
                     };
@@ -3916,7 +3930,7 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                         caps,
                         domains,
                         p.manifest.name,
-                        ui_flag,
+                        trust_flag,
                     );
                     if let Some(ref err) = p.last_error {
                         println!("  last_error: {err}");
@@ -3925,18 +3939,31 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        PluginCommand::Install { path } => {
+        PluginCommand::Install { target } => {
             let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
-            let installed = if path.is_dir() {
-                pm.install_from_dir(path)?
-            } else if path.is_file() {
-                pm.install_from_zip(path)?
-            } else {
+            let candidate = std::path::Path::new(target);
+            let installed = if candidate.exists() {
+                if candidate.is_dir() {
+                    pm.install_from_dir(candidate)?
+                } else if candidate.is_file() {
+                    pm.install_from_zip(candidate)?
+                } else {
+                    return Err(xcpc_plugin::PluginError::InvalidPackage(format!(
+                        "plugin path is not a directory or file: {target}"
+                    ))
+                    .into());
+                }
+            } else if target.contains('/')
+                || target.contains('\\')
+                || target.starts_with('.')
+                || target.ends_with(".zip")
+            {
                 return Err(xcpc_plugin::PluginError::InvalidPackage(format!(
-                    "plugin path does not exist: {}",
-                    path.display()
+                    "plugin path does not exist: {target}"
                 ))
                 .into());
+            } else {
+                pm.install_from_repos(target, &xcpc_plugin::UreqHttpClient::new())?
             };
             if cli.json {
                 println!(
@@ -3954,6 +3981,12 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                     installed.manifest.version,
                     format_plugin_origin(installed.origin)
                 );
+                if installed.pending_trust {
+                    println!(
+                        "  pending trust: run `xcpc plugin trust {}` to allow execution",
+                        installed.manifest.id
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -4021,6 +4054,24 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        PluginCommand::Trust { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            pm.trust_plugin(id)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "trusted": true,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("trusted plugin {id}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         PluginCommand::Export { id } => {
             let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
             let dest = pm.export_builtin_copy(id)?;
@@ -4057,13 +4108,18 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                         "tsconfig.json",
                         ".gitignore",
                         "manifest.toml",
+                        "index.html",
                         "src/index.ts",
-                        "src/ui.tsx",
+                        "src/main.ts",
+                        "src/style.css",
                     ],
                 }
             } else {
                 xcpc_plugin::init_plugin_scaffold(dir, kind.into_scaffold_kind())?;
-                vec!["manifest.toml", "index.js", "xcpc-plugin.d.ts"]
+                match kind {
+                    PluginScaffoldKind::Oj => vec!["manifest.toml", "index.js"],
+                    PluginScaffoldKind::Tool => vec!["manifest.toml", "index.js", "ui.html"],
+                }
             };
             if cli.json {
                 println!(
@@ -4112,6 +4168,12 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| dir.display().to_string())
                 );
+                if linked.pending_trust {
+                    println!(
+                        "  pending trust: run `xcpc plugin trust {}` to allow execution",
+                        linked.manifest.id
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -4148,7 +4210,7 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                     report.plugin_id.as_deref().unwrap_or("?"),
                     report.version.as_deref().unwrap_or("?"),
                     report.exports.join(", "),
-                    if report.has_ui { " + ui.js" } else { "" }
+                    if report.has_ui { " + ui.html" } else { "" }
                 );
             } else {
                 eprintln!(
@@ -4277,6 +4339,78 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                             } else {
                                 println!("{}", r.url);
                             }
+                        }
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                PluginRepoCommand::Catalog { query } => {
+                    let catalog = pm.fetch_all_repo_catalogs(&xcpc_plugin::UreqHttpClient::new())?;
+                    let needle = query
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_ascii_lowercase);
+                    let filtered: Vec<_> = catalog
+                        .plugins
+                        .into_iter()
+                        .filter(|item| match &needle {
+                            None => true,
+                            Some(q) => {
+                                item.entry.id.to_ascii_lowercase().contains(q)
+                                    || item.entry.name.to_ascii_lowercase().contains(q)
+                                    || item.entry.description.to_ascii_lowercase().contains(q)
+                            }
+                        })
+                        .collect();
+                    if cli.json {
+                        let items: Vec<_> = filtered
+                            .iter()
+                            .map(|item| {
+                                json!({
+                                    "repo_url": item.repo_url,
+                                    "repo_name": item.repo_name,
+                                    "id": item.entry.id,
+                                    "name": item.entry.name,
+                                    "version": item.entry.version,
+                                    "description": item.entry.description,
+                                    "download_url": item.entry.download_url,
+                                    "sha256": item.entry.sha256,
+                                    "capabilities": item.entry.capabilities,
+                                    "has_ui": item.entry.has_ui,
+                                    "official": item.entry.official,
+                                    "permissions": item.entry.permissions,
+                                })
+                            })
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "ok": true,
+                                "plugins": items,
+                                "errors": catalog.errors,
+                            }))
+                            .expect("serializable")
+                        );
+                    } else {
+                        if filtered.is_empty() {
+                            println!("no plugins found in subscribed repositories");
+                        } else {
+                            for item in &filtered {
+                                println!(
+                                    "{}\t{}\t{}\t{}\t{}",
+                                    item.entry.id,
+                                    item.entry.version,
+                                    item.repo_name,
+                                    item.entry.name,
+                                    item.entry.description
+                                );
+                            }
+                        }
+                        for err in &catalog.errors {
+                            eprintln!(
+                                "warning: failed to fetch repo {}: {}",
+                                err.repo_url, err.error
+                            );
                         }
                     }
                     Ok(ExitCode::SUCCESS)

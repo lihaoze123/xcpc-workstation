@@ -44,7 +44,7 @@
     "ui_entry": {
       "type": "string",
       "minLength": 1,
-      "description": "Optional relative path to the desktop NSH UI script (runs outside QuickJS sandbox)."
+      "description": "Optional relative path to the WebView HTML UI entry (e.g. 'ui.html')."
     },
     "capabilities": {
       "type": "array",

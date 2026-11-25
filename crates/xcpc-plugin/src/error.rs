@@ -13,6 +13,14 @@ pub enum PluginError {
     #[error("PLUGIN_DISABLED: plugin '{0}' is disabled")]
     Disabled(String),
 
+    #[error("PLUGIN_UNTRUSTED: plugin '{0}' requires user trust before execution")]
+    Untrusted(String),
+
+    #[error(
+        "HTTP_NOT_ALLOWED: plaintext http repository URL '{0}' is not allowed (use https:// or localhost)"
+    )]
+    HttpNotAllowed(String),
+
     #[error("DOMAIN_NOT_ALLOWED: plugin '{plugin_id}' is not allowed to access host '{host}'")]
     DomainNotAllowed { plugin_id: String, host: String },
 
@@ -43,6 +51,9 @@ pub enum PluginError {
     #[error("ZIP_SLIP: unsafe archive path '{0}'")]
     ZipSlip(String),
 
+    #[error("SYMLINK_ESCAPE: {0}")]
+    SymlinkEscape(String),
+
     #[error("CHECKSUM_MISMATCH: expected sha256 '{expected}', got '{actual}'")]
     ChecksumMismatch { expected: String, actual: String },
 
@@ -68,6 +79,8 @@ impl PluginError {
             Self::ManifestInvalid(_) => "INVALID_MANIFEST",
             Self::NotFound(_) => "PLUGIN_NOT_FOUND",
             Self::Disabled(_) => "PLUGIN_DISABLED",
+            Self::Untrusted(_) => "PLUGIN_UNTRUSTED",
+            Self::HttpNotAllowed(_) => "HTTP_NOT_ALLOWED",
             Self::DomainNotAllowed { .. } => "DOMAIN_NOT_ALLOWED",
             Self::PermissionDenied { .. } => "PERMISSION_DENIED",
             Self::Timeout { .. } => "TIMEOUT",
@@ -76,6 +89,7 @@ impl PluginError {
             Self::Http(_) => "HTTP_ERROR",
             Self::Credential(_) => "CREDENTIAL_ERROR",
             Self::ZipSlip(_) => "ZIP_SLIP",
+            Self::SymlinkEscape(_) => "SYMLINK_ESCAPE",
             Self::ChecksumMismatch { .. } => "CHECKSUM_MISMATCH",
             Self::InvalidPackage(_) => "INVALID_PACKAGE",
             Self::Render(_) => "RENDER_ERROR",
@@ -83,5 +97,12 @@ impl PluginError {
             Self::Json(_) => "JSON_ERROR",
             Self::Toml(_) => "TOML_ERROR",
         }
+    }
+
+    /// Returns the error message without the leading `CODE: ` prefix.
+    pub fn detail(&self) -> String {
+        let full = self.to_string();
+        let prefix = format!("{}: ", self.code());
+        full.strip_prefix(&prefix).unwrap_or(&full).to_string()
     }
 }

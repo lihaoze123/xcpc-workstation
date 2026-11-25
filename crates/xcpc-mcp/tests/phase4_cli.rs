@@ -82,7 +82,11 @@ fn plugin_list_shows_builtin_codeforces_and_atcoder() {
     let cf = plugins.iter().find(|p| p["id"] == "codeforces").unwrap();
     assert_eq!(cf["origin"], "builtin");
     assert_eq!(cf["enabled"], true);
-    assert_eq!(cf["has_unsandboxed_ui"], false);
+    assert_eq!(cf["pending_trust"], false);
+    assert_eq!(cf["overrides_builtin"], false);
+    assert_eq!(cf["has_network"], true);
+    assert_eq!(cf["has_ui"], false);
+    assert!(cf.get("has_unsandboxed_ui").is_none());
     assert!(
         cf["capabilities"]
             .as_array()
@@ -119,7 +123,7 @@ fn plugin_init_and_test_oj_and_tool_scaffolds() {
     assert_eq!(init_oj_json["kind"], "oj");
     assert!(oj_dir.join("manifest.toml").is_file());
     assert!(oj_dir.join("index.js").is_file());
-    assert!(oj_dir.join("xcpc-plugin.d.ts").is_file());
+    assert!(!oj_dir.join("xcpc-plugin.d.ts").exists());
 
     // Run `plugin test` with explicit action and --args
     let test_oj = run_xcpc(
@@ -1304,6 +1308,38 @@ required = true
         "stderr: {}",
         String::from_utf8_lossy(&inst.stderr)
     );
+    let inst_json = parse_json_stdout(&inst);
+    assert_eq!(inst_json["plugin"]["pending_trust"], true);
+
+    // Running an untrusted workspace_read plugin must fail with PLUGIN_UNTRUSTED.
+    let blocked = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "tool",
+            "run",
+            "svg-badge:render",
+            "--input",
+            "label=Hello",
+            "--json",
+        ],
+    );
+    assert!(!blocked.status.success());
+    let blocked_json = parse_json_stdout(&blocked);
+    assert_eq!(blocked_json["error"]["code"], "PLUGIN_UNTRUSTED");
+
+    // Trusting the plugin allows execution.
+    let trust = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "trust", "svg-badge", "--json"],
+    );
+    assert!(
+        trust.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&trust.stderr)
+    );
+    assert_eq!(parse_json_stdout(&trust)["trusted"], true);
 
     let out = run_xcpc(
         Some(ws.path()),
@@ -1853,8 +1889,10 @@ fn phase4d_plugin_cli_init_vite_check_pack_link_unlink() {
     assert_eq!(init_vite_json["vite"], true);
     assert!(vite_dir.join("package.json").is_file());
     assert!(vite_dir.join("vite.config.ts").is_file());
+    assert!(vite_dir.join("index.html").is_file());
     assert!(vite_dir.join("src/index.ts").is_file());
-    assert!(vite_dir.join("src/ui.tsx").is_file());
+    assert!(vite_dir.join("src/main.ts").is_file());
+    assert!(vite_dir.join("src/style.css").is_file());
 
     // 2. Plain JS tool -> `check` -> `pack` -> `link` -> `list` -> `unlink`
     let plain_dir = tmp.path().join("plain-tool");
@@ -1871,6 +1909,7 @@ fn phase4d_plugin_cli_init_vite_check_pack_link_unlink() {
         ],
     );
     assert!(init_plain.status.success());
+    assert!(plain_dir.join("ui.html").is_file());
 
     let check = run_xcpc(
         None,
@@ -1998,4 +2037,174 @@ fn plugin_uninstall_removes_local_and_rejects_builtin() {
         &["plugin", "uninstall", "codeforces", "--json"],
     );
     assert!(!builtin_err.status.success());
+}
+
+#[test]
+fn plugin_cli_default_init_kind_https_guard_repo_catalog_and_install_by_id() {
+    use std::io::{Read, Write as _};
+    use std::net::TcpListener;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // 1. `plugin init` defaults to `--kind tool` and title-cases display name from id.
+    let default_dir = tmp.path().join("alpha-beta");
+    let init_default = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "init", default_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        init_default.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&init_default.stderr)
+    );
+    let init_json = parse_json_stdout(&init_default);
+    assert_eq!(init_json["kind"], "tool");
+    assert_eq!(
+        init_json["files"],
+        serde_json::json!(["manifest.toml", "index.js", "ui.html"])
+    );
+    assert!(!default_dir.join("xcpc-plugin.d.ts").exists());
+
+    // 2. Pack plugin -> defaults to parent directory outside plugin dir.
+    let pack = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "pack", default_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        pack.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&pack.stderr)
+    );
+    let pack_json = parse_json_stdout(&pack);
+    let zip_path = Path::new(pack_json["output_path"].as_str().unwrap());
+    assert_eq!(zip_path, tmp.path().join("alpha-beta-0.1.0.zip"));
+    assert!(zip_path.is_file());
+    let zip_bytes = fs::read(zip_path).unwrap();
+    let zip_sha = pack_json["sha256"].as_str().unwrap().to_string();
+
+    // 3. Plaintext HTTP non-loopback repo URL is rejected with HTTP_NOT_ALLOWED.
+    let bad_repo = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "repo",
+            "add",
+            "http://evil.example/index.json",
+            "--json",
+        ],
+    );
+    assert!(!bad_repo.status.success());
+    let bad_repo_json = parse_json_stdout(&bad_repo);
+    assert_eq!(bad_repo_json["error"]["code"], "HTTP_NOT_ALLOWED");
+
+    // 4. Serve a loopback HTTP repo for `repo catalog` and `plugin install <id>`.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{addr}");
+    let index_body = serde_json::json!({
+        "name": "Local Test Repo",
+        "plugins": [{
+            "id": "alpha-beta",
+            "name": "Alpha Beta",
+            "version": "0.1.0",
+            "description": "Test tool from local repo",
+            "download_url": format!("{base_url}/alpha-beta-0.1.0.zip"),
+            "sha256": zip_sha,
+            "capabilities": ["tool"],
+            "has_ui": false,
+            "official": false
+        }]
+    })
+    .to_string();
+
+    let server_index = index_body.clone();
+    let server_zip = zip_bytes.clone();
+    let handle = std::thread::spawn(move || {
+        // Handle up to 3 requests: catalog, install->catalog, install->zip
+        for _ in 0..3 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let first_line = req.lines().next().unwrap_or("");
+            if first_line.contains("/index.json") {
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    server_index.len(),
+                    server_index
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            } else if first_line.contains("/alpha-beta-0.1.0.zip") {
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    server_zip.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&server_zip);
+            }
+        }
+    });
+
+    // Replace default official repo with local loopback repo so no external network is needed.
+    let official_url = xcpc_plugin::official_repo_url();
+    let _ = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "repo", "remove", &official_url, "--json"],
+    );
+    let add_local = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "repo",
+            "add",
+            &format!("{base_url}/index.json"),
+            "--name",
+            "Local Test Repo",
+            "--json",
+        ],
+    );
+    assert!(add_local.status.success());
+
+    // `xcpc plugin repo catalog alpha --json`
+    let cat = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "repo", "catalog", "alpha", "--json"],
+    );
+    assert!(
+        cat.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&cat.stderr)
+    );
+    let cat_json = parse_json_stdout(&cat);
+    assert_eq!(cat_json["ok"], true);
+    assert_eq!(cat_json["plugins"].as_array().unwrap().len(), 1);
+    assert_eq!(cat_json["plugins"][0]["id"], "alpha-beta");
+    assert!(cat_json["errors"].as_array().unwrap().is_empty());
+
+    // `xcpc plugin install alpha-beta --json` (install by ID from repo!)
+    let inst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "install", "alpha-beta", "--json"],
+    );
+    assert!(
+        inst.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inst.stderr)
+    );
+    let inst_json = parse_json_stdout(&inst);
+    assert_eq!(inst_json["ok"], true);
+    assert_eq!(inst_json["plugin"]["id"], "alpha-beta");
+    assert_eq!(inst_json["plugin"]["pending_trust"], false);
+
+    let _ = handle.join();
 }

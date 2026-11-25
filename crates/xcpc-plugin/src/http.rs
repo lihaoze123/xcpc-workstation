@@ -115,23 +115,61 @@ impl HttpClient for UreqHttpClient {
     }
 
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        const MAX_REDIRECTS: usize = 5;
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_millis(DEFAULT_HTTP_TIMEOUT_MS))
+            .redirects(0)
             .user_agent("XCPC-Workstation/0.3")
             .build();
-        let resp = match agent.get(url).call() {
-            Ok(resp) => resp,
-            Err(ureq::Error::Status(code, _)) => {
-                return Err(PluginError::Http(format!("HTTP {code} downloading {url}")));
+
+        let mut current_url = url.to_string();
+        for hop in 0..=MAX_REDIRECTS {
+            crate::manager::validate_repo_url(&current_url)?;
+            let resp = match agent.get(&current_url).call() {
+                Ok(resp) => resp,
+                Err(ureq::Error::Status(_, resp)) => resp,
+                Err(ureq::Error::Transport(t)) => return Err(PluginError::Http(t.to_string())),
+            };
+
+            let status = resp.status();
+            if matches!(status, 301 | 302 | 303 | 307 | 308) {
+                let Some(loc) = resp.header("location").filter(|s| !s.trim().is_empty()) else {
+                    return Err(PluginError::Http(format!(
+                        "HTTP {status} redirect without Location downloading {current_url}"
+                    )));
+                };
+                if hop == MAX_REDIRECTS {
+                    return Err(PluginError::Http(format!(
+                        "too many redirects downloading {url}"
+                    )));
+                }
+                let base = url::Url::parse(&current_url).map_err(|e| {
+                    PluginError::Http(format!("invalid download url '{current_url}': {e}"))
+                })?;
+                let next = base.join(loc.trim()).map_err(|e| {
+                    PluginError::Http(format!("invalid redirect location '{loc}': {e}"))
+                })?;
+                current_url = next.to_string();
+                continue;
             }
-            Err(ureq::Error::Transport(t)) => return Err(PluginError::Http(t.to_string())),
-        };
-        let mut buf = Vec::new();
-        resp.into_reader()
-            .take(64 * 1024 * 1024)
-            .read_to_end(&mut buf)
-            .map_err(|e| PluginError::Http(format!("failed to read binary body: {e}")))?;
-        Ok(buf)
+
+            if !(200..300).contains(&status) {
+                return Err(PluginError::Http(format!(
+                    "HTTP {status} downloading {current_url}"
+                )));
+            }
+
+            let mut buf = Vec::new();
+            resp.into_reader()
+                .take(64 * 1024 * 1024)
+                .read_to_end(&mut buf)
+                .map_err(|e| PluginError::Http(format!("failed to read binary body: {e}")))?;
+            return Ok(buf);
+        }
+
+        Err(PluginError::Http(format!(
+            "too many redirects downloading {url}"
+        )))
     }
 }
 
