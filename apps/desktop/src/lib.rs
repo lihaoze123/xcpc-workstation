@@ -52,16 +52,17 @@ pub use crate::types::{
     PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
     PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs,
     PluginCredentialFieldJs, PluginKvResultJs, PluginPickFileResultJs, PluginRenderPngResultJs,
-    PluginRepoConfigJs, PluginSummaryJs, PluginUiSourceResultJs, PluginWatchEventJs,
-    PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer, PreviewLocationJs,
-    PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
-    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
-    RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
-    ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs, SaveReportResultJs, SaveResult,
-    SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
-    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    PluginRepoConfigJs, PluginSummaryJs, PluginUiFrameJs, PluginUiSourceResultJs,
+    PluginWatchEventJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer,
+    PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView,
+    ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs,
+    ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs,
+    RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs,
+    SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
+    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -93,6 +94,7 @@ impl Drop for Preview {
         // wakes up immediately and never leaks.
         self.state.stop_batch_task();
         self.state.stop_plugin_watcher();
+        self.state.stop_plugin_ui_worker();
         let old_watcher = self.state.stop_watcher();
         drop(old_watcher);
     }
@@ -2705,6 +2707,62 @@ impl Preview {
     /// Synchronously deletes a key from the plugin's persistent KV store.
     pub fn plugin_kv_delete(&self, plugin_id: String, key: String) -> PluginKvResultJs {
         self.state.plugin_kv_delete(&plugin_id, &key)
+    }
+
+    /// Uninstalls a locally installed plugin, unlinks a dev-linked plugin (never deleting source dir),
+    /// or reverts a local override back to the built-in version.
+    pub fn uninstall_plugin(&self, id: String) -> InstallPluginResultJs {
+        self.state.uninstall_plugin(&id)
+    }
+
+    /// Mounts a plugin's `ui.js` inside a sandboxed Core QuickJS UI session and returns the initial VNode frame.
+    pub fn plugin_ui_mount(
+        &self,
+        plugin_id: String,
+        payload_json: Option<String>,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        self.state
+            .plugin_ui_mount(&plugin_id, payload_json, theme_tokens_json, color_scheme)
+    }
+
+    /// Dispatches a UI callback or shortcut event into an active Core QuickJS UI session.
+    pub fn plugin_ui_dispatch(
+        &self,
+        session_id: u32,
+        callback_id: String,
+        payload_json: Option<String>,
+    ) -> PluginUiFrameJs {
+        self.state
+            .plugin_ui_dispatch(session_id, callback_id, payload_json)
+    }
+
+    /// Resolves an async host effect (e.g. `pickFile`, `readClipboard`, `savePng`) into a UI session.
+    pub fn plugin_ui_resolve_effect(
+        &self,
+        session_id: u32,
+        effect_id: u32,
+        result_json: String,
+    ) -> PluginUiFrameJs {
+        self.state
+            .plugin_ui_resolve_effect(session_id, effect_id, result_json)
+    }
+
+    /// Pushes updated theme tokens & color scheme into an active UI session.
+    pub fn plugin_ui_update_theme(
+        &self,
+        session_id: u32,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        self.state
+            .plugin_ui_update_theme(session_id, theme_tokens_json, color_scheme)
+    }
+
+    /// Disposes a Core QuickJS UI session and invokes its `onCleanup` callbacks.
+    pub fn plugin_ui_dispose(&self, session_id: u32) -> ActionResult {
+        self.state.plugin_ui_dispose(session_id)
     }
 
     /// Prompts the user to pick a single local file (up to 16 MiB) and returns its UTF-8 text (when valid)

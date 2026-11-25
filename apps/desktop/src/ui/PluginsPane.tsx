@@ -12,6 +12,7 @@ import { Btn, DelayedSpinner, tip } from "./kit";
 import { Section, SectionRow } from "./layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DialogHeader, Modal } from "./Modal";
+import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
   cachedPluginsOverview,
   globalLastSyncedAt,
@@ -133,6 +134,8 @@ function OjAccountRow(props: {
   plugin: PluginSummaryJs;
   first?: boolean;
   onReload: () => void;
+  onUnlinkOrRevert: (plugin: PluginSummaryJs) => void;
+  onRequestUninstall: (plugin: PluginSummaryJs) => void;
 }) {
   const p = () => props.plugin;
   const handleDraft = signal(p().handle ?? "");
@@ -251,6 +254,26 @@ function OjAccountRow(props: {
         icon: "copy",
       });
     }
+    if (p().isLinked) {
+      items.push({
+        id: "unlink",
+        label: zhEn("取消开发链接", "Unlink dev plugin"),
+        icon: "x",
+      });
+    } else if (p().origin === "local_override") {
+      items.push({
+        id: "revert",
+        label: zhEn("恢复内置版本", "Restore built-in"),
+        icon: "rotateCcw",
+      });
+    } else if (p().origin === "local") {
+      items.push({
+        id: "uninstall",
+        label: zhEn("卸载", "Uninstall"),
+        icon: "trash",
+        destructive: true,
+      });
+    }
     return items;
   };
 
@@ -366,6 +389,8 @@ function OjAccountRow(props: {
               onSelect={(id) => {
                 if (id === "verify") void commitAndVerify(true);
                 else if (id === "export") exportBuiltin();
+                else if (id === "unlink" || id === "revert") props.onUnlinkOrRevert(p());
+                else if (id === "uninstall") props.onRequestUninstall(p());
               }}
               trigger={<MoreTrigger testID={`oj-more-${p().id}`} />}
             />
@@ -383,6 +408,8 @@ function ToolPluginRow(props: {
   plugin: PluginSummaryJs;
   first?: boolean;
   onReload: () => void;
+  onUnlinkOrRevert: (plugin: PluginSummaryJs) => void;
+  onRequestUninstall: (plugin: PluginSummaryJs) => void;
 }) {
   const p = () => props.plugin;
 
@@ -412,6 +439,26 @@ function ToolPluginRow(props: {
         id: "export",
         label: t("settings.plugins.exportLocalCopy"),
         icon: "copy",
+      });
+    }
+    if (p().isLinked) {
+      items.push({
+        id: "unlink",
+        label: zhEn("取消开发链接", "Unlink dev plugin"),
+        icon: "x",
+      });
+    } else if (p().origin === "local_override") {
+      items.push({
+        id: "revert",
+        label: zhEn("恢复内置版本", "Restore built-in"),
+        icon: "rotateCcw",
+      });
+    } else if (p().origin === "local") {
+      items.push({
+        id: "uninstall",
+        label: zhEn("卸载", "Uninstall"),
+        icon: "trash",
+        destructive: true,
       });
     }
     return items;
@@ -469,6 +516,8 @@ function ToolPluginRow(props: {
               entries={moreEntries()}
               onSelect={(id) => {
                 if (id === "export") exportBuiltin();
+                else if (id === "unlink" || id === "revert") props.onUnlinkOrRevert(p());
+                else if (id === "uninstall") props.onRequestUninstall(p());
               }}
               trigger={<MoreTrigger testID={`plugin-more-${p().id}`} />}
             />
@@ -498,6 +547,8 @@ export function PluginsPane() {
   const overview = signal<PluginsOverviewJs>(initial);
   const syncing = signal(false);
   const pendingTrustPlugin = signal<PluginSummaryJs | undefined>(undefined);
+  const pendingUninstall = signal<PluginSummaryJs | undefined>(undefined);
+  const repoBrowserOpen = signal(false);
 
   const syncOverviewFromStore = (reload = false) => {
     const next = refreshPluginsOverview(reload);
@@ -607,7 +658,7 @@ export function PluginsPane() {
         const needsTrustConfirm =
           installed !== undefined &&
           installed.origin !== "builtin" &&
-          (installed.hasUnsandboxedUi || installed.domains.length > 0 || installed.workspaceRead);
+          (installed.domains.length > 0 || installed.workspaceRead);
 
         if (needsTrustConfirm && installed) {
           // Disable third-party plugin immediately until the user explicitly confirms trust.
@@ -667,6 +718,31 @@ export function PluginsPane() {
     });
   };
 
+  const executeUninstall = (plugin: PluginSummaryJs) => {
+    const res = preview.uninstallPlugin(plugin.id);
+    if (res.ok) {
+      if (plugin.isLinked) {
+        showToast({
+          tone: "info",
+          text: zhEn(`已取消开发链接「${plugin.name}」`, `Unlinked "${plugin.name}"`),
+        });
+      } else if (plugin.origin === "local_override") {
+        showToast({
+          tone: "success",
+          text: zhEn(`已恢复内置版本「${plugin.name}」`, `Restored built-in "${plugin.name}"`),
+        });
+      } else {
+        showToast({
+          tone: "info",
+          text: zhEn(`已卸载「${plugin.name}」`, `Uninstalled "${plugin.name}"`),
+        });
+      }
+      reloadOverview();
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
   const syncMoreEntries = (): MenuEntry[] => [
     {
       id: "fullSync",
@@ -677,6 +753,7 @@ export function PluginsPane() {
   ];
 
   const installMenuEntries = (): MenuEntry[] => [
+    { id: "repo", label: zhEn("从仓库浏览与安装…", "Browse repositories…"), icon: "search" },
     { id: "dir", label: t("settings.plugins.installDir"), icon: "folderPlus" },
     { id: "zip", label: t("settings.plugins.installZip"), icon: "fileDown" },
   ];
@@ -702,6 +779,8 @@ export function PluginsPane() {
               plugin={plugin()}
               first={plugin().id === ojPlugins()[0]?.id}
               onReload={() => syncOverviewFromStore(false)}
+              onUnlinkOrRevert={executeUninstall}
+              onRequestUninstall={(p) => pendingUninstall.set(p)}
             />
           )}
         </Each>
@@ -770,7 +849,8 @@ export function PluginsPane() {
               align="end"
               entries={installMenuEntries()}
               onSelect={(id) => {
-                if (id === "dir" || id === "zip") void installFromDialog(id);
+                if (id === "repo") repoBrowserOpen.set(true);
+                else if (id === "dir" || id === "zip") void installFromDialog(id);
               }}
               trigger={
                 <Btn
@@ -806,12 +886,14 @@ export function PluginsPane() {
               plugin={plugin()}
               first={plugin().id === toolPlugins()[0]?.id}
               onReload={reloadOverview}
+              onUnlinkOrRevert={executeUninstall}
+              onRequestUninstall={(p) => pendingUninstall.set(p)}
             />
           )}
         </Each>
       </Section>
 
-      {/* Third-party plugin trust confirmation modal */}
+      {/* Third-party plugin trust confirmation modal (only for network domains / workspace read) */}
       <Modal
         open={pendingTrustPlugin() !== undefined}
         onClose={cancelTrustPlugin}
@@ -823,7 +905,7 @@ export function PluginsPane() {
             <View style={{ padding: 20, gap: 16 }}>
               <DialogHeader
                 icon="triangleAlert"
-                tone={plugin().hasUnsandboxedUi ? "destructive" : "foreground"}
+                tone="foreground"
                 title={zhEn(
                   `信任并启用「${plugin().name}」？`,
                   `Trust and enable "${plugin().name}"?`,
@@ -835,24 +917,6 @@ export function PluginsPane() {
               />
 
               <View style={{ gap: 10 }}>
-                <If when={plugin().hasUnsandboxedUi}>
-                  <View
-                    testID="plugin-trust-unsandboxed-warning"
-                    class="bg-destructive/10 border border-destructive/30"
-                    style={{ borderRadius: 8, padding: 10, gap: 4 }}
-                  >
-                    <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-destructive">
-                      {zhEn("非沙箱桌面界面代码（ui.js）", "Unsandboxed desktop UI code (ui.js)")}
-                    </Text>
-                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-foreground">
-                      {zhEn(
-                        "此插件包含自定义桌面界面脚本，将在非沙箱环境中运行并可访问桌面应用接口。仅在信任插件来源时启用。",
-                        "This plugin includes custom desktop UI code that runs unsandboxed with access to desktop app APIs. Only enable plugins from sources you trust.",
-                      )}
-                    </Text>
-                  </View>
-                </If>
-
                 <If when={plugin().domains.length > 0}>
                   <View
                     testID="plugin-trust-domains"
@@ -909,6 +973,53 @@ export function PluginsPane() {
           )}
         </If>
       </Modal>
+
+      {/* Uninstall confirmation modal for locally installed plugins */}
+      <Modal
+        open={pendingUninstall() !== undefined}
+        onClose={() => pendingUninstall.set(undefined)}
+        width={420}
+        testID="plugin-uninstall-modal"
+      >
+        <If when={pendingUninstall()}>
+          {(plugin) => (
+            <View style={{ padding: 20, gap: 16 }}>
+              <DialogHeader
+                icon="trash"
+                tone="destructive"
+                title={zhEn(`卸载「${plugin().name}」？`, `Uninstall "${plugin().name}"?`)}
+                description={zhEn(
+                  "将从本地插件目录中移除此插件。你随时可以从仓库或安装包重新安装。",
+                  "This removes the plugin from your local plugins directory. You can reinstall it anytime.",
+                )}
+              />
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+                <Btn
+                  testID="plugin-uninstall-cancel"
+                  label={zhEn("取消", "Cancel")}
+                  variant="outline"
+                  onPress={() => pendingUninstall.set(undefined)}
+                />
+                <Btn
+                  testID="plugin-uninstall-confirm"
+                  label={zhEn("卸载", "Uninstall")}
+                  variant="danger"
+                  onPress={() => {
+                    const target = plugin();
+                    pendingUninstall.set(undefined);
+                    executeUninstall(target);
+                  }}
+                />
+              </View>
+            </View>
+          )}
+        </If>
+      </Modal>
+
+      <PluginRepoBrowserModal
+        open={repoBrowserOpen()}
+        onClose={() => repoBrowserOpen.set(false)}
+      />
     </View>
   );
 }

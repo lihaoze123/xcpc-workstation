@@ -1946,3 +1946,56 @@ fn phase4d_plugin_cli_init_vite_check_pack_link_unlink() {
         assert!(plain_dir.exists(), "unlink must never delete source dir");
     }
 }
+
+#[test]
+fn plugin_uninstall_removes_local_and_rejects_builtin() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let src_root = tempfile::tempdir().unwrap();
+    let plugin_dir = src_root.path().join("demo-remove-tool");
+
+    let init = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "init",
+            plugin_dir.to_str().unwrap(),
+            "--kind",
+            "tool",
+            "--json",
+        ],
+    );
+    assert!(init.status.success());
+
+    let inst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "install", plugin_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(inst.status.success());
+    assert!(data_dir.path().join("plugins/demo-remove-tool").is_dir());
+
+    // Uninstall locally installed plugin -> succeeds & removes directory
+    let uninst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "uninstall", "demo-remove-tool", "--json"],
+    );
+    assert!(
+        uninst.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&uninst.stderr)
+    );
+    let uninst_json = parse_json_stdout(&uninst);
+    assert_eq!(uninst_json["ok"], true);
+    assert_eq!(uninst_json["uninstalled"], true);
+    assert!(!data_dir.path().join("plugins/demo-remove-tool").exists());
+
+    // Attempting to uninstall a built-in plugin must fail cleanly
+    let builtin_err = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "uninstall", "codeforces", "--json"],
+    );
+    assert!(!builtin_err.status.success());
+}

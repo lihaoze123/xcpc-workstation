@@ -17,9 +17,9 @@
    - 主仓库内置插件收敛为 **2 个核心 OJ 插件**（`codeforces`、`atcoder`），保证训练看板开箱可用且 Rust Core 构建无需 Node.js；
    - 4 个工具插件（`graph-editor`、`math-bitwise`、`complexity-mem`、`string-lab`）全部迁出至独立官方收录仓库，以 `@xcpc/plugin-sdk` + Vite + TSX 重构并作为官方样板与生态狗粮；
    - 桌面端默认预置官方收录仓库订阅（可移除），并在「工具」空态直接展示官方推荐工具列表供一键安装。
-4. **安全边界不妥协**：
+4. **安全边界不妥协（统一 QuickJS 沙箱）**：
    - `xcpc plugin link <dir>` 仅放行显式注册的顶层开发链接根目录，插件内部任何子路径经 `canonicalize` 后仍严禁逃逸出该目标根目录；
-   - 第三方或含 `ui.js` 的插件仍遵循既有的信任模型与安装前显式提示（官方预置仓库中的插件也清晰标明来源与非沙箱 UI 边界）。
+   - **`ui.js` 与 `index.js` 均运行在 Rust Core 的 `rquickjs` 沙箱中**（64 MiB 内存上限、单次交互 2s 超时），彻底消除 NSH Release 构建的 `HARDEN`（禁用 `new Function` / `eval`）限制，同时让外部工具插件天然沙箱化：纯离线工具插件（无外网域名、无 `workspace_read`）安装后立即可用，仅声明网络域名或工作区读取权限的第三方插件需要用户显式信任确认。
 
 ### 明确不做（Phase 4D 范围外）
 - 不做编译期响应式语法糖 / Babel / 自定义 JSX 响应式编译器；
@@ -52,9 +52,20 @@
 
 ---
 
-## 3. 宿主 Plugin UI SDK（`pluginSdk.tsx`）与可观测性升级
+## 3. Core QuickJS 声明式 UI 协议与原生 NSH 渲染器
 
-在现有 `apps/desktop/src/ui/tools/pluginSdk.tsx`（已有 `View`、`Text`、`Scroll`、`Canvas`、`Button`、`Icon`、`Segmented`、`Chip`、`Input`、`If`、`Output`）基础上补齐高频原语与生命周期：
+为确保 Release 构建（NSH `Policy.harden = true` 禁用 `new Function` / `eval`）与开发构建 100% 行为一致并统一插件安全沙箱，`ui.js` 不在桌面端 JS VM 中动态执行，而是在 Rust Core 内运行并通过声明式 VNode 协议交由 NSH 原生组件渲染：
+
+- **Core 持久 UI 会话（`crates/xcpc-plugin/src/ui_session.rs`）**：
+  - 每个挂载中的工具插件由专用工作线程（`PluginUiWorker`）持有独立 `PluginUiSession`（含 `rquickjs::Runtime`、响应式 `signal`/`computed`/`effect`、回调表、Canvas2D 命令录制器、宿主副作用队列）；
+  - 插件作者写法完全透明不变：继续使用 `@xcpc/plugin-sdk/ui`、TSX、`signal`、`onPress` 闭包与 `Canvas` `onDraw(cx, w, h)`；
+  - 每次状态变更或事件派发仅输出最新序列化 VNode 树、Canvas `drawOps` 命令数组与宿主副作用列表（`toast`、`copyText`、`openTool`、`openExternal`、`saveText`、`savePng`、`pickFile`、`readClipboard`）。
+- **桌面端原生渲染器（`apps/desktop/src/ui/tools/PluginUiRenderer.tsx`）**：
+  - 将 VNode 树直接映射为 NSH 原生组件（`View`、`Text`、`Scroll`、`Canvas`、`Input`、`Switch`、`Select`、`Menu`、`Modal`、`CodeEditor`、`OutputRenderer` 等）；
+  - 通过 `replayCanvasOps` 将 Canvas2D 命令数组零开销回放到 NSH 原生 `<Canvas>`，并对 `onMouseMove` 做 16ms 帧合并以保证 60fps 拖拽手感；
+  - 同步响应主题切换（`colorScheme`）、快捷键注册（`onShortcut`）与 `pluginsRevision` 热重载（先销毁旧会话并逆序执行 `onCleanup`，再原地重挂载）。
+
+在 `sdk.ui` 原语基础上完整提供以下能力：
 
 ### 3.1 新增 UI 原语与布局组件
 - **列表与布局**：
@@ -113,6 +124,7 @@
 | 命令 | 职责与行为 |
 | :--- | :--- |
 | `xcpc plugin init <dir> [--kind oj\|tool] [--vite]` | 升级现有命令：默认仍生成零构建纯 JS 模板（`manifest.toml` + `index.js`）；加 `--vite` 生成 Vite + TypeScript/JSX 工程模板（`package.json`、`vite.config.ts`、`tsconfig.json`、`manifest.toml`、`src/index.ts`、tool 类型附 `src/ui.tsx`）。 |
+| `xcpc plugin uninstall <id>` | 卸载本地已安装插件（或取消开发链接 / 恢复内置插件版本）；内置插件不可卸载。 |
 | `xcpc plugin link <dir>` / `xcpc plugin unlink <id>` | 挂载/卸载本地开发插件软链并维护 `plugin_links.json`，直接联动桌面端热重载。 |
 | `xcpc plugin check <dir> [--json]` | 静态 + 运行时全面体检：① 校验 `manifest.toml` 合法性与字段约束；② 检查 `index.js` / `ui.js` 存在性与路径沙箱；③ 在 `rquickjs` 沙箱内 dry-run 加载 `index.js` 并校验声明扩展点对应的导出函数签名（如 `oj_source` 需导出 `syncAccount`/`normalizeRating`，`tool` 需导出 `runTool`）；④ 检查 `ui.js` 语法与导出 `render` 契约。失败返回非零退出码与结构化错误列表。 |
 | `xcpc plugin pack <dir> [-o <out.zip>] [--json]` | 先自动运行 `check`（未通过拒绝打包），随后按白名单仅打包运行时必需文件（`manifest.toml`、`index.js`、可选 `ui.js`、`README.md` / `LICENSE` 等声明资产），严格排除 `node_modules/`、`src/`、`.git/`、`*.map` 等开发文件，输出 `.zip` 并打印 SHA-256 校验值（便于直接填入仓库 `index.json`）。 |
@@ -131,11 +143,10 @@
 - **默认官方仓库订阅**：
   - `PluginManager` 定义默认官方仓库常量 `OFFICIAL_PLUGIN_REPO_URL`（指向官方收录仓库发布的 `index.json`），支持环境变量 `XCPC_OFFICIAL_PLUGIN_REPO` 覆写（便于本地调试与自动化验收）；
   - 首次初始化 `plugin_repos.json`（文件不存在）时默认预置官方仓库条目；用户可随时在「设置 → 插件」移除，移除后不再自动写回。
-- **「工具」Tab 空态推荐安装**：
-  - 当已启用的 `tool` 插件为空时，「工具」空态不显示干瘪空白页：
-    - 异步拉取已订阅仓库（默认含官方仓库）中含 `tool` 扩展点的插件列表，直接展示官方推荐工具卡片（名称、简述、版本、一键「安装」按钮）；
-    - 点击安装仍走 Core 的 SHA-256 校验与既有信任确认（含 `ui.js` 时明示非沙箱桌面界面边界），安装完成后原地切入刚装好的工具，无需手动跳转；
-    - 离线或未订阅任何仓库时优雅回退：说明当前无已安装工具，提供前往「设置 → 插件」添加仓库或安装本地包的入口。
+- **「工具」Tab 空态推荐与持续浏览安装**：
+  - 当已启用的 `tool` 插件为空时，「工具」空态异步拉取已订阅仓库（默认含官方仓库）中的工具列表供一键安装，安装完成后原地切入刚装好的工具；
+  - 「工具」左侧栏底部常驻克制的「获取更多工具」入口，与「设置 → 插件」的「安装插件… → 从仓库浏览与安装…」共用同一套 `PluginRepoBrowserModal`（支持源管理、查看所有仓库插件、区分「安装 / 更新 / 已安装」状态）；
+  - 「设置 → 插件」每行 `⋯` 菜单按插件来源提供闭环操作：本地安装插件提供「卸载」（含二次确认弹窗），开发链接插件提供「取消开发链接」（不删源目录），本地覆写内置插件提供「恢复内置版本」。
 
 ### 5.3 独立官方插件收录仓库结构与 CI
 独立维护官方插件收录仓库（如 `xcpc-plugins`），承担双重角色：**官方工具插件源码托管** + **社区插件元数据收录**：

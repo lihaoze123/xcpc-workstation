@@ -195,6 +195,8 @@ pub(crate) struct State {
     pub(crate) startup_sync_triggered: AtomicBool,
     /// Watches `<dataDir>/plugins/` and registered linked dev plugin directories for hot reload.
     pub(crate) plugin_watcher: Mutex<Option<crate::plugins::PluginFileWatcher>>,
+    /// Dedicated single-thread worker owning sandboxed Core QuickJS plugin UI sessions.
+    pub(crate) plugin_ui_worker: Mutex<Option<crate::plugins::PluginUiWorker>>,
 }
 
 impl Drop for State {
@@ -207,6 +209,7 @@ impl Drop for State {
         }
         self.stop_batch_task();
         self.stop_plugin_watcher();
+        self.stop_plugin_ui_worker();
         xcpc_trace::flush_if_env_configured();
         if let Ok(mut core) = self.core.lock() {
             core.watch_session = None;
@@ -279,6 +282,7 @@ impl State {
             credentials: Arc::new(xcpc_plugin::SystemKeyringStore::new()),
             startup_sync_triggered: AtomicBool::new(false),
             plugin_watcher: Mutex::new(None),
+            plugin_ui_worker: Mutex::new(None),
         };
 
         if let Some(ws) = workspace {
@@ -313,6 +317,12 @@ impl State {
 
     pub(crate) fn stop_plugin_watcher(&self) {
         if let Ok(mut slot) = self.plugin_watcher.lock() {
+            drop(slot.take());
+        }
+    }
+
+    pub(crate) fn stop_plugin_ui_worker(&self) {
+        if let Ok(mut slot) = self.plugin_ui_worker.lock() {
             drop(slot.take());
         }
     }

@@ -2375,3 +2375,15 @@ pub struct PluginPickFileResultJs {
     #[prop(skip_none)]
     pub error: Option<String>,
 }
+
+/// Serialized VNode frame & effects returned by a sandboxed Core QuickJS UI session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginUiFrameJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub session_id: Option<u32>,
+    #[prop(skip_none)]
+    pub frame_json: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}

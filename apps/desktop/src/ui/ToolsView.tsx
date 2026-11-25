@@ -1,13 +1,13 @@
 // Pure Tools space (`工具`, Cmd+4): host contains zero hardcoded business utilities.
 // Dynamically lists enabled `tool` plugins and hosts either their desktop `ui.js`
-// interactive panel (via `PluginUiSdk`) or their headless `index.js` tool form + renderer.
+// interactive panel (via Core QuickJS `PluginUiRenderer`) or their headless `index.js` tool form + renderer.
 
-import { cleanup as nshOnCleanup, computed, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { Btn } from "./kit";
-import { DialogHeader, Modal } from "./Modal";
+import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
   activeToolId,
   activeToolMode,
@@ -21,8 +21,9 @@ import {
 } from "./store";
 import { showToast } from "./Toast";
 import { HeadlessToolRunner } from "./tools/HeadlessToolRunner";
-import { createPluginUiSdkWithCleanup, mountPluginUi } from "./tools/pluginSdk";
+import { PluginUiRenderer } from "./tools/PluginUiRenderer";
 import { parseJsonReport, type PluginToolGroup } from "./tools/types";
+import { zhEn } from "./training/locale";
 
 interface RecommendedToolItem {
   repoUrl: string;
@@ -30,86 +31,16 @@ interface RecommendedToolItem {
   entry: RepoPluginEntryJs;
 }
 
-function PluginUiHost(props: { pluginId: string; isBuiltin: boolean }) {
-  let prevCleanup: (() => void) | undefined;
-
-  const runPrevCleanup = () => {
-    if (prevCleanup) {
-      const fn = prevCleanup;
-      prevCleanup = undefined;
-      try {
-        fn();
-      } catch {
-        // Never let plugin cleanup crash host.
+function consumeInitialPayload(): unknown {
+  const p = activeToolPayload();
+  if (p !== undefined) {
+    queueMicrotask(() => {
+      if (activeToolPayload() === p) {
+        activeToolPayload.set(undefined);
       }
-    }
-  };
-
-  nshOnCleanup(() => {
-    runPrevCleanup();
-  });
-
-  const mounted = computed(() => {
-    const rev = pluginsRevision();
-    const id = props.pluginId;
-    const isBuiltin = props.isBuiltin;
-    // Isolate `render(sdk)` from outer tracking so reading signals inside a plugin
-    // never remounts the plugin or resets its internal state (A1).
-    return untracked(() => {
-      runPrevCleanup();
-      const res = preview.pluginUiSource(id);
-      if (!res.ok || !res.source) {
-        return { ok: false as const, key: `${id}:${rev}:err`, error: res.error ?? t("tools.uiLoadFailed") };
-      }
-      const { sdk, cleanup } = createPluginUiSdkWithCleanup({
-        pluginId: id,
-        getInitialPayload: () => {
-          const p = activeToolPayload();
-          if (p !== undefined) {
-            queueMicrotask(() => {
-              if (activeToolPayload() === p) {
-                activeToolPayload.set(undefined);
-              }
-            });
-          }
-          return p;
-        },
-      });
-      prevCleanup = cleanup;
-      const out = mountPluginUi(res.source, sdk, {
-        builtinPluginId: isBuiltin ? id : undefined,
-        pluginId: id,
-      });
-      if (!out.ok) {
-        runPrevCleanup();
-        return { ok: false as const, key: `${id}:${rev}:err`, error: out.error };
-      }
-      return { ok: true as const, key: `${id}:${rev}:ok`, element: out.element };
     });
-  });
-
-  return (
-    <View style={{ flex: 1, minHeight: 0 }}>
-      <If
-        when={mounted().ok}
-        else={
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 }}>
-            <Icon name="circleAlert" size={22} tone="destructive" />
-            <Text style={{ fontSize: 13.5, fontWeight: 500 }} class="text-foreground">
-              {t("tools.uiErrorTitle")}
-            </Text>
-            <Text style={{ fontSize: 12, textAlign: "center", maxWidth: 420 }} class="text-muted-foreground">
-              {!mounted().ok ? (mounted() as { ok: false; error: string }).error : ""}
-            </Text>
-          </View>
-        }
-      >
-        <Each of={mounted().ok ? [mounted() as { ok: true; key: string; element: ReturnType<typeof View> }] : []} key={(item) => item.key}>
-          {(item) => item().element}
-        </Each>
-      </If>
-    </View>
-  );
+  }
+  return p;
 }
 
 export function ToolsView(props: { active?: boolean }) {
@@ -156,7 +87,7 @@ export function ToolsView(props: { active?: boolean }) {
   const recommended = signal<RecommendedToolItem[]>([]);
   const loadingRecommended = signal(false);
   const installingId = signal<string | undefined>(undefined);
-  const pendingConfirm = signal<RecommendedToolItem | undefined>(undefined);
+  const repoBrowserOpen = signal(false);
   let lastCatalogRev = -1;
 
   effect(() => {
@@ -222,11 +153,6 @@ export function ToolsView(props: { active?: boolean }) {
   };
 
   const requestInstall = (item: RecommendedToolItem) => {
-    const hasUi = Boolean(item.entry.hasUi || item.entry.permissions?.hasUnsandboxedUi);
-    if (hasUi) {
-      pendingConfirm.set(item);
-      return;
-    }
     void performInstall(item);
   };
 
@@ -296,6 +222,20 @@ export function ToolsView(props: { active?: boolean }) {
             }}
           </Each>
         </Scroll>
+        <View
+          class="border-t border-border"
+          style={{ padding: 8, flexShrink: 0 }}
+        >
+          <Btn
+            testID="tools-browse-more"
+            variant="ghost"
+            size="sm"
+            icon="plus"
+            label={zhEn("获取更多工具", "Get more tools")}
+            onPress={() => repoBrowserOpen.set(true)}
+            style={{ width: "100%", justifyContent: "flex-start" }}
+          />
+        </View>
       </View>
 
       {/* Main plugin container */}
@@ -398,45 +338,6 @@ export function ToolsView(props: { active?: boolean }) {
                   </View>
                 </Scroll>
               </If>
-
-              <Modal
-                open={Boolean(pendingConfirm())}
-                onClose={() => pendingConfirm.set(undefined)}
-                width={420}
-              >
-                <If when={pendingConfirm()}>
-                  {(item) => (
-                    <View style={{ padding: 18, gap: 14 }}>
-                      <DialogHeader
-                        icon="circleAlert"
-                        title={t("tools.uiTrustTitle")}
-                      />
-                      <Text style={{ fontSize: 12.5, lineHeight: 19 }} class="text-secondary-foreground">
-                        {t("tools.uiTrustBody", { name: item().entry.name })}
-                      </Text>
-                      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-                        <Btn
-                          variant="outline"
-                          size="sm"
-                          label={t("tools.cancel")}
-                          onPress={() => pendingConfirm.set(undefined)}
-                        />
-                        <Btn
-                          testID="confirm-install-ui-tool"
-                          variant="primary"
-                          size="sm"
-                          label={t("tools.uiTrustConfirm")}
-                          onPress={() => {
-                            const chosen = item();
-                            pendingConfirm.set(undefined);
-                            void performInstall(chosen);
-                          }}
-                        />
-                      </View>
-                    </View>
-                  )}
-                </If>
-              </Modal>
             </View>
           }
         >
@@ -479,13 +380,24 @@ export function ToolsView(props: { active?: boolean }) {
                     </Each>
                   }
                 >
-                  <PluginUiHost pluginId={group().plugin_id} isBuiltin={group().is_builtin} />
+                  <PluginUiRenderer
+                    pluginId={group().plugin_id}
+                    revision={pluginsRevision()}
+                    getInitialPayload={consumeInitialPayload}
+                  />
                 </If>
               </View>
             </View>
           )}
         </If>
       </View>
+
+      <PluginRepoBrowserModal
+        open={repoBrowserOpen()}
+        onClose={() => repoBrowserOpen.set(false)}
+        filterCapability="tool"
+        onInstalled={(id) => selectedPluginId.set(id)}
+      />
     </View>
   );
 }

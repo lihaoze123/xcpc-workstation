@@ -507,6 +507,11 @@ enum PluginCommand {
         /// Path to a plugin directory or `.zip` archive.
         path: PathBuf,
     },
+    /// Uninstall a locally installed plugin (or unlink a dev-linked plugin / revert a built-in override).
+    Uninstall {
+        /// Plugin ID to uninstall.
+        id: String,
+    },
     /// Enable a plugin by ID.
     Enable {
         /// Plugin ID.
@@ -3949,12 +3954,34 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                     installed.manifest.version,
                     format_plugin_origin(installed.origin)
                 );
-                if installed.manifest.ui_entry.is_some() {
-                    println!(
-                        "  warning: this plugin includes unsandboxed desktop UI code ({})",
-                        installed.manifest.ui_entry.as_deref().unwrap_or("ui.js")
-                    );
-                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Uninstall { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let removed = pm.uninstall_plugin(id)?;
+            if !removed {
+                return Err(Fatal {
+                    code: "PLUGIN_NOT_REMOVABLE",
+                    message: format!(
+                        "plugin '{id}' is not a locally installed or linked plugin (built-in plugins cannot be uninstalled)"
+                    ),
+                    human: Some(format!("插件「{id}」不是本地安装或链接的插件，无法卸载")),
+                    exit_code: 2,
+                });
+            }
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "uninstalled": true,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("uninstalled plugin {id}");
             }
             Ok(ExitCode::SUCCESS)
         }

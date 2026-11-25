@@ -2025,3 +2025,112 @@ fn check_and_pack_plugin_dir_and_vite_scaffold() {
     assert!(vite_dir.join("src/index.ts").is_file());
     assert!(vite_dir.join("src/ui.tsx").is_file());
 }
+
+#[test]
+fn persistent_ui_session_renders_signals_canvas_recorder_and_events() {
+    let manifest = PluginManifest::from_toml_str(
+        r#"
+id = "demo-canvas"
+name = "Demo Canvas"
+version = "1.0.0"
+entry = "index.js"
+ui_entry = "ui.js"
+capabilities = ["tool"]
+"#,
+    )
+    .unwrap();
+    let loaded = crate::LoadedPlugin {
+        info: crate::InstalledPlugin {
+            manifest,
+            origin: PluginOrigin::Local,
+            enabled: true,
+            last_error: None,
+            local_dir: None,
+            is_linked: false,
+            link_target: None,
+        },
+        entry_source: r#"
+module.exports = {
+  runTool(id, inputs) {
+    return { blocks: [{ type: "text", content: "sum=" + ((inputs.a || 0) + 1) }] };
+  }
+};
+"#
+        .to_string(),
+        ui_source: Some(
+            r#"
+function render(sdk) {
+  const { h, signal, ui, useTool, storage, toast } = sdk;
+  const count = signal(storage.get("count") ?? 1);
+  const res = useTool("add", () => ({ a: count() }));
+  return h(ui.Col, { gap: 8 },
+    h(ui.Text, { testID: "counter" }, () => "n=" + count()),
+    h(ui.Button, {
+      testID: "inc",
+      onPress: () => {
+        const next = count() + 1;
+        count.set(next);
+        storage.set("count", next);
+        toast("clicked " + next);
+      }
+    }, "+1"),
+    h(ui.Canvas, {
+      testID: "cv",
+      draw: (cx, sz) => {
+        cx.clearRect(0, 0, sz.width, sz.height);
+        cx.beginPath();
+        cx.arc(50, 50, 10 + count(), 0, Math.PI * 2);
+        cx.fill();
+      }
+    }),
+    h(ui.Output, { blocks: () => (res.data() && res.data().blocks) || [] })
+  );
+}
+module.exports = { render };
+"#
+            .to_string(),
+        ),
+    };
+
+    let kv = Arc::new(KvStore::in_memory());
+    let (session, out1) = crate::PluginUiSession::mount(
+        loaded,
+        Arc::clone(&kv),
+        None,
+        None,
+        None,
+        None,
+        None,
+        r##"{"background":"#ffffff"}"##,
+        "light",
+    )
+    .unwrap();
+
+    // Initial render: counter text = "n=1", Output has "sum=2", Canvas has recorded drawOps.
+    let children = out1.tree["children"].as_array().unwrap();
+    assert_eq!(children[0]["props"]["text"], "n=1");
+    let inc_cb = children[1]["props"]["onPress"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let draw_ops = children[2]["props"]["drawOps"].as_array().unwrap();
+    assert!(draw_ops.iter().any(|op| op[0] == "arc" && op[3] == 11.0));
+    assert_eq!(children[3]["props"]["blocks"][0]["content"], "sum=2");
+
+    // Dispatch button press -> signal updates to 2, storage persists 2, toast effect queued, Canvas re-recorded.
+    let out2 = session.dispatch_event(&inc_cb, None).unwrap();
+    let ch2 = out2.tree["children"].as_array().unwrap();
+    assert_eq!(ch2[0]["props"]["text"], "n=2");
+    assert_eq!(ch2[3]["props"]["blocks"][0]["content"], "sum=3");
+    assert!(
+        ch2[2]["props"]["drawOps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op[0] == "arc" && op[3] == 12.0)
+    );
+    assert_eq!(kv.get("count").unwrap(), Some(serde_json::json!(2)));
+    assert!(out2.effects.iter().any(|e| e.kind == "toast"));
+
+    session.dispose();
+}

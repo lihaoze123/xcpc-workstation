@@ -3,6 +3,7 @@ import { Preview } from "xcpc-workstation/native";
 import { spaceName, windowTitle } from "./logic";
 import { goSpace, info, openToolPlugin, activeToolPluginId, activeToolPayload, space, preview } from "./store";
 import { computeTableColumnSpecs, isMonoTableCell } from "./tools/OutputRenderer";
+import { replayCanvasOps } from "./tools/PluginUiRenderer";
 import { createPluginUiSdk, createPluginUiSdkWithCleanup, fitBounds, mountPluginUi } from "./tools/pluginSdk";
 import {
   coerceToolInputs,
@@ -227,5 +228,69 @@ describe("Phase 4C/4D Pure Tools space & Plugin SDK", () => {
     cleanup();
     cleanup();
     expect(order).toEqual(["second", "first"]);
+  });
+
+  test("Core QuickJS declarative UI protocol: replayCanvasOps & native bridge safety", () => {
+    const calls: string[] = [];
+    const mockCx = {
+      fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 1,
+      font: "",
+      textAlign: "left",
+      textBaseline: "alphabetic",
+      save: () => calls.push("save"),
+      restore: () => calls.push("restore"),
+      beginPath: () => calls.push("beginPath"),
+      moveTo: (x: number, y: number) => calls.push(`moveTo(${x},${y})`),
+      lineTo: (x: number, y: number) => calls.push(`lineTo(${x},${y})`),
+      arc: (x: number, y: number, r: number) => calls.push(`arc(${x},${y},${r})`),
+      fill: () => calls.push("fill"),
+      stroke: () => calls.push("stroke"),
+      fillText: (text: string, x: number, y: number) => calls.push(`fillText(${text},${x},${y})`),
+      setLineDash: (segs: number[]) => calls.push(`setLineDash(${segs.join(",")})`),
+    };
+
+    replayCanvasOps(mockCx, [
+      ["save"],
+      ["fillStyle", "#0b6989"],
+      ["strokeStyle", "#333333"],
+      ["lineWidth", 2],
+      ["setLineDash", [4, 2]],
+      ["beginPath"],
+      ["moveTo", 10, 20],
+      ["lineTo", 50, 60],
+      ["stroke"],
+      ["beginPath"],
+      ["arc", 30, 40, 12, 0, Math.PI * 2],
+      ["fill"],
+      ["fillText", "A", 30, 40],
+      ["restore"],
+    ]);
+
+    expect(mockCx.fillStyle).toBe("#0b6989");
+    expect(mockCx.strokeStyle).toBe("#333333");
+    expect(mockCx.lineWidth).toBe(2);
+    expect(calls).toEqual([
+      "save",
+      "setLineDash(4,2)",
+      "beginPath",
+      "moveTo(10,20)",
+      "lineTo(50,60)",
+      "stroke",
+      "beginPath",
+      "arc(30,40,12)",
+      "fill",
+      "fillText(A,30,40)",
+      "restore",
+    ]);
+
+    // Mounting a non-existent plugin fails gracefully without throwing or needing `new Function`.
+    const missing = preview.pluginUiMount("does-not-exist", "light", "{}", "");
+    expect(missing.ok).toBe(false);
+
+    // Built-in plugins cannot be uninstalled.
+    const uninstBuiltin = preview.uninstallPlugin("codeforces");
+    expect(uninstBuiltin.ok).toBe(false);
   });
 });

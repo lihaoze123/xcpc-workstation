@@ -32,9 +32,9 @@ use crate::types::{
     ExportPluginResultJs, IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs,
     JsonReportResultJs, ManualLogResultJs, PlatformSyncReportJs, PluginCredentialFieldJs,
     PluginKvResultJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginUiSourceResultJs, PluginWatchEventJs, PluginsOverviewJs, ProblemSourceJs,
-    RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs,
-    SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
+    PluginUiFrameJs, PluginUiSourceResultJs, PluginWatchEventJs, PluginsOverviewJs,
+    ProblemSourceJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
+    ResolvedProblemUrlJs, SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
 };
 
 fn origin_str(origin: PluginOrigin) -> &'static str {
@@ -1967,5 +1967,611 @@ impl PluginFileWatcher {
 impl Drop for PluginFileWatcher {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+// ---- Phase 4D+: Uninstall & Persistent Core QuickJS UI Session Worker ------------------
+
+impl State {
+    pub(crate) fn uninstall_plugin(&self, id: &str) -> InstallPluginResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return InstallPluginResultJs {
+                    ok: false,
+                    cancelled: false,
+                    plugin_id: None,
+                    overview: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let pm = PluginManager::new(dir);
+        match pm.uninstall_plugin(id.trim()) {
+            Ok(true) => {
+                self.refresh_plugin_watcher();
+                InstallPluginResultJs {
+                    ok: true,
+                    cancelled: false,
+                    plugin_id: Some(id.trim().to_owned()),
+                    overview: Some(self.get_plugins_overview()),
+                    error: None,
+                }
+            }
+            Ok(false) => InstallPluginResultJs {
+                ok: false,
+                cancelled: false,
+                plugin_id: None,
+                overview: None,
+                error: Some(format!(
+                    "plugin '{}' cannot be uninstalled (not locally installed)",
+                    id.trim()
+                )),
+            },
+            Err(e) => InstallPluginResultJs {
+                ok: false,
+                cancelled: false,
+                plugin_id: None,
+                overview: None,
+                error: Some(e.to_string()),
+            },
+        }
+    }
+
+    fn with_ui_worker<F, R>(&self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&PluginUiWorker) -> R,
+    {
+        let mut slot = self
+            .plugin_ui_worker
+            .lock()
+            .map_err(|_| "plugin UI worker lock poisoned".to_owned())?;
+        if slot.is_none() {
+            *slot = Some(PluginUiWorker::start()?);
+        }
+        Ok(f(slot.as_ref().unwrap()))
+    }
+
+    pub(crate) fn plugin_ui_mount(
+        &self,
+        plugin_id: &str,
+        payload_json: Option<String>,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return PluginUiFrameJs {
+                    ok: false,
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        let loaded = match pm.load_plugin(plugin_id) {
+            Ok(l) => l,
+            Err(e) => {
+                return PluginUiFrameJs {
+                    ok: false,
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                };
+            }
+        };
+        let kv = match pm.kv_store(plugin_id) {
+            Ok(k) => Arc::new(k),
+            Err(e) => {
+                return PluginUiFrameJs {
+                    ok: false,
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                };
+            }
+        };
+        let ws = self.core.lock().ok().and_then(|c| c.workspace.clone());
+        let ws_reader: Option<Arc<dyn WorkspaceReader>> = ws
+            .clone()
+            .map(|w| Arc::new(DesktopWorkspaceReader(w)) as Arc<dyn WorkspaceReader>);
+        let ui_ws: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>> = ws.map(|w| {
+            Arc::new(DesktopUiWorkspaceBridge { ws: w }) as Arc<dyn xcpc_plugin::UiWorkspaceBridge>
+        });
+        let creds = Arc::clone(&self.credentials);
+
+        match self.with_ui_worker(|w| {
+            w.mount(
+                loaded,
+                kv,
+                creds,
+                ws_reader,
+                ui_ws,
+                payload_json,
+                theme_tokens_json,
+                color_scheme,
+            )
+        }) {
+            Ok(frame) => frame,
+            Err(err) => PluginUiFrameJs {
+                ok: false,
+                error: Some(err),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn plugin_ui_dispatch(
+        &self,
+        session_id: u32,
+        callback_id: String,
+        payload_json: Option<String>,
+    ) -> PluginUiFrameJs {
+        match self.with_ui_worker(|w| w.dispatch(session_id, callback_id, payload_json)) {
+            Ok(frame) => frame,
+            Err(err) => PluginUiFrameJs {
+                ok: false,
+                error: Some(err),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn plugin_ui_resolve_effect(
+        &self,
+        session_id: u32,
+        effect_id: u32,
+        result_json: String,
+    ) -> PluginUiFrameJs {
+        match self.with_ui_worker(|w| w.resolve_effect(session_id, effect_id as u64, result_json)) {
+            Ok(frame) => frame,
+            Err(err) => PluginUiFrameJs {
+                ok: false,
+                error: Some(err),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn plugin_ui_update_theme(
+        &self,
+        session_id: u32,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        match self.with_ui_worker(|w| w.update_theme(session_id, theme_tokens_json, color_scheme)) {
+            Ok(frame) => frame,
+            Err(err) => PluginUiFrameJs {
+                ok: false,
+                error: Some(err),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn plugin_ui_dispose(&self, session_id: u32) -> ActionResult {
+        if let Ok(slot) = self.plugin_ui_worker.lock()
+            && let Some(ref worker) = *slot
+        {
+            worker.dispose(session_id);
+        }
+        ActionResult::ok()
+    }
+}
+
+struct DesktopUiWorkspaceBridge {
+    ws: Workspace,
+}
+
+impl xcpc_plugin::UiWorkspaceBridge for DesktopUiWorkspaceBridge {
+    fn has_workspace(&self) -> bool {
+        true
+    }
+
+    fn current_problem_id(&self) -> Option<String> {
+        None
+    }
+
+    fn list_problems_json(&self) -> String {
+        let Ok(ids) = self.ws.list_problems() else {
+            return "[]".to_owned();
+        };
+        let mut items = Vec::new();
+        for id in ids {
+            if let Ok(p) = self.ws.load_problem(&id) {
+                items.push(serde_json::json!({
+                    "id": p.id,
+                    "title": p.meta.title,
+                    "tags": p.meta.tags,
+                    "rating": p.meta.rating,
+                }));
+            }
+        }
+        serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_owned())
+    }
+
+    fn get_problem_json(&self, id: &str) -> String {
+        let Ok(p) = self.ws.load_problem(id) else {
+            return "null".to_owned();
+        };
+        let samples: Vec<_> = p
+            .samples
+            .iter()
+            .map(|s| serde_json::json!({ "input": s.input, "answer": s.output }))
+            .collect();
+        let lang = p.default_language();
+        let stmt_rel = p
+            .statement(lang)
+            .map(|s| s.file.path.clone())
+            .unwrap_or_else(|| format!("{}/statement.md", p.dir));
+        let statement_md = self.ws.read_text(&stmt_rel).unwrap_or_default();
+        let editorial_md = self
+            .ws
+            .read_text(&format!("{}/editorial.md", p.dir))
+            .unwrap_or_default();
+        serde_json::to_string(&serde_json::json!({
+            "id": p.id,
+            "title": p.meta.title,
+            "tags": p.meta.tags,
+            "rating": p.meta.rating,
+            "statementMd": statement_md,
+            "editorialMd": editorial_md,
+            "samples": samples,
+        }))
+        .unwrap_or_else(|_| "null".to_owned())
+    }
+}
+
+enum UiWorkerCmd {
+    Mount {
+        loaded: xcpc_plugin::LoadedPlugin,
+        kv: Arc<xcpc_plugin::KvStore>,
+        credentials: Arc<dyn xcpc_plugin::CredentialStore>,
+        workspace_reader: Option<Arc<dyn WorkspaceReader>>,
+        ui_workspace: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>>,
+        payload_json: Option<String>,
+        theme_tokens_json: String,
+        color_scheme: String,
+        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
+    },
+    Dispatch {
+        session_id: u32,
+        callback_id: String,
+        payload_json: Option<String>,
+        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
+    },
+    ResolveEffect {
+        session_id: u32,
+        effect_id: u64,
+        result_json: String,
+        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
+    },
+    UpdateTheme {
+        session_id: u32,
+        theme_tokens_json: String,
+        color_scheme: String,
+        reply: std::sync::mpsc::SyncSender<PluginUiFrameJs>,
+    },
+    Dispose {
+        session_id: u32,
+    },
+    Stop,
+}
+
+pub(crate) struct PluginUiWorker {
+    tx: std::sync::mpsc::Sender<UiWorkerCmd>,
+}
+
+impl PluginUiWorker {
+    fn start() -> Result<Self, String> {
+        use std::collections::HashMap;
+        use std::sync::mpsc;
+
+        let (tx, rx) = mpsc::channel::<UiWorkerCmd>();
+        std::thread::Builder::new()
+            .name("xcpc-plugin-ui-worker".into())
+            .spawn(move || {
+                let mut sessions: HashMap<u32, xcpc_plugin::PluginUiSession> = HashMap::new();
+                let mut next_id: u32 = 1;
+
+                while let Ok(cmd) = rx.recv() {
+                    match cmd {
+                        UiWorkerCmd::Mount {
+                            loaded,
+                            kv,
+                            credentials,
+                            workspace_reader,
+                            ui_workspace,
+                            payload_json,
+                            theme_tokens_json,
+                            color_scheme,
+                            reply,
+                        } => {
+                            let res = match xcpc_plugin::PluginUiSession::mount(
+                                loaded,
+                                kv,
+                                Some(Arc::new(UreqHttpClient::new())),
+                                Some(credentials),
+                                workspace_reader,
+                                ui_workspace,
+                                payload_json.as_deref(),
+                                &theme_tokens_json,
+                                &color_scheme,
+                            ) {
+                                Ok((session, out)) => {
+                                    let sid = next_id;
+                                    next_id = next_id.wrapping_add(1).max(1);
+                                    sessions.insert(sid, session);
+                                    match serde_json::to_string(&out) {
+                                        Ok(frame_json) => PluginUiFrameJs {
+                                            ok: true,
+                                            session_id: Some(sid),
+                                            frame_json: Some(frame_json),
+                                            error: None,
+                                        },
+                                        Err(e) => PluginUiFrameJs {
+                                            ok: false,
+                                            error: Some(e.to_string()),
+                                            ..Default::default()
+                                        },
+                                    }
+                                }
+                                Err(e) => PluginUiFrameJs {
+                                    ok: false,
+                                    error: Some(e.to_string()),
+                                    ..Default::default()
+                                },
+                            };
+                            let _ = reply.send(res);
+                        }
+                        UiWorkerCmd::Dispatch {
+                            session_id,
+                            callback_id,
+                            payload_json,
+                            reply,
+                        } => {
+                            let res = match sessions.get(&session_id) {
+                                Some(sess) => {
+                                    match sess.dispatch_event(&callback_id, payload_json.as_deref())
+                                    {
+                                        Ok(out) => PluginUiFrameJs {
+                                            ok: true,
+                                            session_id: Some(session_id),
+                                            frame_json: serde_json::to_string(&out).ok(),
+                                            error: None,
+                                        },
+                                        Err(e) => PluginUiFrameJs {
+                                            ok: false,
+                                            session_id: Some(session_id),
+                                            frame_json: None,
+                                            error: Some(e.to_string()),
+                                        },
+                                    }
+                                }
+                                None => PluginUiFrameJs {
+                                    ok: false,
+                                    error: Some("plugin UI session not found".to_owned()),
+                                    ..Default::default()
+                                },
+                            };
+                            let _ = reply.send(res);
+                        }
+                        UiWorkerCmd::ResolveEffect {
+                            session_id,
+                            effect_id,
+                            result_json,
+                            reply,
+                        } => {
+                            let res = match sessions.get(&session_id) {
+                                Some(sess) => match sess.resolve_effect(effect_id, &result_json) {
+                                    Ok(out) => PluginUiFrameJs {
+                                        ok: true,
+                                        session_id: Some(session_id),
+                                        frame_json: serde_json::to_string(&out).ok(),
+                                        error: None,
+                                    },
+                                    Err(e) => PluginUiFrameJs {
+                                        ok: false,
+                                        session_id: Some(session_id),
+                                        frame_json: None,
+                                        error: Some(e.to_string()),
+                                    },
+                                },
+                                None => PluginUiFrameJs {
+                                    ok: false,
+                                    error: Some("plugin UI session not found".to_owned()),
+                                    ..Default::default()
+                                },
+                            };
+                            let _ = reply.send(res);
+                        }
+                        UiWorkerCmd::UpdateTheme {
+                            session_id,
+                            theme_tokens_json,
+                            color_scheme,
+                            reply,
+                        } => {
+                            let res = match sessions.get(&session_id) {
+                                Some(sess) => {
+                                    match sess.update_theme(&theme_tokens_json, &color_scheme) {
+                                        Ok(out) => PluginUiFrameJs {
+                                            ok: true,
+                                            session_id: Some(session_id),
+                                            frame_json: serde_json::to_string(&out).ok(),
+                                            error: None,
+                                        },
+                                        Err(e) => PluginUiFrameJs {
+                                            ok: false,
+                                            session_id: Some(session_id),
+                                            frame_json: None,
+                                            error: Some(e.to_string()),
+                                        },
+                                    }
+                                }
+                                None => PluginUiFrameJs {
+                                    ok: false,
+                                    error: Some("plugin UI session not found".to_owned()),
+                                    ..Default::default()
+                                },
+                            };
+                            let _ = reply.send(res);
+                        }
+                        UiWorkerCmd::Dispose { session_id } => {
+                            if let Some(sess) = sessions.remove(&session_id) {
+                                sess.dispose();
+                            }
+                        }
+                        UiWorkerCmd::Stop => {
+                            for (_, sess) in sessions.drain() {
+                                sess.dispose();
+                            }
+                            break;
+                        }
+                    }
+                }
+            })
+            .map_err(|e| format!("failed to spawn plugin UI worker thread: {e}"))?;
+
+        Ok(Self { tx })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn mount(
+        &self,
+        loaded: xcpc_plugin::LoadedPlugin,
+        kv: Arc<xcpc_plugin::KvStore>,
+        credentials: Arc<dyn xcpc_plugin::CredentialStore>,
+        workspace_reader: Option<Arc<dyn WorkspaceReader>>,
+        ui_workspace: Option<Arc<dyn xcpc_plugin::UiWorkspaceBridge>>,
+        payload_json: Option<String>,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        let (reply, rx) = std::sync::mpsc::sync_channel(1);
+        if self
+            .tx
+            .send(UiWorkerCmd::Mount {
+                loaded,
+                kv,
+                credentials,
+                workspace_reader,
+                ui_workspace,
+                payload_json,
+                theme_tokens_json,
+                color_scheme,
+                reply,
+            })
+            .is_err()
+        {
+            return PluginUiFrameJs {
+                ok: false,
+                error: Some("plugin UI worker stopped".to_owned()),
+                ..Default::default()
+            };
+        }
+        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
+            ok: false,
+            error: Some("plugin UI worker disconnected".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    fn dispatch(
+        &self,
+        session_id: u32,
+        callback_id: String,
+        payload_json: Option<String>,
+    ) -> PluginUiFrameJs {
+        let (reply, rx) = std::sync::mpsc::sync_channel(1);
+        if self
+            .tx
+            .send(UiWorkerCmd::Dispatch {
+                session_id,
+                callback_id,
+                payload_json,
+                reply,
+            })
+            .is_err()
+        {
+            return PluginUiFrameJs {
+                ok: false,
+                error: Some("plugin UI worker stopped".to_owned()),
+                ..Default::default()
+            };
+        }
+        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
+            ok: false,
+            error: Some("plugin UI worker disconnected".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    fn resolve_effect(
+        &self,
+        session_id: u32,
+        effect_id: u64,
+        result_json: String,
+    ) -> PluginUiFrameJs {
+        let (reply, rx) = std::sync::mpsc::sync_channel(1);
+        if self
+            .tx
+            .send(UiWorkerCmd::ResolveEffect {
+                session_id,
+                effect_id,
+                result_json,
+                reply,
+            })
+            .is_err()
+        {
+            return PluginUiFrameJs {
+                ok: false,
+                error: Some("plugin UI worker stopped".to_owned()),
+                ..Default::default()
+            };
+        }
+        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
+            ok: false,
+            error: Some("plugin UI worker disconnected".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    fn update_theme(
+        &self,
+        session_id: u32,
+        theme_tokens_json: String,
+        color_scheme: String,
+    ) -> PluginUiFrameJs {
+        let (reply, rx) = std::sync::mpsc::sync_channel(1);
+        if self
+            .tx
+            .send(UiWorkerCmd::UpdateTheme {
+                session_id,
+                theme_tokens_json,
+                color_scheme,
+                reply,
+            })
+            .is_err()
+        {
+            return PluginUiFrameJs {
+                ok: false,
+                error: Some("plugin UI worker stopped".to_owned()),
+                ..Default::default()
+            };
+        }
+        rx.recv().unwrap_or_else(|_| PluginUiFrameJs {
+            ok: false,
+            error: Some("plugin UI worker disconnected".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    fn dispose(&self, session_id: u32) {
+        let _ = self.tx.send(UiWorkerCmd::Dispose { session_id });
+    }
+}
+
+impl Drop for PluginUiWorker {
+    fn drop(&mut self) {
+        let _ = self.tx.send(UiWorkerCmd::Stop);
     }
 }

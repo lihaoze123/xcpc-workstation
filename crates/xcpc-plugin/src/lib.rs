@@ -11,6 +11,7 @@ pub mod oj;
 pub mod render;
 pub mod runtime;
 pub mod tool;
+pub mod ui_session;
 pub mod workspace;
 
 pub use commands::{PluginCommandAction, RegisteredPluginCommand};
@@ -45,6 +46,10 @@ pub use render::{
 };
 pub use runtime::{CallResult, HostContext, PluginLogEntry, PluginRuntime, SandboxLimits};
 pub use tool::{GraphEdge, GraphNode, PluginToolGroup, ToolExecutionResult, ToolOutputBlock};
+pub use ui_session::{
+    PluginUiSession, UI_SESSION_MEMORY_LIMIT_BYTES, UI_SESSION_TURN_TIMEOUT_MS, UiHostEffect,
+    UiRenderOutput, UiShortcutSpec, UiWorkspaceBridge,
+};
 pub use workspace::{WorkspaceProblemDetail, WorkspaceProblemSummary, WorkspaceReader};
 
 #[cfg(test)]
