@@ -1,11 +1,14 @@
-// Dual-mode annual training heatmap (cptracker style):
+// Dual-mode annual training heatmap:
 // Switches between daily distinct AC count and daily max solved difficulty,
-// supports year selection, and shows exact per-day details on hover or click.
+// uses host Segmented controls for mode & year switching, localized Chinese/English labels,
+// and fills the full card width cleanly with aligned first column.
 
 import { Canvas, colorScheme, computed, signal, Text, View } from "nsh";
 import { t } from "../i18n";
+import { Segmented } from "../kit";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor, token } from "../theme";
+import { isEn } from "./locale";
 import {
   buildYearHeatmapGrid,
   heatmapCellColor,
@@ -14,10 +17,33 @@ import {
   type HeatmapMode,
 } from "./types";
 
-const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const LEFT_LABEL_W = 26;
+const MONTH_LABELS_ZH = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+const MONTH_LABELS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAY_LABELS_ZH = [
+  [1, "一"],
+  [3, "三"],
+  [5, "五"],
+] as const;
+const WEEKDAY_LABELS_EN = [
+  [1, "M"],
+  [3, "W"],
+  [5, "F"],
+] as const;
+
+const LEFT_LABEL_W = 22;
+const RIGHT_PAD = 2;
 const TOP_LABEL_H = 18;
 const CELL_GAP = 3;
+
+function computeGridGeometry(width: number, weeks: number) {
+  const safeWeeks = Math.max(1, weeks);
+  const availW = Math.max(200, width - LEFT_LABEL_W - RIGHT_PAD);
+  const step = (availW + CELL_GAP) / safeWeeks;
+  const cellSize = Math.max(6, Math.min(18, step - CELL_GAP));
+  const actualStep = cellSize + CELL_GAP;
+  const height = Math.ceil(TOP_LABEL_H + 7 * actualStep - CELL_GAP + 4);
+  return { cellSize, step: actualStep, height };
+}
 
 export function HeatmapCard(props: {
   year: number;
@@ -33,14 +59,7 @@ export function HeatmapCard(props: {
   const grid = computed(() => buildYearHeatmapGrid(props.year, props.cells));
   const activeDay = () => hovered() ?? pinned();
 
-  const cellMetrics = computed(() => {
-    const g = grid();
-    const availW = Math.max(200, canvasWidth() - LEFT_LABEL_W - 6);
-    const cellSize = Math.max(8, Math.min(14, Math.floor((availW - (g.weeks - 1) * CELL_GAP) / g.weeks)));
-    const step = cellSize + CELL_GAP;
-    const height = TOP_LABEL_H + 7 * step + 4;
-    return { cellSize, step, height };
-  });
+  const cellMetrics = computed(() => computeGridGeometry(canvasWidth(), grid().weeks));
 
   const dayLookup = computed(() => {
     const map = new Map<string, HeatmapGridDay>();
@@ -62,30 +81,18 @@ export function HeatmapCard(props: {
   const totalAcYear = computed(() => props.cells.reduce((acc, c) => acc + c.ac_count, 0));
   const activeDaysYear = computed(() => props.cells.filter((c) => c.ac_count > 0).length);
 
-  const modeBtn = (m: HeatmapMode, label: string, testID: string) => {
-    const on = () => mode() === m;
-    return (
-      <View
-        testID={testID}
-        onPress={() => mode.set(m)}
-        class={on() ? "bg-card border border-border" : "hover:bg-background/60"}
-        style={{
-          height: 24,
-          paddingLeft: 9,
-          paddingRight: 9,
-          borderRadius: 6,
-          justifyContent: "center",
-        }}
-      >
-        <Text
-          style={{ fontSize: 12, fontWeight: on() ? 500 : 400 }}
-          class={on() ? "text-foreground" : "text-secondary-foreground"}
-        >
-          {label}
-        </Text>
-      </View>
-    );
-  };
+  const modeItems = computed(() => [
+    { value: "count" as const, label: t("training.heatmap.modeCount"), testID: "heatmap-mode-count" },
+    { value: "rating" as const, label: t("training.heatmap.modeRating"), testID: "heatmap-mode-rating" },
+  ]);
+
+  const yearItems = computed(() =>
+    props.availableYears.slice(0, 4).map((y) => ({
+      value: String(y),
+      label: String(y),
+      testID: `heatmap-year-${y}`,
+    })),
+  );
 
   return (
     <View
@@ -98,7 +105,7 @@ export function HeatmapCard(props: {
         boxShadow: cardShadow(),
       }}
     >
-      {/* Header: title + year summary + mode switcher + year selector */}
+      {/* Header: title + year summary + host Segmented mode & year switchers */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
           <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
@@ -109,44 +116,23 @@ export function HeatmapCard(props: {
           </Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <View
-            class="bg-muted border border-border"
-            style={{ flexDirection: "row", padding: 2, borderRadius: 8, gap: 2 }}
-          >
-            {modeBtn("count", t("training.heatmap.modeCount"), "heatmap-mode-count")}
-            {modeBtn("rating", t("training.heatmap.modeRating"), "heatmap-mode-rating")}
-          </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <Each of={props.availableYears.slice(0, 5)} key={(y) => String(y)}>
-              {(yr) => {
-                const active = () => yr() === props.year;
-                return (
-                  <View
-                    testID={`heatmap-year-${yr()}`}
-                    onPress={() => {
-                      pinned.set(undefined);
-                      props.onYearChange(yr());
-                    }}
-                    class={active() ? "bg-accent border border-border" : "hover:bg-muted"}
-                    style={{
-                      height: 26,
-                      paddingLeft: 8,
-                      paddingRight: 8,
-                      borderRadius: 6,
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text
-                      style={{ fontSize: 12, fontVariant: ["tabular-nums"], fontWeight: active() ? 600 : 400 }}
-                      class={active() ? "text-foreground" : "text-secondary-foreground"}
-                    >
-                      {String(yr())}
-                    </Text>
-                  </View>
-                );
+          <Segmented
+            items={modeItems()}
+            value={mode()}
+            onChange={(m) => mode.set(m)}
+            itemWidth={88}
+          />
+          <If when={yearItems().length > 1}>
+            <Segmented
+              items={yearItems()}
+              value={String(props.year)}
+              onChange={(yr) => {
+                pinned.set(undefined);
+                props.onYearChange(Number(yr));
               }}
-            </Each>
-          </View>
+              itemWidth={50}
+            />
+          </If>
         </View>
       </View>
 
@@ -155,7 +141,9 @@ export function HeatmapCard(props: {
         testID="training-heatmap-canvas"
         style={{ width: "100%", height: cellMetrics().height }}
         onLayout={(e) => {
-          if (e.bounds.size.width > 0) canvasWidth.set(e.bounds.size.width);
+          if (e.bounds.size.width > 0 && Math.abs(e.bounds.size.width - canvasWidth()) > 1) {
+            canvasWidth.set(e.bounds.size.width);
+          }
         }}
         onMouseMove={(e) => hovered.set(hitDay(e.position.x, e.position.y))}
         onMouseLeave={() => hovered.set(undefined)}
@@ -165,12 +153,15 @@ export function HeatmapCard(props: {
         }}
         draw={(cx, size) => {
           const dark = colorScheme() === "dark";
+          const en = isEn();
           const g = grid();
           const curMode = mode();
           const sel = activeDay();
-          const { cellSize, step } = cellMetrics();
+          const { cellSize, step } = computeGridGeometry(size.width, g.weeks);
           const mutedText = token("muted-foreground");
           const fg = token("foreground");
+          const monthLabels = en ? MONTH_LABELS_EN : MONTH_LABELS_ZH;
+          const weekdayLabels = en ? WEEKDAY_LABELS_EN : WEEKDAY_LABELS_ZH;
 
           cx.clearRect(0, 0, size.width, size.height);
           cx.font = "10px system-ui, sans-serif";
@@ -178,28 +169,25 @@ export function HeatmapCard(props: {
           cx.textBaseline = "top";
           cx.textAlign = "left";
 
-          // Month labels
+          // Month labels aligned to column start
           let prevX = -999;
           for (const m of g.monthStarts) {
             const mx = LEFT_LABEL_W + m.weekIndex * step;
-            if (mx - prevX >= 28) {
-              cx.fillText(MONTH_LABELS[m.month - 1] ?? "", mx, 2);
+            if (mx - prevX >= 28 && mx < size.width - 18) {
+              cx.fillText(monthLabels[m.month - 1] ?? "", mx, 2);
               prevX = mx;
             }
           }
 
           // Weekday labels (Mon / Wed / Fri)
           cx.textBaseline = "middle";
-          for (const [dow, label] of [
-            [1, "M"],
-            [3, "W"],
-            [5, "F"],
-          ] as const) {
+          cx.textAlign = "left";
+          for (const [dow, label] of weekdayLabels) {
             const my = TOP_LABEL_H + dow * step + cellSize / 2;
-            cx.fillText(label, 4, my);
+            cx.fillText(label, 2, my);
           }
 
-          // Cells
+          // Cells filling full width cleanly
           const radius = Math.min(3, Math.max(1.5, cellSize * 0.22));
           for (const d of g.days) {
             const x = LEFT_LABEL_W + d.weekIndex * step;
@@ -259,7 +247,7 @@ export function HeatmapCard(props: {
 
         {/* Legend */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {mode() === "count" ? t("training.heatmap.less") : "800"}
           </Text>
           <Each
@@ -292,7 +280,7 @@ export function HeatmapCard(props: {
               );
             }}
           </Each>
-          <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {mode() === "count" ? t("training.heatmap.more") : "2400+"}
           </Text>
         </View>

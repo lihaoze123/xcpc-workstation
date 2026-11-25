@@ -1,12 +1,17 @@
-// Platform Rating trajectory chart on NSH <Canvas> with classic rating tier background bands
-// (1200 / 1400 / 1600 / 1900 / 2100 / 2400 / 3000) and interactive point inspection.
+// Platform Rating trajectory chart on NSH <Canvas>:
+// Subtle rating tier background tint, clean round Y-axis ticks covering 3000+,
+// intermediate X-axis date ticks, and clean polyline with dot shown only on hover/pin.
 
 import { Canvas, colorScheme, computed, effect, signal, Text, View } from "nsh";
 import { t } from "../i18n";
+import { Segmented } from "../kit";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor, token } from "../theme";
 import {
   formatUnixDateShort,
+  formatUnixYearMonth,
+  niceRatingTicks,
+  niceXTickIndices,
   platformDisplayName,
   RATING_BANDS,
   type PlatformRatingSeries,
@@ -14,7 +19,7 @@ import {
 } from "./types";
 
 const CHART_H = 210;
-const PAD_L = 42;
+const PAD_L = 44;
 const PAD_R = 14;
 const PAD_T = 12;
 const PAD_B = 22;
@@ -56,17 +61,19 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
     return { minY, maxY };
   });
 
-  const activeIndex = () => {
+  const inspectedIndex = () => {
     const pts = points();
     if (pts.length === 0) return undefined;
     const idx = hoveredIdx() ?? pinnedIdx();
     if (idx !== undefined && idx >= 0 && idx < pts.length) return idx;
-    return pts.length - 1;
+    return undefined;
   };
 
   const activePoint = () => {
-    const idx = activeIndex();
-    return idx !== undefined ? points()[idx] : undefined;
+    const pts = points();
+    if (pts.length === 0) return undefined;
+    const idx = inspectedIndex() ?? pts.length - 1;
+    return pts[idx];
   };
 
   const xOfIndex = (idx: number, count: number, width: number): number => {
@@ -97,6 +104,14 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
     return best;
   };
 
+  const platformItems = computed(() =>
+    props.series.map((s) => ({
+      value: s.platform,
+      label: platformDisplayName(s.platform),
+      testID: `rating-platform-${s.platform}`,
+    })),
+  );
+
   return (
     <View
       testID="training-rating-chart"
@@ -115,32 +130,16 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
           {t("training.rating.title")}
         </Text>
         <If when={props.series.length > 1}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <Each of={props.series} key={(s) => s.platform}>
-              {(s) => {
-                const on = () => s().platform === activeSeries()?.platform;
-                return (
-                  <View
-                    testID={`rating-platform-${s().platform}`}
-                    onPress={() => {
-                      selectedPlatform.set(s().platform);
-                      hoveredIdx.set(undefined);
-                      pinnedIdx.set(undefined);
-                    }}
-                    class={on() ? "bg-accent border border-border" : "hover:bg-muted"}
-                    style={{ height: 24, paddingLeft: 8, paddingRight: 8, borderRadius: 6, justifyContent: "center" }}
-                  >
-                    <Text
-                      style={{ fontSize: 11.5, fontWeight: on() ? 600 : 400 }}
-                      class={on() ? "text-foreground" : "text-secondary-foreground"}
-                    >
-                      {platformDisplayName(s().platform)}
-                    </Text>
-                  </View>
-                );
-              }}
-            </Each>
-          </View>
+          <Segmented
+            items={platformItems()}
+            value={activeSeries()?.platform ?? ""}
+            onChange={(plat) => {
+              selectedPlatform.set(plat);
+              hoveredIdx.set(undefined);
+              pinnedIdx.set(undefined);
+            }}
+            itemWidth={82}
+          />
         </If>
       </View>
 
@@ -164,7 +163,7 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
           onMouseLeave={() => hoveredIdx.set(undefined)}
           onPress={(e) => {
             const idx = nearestIndex(e.position.x);
-            if (idx !== undefined) pinnedIdx.set(idx);
+            if (idx !== undefined) pinnedIdx.set(pinnedIdx() === idx ? undefined : idx);
           }}
           draw={(cx, size) => {
             const dark = colorScheme() === "dark";
@@ -179,7 +178,7 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
 
             cx.clearRect(0, 0, size.width, size.height);
 
-            // Rating tier background bands
+            // Subtle rating tier background tint
             for (const band of RATING_BANDS) {
               const bLo = Math.max(minY, band.min);
               const bHi = Math.min(maxY, band.max);
@@ -190,16 +189,14 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
               cx.fillRect(PAD_L, yTop, plotW, Math.max(0, yBot - yTop));
             }
 
-            // Horizontal gridlines at rating thresholds
+            // Clean round horizontal gridlines (including 3000+)
             cx.strokeStyle = borderCol;
             cx.lineWidth = 1;
             cx.font = "10.5px system-ui, sans-serif";
             cx.fillStyle = mutedText;
             cx.textAlign = "right";
             cx.textBaseline = "middle";
-            const ticks = [800, 1200, 1400, 1600, 1900, 2100, 2400, 3000].filter(
-              (v) => v >= minY && v <= maxY,
-            );
+            const ticks = niceRatingTicks(minY, maxY);
             for (const v of ticks) {
               const y = yOfRating(v, minY, maxY);
               cx.beginPath();
@@ -209,10 +206,11 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
               cx.fillText(String(v), PAD_L - 6, y);
             }
 
-            // Polyline
+            // Polyline (clean, no per-point dot clutter)
             if (pts.length > 0) {
               cx.strokeStyle = lineCol;
               cx.lineWidth = 2;
+              cx.lineJoin = "round";
               cx.beginPath();
               pts.forEach((p, i) => {
                 const x = xOfIndex(i, pts.length, size.width);
@@ -222,46 +220,50 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
               });
               cx.stroke();
 
-              // Points
-              const sel = activeIndex();
-              pts.forEach((p, i) => {
-                const x = xOfIndex(i, pts.length, size.width);
+              // Dot ONLY on hover/pin (or single-point chart)
+              const sel = inspectedIndex() ?? (pts.length === 1 ? 0 : undefined);
+              if (sel !== undefined && sel < pts.length) {
+                const p = pts[sel];
+                const x = xOfIndex(sel, pts.length, size.width);
                 const y = yOfRating(p.rating_after, minY, maxY);
-                const isSel = i === sel;
-                const dotColor = tierColor(ratingTier(p.rating_after));
-                if (isSel) {
-                  cx.strokeStyle = borderCol;
-                  cx.lineWidth = 1;
-                  cx.beginPath();
-                  cx.moveTo(x, PAD_T);
-                  cx.lineTo(x, PAD_T + plotH);
-                  cx.stroke();
-                }
-                cx.fillStyle = dotColor;
-                cx.beginPath();
-                cx.arc(x, y, isSel ? 4.5 : pts.length > 40 ? 2 : 3, 0, Math.PI * 2);
-                cx.fill();
-                if (isSel) {
-                  cx.strokeStyle = cardBg;
-                  cx.lineWidth = 1.5;
-                  cx.stroke();
-                }
-              });
 
-              // First / Last date labels on X axis
+                cx.strokeStyle = borderCol;
+                cx.lineWidth = 1;
+                cx.beginPath();
+                cx.moveTo(x, PAD_T);
+                cx.lineTo(x, PAD_T + plotH);
+                cx.stroke();
+
+                cx.fillStyle = tierColor(ratingTier(p.rating_after));
+                cx.beginPath();
+                cx.arc(x, y, 4.5, 0, Math.PI * 2);
+                cx.fill();
+                cx.strokeStyle = cardBg;
+                cx.lineWidth = 1.5;
+                cx.stroke();
+              }
+
+              // Intermediate X-axis date ticks
+              const spanSec = pts.length > 1 ? pts[pts.length - 1].at - pts[0].at : 0;
+              const useYearMonth = spanSec > 180 * 86_400;
+              const maxXTicks = Math.max(2, Math.min(5, Math.floor(plotW / 85)));
+              const xIndices = niceXTickIndices(pts.length, maxXTicks);
               cx.fillStyle = mutedText;
               cx.textBaseline = "top";
-              cx.textAlign = "left";
-              cx.fillText(formatUnixDateShort(pts[0].at), PAD_L, CHART_H - 16);
-              if (pts.length > 1) {
-                cx.textAlign = "right";
-                cx.fillText(formatUnixDateShort(pts[pts.length - 1].at), PAD_L + plotW, CHART_H - 16);
-              }
+              xIndices.forEach((idx, pos) => {
+                const x = xOfIndex(idx, pts.length, size.width);
+                const label = useYearMonth
+                  ? formatUnixYearMonth(pts[idx].at)
+                  : formatUnixDateShort(pts[idx].at);
+                cx.textAlign =
+                  pos === 0 ? "left" : pos === xIndices.length - 1 ? "right" : "center";
+                cx.fillText(label, x, CHART_H - 16);
+              });
             }
           }}
         />
 
-        {/* Selected / hovered point detail */}
+        {/* Selected / latest point detail */}
         <If when={activePoint()}>
           {(pt) => {
             const delta = () => pt().delta;

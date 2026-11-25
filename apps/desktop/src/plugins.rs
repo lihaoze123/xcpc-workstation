@@ -20,17 +20,19 @@ use xcpc_plugin::{
 };
 use xcpc_storage::{CreateProblemOptions, Workspace};
 use xcpc_sync::{
-    ContestsQuery, DB_FILENAME, IngestProblemRequest, SubmissionsQuery, SyncConfig, SyncDb,
-    SyncEngine, SyncOptions, TimeWindow, TrainingDashboardQuery, compute_training_dashboard,
-    ingest_problem, now_rfc3339_utc, query_contests, query_submissions,
+    ContestsQuery, DB_FILENAME, EditorialQuery, IngestProblemRequest, ManualLogRequest,
+    SubmissionsQuery, SyncConfig, SyncDb, SyncEngine, SyncOptions, TimeWindow,
+    TrainingDashboardQuery, compute_training_dashboard, ingest_problem, log_training_record,
+    now_rfc3339_utc, query_contests, query_submissions, query_training_editorials,
 };
 
 use crate::state::State;
 use crate::types::{
-    ActionResult, CreateProblemFromUrlResultJs, ExportPluginResultJs, IngestProblemRequestJs,
-    IngestProblemResultJs, InstallPluginResultJs, JsonReportResultJs, PlatformSyncReportJs,
-    PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginUiSourceResultJs, PluginsOverviewJs, RepoCatalogResultJs, RepoPluginEntryJs,
+    ActionResult, CreateProblemFromUrlResultJs, EditorialListResultJs, EditorialSummaryJs,
+    ExportPluginResultJs, IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs,
+    JsonReportResultJs, ManualLogResultJs, PlatformSyncReportJs, PluginCredentialFieldJs,
+    PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs, PluginUiSourceResultJs,
+    PluginsOverviewJs, ProblemSourceJs, RepoCatalogResultJs, RepoPluginEntryJs,
     RepoPluginPermissionJs, ResolvedProblemUrlJs, SyncReportJs, TrainingSubmissionsQueryJs,
     VerifyPluginResultJs,
 };
@@ -132,12 +134,12 @@ impl State {
             Ok(problem) => problem.meta.sources.into_iter().next(),
             Err(e) => return ActionResult::err(e.code(), e.to_string()),
         };
-        let entry = TrainingLogEntry {
-            at: now_rfc3339_utc(),
-            problem_id: Some(pid.to_owned()),
+        let entry = TrainingLogEntry::for_problem(
+            now_rfc3339_utc(),
+            Some(pid.to_owned()),
             source,
-            status: log_status,
-        };
+            log_status,
+        );
         match ws.append_training_log(&entry) {
             Ok(()) => {
                 self.revision.fetch_add(1, Ordering::AcqRel);
@@ -607,17 +609,15 @@ impl State {
     }
 
     pub(crate) fn set_sync_handle(&self, platform: &str, handle: &str) -> ActionResult {
-        let dir = match self.effective_data_dir() {
-            Ok(d) => d,
+        let engine = match self.sync_engine() {
+            Ok(e) => e,
             Err(err) => return ActionResult::err("data_dir", err),
         };
-        let mut config = match SyncConfig::load(&dir) {
-            Ok(c) => c,
-            Err(e) => return ActionResult::err("sync_error", e.to_string()),
-        };
-        config.set_handle(platform, handle);
-        match config.save(&dir) {
-            Ok(()) => ActionResult::ok(),
+        match engine.set_handle(platform, handle) {
+            Ok(()) => {
+                self.revision.fetch_add(1, Ordering::AcqRel);
+                ActionResult::ok()
+            }
             Err(e) => ActionResult::err("sync_error", e.to_string()),
         }
     }
@@ -660,7 +660,11 @@ impl State {
         }
     }
 
-    pub(crate) fn verify_plugin(&self, plugin_id: &str) -> VerifyPluginResultJs {
+    pub(crate) fn verify_plugin(
+        &self,
+        plugin_id: &str,
+        handle_override: Option<&str>,
+    ) -> VerifyPluginResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -692,8 +696,13 @@ impl State {
                 };
             }
         };
-        let config = SyncConfig::load(&dir).unwrap_or_default();
-        let handle = config.handle_for(plugin_id).unwrap_or("").to_owned();
+        let handle = match handle_override {
+            Some(h) => h.trim().to_owned(),
+            None => {
+                let config = SyncConfig::load(&dir).unwrap_or_default();
+                config.handle_for(plugin_id).unwrap_or("").to_owned()
+            }
+        };
         let host_ctx = HostContext {
             manifest: loaded.info.manifest.clone(),
             http_client: Arc::new(UreqHttpClient::new()),
@@ -708,7 +717,9 @@ impl State {
                 Ok(res) => {
                     if res.ok {
                         let _ = pm.clear_error(plugin_id);
-                    } else if let Some(ref msg) = res.message {
+                    } else if handle_override.is_none()
+                        && let Some(ref msg) = res.message
+                    {
                         let _ = pm.record_error(plugin_id, msg);
                     }
                     VerifyPluginResultJs {
@@ -722,7 +733,9 @@ impl State {
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    let _ = pm.record_error(plugin_id, &msg);
+                    if handle_override.is_none() {
+                        let _ = pm.record_error(plugin_id, &msg);
+                    }
                     VerifyPluginResultJs {
                         ok: false,
                         message: None,
@@ -1049,6 +1062,123 @@ impl State {
                     ..Default::default()
                 }
             }
+        }
+    }
+
+    pub(crate) fn training_log_record(&self, req_json: &str) -> ManualLogResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return ManualLogResultJs {
+                    ok: false,
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return ManualLogResultJs {
+                ok: false,
+                error: Some("no workspace is open".to_owned()),
+                ..Default::default()
+            };
+        };
+        let req: ManualLogRequest = match serde_json::from_str(req_json) {
+            Ok(r) => r,
+            Err(err) => {
+                return ManualLogResultJs {
+                    ok: false,
+                    error: Some(format!("invalid manual log request: {err}")),
+                    ..Default::default()
+                };
+            }
+        };
+        let pm = PluginManager::new(&dir);
+        match log_training_record(&ws, &dir, Some(&pm), &req) {
+            Ok(res) => {
+                if res.created_in_library
+                    && let Some(ref pid) = res.library_problem_id
+                {
+                    let _ = self.core.lock().unwrap().index.refresh_problem(&ws, pid);
+                    self.invalidate_cache();
+                } else {
+                    self.revision.fetch_add(1, Ordering::AcqRel);
+                }
+                ManualLogResultJs {
+                    ok: true,
+                    library_problem_id: res.library_problem_id,
+                    created_in_library: res.created_in_library,
+                    error: None,
+                }
+            }
+            Err(err) => ManualLogResultJs {
+                ok: false,
+                library_problem_id: None,
+                created_in_library: false,
+                error: Some(err.to_string()),
+            },
+        }
+    }
+
+    pub(crate) fn training_list_editorials(&self, query_json: &str) -> EditorialListResultJs {
+        let ws = {
+            let core = self.core.lock().unwrap();
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return EditorialListResultJs {
+                error: Some("no workspace is open".to_owned()),
+                ..Default::default()
+            };
+        };
+        let query: EditorialQuery = if query_json.trim().is_empty() {
+            EditorialQuery::default()
+        } else {
+            match serde_json::from_str(query_json) {
+                Ok(q) => q,
+                Err(err) => {
+                    return EditorialListResultJs {
+                        error: Some(format!("invalid editorial query: {err}")),
+                        ..Default::default()
+                    };
+                }
+            }
+        };
+        match query_training_editorials(&ws, &query) {
+            Ok(res) => EditorialListResultJs {
+                items: res
+                    .items
+                    .into_iter()
+                    .map(|item| EditorialSummaryJs {
+                        problem_id: item.problem_id,
+                        title: item.title,
+                        rating: item.rating,
+                        tags: item.tags,
+                        sources: item
+                            .sources
+                            .into_iter()
+                            .map(|s| ProblemSourceJs {
+                                platform: s.platform,
+                                id: s.id,
+                                url: s.url,
+                            })
+                            .collect(),
+                        excerpt: item.excerpt,
+                        updated_at: item.updated_at,
+                    })
+                    .collect(),
+                total: res.total as u32,
+                available_tags: res.available_tags,
+                error: None,
+            },
+            Err(err) => EditorialListResultJs {
+                error: Some(err.to_string()),
+                ..Default::default()
+            },
         }
     }
 
@@ -1502,13 +1632,16 @@ fn build_export_context(ws: &Workspace, kind: &str, id: &str) -> Result<ExportCo
 
 /// Atomically writes `bytes` to `path` via a sibling temporary file + rename.
 pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "output".to_owned());
-    let tmp_name = format!(".{file_name}.tmp.{}", std::process::id());
+    let nonce = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp_name = format!(".{file_name}.tmp.{}.{nonce}", std::process::id());
     let tmp_path = parent.join(tmp_name);
     std::fs::write(&tmp_path, bytes)?;
     if let Err(err) = std::fs::rename(&tmp_path, path) {

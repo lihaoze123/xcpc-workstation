@@ -293,6 +293,14 @@ describe("buildPaletteItems (§6)", () => {
     const notPromoted = buildPaletteItems("export", exactHit, actions, null);
     expect(notPromoted.items[0].groupKind).toBe("problem");
   });
+
+  test("prioritizeActions puts tool/plugin commands ahead of recent jumps when in Tools space", () => {
+    const res = buildPaletteItems("", jumps, actions, null, { prioritizeActions: true });
+    expect(res.items[0].groupKind).toBe("action");
+    expect(res.items[0].id).toBe("a:new-problem");
+    const firstRecentIdx = res.items.findIndex((i) => i.groupKind === "recent");
+    expect(firstRecentIdx).toBe(actions.length);
+  });
 });
 
 describe("New Stage 4 errorCopy codes", () => {

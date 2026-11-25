@@ -4,8 +4,39 @@
 import { ratingTier, type TierName } from "../logic";
 
 export type TimeWindow = "30d" | "90d" | "year" | "all";
-export type TrainingTab = "overview" | "contests" | "submissions";
+export type TrainingTab = "overview" | "contests" | "submissions" | "editorials";
 export type HeatmapMode = "count" | "rating";
+export type ManualLogStatus = "ac" | "upsolved" | "attempted" | "todo";
+
+export interface EditorialSourceItem {
+  platform: string;
+  id: string;
+  url?: string | null;
+}
+
+export interface EditorialSummaryItem {
+  problemId: string;
+  title: string;
+  rating?: number | null;
+  tags: string[];
+  sources: EditorialSourceItem[];
+  excerpt: string;
+  updatedAt: string;
+}
+
+export interface EditorialFilter {
+  search: string;
+  tag: string;
+  minRating: number | null;
+  maxRating: number | null;
+}
+
+export const DEFAULT_EDITORIAL_FILTER: EditorialFilter = {
+  search: "",
+  tag: "",
+  minRating: null,
+  maxRating: null,
+};
 
 export interface PlatformAccountMetric {
   platform: string;
@@ -111,6 +142,8 @@ export interface WorkspaceBacklogItem {
 export interface TrainingDashboardData {
   window: TimeWindow;
   last_synced_at?: string | null;
+  has_local_records?: boolean;
+  local_solved_count?: number;
   accounts: PlatformAccountMetric[];
   kpi: TrainingKpi;
   available_years: number[];
@@ -202,8 +235,10 @@ export function drilldownFromTag(tag: string, minRating: number | null): Submiss
 
 // ── Platform & verdict formatting ────────────────────────────────────────────
 
-export function platformDisplayName(platform: string): string {
+export function platformDisplayName(platform: string, isEn = false): string {
   switch (platform.trim().toLowerCase()) {
+    case "local":
+      return isEn ? "Local" : "本地";
     case "codeforces":
       return "Codeforces";
     case "atcoder":
@@ -223,14 +258,77 @@ export function platformDisplayName(platform: string): string {
   }
 }
 
-export type VerdictTone = "ac" | "wa" | "tle" | "other";
+export type VerdictTone = "ac" | "wa" | "tle" | "attempted" | "todo" | "other";
 
 export function verdictTone(verdict: string): VerdictTone {
   const v = verdict.trim().toUpperCase();
   if (v === "AC" || v === "OK") return "ac";
   if (v === "WA" || v === "RE" || v === "CE") return "wa";
   if (v === "TLE" || v === "MLE" || v === "ILE") return "tle";
+  if (v === "ATTEMPTED") return "attempted";
+  if (v === "TODO") return "todo";
   return "other";
+}
+
+export function verdictDisplayLabel(verdict: string, isEn = false): string {
+  const v = verdict.trim().toUpperCase();
+  if (v === "ATTEMPTED") return isEn ? "Attempted" : "尝试中";
+  if (v === "TODO") return isEn ? "Todo" : "待补";
+  return verdict;
+}
+
+export function formatIsoDateShort(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// ── Algorithm tag localization (zh-CN concise labels) ────────────────────────
+
+const TAG_ZH_LABELS: Record<string, string> = {
+  dp: "动态规划",
+  graphs: "图论",
+  trees: "树",
+  math: "数学",
+  "data structures": "数据结构",
+  greedy: "贪心",
+  strings: "字符串",
+  "binary search": "二分",
+  implementation: "模拟",
+  "constructive algorithms": "构造",
+  "number theory": "数论",
+  combinatorics: "组合数学",
+  geometry: "几何",
+  flows: "网络流",
+  bitmasks: "位运算",
+  "dfs and similar": "搜索",
+  "two pointers": "双指针",
+  sortings: "排序",
+  "brute force": "暴力",
+  "shortest paths": "最短路",
+  dsu: "并查集",
+  games: "博弈",
+  probabilities: "概率",
+  "divide and conquer": "分治",
+  interactive: "交互",
+  hashing: "哈希",
+  matrices: "矩阵",
+  fft: "FFT",
+  "graph matchings": "图匹配",
+  "string suffix structures": "后缀结构",
+  "ternary search": "三分",
+  "meet-in-the-middle": "折半搜索",
+  "2-sat": "2-SAT",
+  "chinese remainder theorem": "中国剩余定理",
+  "expression parsing": "表达式解析",
+};
+
+/** Translates common OJ algorithm tags to concise Chinese in zh-CN; falls back to raw tag. */
+export function formatTagLabel(tag: string, isEn = false): string {
+  if (isEn) return tag;
+  const key = tag.trim().toLowerCase();
+  return TAG_ZH_LABELS[key] ?? tag;
 }
 
 // ── Rating bands (classic Codeforces / AtCoder scale) ────────────────────────
@@ -243,15 +341,42 @@ export interface RatingBand {
 }
 
 export const RATING_BANDS: readonly RatingBand[] = [
-  { min: 0, max: 1200, lightFill: "rgba(161,161,170,0.12)", darkFill: "rgba(161,161,170,0.10)" },
-  { min: 1200, max: 1400, lightFill: "rgba(21,128,61,0.10)", darkFill: "rgba(74,222,128,0.09)" },
-  { min: 1400, max: 1600, lightFill: "rgba(14,116,144,0.11)", darkFill: "rgba(34,211,238,0.09)" },
-  { min: 1600, max: 1900, lightFill: "rgba(29,78,216,0.10)", darkFill: "rgba(96,165,250,0.09)" },
-  { min: 1900, max: 2100, lightFill: "rgba(126,34,206,0.10)", darkFill: "rgba(192,132,252,0.09)" },
-  { min: 2100, max: 2400, lightFill: "rgba(194,65,12,0.10)", darkFill: "rgba(251,146,60,0.09)" },
-  { min: 2400, max: 3000, lightFill: "rgba(185,28,28,0.10)", darkFill: "rgba(248,113,113,0.09)" },
-  { min: 3000, max: 4500, lightFill: "rgba(153,27,27,0.15)", darkFill: "rgba(239,68,68,0.14)" },
+  { min: 0, max: 1200, lightFill: "rgba(161,161,170,0.05)", darkFill: "rgba(161,161,170,0.05)" },
+  { min: 1200, max: 1400, lightFill: "rgba(21,128,61,0.045)", darkFill: "rgba(74,222,128,0.05)" },
+  { min: 1400, max: 1600, lightFill: "rgba(14,116,144,0.05)", darkFill: "rgba(34,211,238,0.05)" },
+  { min: 1600, max: 1900, lightFill: "rgba(29,78,216,0.045)", darkFill: "rgba(96,165,250,0.05)" },
+  { min: 1900, max: 2100, lightFill: "rgba(126,34,206,0.045)", darkFill: "rgba(192,132,252,0.05)" },
+  { min: 2100, max: 2400, lightFill: "rgba(194,65,12,0.045)", darkFill: "rgba(251,146,60,0.05)" },
+  { min: 2400, max: 3000, lightFill: "rgba(185,28,28,0.045)", darkFill: "rgba(248,113,113,0.05)" },
+  { min: 3000, max: 4500, lightFill: "rgba(153,27,27,0.065)", darkFill: "rgba(239,68,68,0.07)" },
 ];
+
+/** Generates clean round Y-axis tick values covering `[minY, maxY]` (including 3000+). */
+export function niceRatingTicks(minY: number, maxY: number): number[] {
+  const span = Math.max(200, maxY - minY);
+  const step = span <= 800 ? 200 : span <= 1600 ? 400 : 500;
+  const first = Math.ceil(minY / step) * step;
+  const ticks: number[] = [];
+  for (let v = first; v <= maxY; v += step) {
+    ticks.push(v);
+  }
+  return ticks;
+}
+
+/** Picks evenly spaced X-axis tick indices for a chart with `count` points. */
+export function niceXTickIndices(count: number, maxTicks = 5): number[] {
+  if (count <= 0) return [];
+  if (count === 1) return [0];
+  if (count <= maxTicks) return Array.from({ length: count }, (_, i) => i);
+  const res: number[] = [0];
+  const segments = maxTicks - 1;
+  for (let i = 1; i < segments; i++) {
+    const idx = Math.round((i / segments) * (count - 1));
+    if (idx > res[res.length - 1] && idx < count - 1) res.push(idx);
+  }
+  res.push(count - 1);
+  return res;
+}
 
 // ── Annual dual-mode heatmap grid builder ────────────────────────────────────
 
@@ -374,23 +499,101 @@ export function formatUnixDateShort(unixSec: number): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-export function formatDuration(durationSec: number): string {
-  const mins = Math.max(0, Math.round(durationSec / 60));
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
+export function formatUnixYearMonth(unixSec: number): string {
+  if (!Number.isFinite(unixSec) || unixSec <= 0) return "";
+  const d = new Date(unixSec * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 }
 
-export function formatCountdown(targetUnixSec: number, nowUnixSec: number): string {
+const WEEKDAYS_ZH = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
+const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+export function formatContestStartBrief(unixSec: number, isEn = false): string {
+  if (!Number.isFinite(unixSec) || unixSec <= 0) return "";
+  const d = new Date(unixSec * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  const wd = (isEn ? WEEKDAYS_EN : WEEKDAYS_ZH)[d.getDay()];
+  return `${wd} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+export function formatDuration(durationSec: number, isEn = false): string {
+  const mins = Math.max(0, Math.round(durationSec / 60));
+  const totalHours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (totalHours >= 48) {
+    const days = Math.floor(totalHours / 24);
+    const remHours = totalHours % 24;
+    if (isEn) {
+      return remHours === 0 ? `${days}d` : `${days}d ${remHours}h`;
+    }
+    return remHours === 0 ? `${days} 天` : `${days} 天 ${remHours} 小时`;
+  }
+  if (isEn) {
+    if (totalHours === 0) return `${remMins}m`;
+    if (remMins === 0) return `${totalHours}h`;
+    return `${totalHours}h ${remMins}m`;
+  }
+  if (totalHours === 0) return `${remMins} 分`;
+  if (remMins === 0) return `${totalHours} 小时`;
+  return `${totalHours} 小时 ${remMins} 分`;
+}
+
+export function formatCountdown(targetUnixSec: number, nowUnixSec: number, isEn = false): string {
   const diff = Math.max(0, Math.floor(targetUnixSec - nowUnixSec));
   const days = Math.floor(diff / 86_400);
   const hours = Math.floor((diff % 86_400) / 3_600);
   const mins = Math.floor((diff % 3_600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${Math.max(1, mins)}m`;
+  if (isEn) {
+    if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+    if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    return `${Math.max(1, mins)}m`;
+  }
+  if (days > 0) return `${days} 天`;
+  if (hours > 0) return mins > 0 ? `${hours} 小时 ${mins} 分` : `${hours} 小时`;
+  return `${Math.max(1, mins)} 分`;
+}
+
+export type ContestTimeGroup = "today" | "thisWeek" | "later" | "finished";
+
+export interface GroupedContests {
+  group: ContestTimeGroup;
+  items: ContestCalendarItem[];
+}
+
+/** Groups contests into Today / This Week / Later / Finished buckets using local calendar boundaries. */
+export function groupContestsByTime(
+  contests: readonly ContestCalendarItem[],
+  nowUnixSec: number,
+): GroupedContests[] {
+  const nowDate = new Date(nowUnixSec * 1000);
+  const startOfToday = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime() / 1000;
+  const endOfToday = startOfToday + 86_400;
+  const endOfWeek = startOfToday + 7 * 86_400;
+
+  const buckets: Record<ContestTimeGroup, ContestCalendarItem[]> = {
+    today: [],
+    thisWeek: [],
+    later: [],
+    finished: [],
+  };
+
+  for (const c of contests) {
+    if (c.status === "finished") {
+      buckets.finished.push(c);
+    } else if (c.status === "running" || c.start_time < endOfToday) {
+      buckets.today.push(c);
+    } else if (c.start_time < endOfWeek) {
+      buckets.thisWeek.push(c);
+    } else {
+      buckets.later.push(c);
+    }
+  }
+
+  const order: ContestTimeGroup[] = ["today", "thisWeek", "later", "finished"];
+  return order
+    .filter((g) => buckets[g].length > 0)
+    .map((group) => ({ group, items: buckets[group] }));
 }
 
 export function formatSyncTimestamp(iso: string | null | undefined, neverText: string): string {

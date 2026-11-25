@@ -995,6 +995,7 @@ export function buildPaletteItems(
   jumps: readonly FuzzyHitJs[],
   actions: readonly PaletteActionInput[],
   activeContest: string | null | undefined,
+  opts?: { prioritizeActions?: boolean },
 ): PaletteBuildResult {
   const trimmedStart = rawQuery.trimStart();
   const actionMode = trimmedStart.startsWith(">");
@@ -1037,7 +1038,11 @@ export function buildPaletteItems(
       return { actionMode: false, query, items: [...contestItems, ...actionItems] };
     }
     const recentItems = jumps.slice(0, 5).map((h) => toJumpItem(h, "recent"));
-    return { actionMode: false, query, items: [...recentItems, ...actionItems] };
+    return {
+      actionMode: false,
+      query,
+      items: opts?.prioritizeActions ? [...actionItems, ...recentItems] : [...recentItems, ...actionItems],
+    };
   }
 
   // Non-empty query: per-group caps (contest_item 6, problem 8, contest 4, actions uncapped).
@@ -1061,7 +1066,7 @@ export function buildPaletteItems(
     return !!h && (h.id.toLowerCase() === needle || h.title.toLowerCase() === needle);
   });
 
-  const promoteActions = bestActionScore >= 70 && !hasExactObjectHit;
+  const promoteActions = (opts?.prioritizeActions ? bestActionScore > 0 : bestActionScore >= 70) && !hasExactObjectHit;
   return {
     actionMode: false,
     query,

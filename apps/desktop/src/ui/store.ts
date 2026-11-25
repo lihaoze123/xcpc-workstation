@@ -12,6 +12,7 @@ import {
   type BatchExportRequestJs,
   type BatchTaskSnapshotJs,
   type PackageWarningJs,
+  type PluginsOverviewJs,
   type ToolchainStatusJs,
   type WorkspaceInfo,
 } from "xcpc-workstation/native";
@@ -237,9 +238,50 @@ export const newWorkspaceModalOpen = signal(false);
 
 /** Bumped whenever plugins are enabled, disabled, installed, or reloaded so Tools/Palette/IO menus refresh. */
 export const pluginsRevision = signal(0);
+/** Preloaded/cached plugins overview so Settings -> Plugins renders immediately with zero blank frame. */
+export const cachedPluginsOverview = signal<PluginsOverviewJs | undefined>(undefined);
+/** Shared reactive last-synced timestamp (ISO string) kept in sync between TrainingView and Settings -> Plugins. */
+export const globalLastSyncedAt = signal<string | null>(null);
+
+export function setGlobalLastSyncedAt(ts: string | null | undefined) {
+  if (ts !== undefined) {
+    globalLastSyncedAt.set(ts);
+  }
+}
+
+export function refreshPluginsOverview(reload = false): PluginsOverviewJs {
+  const next = reload ? preview.reloadPlugins() : preview.getPluginsOverview();
+  cachedPluginsOverview.set(next);
+  if (next?.lastSyncedAt !== undefined) {
+    globalLastSyncedAt.set(next.lastSyncedAt ?? null);
+  }
+  return next;
+}
+
 export function notifyPluginsChanged() {
+  try {
+    if (typeof preview.getPluginsOverview === "function") {
+      const next = preview.getPluginsOverview();
+      cachedPluginsOverview.set(next);
+      if (next?.lastSyncedAt !== undefined) {
+        globalLastSyncedAt.set(next.lastSyncedAt ?? null);
+      }
+    }
+  } catch {
+    // Ignore in headless tests without a native plugin manager.
+  }
   pluginsRevision.set(pluginsRevision() + 1);
 }
+
+setTimeout(() => {
+  try {
+    if (cachedPluginsOverview() === undefined && typeof preview.getPluginsOverview === "function") {
+      cachedPluginsOverview.set(preview.getPluginsOverview());
+    }
+  } catch {
+    // Ignore in headless tests.
+  }
+}, 0);
 
 /** Currently requested plugin / headless tool / payload for the Tools space. */
 export const activeToolPluginId = signal<string | undefined>(undefined);

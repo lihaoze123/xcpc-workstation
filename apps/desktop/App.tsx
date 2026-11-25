@@ -122,7 +122,7 @@ function SpaceStage(props: {
       class={isStudio ? "bg-background" : undefined}
       style={{
         flex: isStudio ? undefined : 1,
-        ...(isStudio ? { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } : undefined),
+        ...(isStudio ? { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } : { minWidth: 0, minHeight: 0 }),
         flexDirection: props.direction,
         display: displayed() ? "flex" : "none",
         pointerEvents: props.visible ? "auto" : "none",
@@ -345,11 +345,11 @@ function App() {
         <SpaceStage visible={space() === "contests"} variant="space">
           <ContestsView active={!inStudio() && space() === "contests"} />
         </SpaceStage>
-        <If when={info().trainingEnabled}>
-          <SpaceStage visible={space() === "training"} variant="space">
+        <SpaceStage visible={info().trainingEnabled && space() === "training"} variant="space">
+          <If when={info().trainingEnabled}>
             <TrainingView active={!inStudio() && space() === "training"} />
-          </SpaceStage>
-        </If>
+          </If>
+        </SpaceStage>
         <SpaceStage visible={space() === "tools"} variant="space">
           <ToolsView active={!inStudio() && space() === "tools"} />
         </SpaceStage>

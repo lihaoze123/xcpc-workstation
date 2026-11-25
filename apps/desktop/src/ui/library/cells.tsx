@@ -53,13 +53,14 @@ export function TriCheckbox(props: {
   );
 }
 
-/** Fixed 18pt status icon slot (renders a whisper-quiet dot when empty to keep 3-column visual rhythm). */
-function StatusSlot(props: { children?: JSX.Element; tooltipText?: string }) {
+/** Fixed status icon slot (renders a whisper-quiet dot when empty to keep visual rhythm). */
+function StatusSlot(props: { children?: JSX.Element; tooltipText?: string; compact?: boolean }) {
+  const size = props.compact ? 16 : 18;
   return (
     <View
       tooltip={props.tooltipText ? tip(props.tooltipText) : undefined}
       style={{
-        width: 18,
+        width: size,
         height: 18,
         alignItems: "center",
         justifyContent: "center",
@@ -71,60 +72,38 @@ function StatusSlot(props: { children?: JSX.Element; tooltipText?: string }) {
   );
 }
 
-/** Compact training status pill rendered when `trainingEnabled` is true and status != "none". */
-function TrainingStatusBadge(props: { status: string }) {
-  const st = props.status;
-  if (st !== "todo" && st !== "attempted" && st !== "ac" && st !== "upsolved") return null;
-  const label =
-    st === "ac"
-      ? t("training.status.ac")
-      : st === "upsolved"
-        ? t("training.status.upsolved")
-        : st === "attempted"
-          ? t("training.status.attempted")
-          : t("training.status.todo");
-  const bgClass =
-    st === "ac"
-      ? "bg-chart-2/15"
-      : st === "upsolved"
-        ? "bg-primary/15"
-        : st === "attempted"
-          ? "bg-chart-4/15"
-          : "bg-muted";
-  const textClass =
-    st === "ac"
-      ? "text-chart-2"
-      : st === "upsolved"
-        ? "text-primary"
-        : st === "attempted"
-          ? "text-chart-4"
-          : "text-secondary-foreground";
-  return (
-    <View
-      style={{
-        height: 18,
-        paddingLeft: 5,
-        paddingRight: 5,
-        borderRadius: 4,
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}
-      class={bgClass}
-    >
-      <Text
-        style={{
-          fontSize: 10.5,
-          lineHeight: 14,
-          fontWeight: 500,
-          fontVariant: ["tabular-nums"],
-        }}
-        class={textClass}
-      >
-        {label}
-      </Text>
-    </View>
-  );
+/** Compact training status icon rendered inside the Status column's first slot (aligned across all rows). */
+function TrainingStatusSlot(props: { status?: string | null }) {
+  const st = props.status ?? "none";
+  if (st === "ac") {
+    return (
+      <StatusSlot compact tooltipText={t("training.status.ac")}>
+        <Icon name="check" size={13} tone="chart-2" />
+      </StatusSlot>
+    );
+  }
+  if (st === "upsolved") {
+    return (
+      <StatusSlot compact tooltipText={t("training.status.upsolved")}>
+        <Icon name="shieldCheck" size={13} tone="primary" />
+      </StatusSlot>
+    );
+  }
+  if (st === "attempted") {
+    return (
+      <StatusSlot compact tooltipText={t("training.status.attempted")}>
+        <Icon name="circleAlert" size={13} tone="chart-4" />
+      </StatusSlot>
+    );
+  }
+  if (st === "todo") {
+    return (
+      <StatusSlot compact tooltipText={t("training.status.todo")}>
+        <View style={{ width: 9, height: 9, borderRadius: 4.5, borderWidth: 1.5 }} class="border-secondary-foreground" />
+      </StatusSlot>
+    );
+  }
+  return <StatusSlot compact />;
 }
 
 export function renderLibraryCellContent(
@@ -153,9 +132,6 @@ export function renderLibraryCellContent(
   if (key === "title") {
     return (
       <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
-        {opts.trainingEnabled && row.trainingStatus && row.trainingStatus !== "none" && (
-          <TrainingStatusBadge status={row.trainingStatus} />
-        )}
         <Text
           style={{
             numberOfLines: 1,
@@ -240,9 +216,12 @@ export function renderLibraryCellContent(
 
   if (key === "status") {
     const st = row.packageStatus;
+    const compact = Boolean(opts.trainingEnabled);
     return (
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: compact ? 2 : 4 }}>
+        {opts.trainingEnabled && <TrainingStatusSlot status={row.trainingStatus} />}
         <StatusSlot
+          compact={compact}
           tooltipText={
             st === "verified_fresh"
               ? t("library.status.verified")
@@ -258,18 +237,18 @@ export function renderLibraryCellContent(
           {st ? <StatusMark kind={markForPackageStatus(st)} /> : undefined}
         </StatusSlot>
         {row.hasEditorial ? (
-          <StatusSlot tooltipText={t("library.status.hasEditorial")}>
-            <Icon name="filePenLine" size={13.5} tone="secondary-foreground" />
+          <StatusSlot compact={compact} tooltipText={t("library.status.hasEditorial")}>
+            <Icon name="filePenLine" size={13} tone="secondary-foreground" />
           </StatusSlot>
         ) : (
-          <StatusSlot />
+          <StatusSlot compact={compact} />
         )}
         {row.hasSolutions ? (
-          <StatusSlot tooltipText={t("library.status.hasCode")}>
-            <Icon name="code" size={13.5} tone="secondary-foreground" />
+          <StatusSlot compact={compact} tooltipText={t("library.status.hasCode")}>
+            <Icon name="code" size={13} tone="secondary-foreground" />
           </StatusSlot>
         ) : (
-          <StatusSlot />
+          <StatusSlot compact={compact} />
         )}
       </View>
     );

@@ -1537,12 +1537,10 @@ export function SettingsView() {
       paneY.set(0);
       return;
     }
-    paneOpacity.set(0);
-    paneY.set(6);
-    const anim = Animated.parallel([
-      Animated.timing(paneOpacity, { toValue: 1, duration: 180, easing: EASE_EXPO_CURVE }),
-      Animated.timing(paneY, { toValue: 0, duration: 200, easing: EASE_EXPO_CURVE }),
-    ]);
+    // Keep opacity at 1 so switching settings panes (e.g. Workspace -> Plugins) never flashes a blank frame.
+    paneOpacity.set(1);
+    paneY.set(4);
+    const anim = Animated.timing(paneY, { toValue: 0, duration: 150, easing: EASE_EXPO_CURVE });
     running = anim;
     void anim.start(() => {
       if (running === anim) running = undefined;

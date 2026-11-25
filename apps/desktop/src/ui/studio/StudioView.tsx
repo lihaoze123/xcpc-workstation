@@ -117,7 +117,14 @@ export function StudioView(props: { active: boolean }) {
     return tg?.target === "contest" && !coverActive() && !!item() && !item()!.missing;
   });
   const isFullConsole = computed(() => isAuthoring());
-  const tab = signal<Tab>(storeBook() === "editorial" ? "editorial" : "statement");
+  const initialStudioTab = untracked(studio)?.initialTab;
+  const tab = signal<Tab>(
+    initialStudioTab && initialStudioTab !== "build"
+      ? initialStudioTab
+      : storeBook() === "editorial"
+        ? "editorial"
+        : "statement",
+  );
   const book = computed<Book>(() => (tab() === "editorial" ? "editorial" : "statements"));
   const initialWinWidth = untracked(windowSize).width;
   const inspectorOpen = signal(
@@ -298,6 +305,11 @@ export function StudioView(props: { active: boolean }) {
         studioMode.set("statement");
         if (s.target === "problem") lastStudioModeByProblem.set(s.id, "statement");
         tab.set(want);
+        const b: Book = want === "editorial" ? "editorial" : "statements";
+        if (storeBook() !== b) {
+          storeBook.set(b);
+          savePrefs({ lastBook: b });
+        }
       } else if (s.target === "problem" && !want) {
         studioMode.set(lastStudioModeByProblem.get(s.id) ?? "statement");
       } else if (s.target === "contest") {

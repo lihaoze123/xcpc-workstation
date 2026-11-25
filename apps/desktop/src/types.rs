@@ -2273,6 +2273,40 @@ pub struct IngestProblemResultJs {
     pub error: Option<String>,
 }
 
+/// Result of `trainingLogRecord(reqJson)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct ManualLogResultJs {
+    pub ok: bool,
+    #[prop(skip_none)]
+    pub library_problem_id: Option<String>,
+    pub created_in_library: bool,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// One non-empty editorial summary returned by `trainingListEditorials`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct EditorialSummaryJs {
+    pub problem_id: String,
+    pub title: String,
+    #[prop(skip_none)]
+    pub rating: Option<i32>,
+    pub tags: Vec<String>,
+    pub sources: Vec<ProblemSourceJs>,
+    pub excerpt: String,
+    pub updated_at: String,
+}
+
+/// Result of `trainingListEditorials(queryJson)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct EditorialListResultJs {
+    pub items: Vec<EditorialSummaryJs>,
+    pub total: u32,
+    pub available_tags: Vec<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
 // ---- Phase 4C: Toolbox, Plugin UI SDK, Commands & Importer/Exporter --------------------
 
 /// Result of reading a plugin's desktop `ui.js` source (`pluginUiSource`).

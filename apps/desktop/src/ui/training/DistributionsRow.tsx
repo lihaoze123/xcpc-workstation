@@ -7,7 +7,8 @@ import { computed, Text, View } from "nsh";
 import { t } from "../i18n";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor } from "../theme";
-import type { DifficultyBucket, TagStat } from "./types";
+import { isEn, zhEn } from "./locale";
+import { formatTagLabel, type DifficultyBucket, type TagStat } from "./types";
 
 const TAG_MIN_OPTIONS: readonly { value: number | null; labelKey: "all" | "1600" | "1900" | "2200" }[] = [
   { value: null, labelKey: "all" },
@@ -16,9 +17,25 @@ const TAG_MIN_OPTIONS: readonly { value: number | null; labelKey: "all" | "1600"
   { value: 2200, labelKey: "2200" },
 ];
 
+function WindowBadge(props: { label?: string }) {
+  return (
+    <If when={props.label}>
+      <View
+        class="bg-muted"
+        style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+      >
+        <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+          {props.label!}
+        </Text>
+      </View>
+    </If>
+  );
+}
+
 export function DistributionsRow(props: {
   buckets: readonly DifficultyBucket[];
   tags: readonly TagStat[];
+  windowLabel?: string;
   tagMinRating: number | null;
   onTagMinRatingChange: (min: number | null) => void;
   onSelectBucket: (bucket: DifficultyBucket) => void;
@@ -30,7 +47,7 @@ export function DistributionsRow(props: {
 
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
-      {/* Left: Difficulty buckets */}
+      {/* Left: Difficulty buckets (restrained cohesive primary opacity ramp, no rainbow wall) */}
       <View
         testID="training-buckets-card"
         class="bg-card border border-border"
@@ -43,10 +60,13 @@ export function DistributionsRow(props: {
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-          <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
-            {t("training.buckets.title")}
-          </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+              {t("training.buckets.title")}
+            </Text>
+            <WindowBadge label={props.windowLabel} />
+          </View>
           <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
             {t("training.buckets.clickHint")}
           </Text>
@@ -54,10 +74,12 @@ export function DistributionsRow(props: {
 
         <View style={{ gap: 6 }}>
           <Each of={props.buckets} key={(b) => b.label}>
-            {(bucket) => {
-              const repRating = () => bucket().min_rating ?? (bucket().max_rating != null ? bucket().max_rating! - 100 : 1000);
-              const color = () => tierColor(ratingTier(repRating()));
+            {(bucket, idx) => {
               const pct = () => Math.max(bucket().ac_count > 0 ? 4 : 0, Math.round((bucket().ac_count / maxBucketAc()) * 100));
+              const barOpacity = () => {
+                const denom = Math.max(1, props.buckets.length - 1);
+                return 0.42 + 0.58 * (idx() / denom);
+              };
               return (
                 <View
                   testID={`training-bucket-${bucket().label}`}
@@ -76,7 +98,8 @@ export function DistributionsRow(props: {
                   }}
                 >
                   <Text
-                    style={{ width: 78, fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"], color: color() }}
+                    style={{ width: 78, fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                    class="text-secondary-foreground"
                   >
                     {bucket().label}
                   </Text>
@@ -86,8 +109,9 @@ export function DistributionsRow(props: {
                         width: `${pct()}%`,
                         height: 10,
                         borderRadius: 4,
-                        backgroundColor: color(),
+                        opacity: barOpacity(),
                       }}
+                      class="bg-primary"
                     />
                   </View>
                   <Text
@@ -117,9 +141,12 @@ export function DistributionsRow(props: {
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
-            {t("training.tags.title")}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+              {t("training.tags.title")}
+            </Text>
+            <WindowBadge label={props.windowLabel} />
+          </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <Each of={TAG_MIN_OPTIONS} key={(o) => o.labelKey}>
               {(opt) => {
@@ -128,11 +155,11 @@ export function DistributionsRow(props: {
                   <View
                     testID={`training-tag-min-${opt().labelKey}`}
                     onPress={() => props.onTagMinRatingChange(opt().value)}
-                    class={active() ? "bg-accent border border-border" : "hover:bg-muted"}
+                    class={active() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
                     style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
                   >
                     <Text
-                      style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], fontWeight: active() ? 600 : 400 }}
+                      style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], fontWeight: 500 }}
                       class={active() ? "text-foreground" : "text-secondary-foreground"}
                     >
                       {opt().value === null ? t("training.tags.filterAll") : `≥${opt().value}`}
@@ -155,6 +182,29 @@ export function DistributionsRow(props: {
           }
         >
           <View style={{ gap: 6 }}>
+            {/* Subtle column header row so right colored numbers are immediately understood as average difficulty */}
+            <View
+              testID="training-tags-header"
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                paddingLeft: 6,
+                paddingRight: 6,
+                height: 18,
+              }}
+            >
+              <Text style={{ width: 112, fontSize: 11 }} class="text-muted-foreground">
+                {zhEn("标签", "Tag")}
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={{ width: 32, textAlign: "right", fontSize: 11 }} class="text-muted-foreground">
+                {zhEn("过题", "Solved")}
+              </Text>
+              <Text style={{ width: 42, textAlign: "right", fontSize: 11 }} class="text-muted-foreground">
+                {zhEn("均难", "Avg")}
+              </Text>
+            </View>
             <Each of={visibleTags()} key={(item) => item.tag}>
               {(item) => {
                 const pct = () => Math.max(4, Math.round((item().ac_count / maxTagAc()) * 100));
@@ -182,7 +232,7 @@ export function DistributionsRow(props: {
                       }}
                       class="text-foreground"
                     >
-                      {item().tag}
+                      {formatTagLabel(item().tag, isEn())}
                     </Text>
                     <View style={{ flex: 1, height: 10, borderRadius: 4, overflow: "hidden" }} class="bg-muted">
                       <View

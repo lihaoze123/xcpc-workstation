@@ -4,10 +4,11 @@
 import { reduceMotion, Text, View } from "nsh";
 import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
+import { Icon } from "../Icon";
 import { Btn, IconBtn, tip } from "../kit";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { overlayTransition } from "../motion";
-import { modalShadow } from "../theme";
+import { modalShadow, token } from "../theme";
 
 export function BatchFloatingBar(props: {
   count: number;
@@ -77,14 +78,13 @@ export function BatchFloatingBar(props: {
             fontSize: 13,
             fontWeight: 500,
             fontVariant: ["tabular-nums"],
-            paddingRight: 6,
+            paddingRight: 10,
             flexShrink: 0,
           }}
           class="text-foreground"
         >
           {t("library.batch.selectedCount", { count: props.count })}
         </Text>
-        <View style={{ width: 1, height: 18, marginRight: 2 }} class="bg-border" />
 
         <Btn
           variant="ghost"
@@ -158,19 +158,30 @@ export function BatchFloatingBar(props: {
 
         <Btn
           variant="ghost"
-          icon="trash"
-          label={showLabels() ? t("library.batch.delete") : undefined}
           disabled={props.readOnly}
           tooltip={tip(t("library.batch.delete"))}
           onPress={props.onDelete}
-          textStyle={{ color: "var(--destructive)" }}
-        />
+          style={
+            showLabels()
+              ? { paddingLeft: 8, paddingRight: 10 }
+              : { width: 28, paddingLeft: 0, paddingRight: 0 }
+          }
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Icon name="trash" size={15} tone="destructive" />
+            <If when={showLabels()}>
+              <Text style={{ fontSize: 13, color: token("destructive") }}>
+                {t("library.batch.delete")}
+              </Text>
+            </If>
+          </View>
+        </Btn>
 
-        <View style={{ width: 1, height: 18, marginLeft: 2, marginRight: 2 }} class="bg-border" />
         <IconBtn
           icon="x"
           size={28}
           iconSize={15}
+          style={{ marginLeft: 4 }}
           tooltip={tip(t("library.batch.clearSelection"), "escape")}
           onPress={props.onClear}
         />

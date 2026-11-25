@@ -1,60 +1,47 @@
-// Settings -> Plugins management view (Phase 4A):
-// Header sync & install actions, installed/built-in plugin cards (enable/disable,
-// export local copy, OJ handle, masked credentials, verify, error stack), and
-// decentralized index.json repository subscriptions with permission preview.
+// Settings -> Plugins management view (Phase 4 UX overhaul):
+// Two clean sections — "OJ 账号" (handle input with inline auto-verify/save slot,
+// sync controls with Toast feedback) and "工具与扩展" (clean plugin list, single
+// "安装插件…" menu, developer actions tucked into ⋯ overflow menus).
 
-import { batch, signal, Text, View, type JSX } from "nsh";
+import { computed, effect, signal, Text, View } from "nsh";
 import { Input, Switch } from "nsh/base";
-import type {
-  PluginSummaryJs,
-  PluginsOverviewJs,
-  RepoCatalogResultJs,
-  RepoPluginEntryJs,
-} from "xcpc-workstation/native";
+import type { PluginSummaryJs, PluginsOverviewJs } from "xcpc-workstation/native";
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
-import { Btn, Chip, createTransientFlag, DelayedSpinner } from "./kit";
+import { Btn, DelayedSpinner, tip } from "./kit";
 import { Section, SectionRow } from "./layout";
-import { notifyPluginsChanged, preview, refresh } from "./store";
-import { cardShadow, MONO } from "./theme";
+import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
+import { DialogHeader, Modal } from "./Modal";
+import {
+  cachedPluginsOverview,
+  globalLastSyncedAt,
+  notifyPluginsChanged,
+  pluginsRevision,
+  preview,
+  refresh,
+  refreshPluginsOverview,
+  setGlobalLastSyncedAt,
+} from "./store";
+import { MONO } from "./theme";
 import { showToast } from "./Toast";
+import { zhEn } from "./training/locale";
 
 const INPUT_CLASS =
   "h-8 px-2.5 rounded-md border border-border bg-card text-[12.5px] placeholder:text-muted-foreground focus:ring-1 focus:ring-inset focus:ring-ring transition-colors";
 
-function Card(props: { children?: JSX.Element }) {
-  return (
-    <View
-      style={{
-        borderRadius: 10,
-        borderWidth: 1,
-        overflow: "hidden",
-        boxShadow: cardShadow(),
-      }}
-      class="bg-card border-border"
-    >
-      {props.children}
-    </View>
-  );
-}
+const BUILTIN_DESC_KEYS: Record<string, MessageKey> = {
+  codeforces: "settings.plugins.desc.codeforces",
+  atcoder: "settings.plugins.desc.atcoder",
+  "graph-editor": "settings.plugins.desc.graphEditor",
+  "complexity-mem": "settings.plugins.desc.complexityMem",
+  "math-bitwise": "settings.plugins.desc.mathBitwise",
+  "string-lab": "settings.plugins.desc.stringLab",
+};
 
-function originLabel(origin: string): string {
-  if (origin === "builtin") return t("settings.plugins.origin.builtin");
-  if (origin === "local_override") return t("settings.plugins.origin.localOverride");
-  return t("settings.plugins.origin.local");
-}
-
-function capabilityLabel(cap: string): string {
-  const map: Record<string, MessageKey> = {
-    oj_source: "settings.plugins.cap.ojSource",
-    tool: "settings.plugins.cap.tool",
-    commands: "settings.plugins.cap.commands",
-    importer: "settings.plugins.cap.importer",
-    exporter: "settings.plugins.cap.exporter",
-    credentials: "settings.plugins.cap.credentials",
-  };
-  const key = map[cap];
-  return key ? t(key) : cap;
+function pluginDescription(plugin: PluginSummaryJs): string {
+  const key = BUILTIN_DESC_KEYS[plugin.id];
+  if (key) return t(key);
+  return plugin.description.trim();
 }
 
 function formatSyncTime(iso?: string | null): string {
@@ -65,77 +52,10 @@ function formatSyncTime(iso?: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function PluginRow(props: {
-  plugin: PluginSummaryJs;
-  onReload: () => void;
-}) {
+function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }) {
   const p = () => props.plugin;
-  const handleDraft = signal(p().handle ?? "");
-  const handleSaved = createTransientFlag(1600);
-  const exportedFlag = createTransientFlag(1800);
-  const verifying = signal(false);
-  const verifyFeedback = signal<{ ok: boolean; text: string } | undefined>(undefined);
-  const errorExpanded = signal(false);
   const credDrafts = signal<Record<string, string>>({});
   const credSavedKey = signal<string | undefined>(undefined);
-
-  const isOj = () => p().capabilities.includes("oj_source");
-
-  const saveHandle = () => {
-    const res = preview.setSyncHandle(p().id, handleDraft().trim());
-    if (res.ok) {
-      handleSaved.trigger();
-      props.onReload();
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const toggleEnabled = (next: boolean) => {
-    const res = preview.setPluginEnabled(p().id, next);
-    if (res.ok) {
-      props.onReload();
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const exportBuiltin = () => {
-    const res = preview.exportBuiltinPlugin(p().id);
-    if (res.ok) {
-      exportedFlag.trigger();
-      props.onReload();
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const runVerify = async () => {
-    if (verifying()) return;
-    // Save latest handle draft before verifying so the user doesn't have to blur first.
-    if (isOj() && handleDraft().trim() !== (p().handle ?? "")) {
-      preview.setSyncHandle(p().id, handleDraft().trim());
-    }
-    verifying.set(true);
-    verifyFeedback.set(undefined);
-    try {
-      const res = await preview.verifyPlugin(p().id);
-      if (res.ok) {
-        verifyFeedback.set({
-          ok: true,
-          text: res.message || t("settings.plugins.verifyOk"),
-        });
-      } else {
-        verifyFeedback.set({
-          ok: false,
-          text: res.error || res.message || t("settings.plugins.verifyFailed"),
-        });
-      }
-      props.onReload();
-    } finally {
-      verifying.set(false);
-    }
-  };
 
   const saveCredential = (key: string) => {
     const val = credDrafts()[key] ?? "";
@@ -153,345 +73,464 @@ function PluginRow(props: {
   };
 
   return (
+    <If when={p().credentials.length > 0}>
+      <View style={{ gap: 6 }}>
+        <Each of={p().credentials} key={(c) => c.name}>
+          {(cred) => {
+            const key = cred().name;
+            const val = () => credDrafts()[key] ?? "";
+            return (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text
+                  style={{ fontSize: 12, width: 72, flexShrink: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                  class="text-secondary-foreground"
+                >
+                  {cred().label}
+                </Text>
+                <Input
+                  class={INPUT_CLASS}
+                  style={{ flex: 1, fontFamily: MONO }}
+                  masked={cred().secret}
+                  value={val()}
+                  placeholder={
+                    cred().hasValue
+                      ? t("settings.plugins.credentialSetPlaceholder")
+                      : cred().placeholder || t("settings.plugins.credentialEmptyPlaceholder")
+                  }
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  submitBehavior="blurAndSubmit"
+                  onChange={(e) => credDrafts.set({ ...credDrafts(), [key]: e.value })}
+                  onSubmit={() => saveCredential(key)}
+                  onBlur={() => {
+                    if (val().length > 0) saveCredential(key);
+                  }}
+                />
+                <View
+                  style={{
+                    width: 22,
+                    height: 22,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <If when={credSavedKey() === key}>
+                    <Icon name="check" size={14} tone="chart-2" />
+                  </If>
+                </View>
+              </View>
+            );
+          }}
+        </Each>
+      </View>
+    </If>
+  );
+}
+
+/** Section 1 row: one OJ platform with handle input, inline fixed-width verify status slot, fixed error slot, switch, and ⋯ menu. */
+function OjAccountRow(props: {
+  plugin: PluginSummaryJs;
+  first?: boolean;
+  onReload: () => void;
+}) {
+  const p = () => props.plugin;
+  const handleDraft = signal(p().handle ?? "");
+  const verifying = signal(false);
+  const verifyStatus = signal<{ ok: boolean; text: string } | undefined>(undefined);
+  let lastCommitted = (p().handle ?? "").trim();
+  let lastFailedDraft: string | undefined;
+
+  // Keep unedited handleDraft in sync when an account is updated externally (e.g. Training onboarding).
+  effect(() => {
+    const incomingRaw = p().handle ?? "";
+    const incoming = incomingRaw.trim();
+    if (incoming !== lastCommitted) {
+      if (handleDraft().trim() === lastCommitted) {
+        handleDraft.set(incomingRaw);
+        verifyStatus.set(undefined);
+        lastFailedDraft = undefined;
+      }
+      lastCommitted = incoming;
+    }
+  });
+
+  const toggleEnabled = (next: boolean) => {
+    const res = preview.setPluginEnabled(p().id, next);
+    if (res.ok) {
+      props.onReload();
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
+  const exportBuiltin = () => {
+    const res = preview.exportBuiltinPlugin(p().id);
+    if (res.ok) {
+      showToast({ tone: "success", text: t("settings.plugins.exported") });
+      props.onReload();
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
+  const commitAndVerify = async (force = false) => {
+    if (verifying()) return;
+    const trimmed = handleDraft().trim();
+    if (!force && (trimmed === lastCommitted || trimmed === lastFailedDraft)) return;
+
+    if (trimmed.length === 0) {
+      const saveRes = preview.setSyncHandle(p().id, "");
+      if (!saveRes.ok) {
+        if (saveRes.error) showToast({ tone: "issues", text: saveRes.error });
+        return;
+      }
+      lastCommitted = "";
+      lastFailedDraft = undefined;
+      verifyStatus.set(undefined);
+      props.onReload();
+      return;
+    }
+
+    verifying.set(true);
+    try {
+      // Verify the candidate handle BEFORE saving to sync_config.json so invalid handles are never persisted.
+      const res = await preview.verifyPlugin(p().id, trimmed);
+      if (res.ok) {
+        const saveRes = preview.setSyncHandle(p().id, trimmed);
+        if (!saveRes.ok) {
+          if (saveRes.error) showToast({ tone: "issues", text: saveRes.error });
+          return;
+        }
+        lastCommitted = trimmed;
+        lastFailedDraft = undefined;
+        verifyStatus.set({
+          ok: true,
+          text: res.message || t("settings.plugins.verifyOk"),
+        });
+        props.onReload();
+      } else {
+        lastFailedDraft = trimmed;
+        verifyStatus.set({
+          ok: false,
+          text: res.error || res.message || t("settings.plugins.verifyFailed"),
+        });
+      }
+    } catch (err) {
+      lastFailedDraft = trimmed;
+      verifyStatus.set({
+        ok: false,
+        text: err instanceof Error ? err.message : t("settings.plugins.verifyFailed"),
+      });
+    } finally {
+      verifying.set(false);
+    }
+  };
+
+  const errorText = () => {
+    const st = verifyStatus();
+    if (st && !st.ok) return st.text;
+    if (st && st.ok) return undefined;
+    return p().lastError || undefined;
+  };
+
+  const moreEntries = (): MenuEntry[] => {
+    const items: MenuEntry[] = [];
+    if (handleDraft().trim().length > 0) {
+      items.push({
+        id: "verify",
+        label: t("settings.plugins.reverify"),
+        icon: "rotateCcw",
+        disabled: verifying(),
+      });
+    }
+    if (p().origin === "builtin") {
+      items.push({
+        id: "export",
+        label: t("settings.plugins.exportLocalCopy"),
+        icon: "copy",
+      });
+    }
+    return items;
+  };
+
+  const desc = () => pluginDescription(p());
+
+  return (
     <View
       style={{
-        paddingTop: 14,
-        paddingBottom: 14,
-        paddingLeft: 16,
-        paddingRight: 16,
-        gap: 10,
+        paddingTop: 12,
+        paddingBottom: 8,
+        paddingLeft: 14,
+        paddingRight: 12,
+        gap: 6,
+        borderTopWidth: props.first ? 0 : 1,
       }}
-      class="border-b border-border"
+      class="border-border"
     >
-      {/* Top header line: name, version, origin, capabilities, unsandboxed warning, enable switch */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-            <Text style={{ fontSize: 13.5, fontWeight: 500 }} class="text-foreground">
-              {p().name}
-            </Text>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+        <View style={{ width: 210, minHeight: 32, justifyContent: "center", flexShrink: 0, gap: 2 }}>
+          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+            {p().name}
+          </Text>
+          <If when={desc().length > 0}>
             <Text
-              style={{ fontSize: 11.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+              style={{ fontSize: 11.5, lineHeight: 15, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-muted-foreground"
             >
-              {`v${p().version}`}
-            </Text>
-            <Chip label={originLabel(p().origin)} />
-            <Each of={p().capabilities} key={(c) => c}>
-              {(cap) => <Chip label={capabilityLabel(cap())} />}
-            </Each>
-            <If when={p().hasUnsandboxedUi}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 4,
-                  paddingLeft: 6,
-                  paddingRight: 6,
-                  height: 20,
-                  borderRadius: 5,
-                }}
-                class="bg-destructive/10"
-              >
-                <Icon name="triangleAlert" size={11.5} tone="destructive" />
-                <Text style={{ fontSize: 11, fontWeight: 500 }} class="text-destructive">
-                  {t("settings.plugins.unsandboxedUiWarning")}
-                </Text>
-              </View>
-            </If>
-          </View>
-          <If when={p().description.trim().length > 0}>
-            <Text style={{ fontSize: 12.5, lineHeight: 17 }} class="text-muted-foreground">
-              {p().description}
-            </Text>
-          </If>
-          <If when={p().domains.length > 0}>
-            <Text
-              style={{ fontSize: 11.5, fontFamily: MONO }}
-              class="text-muted-foreground"
-            >
-              {t("settings.plugins.domains", { domains: p().domains.join(", ") })}
+              {desc()}
             </Text>
           </If>
         </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <If when={p().origin === "builtin"}>
-            <Btn
-              label={exportedFlag.active() ? t("settings.plugins.exported") : t("settings.plugins.exportLocalCopy")}
-              size="sm"
-              variant="ghost"
-              icon={exportedFlag.active() ? "check" : "copy"}
-              onPress={exportBuiltin}
+        {/* Handle input + fixed-height single-line error slot beneath it (zero vertical shift) */}
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <View
+            style={{
+              height: 32,
+              borderRadius: 6,
+              borderWidth: 1,
+              flexDirection: "row",
+              alignItems: "center",
+              paddingLeft: 10,
+              paddingRight: 4,
+              gap: 4,
+            }}
+            class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
+          >
+            <Input
+              testID={`oj-handle-${p().id}`}
+              class="bg-transparent placeholder:text-muted-foreground"
+              style={{ flex: 1, height: 28, fontSize: 12.5, fontFamily: MONO }}
+              value={handleDraft()}
+              placeholder={t("settings.plugins.handlePlaceholder")}
+              autoCapitalize="none"
+              autoCorrect={false}
+              submitBehavior="blurAndSubmit"
+              onChange={(e) => {
+                handleDraft.set(e.value);
+                lastFailedDraft = undefined;
+                if (verifyStatus() !== undefined) verifyStatus.set(undefined);
+              }}
+              onSubmit={() => void commitAndVerify(true)}
+              onBlur={() => void commitAndVerify(false)}
             />
-          </If>
+            <View
+              testID={`oj-status-${p().id}`}
+              tooltip={verifyStatus() ? tip(verifyStatus()!.text) : undefined}
+              style={{
+                width: 22,
+                height: 22,
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <If when={verifying()}>
+                <DelayedSpinner active={true} size={13} />
+              </If>
+              <If when={!verifying() && verifyStatus() !== undefined}>
+                <Icon
+                  name={verifyStatus()?.ok ? "check" : "circleAlert"}
+                  size={14}
+                  tone={verifyStatus()?.ok ? "chart-2" : "destructive"}
+                />
+              </If>
+            </View>
+          </View>
+          <View style={{ height: 16, justifyContent: "center" }}>
+            <If when={!!errorText()}>
+              <Text
+                testID={`oj-error-${p().id}`}
+                style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+                class="text-destructive"
+                tooltip={tip(errorText()!)}
+              >
+                {errorText()}
+              </Text>
+            </If>
+          </View>
+        </View>
+
+        <View style={{ height: 32, flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <Switch
             checked={p().enabled}
             onChange={(e) => toggleEnabled(e.checked)}
             trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
             thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
           />
+          <If when={moreEntries().length > 0}>
+            <AppMenu
+              align="end"
+              entries={moreEntries()}
+              onSelect={(id) => {
+                if (id === "verify") void commitAndVerify(true);
+                else if (id === "export") exportBuiltin();
+              }}
+              trigger={<MoreTrigger testID={`oj-more-${p().id}`} />}
+            />
+          </If>
         </View>
       </View>
 
-      {/* OJ handle & verify */}
-      <If when={isOj()}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ fontSize: 12, width: 72, flexShrink: 0 }} class="text-secondary-foreground">
-            {t("settings.plugins.handleLabel")}
-          </Text>
-          <Input
-            class={INPUT_CLASS}
-            style={{ flex: 1, fontFamily: MONO }}
-            value={handleDraft()}
-            placeholder={t("settings.plugins.handlePlaceholder")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            submitBehavior="blurAndSubmit"
-            onChange={(e) => handleDraft.set(e.value)}
-            onSubmit={saveHandle}
-            onBlur={saveHandle}
-          />
-          <Btn
-            label={handleSaved.active() ? t("common.saved") : t("common.save")}
-            size="sm"
-            variant="ghost"
-            onPress={saveHandle}
-          />
-          <Btn
-            label={t("settings.plugins.verify")}
-            size="sm"
-            variant="outline"
-            disabled={verifying()}
-            onPress={() => void runVerify()}
-          />
-          <DelayedSpinner active={verifying()} size={14} />
-        </View>
-      </If>
-
-      {/* Transient verify feedback */}
-      <If when={verifyFeedback() !== undefined}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 80 }}>
-          <Icon
-            name={verifyFeedback()?.ok ? "check" : "circleAlert"}
-            size={13}
-            tone={verifyFeedback()?.ok ? "chart-2" : "destructive"}
-          />
-          <Text
-            style={{ fontSize: 12 }}
-            class={verifyFeedback()?.ok ? "text-foreground" : "text-destructive"}
-          >
-            {verifyFeedback()?.text ?? ""}
-          </Text>
-        </View>
-      </If>
-
-      {/* Declared credentials (masked paste inputs) */}
-      <If when={p().credentials.length > 0}>
-        <View style={{ gap: 6 }}>
-          <Each of={p().credentials} key={(c) => c.name}>
-            {(cred) => {
-              const key = cred().name;
-              const val = () => credDrafts()[key] ?? "";
-              return (
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text
-                    style={{ fontSize: 12, width: 72, flexShrink: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
-                    class="text-secondary-foreground"
-                  >
-                    {cred().label}
-                  </Text>
-                  <Input
-                    class={INPUT_CLASS}
-                    style={{ flex: 1, fontFamily: MONO }}
-                    masked={cred().secret}
-                    value={val()}
-                    placeholder={
-                      cred().hasValue
-                        ? t("settings.plugins.credentialSetPlaceholder")
-                        : cred().placeholder || t("settings.plugins.credentialEmptyPlaceholder")
-                    }
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    submitBehavior="blurAndSubmit"
-                    onChange={(e) => credDrafts.set({ ...credDrafts(), [key]: e.value })}
-                    onSubmit={() => saveCredential(key)}
-                  />
-                  <Btn
-                    label={credSavedKey() === key ? t("common.saved") : t("common.save")}
-                    size="sm"
-                    variant="ghost"
-                    onPress={() => saveCredential(key)}
-                  />
-                </View>
-              );
-            }}
-          </Each>
-        </View>
-      </If>
-
-      {/* Expandable last error stack */}
-      <If when={!!p().lastError}>
-        <View style={{ gap: 4 }}>
-          <View
-            onPress={() => errorExpanded.set(!errorExpanded())}
-            style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
-          >
-            <Icon
-              name={errorExpanded() ? "chevronDown" : "chevronRight"}
-              size={13}
-              tone="destructive"
-            />
-            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-destructive">
-              {t("settings.plugins.lastErrorTitle")}
-            </Text>
-          </View>
-          <If when={errorExpanded()}>
-            <View
-              style={{
-                padding: 10,
-                borderRadius: 6,
-                borderWidth: 1,
-              }}
-              class="bg-destructive/5 border-destructive/20"
-            >
-              <Text style={{ fontSize: 11.5, fontFamily: MONO, lineHeight: 16 }} class="text-destructive">
-                {p().lastError ?? ""}
-              </Text>
-            </View>
-          </If>
-        </View>
-      </If>
+      <CredentialRows plugin={p()} onReload={props.onReload} />
     </View>
   );
 }
 
-function RepoCatalogCard(props: {
-  repoUrl: string;
-  catalog: RepoCatalogResultJs;
-  installingId: string | undefined;
-  onInstall: (entry: RepoPluginEntryJs) => void;
+/** Section 2 row: clean tool/extension row with toggle switch and ⋯ overflow menu. */
+function ToolPluginRow(props: {
+  plugin: PluginSummaryJs;
+  first?: boolean;
+  onReload: () => void;
 }) {
-  const plugins = () => props.catalog.plugins ?? [];
-  return (
-    <View style={{ gap: 8, paddingTop: 8 }}>
-      <If when={!props.catalog.ok}>
-        <Text style={{ fontSize: 12 }} class="text-destructive">
-          {props.catalog.error || t("settings.plugins.repoFetchFailed")}
-        </Text>
-      </If>
-      <If when={props.catalog.ok && plugins().length === 0}>
-        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-          {t("settings.plugins.repoEmpty")}
-        </Text>
-      </If>
-      <If when={props.catalog.ok && plugins().length > 0}>
-        <View style={{ gap: 8 }}>
-          <Each of={plugins()} key={(e) => e.id}>
-            {(entry) => {
-              const perms = () => entry().permissions;
-              const isInstalling = () => props.installingId === entry().id;
-              return (
-                <View
-                  style={{
-                    padding: 10,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    gap: 6,
-                  }}
-                  class="bg-muted/40 border-border"
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                        <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                          {entry().name}
-                        </Text>
-                        <Text
-                          style={{ fontSize: 11.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
-                          class="text-muted-foreground"
-                        >
-                          {`v${entry().version}`}
-                        </Text>
-                        <If when={perms()?.hasUnsandboxedUi}>
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 4,
-                              paddingLeft: 6,
-                              paddingRight: 6,
-                              height: 18,
-                              borderRadius: 4,
-                            }}
-                            class="bg-destructive/10"
-                          >
-                            <Icon name="triangleAlert" size={11} tone="destructive" />
-                            <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-destructive">
-                              {t("settings.plugins.unsandboxedUiWarning")}
-                            </Text>
-                          </View>
-                        </If>
-                      </View>
-                      <If when={entry().description.trim().length > 0}>
-                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                          {entry().description}
-                        </Text>
-                      </If>
-                    </View>
-                    <Btn
-                      label={isInstalling() ? t("settings.plugins.installing") : t("settings.plugins.install")}
-                      size="sm"
-                      variant="primary"
-                      disabled={props.installingId !== undefined}
-                      onPress={() => props.onInstall(entry())}
-                    />
-                  </View>
+  const p = () => props.plugin;
 
-                  {/* Permission preview before installing */}
-                  <If when={perms() !== undefined}>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                      <If when={(perms()?.domains.length ?? 0) > 0}>
-                        <Chip
-                          label={t("settings.plugins.permDomains", {
-                            domains: perms()!.domains.join(", "),
-                          })}
-                        />
-                      </If>
-                      <If when={perms()?.workspaceRead}>
-                        <Chip label={t("settings.plugins.permWorkspaceRead")} />
-                      </If>
-                    </View>
-                  </If>
-                </View>
-              );
-            }}
-          </Each>
+  const toggleEnabled = (next: boolean) => {
+    const res = preview.setPluginEnabled(p().id, next);
+    if (res.ok) {
+      props.onReload();
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
+  const exportBuiltin = () => {
+    const res = preview.exportBuiltinPlugin(p().id);
+    if (res.ok) {
+      showToast({ tone: "success", text: t("settings.plugins.exported") });
+      props.onReload();
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
+  const moreEntries = (): MenuEntry[] => {
+    const items: MenuEntry[] = [];
+    if (p().origin === "builtin") {
+      items.push({
+        id: "export",
+        label: t("settings.plugins.exportLocalCopy"),
+        icon: "copy",
+      });
+    }
+    return items;
+  };
+
+  const desc = () => pluginDescription(p());
+
+  return (
+    <View
+      style={{
+        paddingTop: 12,
+        paddingBottom: 12,
+        paddingLeft: 14,
+        paddingRight: 12,
+        gap: 8,
+        borderTopWidth: props.first ? 0 : 1,
+      }}
+      class="border-border"
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+            {p().name}
+          </Text>
+          <If when={desc().length > 0}>
+            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              {desc()}
+            </Text>
+          </If>
         </View>
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <Switch
+            checked={p().enabled}
+            onChange={(e) => toggleEnabled(e.checked)}
+            trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
+            thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
+          />
+          <If when={moreEntries().length > 0}>
+            <AppMenu
+              align="end"
+              entries={moreEntries()}
+              onSelect={(id) => {
+                if (id === "export") exportBuiltin();
+              }}
+              trigger={<MoreTrigger testID={`plugin-more-${p().id}`} />}
+            />
+          </If>
+        </View>
+      </View>
+
+      <CredentialRows plugin={p()} onReload={props.onReload} />
+      <If when={!!p().lastError}>
+        <Text
+          style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+          class="text-destructive"
+          tooltip={tip(p().lastError!)}
+        >
+          {p().lastError}
+        </Text>
       </If>
     </View>
   );
 }
 
 export function PluginsPane() {
-  const overview = signal<PluginsOverviewJs>(preview.getPluginsOverview());
+  const initial = cachedPluginsOverview() ?? refreshPluginsOverview(false);
+  if (globalLastSyncedAt() === null && initial.lastSyncedAt) {
+    setGlobalLastSyncedAt(initial.lastSyncedAt);
+  }
+  const overview = signal<PluginsOverviewJs>(initial);
   const syncing = signal(false);
-  const repoInput = signal("");
-  const loadingRepoUrl = signal<string | undefined>(undefined);
-  const catalogs = signal<Record<string, RepoCatalogResultJs>>({});
-  const installingPluginId = signal<string | undefined>(undefined);
+  const pendingTrustPlugin = signal<PluginSummaryJs | undefined>(undefined);
 
-  const reloadOverview = () => {
-    overview.set(preview.reloadPlugins());
-    notifyPluginsChanged();
+  const syncOverviewFromStore = (reload = false) => {
+    const next = refreshPluginsOverview(reload);
+    overview.set(next);
+    setGlobalLastSyncedAt(next.lastSyncedAt ?? null);
+    if (reload) notifyPluginsChanged();
   };
 
-  const runManualSync = async () => {
-    if (syncing()) return;
+  let lastPluginsRev = pluginsRevision();
+  effect(() => {
+    const rev = pluginsRevision();
+    if (rev === lastPluginsRev) return;
+    lastPluginsRev = rev;
+    const next = cachedPluginsOverview() ?? refreshPluginsOverview(false);
+    overview.set(next);
+    setGlobalLastSyncedAt(next.lastSyncedAt ?? null);
+  });
+
+  const reloadOverview = () => {
+    syncOverviewFromStore(true);
+  };
+
+  const ojPlugins = computed(() =>
+    overview().plugins.filter((p) => p.capabilities.includes("oj_source")),
+  );
+  const toolPlugins = computed(() =>
+    overview().plugins.filter((p) => !p.capabilities.includes("oj_source")),
+  );
+
+  const hasConfiguredAccount = computed(() =>
+    ojPlugins().some((p) => p.enabled && (p.handle ?? "").trim().length > 0),
+  );
+
+  const effectiveLastSyncedAt = () => globalLastSyncedAt() ?? overview().lastSyncedAt ?? null;
+
+  const runManualSync = async (full = false) => {
+    if (syncing() || !hasConfiguredAccount()) return;
     syncing.set(true);
+    showToast({
+      tone: "info",
+      text: full ? t("settings.plugins.fullSyncingToast") : t("settings.plugins.syncingToast"),
+      durationMs: 60000,
+    });
     try {
-      const report = await preview.syncOj(null, false);
-      overview.set(preview.getPluginsOverview());
+      const report = await preview.syncOj(null, full);
+      syncOverviewFromStore(false);
       refresh();
       if (!report.ok && report.error) {
         showToast({ tone: "issues", text: report.error });
@@ -499,7 +538,7 @@ export function PluginsPane() {
       }
       const platforms = report.platforms ?? [];
       if (platforms.length === 0) {
-        showToast({ tone: "info", text: t("settings.plugins.syncNoHandles") });
+        showToast({ tone: "info", text: t("settings.plugins.fillAccountFirst") });
         return;
       }
       const failed = platforms.filter((p) => !p.ok);
@@ -514,12 +553,17 @@ export function PluginsPane() {
         const subs = platforms.reduce((acc, p) => acc + p.submissionsSynced, 0);
         showToast({
           tone: "success",
-          text: t("settings.plugins.syncSuccess", {
-            platforms: platforms.length,
-            submissions: subs,
-          }),
+          text:
+            subs > 0
+              ? t("settings.plugins.syncSuccessCount", { count: subs })
+              : t("settings.plugins.syncUpToDate"),
         });
       }
+    } catch (err) {
+      showToast({
+        tone: "issues",
+        text: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       syncing.set(false);
     }
@@ -528,296 +572,330 @@ export function PluginsPane() {
   const toggleAutoSync = (enabled: boolean) => {
     const res = preview.setAutoSyncOnStartup(enabled);
     if (res.ok) {
-      overview.set(preview.getPluginsOverview());
+      syncOverviewFromStore(false);
     } else if (res.error) {
       showToast({ tone: "issues", text: res.error });
     }
   };
 
   const installFromDialog = async (kind: "dir" | "zip") => {
-    const res = await preview.installPluginFromDialog(kind, {
-      title: kind === "zip" ? t("settings.plugins.installZipTitle") : t("settings.plugins.installDirTitle"),
-      buttonLabel: t("settings.plugins.install"),
-      filterLabel: kind === "zip" ? t("settings.plugins.zipFilter") : null,
-    });
-    if (res.cancelled) return;
-    if (res.ok) {
-      if (res.overview) {
-        overview.set(res.overview);
-        notifyPluginsChanged();
-      } else reloadOverview();
-      showToast({
-        tone: "success",
-        text: t("settings.plugins.installSuccess", { id: res.pluginId ?? "" }),
-      });
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const addRepo = () => {
-    const url = repoInput().trim();
-    if (!url) return;
-    const res = preview.addPluginRepo(url);
-    if (res.ok) {
-      batch(() => {
-        repoInput.set("");
-        overview.set(preview.getPluginsOverview());
-      });
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const removeRepo = (url: string) => {
-    const res = preview.removePluginRepo(url);
-    if (res.ok) {
-      const nextCatalogs = { ...catalogs() };
-      delete nextCatalogs[url];
-      batch(() => {
-        catalogs.set(nextCatalogs);
-        overview.set(preview.getPluginsOverview());
-      });
-    } else if (res.error) {
-      showToast({ tone: "issues", text: res.error });
-    }
-  };
-
-  const loadRepoCatalog = async (url: string) => {
-    if (loadingRepoUrl() !== undefined) return;
-    loadingRepoUrl.set(url);
     try {
-      const cat = await preview.fetchPluginRepoCatalog(url);
-      catalogs.set({ ...catalogs(), [url]: cat });
-      overview.set(preview.getPluginsOverview());
-    } finally {
-      loadingRepoUrl.set(undefined);
-    }
-  };
-
-  const installFromRepo = async (repoUrl: string, entry: RepoPluginEntryJs) => {
-    if (installingPluginId() !== undefined) return;
-    installingPluginId.set(entry.id);
-    try {
-      const res = await preview.installPluginFromRepo(repoUrl, entry.id);
+      const res = await preview.installPluginFromDialog(kind, {
+        title: kind === "zip" ? t("settings.plugins.installZipTitle") : t("settings.plugins.installDirTitle"),
+        buttonLabel: t("settings.plugins.install"),
+        filterLabel: kind === "zip" ? t("settings.plugins.zipFilter") : null,
+      });
+      if (res.cancelled) return;
       if (res.ok) {
-        if (res.overview) overview.set(res.overview);
-        else reloadOverview();
+        const nextOverview = res.overview ?? refreshPluginsOverview(true);
+        const installed = res.pluginId
+          ? nextOverview.plugins.find((p) => p.id === res.pluginId)
+          : undefined;
+        const needsTrustConfirm =
+          installed !== undefined &&
+          installed.origin !== "builtin" &&
+          (installed.hasUnsandboxedUi || installed.domains.length > 0 || installed.workspaceRead);
+
+        if (needsTrustConfirm && installed) {
+          // Disable third-party plugin immediately until the user explicitly confirms trust.
+          preview.setPluginEnabled(installed.id, false);
+          syncOverviewFromStore(false);
+          notifyPluginsChanged();
+          pendingTrustPlugin.set(installed);
+          return;
+        }
+
+        if (res.overview) {
+          cachedPluginsOverview.set(res.overview);
+          overview.set(res.overview);
+          setGlobalLastSyncedAt(res.overview.lastSyncedAt ?? null);
+          notifyPluginsChanged();
+        } else {
+          reloadOverview();
+        }
         showToast({
           tone: "success",
-          text: t("settings.plugins.installSuccess", { id: res.pluginId ?? entry.id }),
+          text: t("settings.plugins.installSuccess", { id: res.pluginId ?? "" }),
         });
       } else if (res.error) {
         showToast({ tone: "issues", text: res.error });
       }
-    } finally {
-      installingPluginId.set(undefined);
+    } catch (err) {
+      showToast({
+        tone: "issues",
+        text: err instanceof Error ? err.message : String(err),
+      });
     }
   };
 
+  const confirmTrustPlugin = () => {
+    const plugin = pendingTrustPlugin();
+    if (!plugin) return;
+    const res = preview.setPluginEnabled(plugin.id, true);
+    pendingTrustPlugin.set(undefined);
+    syncOverviewFromStore(false);
+    notifyPluginsChanged();
+    if (res.ok) {
+      showToast({
+        tone: "success",
+        text: t("settings.plugins.installSuccess", { id: plugin.id }),
+      });
+    } else if (res.error) {
+      showToast({ tone: "issues", text: res.error });
+    }
+  };
+
+  const cancelTrustPlugin = () => {
+    if (!pendingTrustPlugin()) return;
+    pendingTrustPlugin.set(undefined);
+    showToast({
+      tone: "info",
+      text: zhEn("插件已安装但保持禁用", "Plugin installed and kept disabled"),
+    });
+  };
+
+  const syncMoreEntries = (): MenuEntry[] => [
+    {
+      id: "fullSync",
+      label: t("settings.plugins.fullResync"),
+      icon: "rotateCcw",
+      disabled: syncing() || !hasConfiguredAccount(),
+    },
+  ];
+
+  const installMenuEntries = (): MenuEntry[] => [
+    { id: "dir", label: t("settings.plugins.installDir"), icon: "folderPlus" },
+    { id: "zip", label: t("settings.plugins.installZip"), icon: "fileDown" },
+  ];
+
+  const toolsMoreEntries = (): MenuEntry[] => [
+    { id: "reload", label: t("settings.plugins.reloadLocal"), icon: "rotateCcw" },
+  ];
+
   return (
-    <View style={{ gap: 20 }}>
-      {/* Sync & Management actions */}
-      <Section title={t("settings.plugins.syncSection")}>
-        <Card>
-          <SectionRow
-            first
-            trailing={
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <DelayedSpinner active={syncing()} size={14} />
-                <Btn
-                  label={t("settings.plugins.syncNow")}
-                  variant="primary"
-                  size="sm"
-                  icon="rotateCcw"
-                  disabled={syncing()}
-                  onPress={() => void runManualSync()}
-                />
-              </View>
-            }
-          >
-            <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-                {t("settings.plugins.syncNowLabel")}
-              </Text>
-              <Text style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                {t("settings.plugins.lastSyncedAt", {
-                  time: formatSyncTime(overview().lastSyncedAt),
-                })}
-              </Text>
-            </View>
-          </SectionRow>
-          <SectionRow
-            trailing={
-              <Switch
-                checked={overview().autoSyncOnStartup}
-                onChange={(e) => toggleAutoSync(e.checked)}
-                trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
-                thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
-              />
-            }
-          >
-            <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-                {t("settings.plugins.autoSyncLabel")}
-              </Text>
-              <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-                {t("settings.plugins.autoSyncHint")}
-              </Text>
-            </View>
-          </SectionRow>
-          <SectionRow
-            trailing={
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <Btn
-                  label={t("settings.plugins.reloadLocal")}
-                  size="sm"
-                  variant="ghost"
-                  icon="rotateCcw"
-                  onPress={reloadOverview}
-                />
-                <Btn
-                  label={t("settings.plugins.installDir")}
-                  size="sm"
-                  variant="outline"
-                  icon="folderPlus"
-                  onPress={() => void installFromDialog("dir")}
-                />
-                <Btn
-                  label={t("settings.plugins.installZip")}
-                  size="sm"
-                  variant="outline"
-                  icon="fileDown"
-                  onPress={() => void installFromDialog("zip")}
-                />
-              </View>
-            }
-          >
-            <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-                {t("settings.plugins.localPluginsLabel")}
-              </Text>
-              <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
-                {t("settings.plugins.localPluginsHint")}
-              </Text>
-            </View>
-          </SectionRow>
-        </Card>
-      </Section>
-
-      {/* Installed & Built-in plugins */}
-      <Section title={t("settings.plugins.installedSection")}>
-        <Card>
-          <If when={overview().plugins.length === 0}>
-            <View style={{ padding: 16 }}>
-              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
-                {t("settings.plugins.empty")}
-              </Text>
-            </View>
-          </If>
-          <Each of={overview().plugins} key={(p) => `${p.id}:${p.origin}:${p.enabled}:${p.lastError ?? ""}`}>
-            {(plugin) => <PluginRow plugin={plugin()} onReload={reloadOverview} />}
-          </Each>
-        </Card>
-      </Section>
-
-      {/* Decentralized plugin repositories */}
-      <Section title={t("settings.plugins.reposSection")}>
-        <Card>
-          <View style={{ padding: 14, gap: 12 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Input
-                class={INPUT_CLASS}
-                style={{ flex: 1, fontFamily: MONO }}
-                value={repoInput()}
-                placeholder={t("settings.plugins.repoUrlPlaceholder")}
-                autoCapitalize="none"
-                autoCorrect={false}
-                submitBehavior="submit"
-                onChange={(e) => repoInput.set(e.value)}
-                onSubmit={addRepo}
-              />
-              <Btn
-                label={t("settings.plugins.addRepo")}
-                size="sm"
-                variant="outline"
-                icon="plus"
-                disabled={repoInput().trim().length === 0}
-                onPress={addRepo}
-              />
-            </View>
-
-            <If when={overview().repos.length === 0}>
-              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                {t("settings.plugins.reposEmpty")}
-              </Text>
-            </If>
-
-            <Each of={overview().repos} key={(r) => r.url}>
-              {(repo) => {
-                const url = repo().url;
-                const isLoading = () => loadingRepoUrl() === url;
-                const cat = () => catalogs()[url];
-                return (
-                  <View
-                    style={{
-                      paddingTop: 10,
-                      borderTopWidth: 1,
-                      gap: 6,
-                    }}
-                    class="border-border"
-                  >
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <If when={!!repo().name}>
-                          <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
-                            {repo().name ?? ""}
-                          </Text>
-                        </If>
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontFamily: MONO,
-                            numberOfLines: 1,
-                            textOverflow: "ellipsis",
-                          }}
-                          class="text-muted-foreground"
-                        >
-                          {url}
-                        </Text>
-                      </View>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        <DelayedSpinner active={isLoading()} size={13} />
-                        <Btn
-                          label={t("settings.plugins.loadCatalog")}
-                          size="sm"
-                          variant="ghost"
-                          disabled={loadingRepoUrl() !== undefined}
-                          onPress={() => void loadRepoCatalog(url)}
-                        />
-                        <Btn
-                          label={t("settings.plugins.removeRepo")}
-                          size="sm"
-                          variant="ghost"
-                          onPress={() => removeRepo(url)}
-                        />
-                      </View>
-                    </View>
-                    <If when={cat() !== undefined}>
-                      <RepoCatalogCard
-                        repoUrl={url}
-                        catalog={cat()!}
-                        installingId={installingPluginId()}
-                        onInstall={(entry) => void installFromRepo(url, entry)}
-                      />
-                    </If>
-                  </View>
-                );
-              }}
-            </Each>
+    <View style={{ gap: 22 }}>
+      {/* Section 1: OJ Accounts & Sync */}
+      <Section title={t("settings.plugins.ojAccountsSection")}>
+        <If when={ojPlugins().length === 0}>
+          <View style={{ padding: 14 }}>
+            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              {t("settings.plugins.empty")}
+            </Text>
           </View>
-        </Card>
+        </If>
+        <Each of={ojPlugins()} key={(p) => `${p.id}:${p.origin}`}>
+          {(plugin) => (
+            <OjAccountRow
+              plugin={plugin()}
+              first={plugin().id === ojPlugins()[0]?.id}
+              onReload={() => syncOverviewFromStore(false)}
+            />
+          )}
+        </Each>
+
+        {/* Sync trigger & status row */}
+        <SectionRow
+          first={ojPlugins().length === 0}
+          trailing={
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Btn
+                testID="plugins-sync-now"
+                label={syncing() ? t("settings.plugins.syncing") : t("settings.plugins.syncNow")}
+                variant="outline"
+                size="sm"
+                icon="rotateCcw"
+                disabled={syncing() || !hasConfiguredAccount()}
+                tooltip={!hasConfiguredAccount() ? tip(t("settings.plugins.fillAccountFirst")) : undefined}
+                onPress={() => void runManualSync(false)}
+              />
+              <AppMenu
+                align="end"
+                entries={syncMoreEntries()}
+                onSelect={(id) => {
+                  if (id === "fullSync") void runManualSync(true);
+                }}
+                trigger={<MoreTrigger testID="plugins-sync-more" />}
+              />
+            </View>
+          }
+        >
+          <View style={{ gap: 2 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              {t("settings.plugins.syncNowLabel")}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              {hasConfiguredAccount()
+                ? t("settings.plugins.lastSyncedAt", { time: formatSyncTime(effectiveLastSyncedAt()) })
+                : t("settings.plugins.fillAccountFirst")}
+            </Text>
+          </View>
+        </SectionRow>
+
+        {/* Auto-sync toggle */}
+        <SectionRow
+          trailing={
+            <Switch
+              checked={overview().autoSyncOnStartup}
+              onChange={(e) => toggleAutoSync(e.checked)}
+              trackClass="w-8 h-[18px] rounded-full bg-input checked:bg-primary transition-colors duration-[120ms]"
+              thumbClass="size-[14px] m-[2px] rounded-full bg-white shadow-sm checked:translate-x-[14px] transition-transform duration-[120ms]"
+            />
+          }
+        >
+          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+            {t("settings.plugins.autoSyncLabel")}
+          </Text>
+        </SectionRow>
       </Section>
+
+      {/* Section 2: Tools & Extensions */}
+      <Section
+        title={t("settings.plugins.toolsSection")}
+        trailing={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <AppMenu
+              align="end"
+              entries={installMenuEntries()}
+              onSelect={(id) => {
+                if (id === "dir" || id === "zip") void installFromDialog(id);
+              }}
+              trigger={
+                <Btn
+                  testID="plugins-install-trigger"
+                  label={t("settings.plugins.installPlugin")}
+                  size="sm"
+                  variant="outline"
+                  icon="plus"
+                />
+              }
+            />
+            <AppMenu
+              align="end"
+              entries={toolsMoreEntries()}
+              onSelect={(id) => {
+                if (id === "reload") reloadOverview();
+              }}
+              trigger={<MoreTrigger testID="plugins-tools-more" />}
+            />
+          </View>
+        }
+      >
+        <If when={toolPlugins().length === 0}>
+          <View style={{ padding: 14 }}>
+            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              {t("settings.plugins.empty")}
+            </Text>
+          </View>
+        </If>
+        <Each of={toolPlugins()} key={(p) => `${p.id}:${p.origin}:${p.enabled}:${p.lastError ?? ""}`}>
+          {(plugin) => (
+            <ToolPluginRow
+              plugin={plugin()}
+              first={plugin().id === toolPlugins()[0]?.id}
+              onReload={reloadOverview}
+            />
+          )}
+        </Each>
+      </Section>
+
+      {/* Third-party plugin trust confirmation modal */}
+      <Modal
+        open={pendingTrustPlugin() !== undefined}
+        onClose={cancelTrustPlugin}
+        width={460}
+        testID="plugin-trust-modal"
+      >
+        <If when={pendingTrustPlugin()}>
+          {(plugin) => (
+            <View style={{ padding: 20, gap: 16 }}>
+              <DialogHeader
+                icon="triangleAlert"
+                tone={plugin().hasUnsandboxedUi ? "destructive" : "foreground"}
+                title={zhEn(
+                  `信任并启用「${plugin().name}」？`,
+                  `Trust and enable "${plugin().name}"?`,
+                )}
+                description={zhEn(
+                  "第三方插件在启用前需要你的明确确认，请核对以下权限：",
+                  "Review the permissions requested by this third-party plugin before enabling it:",
+                )}
+              />
+
+              <View style={{ gap: 10 }}>
+                <If when={plugin().hasUnsandboxedUi}>
+                  <View
+                    testID="plugin-trust-unsandboxed-warning"
+                    class="bg-destructive/10 border border-destructive/30"
+                    style={{ borderRadius: 8, padding: 10, gap: 4 }}
+                  >
+                    <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-destructive">
+                      {zhEn("非沙箱桌面界面代码（ui.js）", "Unsandboxed desktop UI code (ui.js)")}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-foreground">
+                      {zhEn(
+                        "此插件包含自定义桌面界面脚本，将在非沙箱环境中运行并可访问桌面应用接口。仅在信任插件来源时启用。",
+                        "This plugin includes custom desktop UI code that runs unsandboxed with access to desktop app APIs. Only enable plugins from sources you trust.",
+                      )}
+                    </Text>
+                  </View>
+                </If>
+
+                <If when={plugin().domains.length > 0}>
+                  <View
+                    testID="plugin-trust-domains"
+                    class="bg-muted/60 border border-border"
+                    style={{ borderRadius: 8, padding: 10, gap: 6 }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                      {zhEn("请求访问的网络域名", "Requested network domains")}
+                    </Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      <Each of={plugin().domains} key={(d) => d}>
+                        {(domain) => (
+                          <View
+                            class="bg-card border border-border"
+                            style={{ borderRadius: 5, paddingLeft: 7, paddingRight: 7, height: 22, justifyContent: "center" }}
+                          >
+                            <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-foreground">
+                              {domain()}
+                            </Text>
+                          </View>
+                        )}
+                      </Each>
+                    </View>
+                  </View>
+                </If>
+
+                <If when={plugin().workspaceRead}>
+                  <View
+                    class="bg-muted/60 border border-border"
+                    style={{ borderRadius: 8, padding: 10 }}
+                  >
+                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                      {zhEn("请求只读访问当前工作区文件。", "Requests read-only access to the current workspace.")}
+                    </Text>
+                  </View>
+                </If>
+              </View>
+
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+                <Btn
+                  testID="plugin-trust-cancel"
+                  label={zhEn("取消", "Cancel")}
+                  variant="outline"
+                  onPress={cancelTrustPlugin}
+                />
+                <Btn
+                  testID="plugin-trust-confirm"
+                  label={zhEn("信任并启用", "Trust & Enable")}
+                  variant="primary"
+                  onPress={confirmTrustPlugin}
+                />
+              </View>
+            </View>
+          )}
+        </If>
+      </Modal>
     </View>
   );
 }

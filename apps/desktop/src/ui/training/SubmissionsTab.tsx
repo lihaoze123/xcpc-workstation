@@ -1,29 +1,95 @@
 // Training space View 3: Submissions Search & One-Click Ingest.
-// Supports raw vs. per-problem deduplication, unsolved-only toggle, multi-dimensional filters
-// (including drill-down from Overview), external URL open, and silent one-click ingest into
-// the workspace library with a bottom-right Toast ("已收入题库 · 打开").
+// 3-way mode Segmented (Raw | By Problem | Unsolved Only), high-contrast filter chips
+// (platform when >1, core verdicts + expandable other errors, difficulty buckets, drilldown pills),
+// subtle hover ingest action & muted "已在题库" + "打开" landing on Editorial tab.
 
 import { computed, Scroll, signal, Text, View } from "nsh";
-import { Input, Switch } from "nsh/base";
+import { Input } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, Chip, IconBtn, RatingBadge } from "../kit";
+import { Btn, IconBtn, RatingBadge, Segmented, tip } from "../kit";
+import { AppMenu, type MenuEntry } from "../Menu";
+import { colorTransition } from "../motion";
 import { info, openStudio, preview, refresh } from "../store";
 import { cardShadow, MONO } from "../theme";
 import { showToast } from "../Toast";
+import { isEn, zhEn } from "./locale";
 import {
   DEFAULT_SUBMISSIONS_FILTER,
+  formatTagLabel,
   formatUnixDateTime,
   hasActiveSubmissionsFilter,
   platformDisplayName,
+  verdictDisplayLabel,
   verdictTone,
   type SubmissionsFilter,
   type SubmissionsPage,
   type SubmissionViewRow,
 } from "./types";
 
-const VERDICT_OPTIONS = ["", "AC", "WA", "TLE", "MLE", "RE", "CE"] as const;
+type SubmissionMode = "raw" | "byProblem" | "unsolved";
+
+const CORE_VERDICTS = ["", "AC", "WA", "TLE"] as const;
+const OTHER_VERDICTS = ["MLE", "RE", "CE"] as const;
+
+interface DifficultyPreset {
+  id: string;
+  labelZh: string;
+  labelEn: string;
+  minRating: number | null;
+  maxRating: number | null;
+}
+
+const DIFFICULTY_PRESETS: readonly DifficultyPreset[] = [
+  { id: "all", labelZh: "全部难度", labelEn: "All Diff", minRating: null, maxRating: null },
+  { id: "lt1200", labelZh: "<1200", labelEn: "<1200", minRating: null, maxRating: 1199 },
+  { id: "1200", labelZh: "1200–1599", labelEn: "1200–1599", minRating: 1200, maxRating: 1599 },
+  { id: "1600", labelZh: "1600–1999", labelEn: "1600–1999", minRating: 1600, maxRating: 1999 },
+  { id: "2000", labelZh: "2000–2399", labelEn: "2000–2399", minRating: 2000, maxRating: 2399 },
+  { id: "2400", labelZh: "2400+", labelEn: "2400+", minRating: 2400, maxRating: null },
+];
+
+/** High-contrast filter pill: unmistakable selected vs unselected states without using brand fill. */
+function FilterChip(props: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  testID?: string;
+}) {
+  return (
+    <View
+      testID={props.testID}
+      onPress={props.onPress}
+      class={
+        props.active
+          ? "bg-accent border border-foreground/40 active:opacity-90"
+          : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+      }
+      style={{
+        height: 22,
+        paddingLeft: 8,
+        paddingRight: 8,
+        borderRadius: 6,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        ...colorTransition(120),
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 11.5,
+          fontWeight: 500,
+          fontVariant: ["tabular-nums"],
+        }}
+        class={props.active ? "text-foreground" : "text-muted-foreground"}
+      >
+        {props.label}
+      </Text>
+    </View>
+  );
+}
 
 export function SubmissionsTab(props: {
   page: SubmissionsPage;
@@ -32,11 +98,34 @@ export function SubmissionsTab(props: {
   onFilterChange: (next: SubmissionsFilter) => void;
   onPageChange: (offset: number) => void;
   onReload: () => void;
+  onOpenProblem?: (id: string, opts?: { initialTab?: "statement" | "editorial" }) => void;
 }) {
   const ingestingKey = signal<string | undefined>(undefined);
+  const hoveredRowKey = signal<string | undefined>(undefined);
+  const showOtherVerdicts = signal<boolean>(false);
 
   const patch = (partial: Partial<SubmissionsFilter>) => {
     props.onFilterChange({ ...props.filter, ...partial });
+  };
+
+  const currentMode = (): SubmissionMode => {
+    if (props.filter.unsolvedOnly) return "unsolved";
+    if (props.filter.byProblem) return "byProblem";
+    return "raw";
+  };
+
+  const setMode = (mode: SubmissionMode) => {
+    if (mode === "raw") {
+      patch({ byProblem: false, unsolvedOnly: false });
+    } else if (mode === "byProblem") {
+      patch({ byProblem: true, unsolvedOnly: false });
+    } else {
+      patch({
+        byProblem: true,
+        unsolvedOnly: true,
+        verdict: props.filter.verdict === "AC" ? "" : props.filter.verdict,
+      });
+    }
   };
 
   const clearFilters = () => {
@@ -46,12 +135,16 @@ export function SubmissionsTab(props: {
     });
   };
 
-  const openProblemStudio = (problemId: string, toEditorial = false) => {
-    openStudio({
-      target: "problem",
-      id: problemId,
-      initialTab: toEditorial ? "editorial" : undefined,
-    });
+  const openProblemEditorial = (problemId: string) => {
+    if (props.onOpenProblem) {
+      props.onOpenProblem(problemId, { initialTab: "editorial" });
+    } else {
+      openStudio({
+        target: "problem",
+        id: problemId,
+        initialTab: "editorial",
+      });
+    }
   };
 
   const ingestRow = (row: SubmissionViewRow) => {
@@ -59,11 +152,12 @@ export function SubmissionsTab(props: {
     if (ingestingKey() === key) return;
     ingestingKey.set(key);
     try {
+      const isLocal = row.platform.trim().toLowerCase() === "local";
       const res = preview.trainingIngestProblem({
         url: row.problem_url ?? null,
-        platform: row.platform,
-        problemKey: row.problem_key,
-        title: row.problem_title ?? null,
+        platform: isLocal ? null : row.platform,
+        problemKey: isLocal ? null : row.problem_key,
+        title: row.problem_title ?? (isLocal ? row.problem_key : null),
         rating: row.normalized_rating ?? row.raw_rating ?? null,
         tags: row.tags.length > 0 ? row.tags : null,
       });
@@ -83,7 +177,7 @@ export function SubmissionsTab(props: {
         action: pid
           ? {
               label: t("training.submissions.openEditorial"),
-              run: () => openProblemStudio(pid, true),
+              run: () => openProblemEditorial(pid),
             }
           : undefined,
         durationMs: 4500,
@@ -103,9 +197,73 @@ export function SubmissionsTab(props: {
     const tone = verdictTone(verdict);
     if (tone === "ac") return "bg-chart-2/15 text-chart-2";
     if (tone === "wa") return "bg-destructive/12 text-destructive";
-    if (tone === "tle") return "bg-chart-4/15 text-chart-4";
+    if (tone === "tle" || tone === "attempted") return "bg-chart-4/15 text-chart-4";
     return "bg-muted text-secondary-foreground";
   };
+
+  const modeItems = computed(() => [
+    { value: "raw" as const, label: t("training.submissions.modeRaw"), testID: "submissions-mode-raw" },
+    { value: "byProblem" as const, label: t("training.submissions.modeByProblem"), testID: "submissions-mode-by-problem" },
+    { value: "unsolved" as const, label: t("training.submissions.unsolvedOnly"), testID: "submissions-mode-unsolved" },
+  ]);
+
+  const effectivePlatforms = computed(() => {
+    const set = new Set<string>(props.platforms);
+    for (const r of props.page.items) {
+      if (r.platform) set.add(r.platform);
+    }
+    if (props.filter.platform) set.add(props.filter.platform);
+    return [...set].sort();
+  });
+
+  const showPlatformCol = computed(() => effectivePlatforms().length > 1);
+
+  const visibleCoreVerdicts = computed(() =>
+    props.filter.unsolvedOnly ? CORE_VERDICTS.filter((v) => v !== "AC") : CORE_VERDICTS,
+  );
+
+  const activeDifficultyPreset = () => {
+    const f = props.filter;
+    return DIFFICULTY_PRESETS.find((p) => p.minRating === f.minRating && p.maxRating === f.maxRating);
+  };
+
+  const hasDifficultyFilter = () =>
+    props.filter.minRating !== null || props.filter.maxRating !== null;
+
+  const difficultyChipLabel = () => {
+    const preset = activeDifficultyPreset();
+    if (preset && preset.id !== "all") {
+      return zhEn(`难度：${preset.labelZh}`, `Diff: ${preset.labelEn}`);
+    }
+    if (hasDifficultyFilter()) {
+      const { minRating, maxRating } = props.filter;
+      const range =
+        minRating !== null && maxRating !== null
+          ? `${minRating}–${maxRating}`
+          : minRating !== null
+            ? `≥${minRating}`
+            : `<${maxRating}`;
+      return zhEn(`难度：${range}`, `Diff: ${range}`);
+    }
+    return zhEn("难度：全部", "Diff: All");
+  };
+
+  const difficultyMenuEntries = computed<MenuEntry[]>(() =>
+    DIFFICULTY_PRESETS.map((p) => ({
+      id: p.id,
+      label: p.id === "all" ? zhEn("全部", "All") : zhEn(p.labelZh, p.labelEn),
+      checked: props.filter.minRating === p.minRating && props.filter.maxRating === p.maxRating,
+    })),
+  );
+
+  const selectDifficultyPreset = (id: string) => {
+    const preset = DIFFICULTY_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    patch({ minRating: preset.minRating, maxRating: preset.maxRating });
+  };
+
+  const otherVerdictActive = () =>
+    (OTHER_VERDICTS as readonly string[]).includes(props.filter.verdict);
 
   const activeFilterCount = computed(() => hasActiveSubmissionsFilter(props.filter));
   const rangeStart = () => (props.page.total === 0 ? 0 : props.page.offset + 1);
@@ -114,7 +272,10 @@ export function SubmissionsTab(props: {
   const hasNext = () => props.page.offset + props.page.limit < props.page.total;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View
+      testID="training-submissions-root"
+      style={{ flex: 1, height: "100%", minHeight: 0, overflow: "hidden", flexDirection: "column" }}
+    >
       {/* Filter toolbar */}
       <View
         class="border-b border-border bg-card/50"
@@ -124,9 +285,10 @@ export function SubmissionsTab(props: {
           paddingLeft: 20,
           paddingRight: 20,
           gap: 8,
+          flexShrink: 0,
         }}
       >
-        {/* Row 1: Search + mode toggle (by-problem) + unsolved-only + clear */}
+        {/* Row 1: Search + 3-way mode Segmented (Raw | By Problem | Unsolved Only) + clear */}
         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
           <View
             class="bg-card border border-border focus-within:border-input"
@@ -157,50 +319,12 @@ export function SubmissionsTab(props: {
             </If>
           </View>
 
-          {/* Raw vs By-Problem toggle */}
-          <View
-            class="bg-muted border border-border"
-            style={{ flexDirection: "row", padding: 2, borderRadius: 7, gap: 2 }}
-          >
-            <View
-              testID="submissions-by-raw"
-              onPress={() => patch({ byProblem: false })}
-              class={!props.filter.byProblem ? "bg-card border border-border" : "hover:bg-background/60"}
-              style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
-            >
-              <Text
-                style={{ fontSize: 11.5, fontWeight: !props.filter.byProblem ? 500 : 400 }}
-                class={!props.filter.byProblem ? "text-foreground" : "text-secondary-foreground"}
-              >
-                {t("training.submissions.modeRaw")}
-              </Text>
-            </View>
-            <View
-              testID="submissions-by-problem"
-              onPress={() => patch({ byProblem: true })}
-              class={props.filter.byProblem ? "bg-card border border-border" : "hover:bg-background/60"}
-              style={{ height: 22, paddingLeft: 8, paddingRight: 8, borderRadius: 5, justifyContent: "center" }}
-            >
-              <Text
-                style={{ fontSize: 11.5, fontWeight: props.filter.byProblem ? 500 : 400 }}
-                class={props.filter.byProblem ? "text-foreground" : "text-secondary-foreground"}
-              >
-                {t("training.submissions.modeByProblem")}
-              </Text>
-            </View>
-          </View>
-
-          {/* Unsolved only switch */}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Switch
-              testID="submissions-unsolved-only"
-              checked={props.filter.unsolvedOnly}
-              onChange={(e) => patch({ unsolvedOnly: e.checked, byProblem: e.checked ? true : props.filter.byProblem })}
-            />
-            <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
-              {t("training.submissions.unsolvedOnly")}
-            </Text>
-          </View>
+          <Segmented
+            items={modeItems()}
+            value={currentMode()}
+            onChange={setMode}
+            itemWidth={86}
+          />
 
           <View style={{ flex: 1 }} />
 
@@ -215,31 +339,34 @@ export function SubmissionsTab(props: {
           </If>
         </View>
 
-        {/* Row 2: Platform chips + Verdict chips + active drilldown chips (rating range / tag) */}
+        {/* Row 2: Platform chips (only when >1) + Core Verdict chips + Difficulty filter + active drilldown pills */}
         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-          {/* Platforms */}
-          <If when={props.platforms.length > 0}>
-            <Chip
+          {/* Platforms (hidden when only 1 platform) */}
+          <If when={effectivePlatforms().length > 1}>
+            <FilterChip
+              testID="submissions-platform-all"
               label={t("training.submissions.allPlatforms")}
               active={props.filter.platform === ""}
               onPress={() => patch({ platform: "" })}
             />
-            <Each of={props.platforms} key={(p) => p}>
+            <Each of={effectivePlatforms()} key={(p) => p}>
               {(plat) => (
-                <Chip
-                  label={platformDisplayName(plat())}
+                <FilterChip
+                  testID={`submissions-platform-${plat()}`}
+                  label={platformDisplayName(plat(), isEn())}
                   active={props.filter.platform === plat()}
                   onPress={() => patch({ platform: props.filter.platform === plat() ? "" : plat() })}
                 />
               )}
             </Each>
-            <View style={{ width: 1, height: 14, marginLeft: 2, marginRight: 2 }} class="bg-border" />
+            <View style={{ width: 8 }} />
           </If>
 
-          {/* Verdicts */}
-          <Each of={VERDICT_OPTIONS} key={(v) => v || "all"}>
+          {/* Core Verdicts (hides AC in unsolved-only mode) */}
+          <Each of={visibleCoreVerdicts()} key={(v) => v || "all"}>
             {(v) => (
-              <Chip
+              <FilterChip
+                testID={`submissions-verdict-${v() || "all"}`}
                 label={v() === "" ? t("training.submissions.allVerdicts") : v()}
                 active={props.filter.verdict === v()}
                 onPress={() => patch({ verdict: v() })}
@@ -247,32 +374,113 @@ export function SubmissionsTab(props: {
             )}
           </Each>
 
-          {/* Active drilldown pills */}
-          <If when={props.filter.minRating !== null || props.filter.maxRating !== null}>
-            <Chip
-              active
-              label={
-                props.filter.minRating !== null && props.filter.maxRating !== null
-                  ? `${props.filter.minRating}–${props.filter.maxRating} ×`
-                  : props.filter.minRating !== null
-                    ? `≥${props.filter.minRating} ×`
-                    : `<${props.filter.maxRating} ×`
-              }
-              onPress={() => patch({ minRating: null, maxRating: null })}
-            />
+          {/* Expandable Other Errors (MLE / RE / CE) */}
+          <If
+            when={showOtherVerdicts() || otherVerdictActive()}
+            else={
+              <FilterChip
+                testID="submissions-verdict-other-toggle"
+                label={zhEn("其他错误", "Other")}
+                active={false}
+                onPress={() => showOtherVerdicts.set(true)}
+              />
+            }
+          >
+            <Each of={OTHER_VERDICTS} key={(v) => v}>
+              {(v) => (
+                <FilterChip
+                  testID={`submissions-verdict-${v()}`}
+                  label={v()}
+                  active={props.filter.verdict === v()}
+                  onPress={() => patch({ verdict: props.filter.verdict === v() ? "" : v() })}
+                />
+              )}
+            </Each>
           </If>
+
+          <View style={{ width: 8 }} />
+
+          {/* Compact difficulty dropdown chip (keeps all filters on one row at 960px) */}
+          <AppMenu
+            entries={difficultyMenuEntries()}
+            onSelect={selectDifficultyPreset}
+            minWidth={148}
+            trigger={
+              <View
+                testID="submissions-diff-menu"
+                class={
+                  hasDifficultyFilter()
+                    ? "bg-accent border border-foreground/40 active:opacity-90"
+                    : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+                }
+                style={{
+                  height: 22,
+                  paddingLeft: 8,
+                  paddingRight: 6,
+                  borderRadius: 6,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  ...colorTransition(120),
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 500,
+                    fontVariant: ["tabular-nums"],
+                  }}
+                  class={hasDifficultyFilter() ? "text-foreground" : "text-muted-foreground"}
+                >
+                  {difficultyChipLabel()}
+                </Text>
+                <Icon
+                  name="chevronDown"
+                  size={11}
+                  tone={hasDifficultyFilter() ? "foreground" : "muted-foreground"}
+                />
+              </View>
+            }
+          />
+
           <If when={props.filter.tag !== ""}>
-            <Chip
-              active
-              label={`#${props.filter.tag} ×`}
+            <View
+              testID="submissions-active-tag-chip"
               onPress={() => patch({ tag: "" })}
-            />
+              class="bg-accent border border-foreground/40 active:opacity-90"
+              style={{
+                height: 22,
+                paddingLeft: 8,
+                paddingRight: 6,
+                borderRadius: 6,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+                ...colorTransition(120),
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  fontVariant: ["tabular-nums"],
+                }}
+                class="text-foreground"
+              >
+                {`#${formatTagLabel(props.filter.tag, isEn())}`}
+              </Text>
+              <Icon name="x" size={11} tone="foreground" />
+            </View>
           </If>
         </View>
       </View>
 
       {/* Submissions list */}
-      <Scroll style={{ flex: 1 }} contentStyle={{ padding: 20, gap: 12, paddingBottom: 32 }}>
+      <Scroll
+        testID="training-submissions-scroll"
+        style={{ flex: 1, minHeight: 0 }}
+        contentStyle={{ padding: 20, gap: 12, paddingBottom: 36 }}
+      >
         <If
           when={props.page.items.length > 0}
           else={
@@ -304,9 +512,11 @@ export function SubmissionsTab(props: {
           >
             <Each of={props.page.items} key={(r) => `${r.platform}:${r.submission_id}:${r.problem_key}`}>
               {(row, idx) => {
-                const key = () => `${row().platform}:${row().problem_key}`;
+                const key = () => `${row().platform}:${row().submission_id}:${row().problem_key}`;
+                const probKey = () => `${row().platform}:${row().problem_key}`;
                 const libId = () => row().library_problem_id;
                 const readOnly = () => info().readOnly;
+                const isHovered = () => hoveredRowKey() === key();
                 return (
                   <View>
                     <If when={idx() > 0}>
@@ -314,8 +524,13 @@ export function SubmissionsTab(props: {
                     </If>
                     <View
                       testID={`submission-row-${row().platform}-${row().problem_key}`}
+                      onMouseEnter={() => hoveredRowKey.set(key())}
+                      onMouseLeave={() => {
+                        if (hoveredRowKey() === key()) hoveredRowKey.set(undefined);
+                      }}
+                      class="hover:bg-muted/40"
                       style={{
-                        minHeight: 44,
+                        minHeight: 42,
                         paddingTop: 8,
                         paddingBottom: 8,
                         paddingLeft: 14,
@@ -323,14 +538,17 @@ export function SubmissionsTab(props: {
                         flexDirection: "row",
                         alignItems: "center",
                         gap: 10,
+                        ...colorTransition(100),
                       }}
                     >
-                      {/* Platform */}
-                      <View style={{ width: 78, flexShrink: 0 }}>
-                        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-                          {platformDisplayName(row().platform)}
-                        </Text>
-                      </View>
+                      {/* Platform (hidden when only 1 platform exists) */}
+                      <If when={showPlatformCol()}>
+                        <View style={{ width: 76, flexShrink: 0 }}>
+                          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                            {platformDisplayName(row().platform, isEn())}
+                          </Text>
+                        </View>
+                      </If>
 
                       {/* Problem key + title */}
                       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
@@ -361,7 +579,7 @@ export function SubmissionsTab(props: {
                             style={{ fontSize: 11, numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-muted-foreground"
                           >
-                            {row().tags.slice(0, 4).join(" · ")}
+                            {row().tags.slice(0, 4).map((tag) => formatTagLabel(tag, isEn())).join("  ")}
                           </Text>
                         </If>
                       </View>
@@ -371,31 +589,28 @@ export function SubmissionsTab(props: {
                         <RatingBadge rating={row().normalized_rating ?? row().raw_rating} />
                       </View>
 
-                      {/* Verdict + attempt count in by-problem mode */}
-                      <View style={{ width: 92, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 5, flexShrink: 0 }}>
-                        <View
-                          class={verdictBadgeClass(row().verdict)}
-                          style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }}>
-                            {row().verdict}
-                          </Text>
+                      {/* Verdict + fixed-width attempt-count slot so verdict column stays 100% aligned */}
+                      <View
+                        tooltip={row().language ? tip(row().language!) : undefined}
+                        style={{ width: 92, flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}
+                      >
+                        <View style={{ flex: 1, flexDirection: "row", justifyContent: "flex-end" }}>
+                          <View
+                            class={verdictBadgeClass(row().verdict)}
+                            style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }}>
+                              {verdictDisplayLabel(row().verdict, isEn())}
+                            </Text>
+                          </View>
                         </View>
-                        <If when={props.filter.byProblem && row().attempt_count > 1}>
-                          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                            {`×${row().attempt_count}`}
-                          </Text>
-                        </If>
-                      </View>
-
-                      {/* Language */}
-                      <View style={{ width: 74, flexShrink: 0 }}>
-                        <Text
-                          style={{ fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis" }}
-                          class="text-muted-foreground"
-                        >
-                          {row().language || "—"}
-                        </Text>
+                        <View style={{ width: 28, alignItems: "flex-start", flexShrink: 0 }}>
+                          <If when={props.filter.byProblem && row().attempt_count > 1}>
+                            <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              {`×${row().attempt_count}`}
+                            </Text>
+                          </If>
+                        </View>
                       </View>
 
                       {/* Submitted time */}
@@ -405,29 +620,38 @@ export function SubmissionsTab(props: {
                         </Text>
                       </View>
 
-                      {/* Ingest / Open in Studio button */}
-                      <View style={{ width: 92, alignItems: "flex-end", flexShrink: 0 }}>
+                      {/* Subtle ingest / already-in-library action slot (no outlined button wall) */}
+                      <View style={{ width: 96, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, flexShrink: 0 }}>
                         <If
                           when={libId()}
                           else={
-                            <Btn
+                            <IconBtn
                               testID={`submission-ingest-${row().problem_key}`}
-                              label={t("training.submissions.ingest")}
                               icon="plus"
-                              variant="outline"
-                              disabled={readOnly() || ingestingKey() === key()}
+                              size={26}
+                              iconSize={14}
+                              tone={isHovered() ? "foreground" : "muted-foreground"}
+                              disabled={readOnly() || ingestingKey() === probKey()}
+                              tooltip={tip(t("training.submissions.ingest"))}
+                              style={{ opacity: isHovered() ? 1 : 0.45 }}
                               onPress={() => ingestRow(row())}
                             />
                           }
                         >
                           {(pid) => (
-                            <Btn
-                              testID={`submission-open-${row().problem_key}`}
-                              label={t("training.submissions.open")}
-                              icon="arrowRight"
-                              variant="ghost"
-                              onPress={() => openProblemStudio(pid(), false)}
-                            />
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                                {zhEn("已在题库", "In library")}
+                              </Text>
+                              <Text
+                                testID={`submission-open-${row().problem_key}`}
+                                onPress={() => openProblemEditorial(pid())}
+                                style={{ fontSize: 12, fontWeight: 500 }}
+                                class="text-primary hover:opacity-80"
+                              >
+                                {t("training.submissions.open")}
+                              </Text>
+                            </View>
                           )}
                         </If>
                       </View>

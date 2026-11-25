@@ -2,7 +2,7 @@
 // `text`, `markdown`, `table`, `svg` (via `resvg` PNG preview + Copy SVG + Save PNG),
 // `image` (PNG preview + Save PNG), and `graph` (read-only Canvas + open in graph-editor).
 
-import { Canvas, Clipboard, colorScheme, computed, Image, Text, View, type JSX } from "nsh";
+import { Canvas, Clipboard, computed, Image, Scroll, Text, View, type JSX } from "nsh";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Btn } from "../kit";
@@ -139,64 +139,280 @@ function MarkdownBlockView(props: { block: Extract<ToolOutputBlock, { type: "mar
   );
 }
 
+const CJK_RE = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]/;
+const PURE_NUMERIC_RE = /^[+-]?[\d,]+(?:\.\d+)?(?:e[+-]?\d+)?%?$/i;
+const ENGLISH_PROSE_RE = /[A-Za-z]{4,}\s+[A-Za-z]{4,}/;
+
+/** Returns true only for numeric, formula, code, or index cells — never for Chinese or English prose. */
+export function isMonoTableCell(raw: string): boolean {
+  const s = raw.trim();
+  if (!s) return false;
+  if (CJK_RE.test(s)) return false;
+  if (ENGLISH_PROSE_RE.test(s)) return false;
+  return true;
+}
+
+/** Estimates visual character units for a string (CJK ≈ 1.75× ASCII width). */
+function measureVisualUnits(raw: string): number {
+  let units = 0;
+  for (const ch of raw) {
+    units += CJK_RE.test(ch) ? 1.75 : 1;
+  }
+  return units;
+}
+
+interface ComputedColSpec {
+  align: "left" | "center" | "right";
+  fixedWidth?: number;
+  flexWeight: number;
+  extraRightPad: number;
+}
+
+/** Computes content-aware column widths, alignments, and inter-column padding for a table. */
+export function computeTableColumnSpecs(
+  headers: readonly string[],
+  rows: readonly (readonly string[])[],
+  explicitAlign?: readonly string[] | null,
+): ComputedColSpec[] {
+  const colCount = headers.length;
+  if (colCount === 0) return [];
+
+  const aligns: ("left" | "center" | "right")[] = [];
+  const maxUnits: number[] = [];
+  const isCompactNumeric: boolean[] = [];
+
+  for (let c = 0; c < colCount; c++) {
+    const header = String(headers[c] ?? "");
+    let maxU = measureVisualUnits(header);
+    let nonEmpty = 0;
+    let numericCount = 0;
+
+    for (const row of rows) {
+      const cell = String(row[c] ?? "").trim();
+      const u = measureVisualUnits(cell);
+      if (u > maxU) maxU = u;
+      if (cell.length > 0) {
+        nonEmpty++;
+        if (PURE_NUMERIC_RE.test(cell)) numericCount++;
+      }
+    }
+
+    const allNumeric = nonEmpty > 0 && numericCount === nonEmpty;
+    const explicit = explicitAlign?.[c];
+    const align: "left" | "center" | "right" =
+      explicit === "right" || explicit === "center" || explicit === "left"
+        ? explicit
+        : allNumeric
+          ? "right"
+          : "left";
+
+    aligns.push(align);
+    maxUnits.push(maxU);
+    isCompactNumeric.push(allNumeric && maxU <= 13);
+  }
+
+  // Only pin compact numeric columns to fixed width when at least one other column can flex.
+  const hasFlexibleCol = isCompactNumeric.some((compact) => !compact);
+
+  const specs: ComputedColSpec[] = [];
+  for (let c = 0; c < colCount; c++) {
+    const estPx = Math.ceil(maxUnits[c] * 7.6) + 12;
+    const nextAlign = c + 1 < colCount ? aligns[c + 1] : undefined;
+    // Extra breathing room when a right-aligned column meets a left-aligned column (e.g. LCP | 后缀).
+    const extraRightPad = aligns[c] === "right" && nextAlign === "left" ? 10 : 0;
+
+    if (hasFlexibleCol && isCompactNumeric[c]) {
+      specs.push({
+        align: aligns[c],
+        fixedWidth: Math.max(44, Math.min(116, estPx)) + extraRightPad,
+        flexWeight: 0,
+        extraRightPad,
+      });
+    } else {
+      specs.push({
+        align: aligns[c],
+        flexWeight: Math.max(60, estPx),
+        extraRightPad,
+      });
+    }
+  }
+
+  return specs;
+}
+
 function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table" }> }) {
-  const textAlignFor = (colIdx: number): "left" | "center" | "right" => {
-    const a = props.block.align?.[colIdx];
-    if (a === "right") return "right";
-    if (a === "center") return "center";
-    return "left";
+  const isWideMatrix = () => props.block.headers.length > 5;
+  const colSpecs = () =>
+    computeTableColumnSpecs(props.block.headers, props.block.rows, props.block.align);
+
+  const wideFirstColWidth = () => {
+    let maxU = measureVisualUnits(String(props.block.headers[0] ?? ""));
+    for (const row of props.block.rows) {
+      const u = measureVisualUnits(String(row[0] ?? ""));
+      if (u > maxU) maxU = u;
+    }
+    return Math.max(76, Math.min(120, Math.ceil(maxU * 7.6) + 14));
   };
 
-  return (
-    <BlockCard title={props.block.title}>
-      <View>
+  const renderTableInner = () => {
+    const wide = isWideMatrix();
+    const specs = wide ? [] : colSpecs();
+    const firstW = wide ? wideFirstColWidth() : 0;
+    return (
+      <View style={wide ? { minWidth: "100%", flexGrow: 1 } : { width: "100%" }}>
         <View
           class="bg-muted/30 border-b border-border"
-          style={{ flexDirection: "row", paddingLeft: 12, paddingRight: 12, paddingTop: 7, paddingBottom: 7, gap: 8 }}
+          style={{
+            flexDirection: "row",
+            width: "100%",
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 7,
+            paddingBottom: 7,
+            gap: wide ? 6 : 16,
+          }}
         >
           <Each of={props.block.headers} key="index">
-            {(header, idx) => (
-              <Text
-                style={{
-                  flex: 1,
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  textAlign: textAlignFor(idx()),
-                }}
-                class="text-muted-foreground"
-              >
-                {header()}
-              </Text>
-            )}
+            {(header, idx) => {
+              const i = idx();
+              if (wide) {
+                return (
+                  <Text
+                    style={
+                      i === 0
+                        ? {
+                            width: firstW,
+                            flexShrink: 0,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            textAlign: "left",
+                            numberOfLines: 1,
+                          }
+                        : {
+                            flexGrow: 1,
+                            flexShrink: 0,
+                            minWidth: 32,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            textAlign: "center",
+                            fontVariant: ["tabular-nums"],
+                            numberOfLines: 1,
+                          }
+                    }
+                    class="text-muted-foreground"
+                  >
+                    {header()}
+                  </Text>
+                );
+              }
+              const spec = specs[i] ?? { align: "left" as const, flexWeight: 100, extraRightPad: 0 };
+              return (
+                <Text
+                  style={{
+                    ...(spec.fixedWidth != null
+                      ? { width: spec.fixedWidth, flexShrink: 0 }
+                      : { flex: spec.flexWeight, minWidth: 0 }),
+                    paddingRight: spec.extraRightPad || undefined,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    textAlign: spec.align,
+                    numberOfLines: 1,
+                  }}
+                  class="text-muted-foreground"
+                >
+                  {header()}
+                </Text>
+              );
+            }}
           </Each>
         </View>
         <Each of={props.block.rows} key="index">
           {(row, rIdx) => (
             <View
               class={rIdx() + 1 < props.block.rows.length ? "border-b border-border" : undefined}
-              style={{ flexDirection: "row", paddingLeft: 12, paddingRight: 12, paddingTop: 7, paddingBottom: 7, gap: 8 }}
+              style={{
+                flexDirection: "row",
+                width: "100%",
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 7,
+                paddingBottom: 7,
+                gap: wide ? 6 : 16,
+              }}
             >
               <Each of={row()} key="index">
-                {(cell, cIdx) => (
-                  <Text
-                    style={{
-                      flex: 1,
-                      fontSize: 12,
-                      lineHeight: 17,
-                      fontFamily: MONO,
-                      fontVariant: ["tabular-nums"],
-                      textAlign: textAlignFor(cIdx()),
-                    }}
-                    class="text-foreground"
-                  >
-                    {cell()}
-                  </Text>
-                )}
+                {(cell, cIdx) => {
+                  const i = cIdx();
+                  const val = cell();
+                  const useMono = isMonoTableCell(val);
+                  if (wide) {
+                    return (
+                      <Text
+                        style={
+                          i === 0
+                            ? {
+                                width: firstW,
+                                flexShrink: 0,
+                                fontSize: 12,
+                                lineHeight: 17,
+                                fontFamily: useMono ? MONO : undefined,
+                                fontVariant: ["tabular-nums"],
+                                textAlign: "left",
+                                numberOfLines: 1,
+                              }
+                            : {
+                                flexGrow: 1,
+                                flexShrink: 0,
+                                minWidth: 32,
+                                fontSize: 12,
+                                lineHeight: 17,
+                                fontFamily: useMono ? MONO : undefined,
+                                fontVariant: ["tabular-nums"],
+                                textAlign: "center",
+                                numberOfLines: 1,
+                              }
+                        }
+                        class="text-foreground"
+                      >
+                        {val}
+                      </Text>
+                    );
+                  }
+                  const spec = specs[i] ?? { align: "left" as const, flexWeight: 100, extraRightPad: 0 };
+                  return (
+                    <Text
+                      style={{
+                        ...(spec.fixedWidth != null
+                          ? { width: spec.fixedWidth, flexShrink: 0 }
+                          : { flex: spec.flexWeight, minWidth: 0 }),
+                        paddingRight: spec.extraRightPad || undefined,
+                        fontSize: 12,
+                        lineHeight: 17,
+                        fontFamily: useMono ? MONO : undefined,
+                        fontVariant: ["tabular-nums"],
+                        textAlign: spec.align,
+                      }}
+                      class="text-foreground"
+                    >
+                      {val}
+                    </Text>
+                  );
+                }}
               </Each>
             </View>
           )}
         </Each>
       </View>
+    );
+  };
+
+  return (
+    <BlockCard title={props.block.title}>
+      <If when={isWideMatrix()} else={renderTableInner()}>
+        <Scroll horizontal style={{ width: "100%" }}>
+          {renderTableInner()}
+        </Scroll>
+      </If>
     </BlockCard>
   );
 }
@@ -224,6 +440,10 @@ function SvgBlockView(props: { block: Extract<ToolOutputBlock, { type: "svg" }> 
     }
   };
 
+  const natW = props.block.width ?? 640;
+  const natH = props.block.height ?? 420;
+  const displayH = Math.min(360, Math.max(180, Math.round((natH / Math.max(1, natW)) * 560)));
+
   return (
     <BlockCard
       title={props.block.title ?? "SVG"}
@@ -241,7 +461,7 @@ function SvgBlockView(props: { block: Extract<ToolOutputBlock, { type: "svg" }> 
         </View>
       }
     >
-      <View style={{ padding: 12, alignItems: "center", justifyContent: "center" }}>
+      <View style={{ padding: 12, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <If
           when={rendered().ok && rendered().pngBase64}
           else={
@@ -254,9 +474,11 @@ function SvgBlockView(props: { block: Extract<ToolOutputBlock, { type: "svg" }> 
             <Image
               src={`data:image/png;base64,${b64()}`}
               style={{
-                width: Math.min(props.block.width ?? 560, 680),
-                height: Math.min(props.block.height ?? 360, 420),
+                width: "100%",
+                maxWidth: Math.min(natW, 640),
+                height: displayH,
                 objectFit: "contain",
+                overflow: "hidden",
               }}
             />
           )}
@@ -287,13 +509,15 @@ function ImageBlockView(props: { block: Extract<ToolOutputBlock, { type: "image"
         <Btn size="sm" variant="outline" icon="fileDown" label={t("tools.savePng")} onPress={() => void savePng()} />
       }
     >
-      <View style={{ padding: 12, alignItems: "center", justifyContent: "center" }}>
+      <View style={{ padding: 12, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <Image
           src={`data:image/png;base64,${props.block.png_base64}`}
           style={{
-            width: Math.min(props.block.width ?? 560, 680),
-            height: Math.min(props.block.height ?? 360, 420),
+            width: "100%",
+            maxWidth: Math.min(props.block.width ?? 640, 640),
+            height: Math.min(props.block.height ?? 360, 380),
             objectFit: "contain",
+            overflow: "hidden",
           }}
         />
       </View>
@@ -304,7 +528,7 @@ function ImageBlockView(props: { block: Extract<ToolOutputBlock, { type: "image"
 function placePreviewNodes(nodes: readonly GraphNode[], w: number, h: number): { id: string; label: string; x: number; y: number; color?: string | null }[] {
   const n = nodes.length;
   if (n === 0) return [];
-  const pad = 32;
+  const pad = 36;
   const cx = w / 2;
   const cy = h / 2;
   const r = Math.max(30, Math.min(w, h) / 2 - pad);
@@ -355,7 +579,7 @@ function GraphBlockView(props: {
           <Btn
             testID="tool-open-in-graph-editor"
             size="sm"
-            variant="primary"
+            variant="outline"
             icon="arrowRight"
             label={t("tools.openInGraphEditor")}
             onPress={openInEditor}
@@ -373,21 +597,21 @@ function GraphBlockView(props: {
             borderColor: token("border"),
           }}
           draw={(cx, size) => {
-            const dark = colorScheme() === "dark";
             cx.clearRect(0, 0, size.width, size.height);
-            cx.fillStyle = dark ? "#18181b" : "#ffffff";
+            cx.fillStyle = token("card");
             cx.fillRect(0, 0, size.width, size.height);
 
             const placed = placePreviewNodes(props.block.nodes, size.width, size.height);
             const byId = new Map(placed.map((n) => [n.id, n]));
-            const strokeCol = dark ? "#94a3b8" : "#475569";
-            const textCol = dark ? "#f8fafc" : "#0f172a";
+            const strokeCol = token("secondary-foreground");
+            const textCol = token("foreground");
+            const nodeFill = token("muted");
             const nodeR = 15;
             const isDir = Boolean(props.block.directed);
 
             cx.strokeStyle = strokeCol;
             cx.lineWidth = 1.8;
-            cx.font = "11px JetBrains Mono, monospace";
+            cx.font = `11px ${MONO}`;
             cx.textAlign = "center";
             cx.textBaseline = "middle";
 
@@ -429,16 +653,46 @@ function GraphBlockView(props: {
               }
             }
 
-            cx.font = "600 12px JetBrains Mono, monospace";
+            const contrastTextForColor = (color: string, fallback: string): string => {
+              const s = color.trim();
+              let r: number | undefined;
+              let g: number | undefined;
+              let b: number | undefined;
+              const hex6 = /^#([0-9a-fA-F]{6})$/.exec(s);
+              if (hex6) {
+                r = parseInt(hex6[1].slice(0, 2), 16);
+                g = parseInt(hex6[1].slice(2, 4), 16);
+                b = parseInt(hex6[1].slice(4, 6), 16);
+              } else {
+                const hex3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+                if (hex3) {
+                  r = parseInt(hex3[1][0] + hex3[1][0], 16);
+                  g = parseInt(hex3[1][1] + hex3[1][1], 16);
+                  b = parseInt(hex3[1][2] + hex3[1][2], 16);
+                } else {
+                  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(s);
+                  if (rgb) {
+                    r = Number(rgb[1]);
+                    g = Number(rgb[2]);
+                    b = Number(rgb[3]);
+                  }
+                }
+              }
+              if (r === undefined || g === undefined || b === undefined) return fallback;
+              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+              return lum < 140 ? "#FAFAFA" : "#09090B";
+            };
+
+            cx.font = `600 12px ${MONO}`;
             for (const nd of placed) {
               cx.beginPath();
               cx.arc(nd.x, nd.y, nodeR, 0, Math.PI * 2);
-              cx.fillStyle = nd.color || (dark ? "#27272a" : "#dbeafe");
+              cx.fillStyle = nd.color || nodeFill;
               cx.fill();
               cx.strokeStyle = strokeCol;
               cx.lineWidth = 1.8;
               cx.stroke();
-              cx.fillStyle = nd.color ? "#0f172a" : textCol;
+              cx.fillStyle = nd.color ? contrastTextForColor(nd.color, textCol) : textCol;
               cx.fillText(nd.label, nd.x, nd.y);
             }
           }}
@@ -454,8 +708,17 @@ function GraphBlockView(props: {
 export function OutputRenderer(props: {
   blocks: readonly ToolOutputBlock[];
   summary?: string | null;
+  resultSeq?: number;
   graphEditorEnabled: boolean;
 }) {
+  const keyedBlocks = () => {
+    const seq = props.resultSeq ?? 0;
+    return props.blocks.map((block, idx) => ({
+      key: `${seq}:${idx}:${block.type}`,
+      block,
+    }));
+  };
+
   return (
     <View style={{ gap: 12 }}>
       <If when={Boolean(props.summary)}>
@@ -463,9 +726,9 @@ export function OutputRenderer(props: {
           {props.summary ?? ""}
         </Text>
       </If>
-      <Each of={props.blocks} key="index">
-        {(blk) => {
-          const b = blk();
+      <Each of={keyedBlocks()} key={(item) => item.key}>
+        {(item) => {
+          const b = item().block;
           switch (b.type) {
             case "text":
               return <TextBlockView block={b} />;

@@ -89,13 +89,13 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           }
           style={{
             height: 28,
-            maxWidth: 112,
-            paddingLeft: 8,
-            paddingRight: 6,
+            maxWidth: 96,
+            paddingLeft: 6,
+            paddingRight: 4,
             borderRadius: 6,
             flexDirection: "row",
             alignItems: "center",
-            gap: 4,
+            gap: 2,
             flexShrink: 0,
             transitionProperty: "colors",
             transitionDuration: ms(120),
@@ -103,12 +103,12 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           }}
         >
           <Text
-            style={{ fontSize: 13, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: 12.5, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={props.active ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.label}
           </Text>
-          <Chevron size={13} tone={props.active ? "foreground" : "muted-foreground"} />
+          <Chevron size={12} tone={props.active ? "foreground" : "muted-foreground"} />
         </View>
       }
     />
@@ -582,6 +582,50 @@ export function LibraryView(props: { active: boolean }) {
     return t("library.groupBy.packageStatus");
   };
 
+  const compactFilters = () => width() > 0 && width() < 660;
+
+  const moreFilterEntries = (): MenuEntry[] => {
+    const list: MenuEntry[] = [];
+    if (trainingEnabled()) {
+      list.push(
+        { id: "tr:", label: t("training.filter.all"), checked: trainingStatusFilter() === undefined },
+        { id: "tr:todo", label: t("training.status.todo"), checked: trainingStatusFilter() === "todo" },
+        { id: "tr:attempted", label: t("training.status.attempted"), checked: trainingStatusFilter() === "attempted" },
+        { id: "tr:ac", label: t("training.status.ac"), checked: trainingStatusFilter() === "ac" },
+        { id: "tr:upsolved", label: t("training.status.upsolved"), checked: trainingStatusFilter() === "upsolved" },
+        { id: "tr:none", label: t("training.status.none"), checked: trainingStatusFilter() === "none" },
+      );
+    }
+    if (facets().platforms.length > 0) {
+      if (list.length > 0) list.push({ separator: true, id: "sep-plat" });
+      list.push(
+        { id: "pl:", label: t("library.filter.allSources"), checked: platform() === undefined },
+        ...facets().platforms.map((p) => ({ id: `pl:${p}`, label: p, checked: platform() === p })),
+      );
+    }
+    if (list.length > 0) list.push({ separator: true, id: "sep-grp" });
+    list.push(
+      { id: "gb:none", label: t("library.groupBy.none"), checked: libraryGroupBy() === "none" },
+      { id: "gb:group", label: t("library.groupBy.group"), checked: libraryGroupBy() === "group" },
+      { id: "gb:rating", label: t("library.groupBy.rating"), checked: libraryGroupBy() === "rating" },
+      { id: "gb:platform", label: t("library.groupBy.platform"), checked: libraryGroupBy() === "platform" },
+      { id: "gb:contest", label: t("library.groupBy.contest"), checked: libraryGroupBy() === "contest" },
+      { id: "gb:package_status", label: t("library.groupBy.packageStatus"), checked: libraryGroupBy() === "package_status" },
+    );
+    return list;
+  };
+
+  const handleMoreFilterSelect = (id: string) => {
+    if (id.startsWith("tr:")) trainingStatusFilter.set(id.slice(3) || undefined);
+    else if (id.startsWith("pl:")) platform.set(id.slice(3) || undefined);
+    else if (id.startsWith("gb:")) setLibraryGroupBy(id.slice(3) as LibraryGroupBy);
+  };
+
+  const moreFilterActive = () =>
+    platform() !== undefined ||
+    (trainingEnabled() && trainingStatusFilter() !== undefined) ||
+    libraryGroupBy() !== "none";
+
   const rowClasses = computed(() => {
     const sel = selection().selectedIds;
     if (sel.size === 0) return [];
@@ -672,9 +716,9 @@ export function LibraryView(props: { active: boolean }) {
                 />
                 <View
                   style={{
-                    flexBasis: 200,
+                    flexBasis: 168,
                     flexShrink: 1,
-                    minWidth: 100,
+                    minWidth: 80,
                     height: 28,
                     borderRadius: 6,
                     borderWidth: 1,
@@ -747,26 +791,38 @@ export function LibraryView(props: { active: boolean }) {
                   entries={tierItems()}
                   onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
                 />
-                <FilterMenu
-                  label={platform() ?? t("library.filter.source")}
-                  active={platform() !== undefined}
-                  entries={platformItems()}
-                  onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
-                />
-                <If when={trainingEnabled()}>
+                <If
+                  when={!compactFilters()}
+                  else={
+                    <FilterMenu
+                      label={t("library.filter.more")}
+                      active={moreFilterActive()}
+                      entries={moreFilterEntries()}
+                      onSelect={handleMoreFilterSelect}
+                    />
+                  }
+                >
                   <FilterMenu
-                    label={trainingFilterLabel()}
-                    active={trainingStatusFilter() !== undefined}
-                    entries={trainingFilterItems()}
-                    onSelect={(id) => trainingStatusFilter.set(id || undefined)}
+                    label={platform() ?? t("library.filter.source")}
+                    active={platform() !== undefined}
+                    entries={platformItems()}
+                    onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
+                  />
+                  <If when={trainingEnabled()}>
+                    <FilterMenu
+                      label={trainingFilterLabel()}
+                      active={trainingStatusFilter() !== undefined}
+                      entries={trainingFilterItems()}
+                      onSelect={(id) => trainingStatusFilter.set(id || undefined)}
+                    />
+                  </If>
+                  <FilterMenu
+                    label={groupByLabel()}
+                    active={libraryGroupBy() !== "none"}
+                    entries={groupByItems()}
+                    onSelect={(id) => setLibraryGroupBy(id as LibraryGroupBy)}
                   />
                 </If>
-                <FilterMenu
-                  label={groupByLabel()}
-                  active={libraryGroupBy() !== "none"}
-                  entries={groupByItems()}
-                  onSelect={(id) => setLibraryGroupBy(id as LibraryGroupBy)}
-                />
                 <If when={filtered()}>
                   <Btn label={width() >= 660 ? t("common.clear") : undefined} icon="filterX" variant="ghost" tooltip={tip(t("library.filter.clear"))} onPress={clearFilters} style={{ flexShrink: 0 }} />
                 </If>
@@ -1013,7 +1069,18 @@ export function LibraryView(props: { active: boolean }) {
           >
             <If
               when={showBatchInspector()}
-              else={<If when={visibleSelected()}>{(id) => <ProblemInspector id={id()} active={props.active} groups={facets().groups} />}</If>}
+              else={
+                <If when={visibleSelected()}>
+                  {(id) => (
+                    <ProblemInspector
+                      id={id()}
+                      active={props.active}
+                      groups={facets().groups}
+                      trainingStatus={rows().find((r) => r.id === id())?.trainingStatus}
+                    />
+                  )}
+                </If>
+              }
             >
               <BatchInspector
                 selectedProblems={selectedProblemsList()}
@@ -1042,7 +1109,12 @@ export function LibraryView(props: { active: boolean }) {
 type Tab = "statements" | "editorial" | "code";
 
 /** The selected problem as it prints, with its sources, referencing contests, and actions. */
-function ProblemInspector(props: { id: string; active: boolean; groups: readonly { name: string; count: number }[] }) {
+function ProblemInspector(props: {
+  id: string;
+  active: boolean;
+  groups: readonly { name: string; count: number }[];
+  trainingStatus?: string | null;
+}) {
   const tab = signal<Tab>("statements");
   const solution = signal<string | undefined>(undefined);
   let canvas: CanvasController | undefined;
@@ -1105,6 +1177,30 @@ function ProblemInspector(props: { id: string; active: boolean; groups: readonly
   const moreEntries = (): MenuEntry[] => {
     const ro = readOnly();
     const curGroup = detail().group ?? null;
+    const curTraining = props.trainingStatus ?? "none";
+    const trainingEntries: MenuEntry[] = info().trainingEnabled
+      ? [
+          { separator: true as const, id: "sep-training" },
+          {
+            id: "training:ac",
+            label: t("library.menu.markAc"),
+            checked: curTraining === "ac",
+            disabled: ro,
+          },
+          {
+            id: "training:todo",
+            label: t("library.menu.markTodo"),
+            checked: curTraining === "todo",
+            disabled: ro,
+          },
+          {
+            id: "training:clear",
+            label: t("training.status.clearManual"),
+            icon: "x" as const,
+            disabled: ro || curTraining === "none",
+          },
+        ]
+      : [];
     const groupEntries: MenuEntry[] = [
       ...props.groups.map((g) => ({
         id: `group:${g.name}`,
@@ -1124,6 +1220,7 @@ function ProblemInspector(props: { id: string; active: boolean; groups: readonly
         : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
       { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: ro },
       { id: "add", label: t("library.menu.addToContest"), icon: "listPlus", disabled: ro },
+      ...trainingEntries,
       ...(groupEntries.length > 0 ? [{ separator: true as const, id: "sep-grp" }, ...groupEntries] : []),
       { separator: true, id: "sep-rev" },
       { id: "reveal", label: t("common.revealInFolder"), icon: "folderOpen" },
@@ -1274,7 +1371,12 @@ function ProblemInspector(props: { id: string; active: boolean; groups: readonly
                     }
                   } else if (id === "duplicate") dialog.set({ kind: "duplicateProblem", problemId: props.id });
                   else if (id === "add") dialog.set({ kind: "addToContest", problemId: props.id });
-                  else if (id === "group:__clear__") {
+                  else if (id.startsWith("training:")) {
+                    if (!readOnly()) {
+                      const res = preview.setTrainingStatus(props.id, id.slice("training:".length));
+                      if (res.ok) refresh();
+                    }
+                  } else if (id === "group:__clear__") {
                     const res = preview.batchSetGroup([props.id], null);
                     if (res.ok || res.succeeded > 0) refresh();
                   } else if (id.startsWith("group:")) {

@@ -1,12 +1,13 @@
 // Headless `index.js` tool runner: dynamically renders a form from `ToolSpec.inputs`
-// and displays structured `ToolExecutionResult` blocks through `OutputRenderer`.
+// with live debounced execution and displays structured `ToolExecutionResult` blocks
+// through `OutputRenderer`.
 
-import { effect, Scroll, signal, Text, View } from "nsh";
+import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { Input } from "nsh/base";
 import { t } from "../i18n";
-import { Btn } from "../kit";
+import { Segmented } from "../kit";
 import { preview } from "../store";
-import { MONO } from "../theme";
+import { cardShadow, MONO } from "../theme";
 import { OutputRenderer } from "./OutputRenderer";
 import {
   coerceToolInputs,
@@ -21,44 +22,117 @@ import {
 function FieldEditor(props: {
   field: ToolInputSpec;
   value: unknown;
-  onChange: (next: unknown) => void;
+  onChange: (next: unknown, immediate?: boolean) => void;
 }) {
   const kind = props.field.kind;
 
   if (kind === "boolean") {
-    const on = Boolean(props.value);
+    const isOn = () => Boolean(props.value);
     return (
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <View
+        testID={`tool-field-${props.field.name}`}
+        onPress={() => props.onChange(!isOn(), true)}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          paddingLeft: 10,
+          paddingRight: 10,
+          height: 32,
+          minWidth: 140,
+          borderRadius: 6,
+          borderWidth: 1,
+        }}
+        class={isOn() ? "border-border bg-accent" : "border-border bg-background hover:bg-muted"}
+      >
         <Text style={{ fontSize: 12.5 }} class="text-foreground">
           {props.field.label}
         </Text>
-        <Btn
-          size="sm"
-          variant={on ? "primary" : "outline"}
-          label={on ? t("tools.boolOn") : t("tools.boolOff")}
-          onPress={() => props.onChange(!on)}
-        />
+        <Text
+          testID={`tool-field-${props.field.name}-state`}
+          style={{ fontSize: 12, fontWeight: 500 }}
+          class={isOn() ? "text-foreground" : "text-muted-foreground"}
+        >
+          {isOn() ? t("tools.boolOn") : t("tools.boolOff")}
+        </Text>
       </View>
     );
   }
 
   if (kind === "select" && (props.field.options?.length ?? 0) > 0) {
-    const current = String(props.value ?? "");
+    const options = props.field.options ?? [];
+    const current = () => String(props.value ?? "");
+
+    if (options.length <= 5) {
+      const items = options.map((opt) => ({
+        value: opt,
+        label: opt,
+        testID: `tool-field-${props.field.name}-${opt}`,
+      }));
+      const maxLen = options.reduce((m, o) => Math.max(m, o.length), 2);
+      const itemWidth = Math.max(64, Math.min(120, maxLen * 9 + 20));
+      return (
+        <View style={{ gap: 5, width: "100%" }}>
+          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            {props.field.label}
+          </Text>
+          <Segmented
+            items={items}
+            value={current()}
+            itemWidth={itemWidth}
+            onChange={(val) => props.onChange(val, true)}
+          />
+        </View>
+      );
+    }
+
+    // Wrapping segmented pill track for larger option sets (e.g. 11 C++ data types)
     return (
-      <View style={{ gap: 5 }}>
+      <View style={{ gap: 5, width: "100%" }}>
         <Text style={{ fontSize: 12 }} class="text-muted-foreground">
           {props.field.label}
         </Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
-          <Each of={props.field.options ?? []} key={(o) => o}>
-            {(opt) => (
-              <Btn
-                size="sm"
-                variant={current === opt() ? "primary" : "outline"}
-                label={opt()}
-                onPress={() => props.onChange(opt())}
-              />
-            )}
+        <View
+          class="bg-muted border border-border"
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: 3,
+            padding: 3,
+            borderRadius: 8,
+          }}
+        >
+          <Each of={options} key={(o) => o}>
+            {(opt) => {
+              const active = () => current() === opt();
+              return (
+                <View
+                  testID={`tool-field-${props.field.name}-${opt()}`}
+                  onPress={() => props.onChange(opt(), true)}
+                  class={active() ? "bg-card" : "hover:bg-background/60"}
+                  style={{
+                    height: 24,
+                    paddingLeft: 9,
+                    paddingRight: 9,
+                    borderRadius: 5,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: active() ? cardShadow() : undefined,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontFamily: MONO,
+                    }}
+                    class={active() ? "text-foreground" : "text-secondary-foreground"}
+                  >
+                    {opt()}
+                  </Text>
+                </View>
+              );
+            }}
           </Each>
         </View>
       </View>
@@ -67,16 +141,17 @@ function FieldEditor(props: {
 
   const multiline = kind === "textarea";
   return (
-    <View style={{ gap: 5 }}>
+    <View style={{ gap: 5, flexGrow: 1, minWidth: multiline ? "100%" : 160 }}>
       <Text style={{ fontSize: 12 }} class="text-muted-foreground">
         {props.field.label}
       </Text>
       <Input
+        testID={`tool-field-${props.field.name}`}
         value={props.value == null ? "" : String(props.value)}
         multiline={multiline}
         autoCapitalize="none"
         autoCorrect={false}
-        onChange={(e) => props.onChange(e.value)}
+        onChange={(e) => props.onChange(e.value, false)}
         class="border border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring"
         style={{
           borderRadius: 6,
@@ -84,7 +159,7 @@ function FieldEditor(props: {
           paddingRight: 10,
           paddingTop: multiline ? 8 : 5,
           paddingBottom: multiline ? 8 : 5,
-          minHeight: multiline ? 110 : 32,
+          minHeight: multiline ? 100 : 32,
           fontSize: 12.5,
           fontFamily: kind === "number" || multiline ? MONO : undefined,
         }}
@@ -105,17 +180,21 @@ export function HeadlessToolRunner(props: {
       : (props.group.tools[0]?.id ?? ""),
   );
   const formValues = signal<Record<string, unknown>>({});
-  const running = signal(false);
   const result = signal<ToolExecutionResult | undefined>(undefined);
+  const resultSeq = signal(0);
   const errorText = signal<string | undefined>(undefined);
   let runSeq = 0;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  cleanup(() => {
+    if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+  });
 
   const activeTool = (): ToolSpec | undefined =>
     props.group.tools.find((x) => x.id === selectedToolId()) ?? props.group.tools[0];
 
   async function execute(tool: ToolSpec, values: Record<string, unknown>) {
     const seq = ++runSeq;
-    running.set(true);
     errorText.set(undefined);
     try {
       const coerced = coerceToolInputs(tool, values);
@@ -128,17 +207,44 @@ export function HeadlessToolRunner(props: {
       if (!res.ok) {
         errorText.set(res.error ?? t("tools.runFailed"));
         result.set(undefined);
+        resultSeq.update((s) => s + 1);
         return;
       }
       const parsed = parseJsonReport<ToolExecutionResult>(res, { blocks: [] });
       result.set(parsed);
+      resultSeq.update((s) => s + 1);
     } catch (err) {
       if (seq !== runSeq) return;
       errorText.set(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (seq === runSeq) running.set(false);
     }
   }
+
+  function scheduleRun(tool: ToolSpec, values: Record<string, unknown>, immediate: boolean) {
+    if (debounceTimer !== undefined) {
+      clearTimeout(debounceTimer);
+      debounceTimer = undefined;
+    }
+    if (immediate) {
+      void execute(tool, values);
+      return;
+    }
+    debounceTimer = setTimeout(() => {
+      debounceTimer = undefined;
+      void execute(tool, values);
+    }, 120);
+  }
+
+  effect(() => {
+    const tools = props.group.tools;
+    const cur = untracked(() => selectedToolId());
+    if (!tools.some((x) => x.id === cur)) {
+      const next =
+        props.initialToolId && tools.some((x) => x.id === props.initialToolId)
+          ? props.initialToolId
+          : (tools[0]?.id ?? "");
+      selectedToolId.set(next);
+    }
+  });
 
   effect(() => {
     const tool = activeTool();
@@ -149,94 +255,88 @@ export function HeadlessToolRunner(props: {
         ? { ...defaults, ...(props.initialInputs as Record<string, unknown>) }
         : defaults;
     formValues.set(merged);
-    void execute(tool, merged);
+    scheduleRun(tool, merged, true);
   });
 
-  const updateField = (name: string, next: unknown) => {
-    formValues.update((prev) => ({ ...prev, [name]: next }));
+  const updateField = (name: string, next: unknown, immediate = false) => {
+    const nextValues = { ...formValues(), [name]: next };
+    formValues.set(nextValues);
+    const tool = activeTool();
+    if (tool) {
+      scheduleRun(tool, nextValues, immediate);
+    }
+  };
+
+  const toolTabItems = () =>
+    props.group.tools.map((tool) => ({
+      value: tool.id,
+      label: tool.name,
+      testID: `tool-tab-${tool.id}`,
+    }));
+
+  const toolTabWidth = () => {
+    const maxLen = props.group.tools.reduce((m, x) => Math.max(m, x.name.length), 4);
+    return Math.max(108, Math.min(156, maxLen * 14 + 24));
   };
 
   return (
-    <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
-      {/* Left parameter panel */}
+    <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 16, gap: 14 }}>
+      {/* Sub-tool switcher via host Segmented */}
+      <If when={props.group.tools.length > 1}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Segmented
+            items={toolTabItems()}
+            value={selectedToolId()}
+            itemWidth={toolTabWidth()}
+            onChange={(id) => selectedToolId.set(id)}
+          />
+        </View>
+      </If>
+
+      {/* Stacked parameter form card */}
       <View
-        class="bg-card border-r border-border"
-        style={{ width: 310, flexShrink: 0, flexDirection: "column" }}
+        class="bg-card border border-border"
+        style={{
+          padding: 14,
+          borderRadius: 10,
+          gap: 12,
+          boxShadow: cardShadow(),
+        }}
       >
-        <If when={props.group.tools.length > 1}>
-          <View
-            class="border-b border-border"
-            style={{ padding: 10, flexDirection: "row", flexWrap: "wrap", gap: 6 }}
-          >
-            <Each of={props.group.tools} key={(tool) => tool.id}>
-              {(tool) => (
-                <Btn
-                  size="sm"
-                  variant={selectedToolId() === tool().id ? "primary" : "outline"}
-                  label={tool().name}
-                  onPress={() => selectedToolId.set(tool().id)}
-                />
-              )}
-            </Each>
-          </View>
-        </If>
-
-        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 12 }}>
-          <If when={Boolean(activeTool()?.description)}>
-            <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
-              {activeTool()?.description ?? ""}
-            </Text>
-          </If>
-
-          <Each of={activeTool()?.inputs ?? []} key={(f) => f.name}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+          <Each of={activeTool()?.inputs ?? []} key={(f) => `${selectedToolId()}:${f.name}`}>
             {(field) => (
               <FieldEditor
                 field={field()}
                 value={formValues()[field().name]}
-                onChange={(next) => updateField(field().name, next)}
+                onChange={(next, immediate) => updateField(field().name, next, immediate)}
               />
             )}
           </Each>
-
-          <View style={{ paddingTop: 4 }}>
-            <Btn
-              testID="tool-run-btn"
-              variant="primary"
-              icon="play"
-              label={running() ? t("tools.running") : t("tools.run")}
-              disabled={running() || !activeTool()}
-              onPress={() => {
-                const tool = activeTool();
-                if (tool) void execute(tool, formValues());
-              }}
-              style={{ width: "100%" }}
-            />
-          </View>
-        </Scroll>
+        </View>
       </View>
 
-      {/* Right output panel */}
-      <Scroll style={{ flex: 1 }} contentStyle={{ padding: 16, gap: 12 }}>
-        <If when={Boolean(errorText())}>
-          <View
-            class="bg-card border border-destructive/40"
-            style={{ padding: 12, borderRadius: 8 }}
-          >
-            <Text style={{ fontSize: 12.5 }} class="text-destructive">
-              {errorText()}
-            </Text>
-          </View>
-        </If>
-        <If when={result()}>
-          {(res) => (
-            <OutputRenderer
-              blocks={res().blocks}
-              summary={res().summary}
-              graphEditorEnabled={props.graphEditorEnabled}
-            />
-          )}
-        </If>
-      </Scroll>
-    </View>
+      {/* Live output area */}
+      <If when={Boolean(errorText())}>
+        <View
+          class="bg-card border border-destructive/40"
+          style={{ padding: 12, borderRadius: 8 }}
+        >
+          <Text style={{ fontSize: 12.5 }} class="text-destructive">
+            {errorText()}
+          </Text>
+        </View>
+      </If>
+      <If when={result()}>
+        {(res) => (
+          <OutputRenderer
+            blocks={res().blocks}
+            summary={res().summary}
+            resultSeq={resultSeq()}
+            graphEditorEnabled={props.graphEditorEnabled}
+          />
+        )}
+      </If>
+    </Scroll>
   );
 }

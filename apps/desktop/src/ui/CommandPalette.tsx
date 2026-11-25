@@ -147,48 +147,49 @@ function actions(): Action[] {
     { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];
 
-  // Dynamically append enabled plugin commands matching the current context.
+  // Dynamically collect enabled plugin commands matching the current context.
   void pluginsRevision();
+  const inTools = !inStudio && space() === "tools";
   const cmdContext = target?.target === "problem" ? "problem" : target?.target === "contest" ? "contest" : "global";
   const pluginCmds = parseJsonReport<RegisteredPluginCommand[]>(
     typeof preview.pluginListCommands === "function" ? preview.pluginListCommands(cmdContext) : undefined,
     [],
   );
-  for (const reg of pluginCmds) {
-    list.push({
-      id: `a:plugin:${reg.plugin_id}:${reg.command.id}`,
-      icon: "sparkles",
-      label: reg.command.title,
-      keywords: [reg.plugin_id, reg.plugin_name, reg.command.id, "plugin", "tool", "插件", "工具"],
-      run: () => {
-        const ctxPayload: Record<string, unknown> = { context: cmdContext };
-        if (target?.target === "problem") ctxPayload.problem_id = target.id;
-        else if (target?.target === "contest") ctxPayload.contest_id = target.id;
-        else if (selectedProblem()) ctxPayload.problem_id = selectedProblem();
-        void preview
-          .pluginRunCommand(reg.plugin_id, reg.command.id, JSON.stringify(ctxPayload))
-          .then((res) => {
-            if (!res.ok) {
-              showToast({ tone: "issues", text: res.error ?? t("tools.commandFailed") });
-              return;
-            }
-            const action = parseJsonReport<PluginCommandAction>(res, { type: "none" });
-            if (action.type === "open_tool") {
-              openToolPlugin(action.plugin_id, {
-                toolId: action.tool_id ?? undefined,
-                payload: action.initial_inputs,
-              });
-            } else if (action.type === "message") {
-              showToast({ tone: "info", text: action.text });
-            } else if (action.type === "tool_result") {
-              showToast({ tone: "success", text: action.result.summary ?? reg.command.title });
-            }
-          });
-      },
-    });
-  }
+  const pluginActions: Action[] = pluginCmds.map((reg) => ({
+    id: `a:plugin:${reg.plugin_id}:${reg.command.id}`,
+    icon: "sparkles",
+    label: reg.command.title,
+    keywords: [reg.plugin_id, reg.plugin_name, reg.command.id, "plugin", "tool", "插件", "工具"],
+    run: () => {
+      const ctxPayload: Record<string, unknown> = { context: cmdContext };
+      if (target?.target === "problem") ctxPayload.problem_id = target.id;
+      else if (target?.target === "contest") ctxPayload.contest_id = target.id;
+      else if (selectedProblem()) ctxPayload.problem_id = selectedProblem();
+      void preview
+        .pluginRunCommand(reg.plugin_id, reg.command.id, JSON.stringify(ctxPayload))
+        .then((res) => {
+          if (!res.ok) {
+            showToast({ tone: "issues", text: res.error ?? t("tools.commandFailed") });
+            return;
+          }
+          const action = parseJsonReport<PluginCommandAction>(res, { type: "none" });
+          if (action.type === "open_tool") {
+            openToolPlugin(action.plugin_id, {
+              toolId: action.tool_id ?? undefined,
+              payload: action.initial_inputs,
+            });
+          } else if (action.type === "message") {
+            showToast({ tone: "info", text: action.text });
+          } else if (action.type === "tool_result") {
+            showToast({ tone: "success", text: action.result.summary ?? reg.command.title });
+          }
+        });
+    },
+  }));
 
-  return list.filter((a) => !a.when || a.when());
+  const builtins = list.filter((a) => !a.when || a.when());
+  // In the Tools space, sort tool/plugin commands to the very top of the palette.
+  return inTools ? [...pluginActions, ...builtins] : [...builtins, ...pluginActions];
 }
 
 /** Top breathing room below the title bar so the palette never touches the window's top edge. */
@@ -226,7 +227,11 @@ function PaletteBody() {
     return preview.fuzzyJump(query().trim(), activeContest());
   });
 
-  const built = computed(() => buildPaletteItems(query(), jumps(), actions(), activeContest()));
+  const built = computed(() =>
+    buildPaletteItems(query(), jumps(), actions(), activeContest(), {
+      prioritizeActions: !studio() && space() === "tools",
+    }),
+  );
 
   const items = computed<CommandItem[]>(() =>
     built().items.map((x) => ({

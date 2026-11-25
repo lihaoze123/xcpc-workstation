@@ -1,6 +1,6 @@
 // Desktop Plugin UI SDK (`ui.js`, Obsidian / VS Code trust model).
-// Injects NSH primitives, styled `Button` / `Input` / reactive `If`, theme tokens,
-// clipboard, toast, and Rust Core / `resvg` hooks into `ui.js` plugins.
+// Injects NSH primitives, reactive host design-system components (`Btn`, `Segmented`,
+// `Chip`, `Input`, `If`), theme tokens, clipboard, toast, and Rust Core / `resvg` hooks.
 
 import {
   Canvas,
@@ -11,35 +11,95 @@ import {
   Scroll,
   signal,
   Text,
+  untracked,
   View,
+  type ImageStyle,
   type JSX,
   type TextStyle,
   type ViewStyle,
 } from "nsh";
 import { Input as NshInput } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
+import { Icon, type IconName, type IconTone } from "../Icon";
+import { Btn, Chip, Segmented } from "../kit";
 import { preview } from "../store";
 import { token } from "../theme";
 import { showToast, type ToastTone } from "../Toast";
 import { BUILTIN_UI_MODULES } from "./builtinUi";
-import type { ToolExecutionResult } from "./types";
+import { OutputRenderer } from "./OutputRenderer";
+import type { ToolExecutionResult, ToolOutputBlock } from "./types";
+
+export type MaybeAccessor<T> = T | (() => T);
+
+function resolve<T>(v: MaybeAccessor<T>): T {
+  return typeof v === "function" ? (v as () => T)() : v;
+}
+
+function resolveTextChildren(ch: unknown): string {
+  if (typeof ch === "function") return resolveTextChildren((ch as () => unknown)());
+  if (Array.isArray(ch)) return ch.map((item) => resolveTextChildren(item)).join("");
+  if (ch === null || ch === undefined || typeof ch === "boolean") return "";
+  return String(ch);
+}
+
+export type SdkButtonVariant = "default" | "primary" | "outline" | "destructive" | "danger" | "ghost";
 
 export interface PluginButtonProps {
-  variant?: "default" | "outline" | "destructive" | "ghost";
+  variant?: MaybeAccessor<SdkButtonVariant>;
   size?: "sm" | "md";
-  disabled?: boolean;
+  icon?: MaybeAccessor<IconName | undefined>;
+  disabled?: MaybeAccessor<boolean>;
   onPress?: () => void;
-  style?: ViewStyle;
-  children?: unknown;
+  style?: MaybeAccessor<ViewStyle>;
+  textStyle?: MaybeAccessor<TextStyle>;
+  testID?: string;
+  children?: MaybeAccessor<unknown>;
+}
+
+export interface PluginIconProps {
+  name: MaybeAccessor<IconName>;
+  size?: number;
+  tone?: MaybeAccessor<IconTone | undefined>;
+  style?: MaybeAccessor<ImageStyle | undefined>;
+}
+
+export interface PluginOutputProps {
+  blocks: MaybeAccessor<readonly ToolOutputBlock[]>;
+  summary?: MaybeAccessor<string | null | undefined>;
+  resultSeq?: MaybeAccessor<number | undefined>;
+}
+
+export interface PluginSegmentedItem {
+  value: string;
+  label: string;
+  testID?: string;
+}
+
+export interface PluginSegmentedProps {
+  items: MaybeAccessor<readonly PluginSegmentedItem[]>;
+  value: MaybeAccessor<string>;
+  onChange: (value: string) => void;
+  itemWidth?: number;
+  underline?: boolean;
+  disabled?: MaybeAccessor<boolean>;
+}
+
+export interface PluginChipProps {
+  label: MaybeAccessor<string>;
+  active?: MaybeAccessor<boolean>;
+  onPress?: () => void;
+  maxWidth?: ViewStyle["maxWidth"];
 }
 
 export interface PluginInputProps {
-  value?: string;
-  placeholder?: string;
+  value?: MaybeAccessor<string>;
+  placeholder?: MaybeAccessor<string>;
   multiline?: boolean;
+  disabled?: MaybeAccessor<boolean>;
   onChangeText?: (text: string) => void;
   onChange?: (e: { value: string }) => void;
-  style?: TextStyle;
+  style?: MaybeAccessor<TextStyle>;
+  testID?: string;
 }
 
 export interface PluginIfProps {
@@ -53,14 +113,19 @@ export interface PluginUiSdk {
   signal: typeof signal;
   computed: typeof computed;
   effect: typeof effect;
+  untracked: typeof untracked;
   ui: {
-    View: typeof View;
-    Text: typeof Text;
+    View: (props: Record<string, unknown>) => JSX.Element;
+    Text: (props: Record<string, unknown>) => JSX.Element;
     Scroll: typeof Scroll;
     Canvas: typeof Canvas;
     Button: (props: PluginButtonProps) => JSX.Element;
+    Icon: (props: PluginIconProps) => JSX.Element;
+    Segmented: (props: PluginSegmentedProps) => JSX.Element;
+    Chip: (props: PluginChipProps) => JSX.Element;
     Input: (props: PluginInputProps) => JSX.Element;
     If: (props: PluginIfProps) => JSX.Element;
+    Output: (props: PluginOutputProps) => JSX.Element;
   };
   token: typeof token;
   colorScheme: typeof colorScheme;
@@ -85,60 +150,162 @@ function flattenChildren(raw: unknown[]): unknown[] {
   return out;
 }
 
-/** Styled button adapter matching the `ui.js` Plugin SDK contract (`default | outline | destructive | ghost`). */
-export function SdkButton(props: PluginButtonProps): JSX.Element {
-  const variant = props.variant ?? "default";
-  const sm = (props.size ?? "md") === "sm";
-  const bgClass =
-    variant === "default"
-      ? "bg-primary hover:bg-sidebar-primary active:opacity-90"
-      : variant === "destructive"
-        ? "bg-chart-5 hover:opacity-90 active:opacity-80"
-        : variant === "ghost"
-          ? "hover:bg-muted active:bg-accent"
-          : "border border-border bg-card hover:bg-muted active:bg-accent";
-  const textClass =
-    variant === "default" || variant === "destructive" ? "text-primary-foreground" : "text-foreground";
-  const isPrimitive = typeof props.children === "string" || typeof props.children === "number";
+function mapButtonVariant(v: SdkButtonVariant | undefined): "primary" | "outline" | "ghost" | "danger" {
+  switch (v) {
+    case "default":
+    case "primary":
+      return "primary";
+    case "destructive":
+    case "danger":
+      return "danger";
+    case "ghost":
+      return "ghost";
+    default:
+      return "outline";
+  }
+}
 
+/** Reactive View adapter allowing `style`, `class`, `disabled`, and `children` to be getter functions. */
+export function SdkView(props: Record<string, unknown>): JSX.Element {
+  const rest: Record<string, unknown> = {};
+  for (const k of Object.keys(props)) {
+    if (k !== "style" && k !== "class" && k !== "disabled" && k !== "children") {
+      rest[k] = props[k];
+    }
+  }
   return (
     <View
-      disabled={props.disabled}
-      onPress={() => {
-        if (!props.disabled) props.onPress?.();
-      }}
-      class={bgClass}
-      style={{
-        height: sm ? 28 : 32,
-        paddingLeft: sm ? 10 : 12,
-        paddingRight: sm ? 10 : 12,
-        borderRadius: 6,
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "row",
-        gap: 6,
-        opacity: props.disabled ? 0.5 : 1,
-        ...props.style,
-      }}
+      {...rest}
+      style={resolve(props.style as MaybeAccessor<ViewStyle | undefined>)}
+      class={resolve(props.class as MaybeAccessor<string | undefined>)}
+      disabled={resolve(props.disabled as MaybeAccessor<boolean | undefined>)}
     >
-      {isPrimitive ? (
-        <Text style={{ fontSize: sm ? 12 : 13, fontWeight: 500 }} class={textClass}>
-          {String(props.children)}
-        </Text>
-      ) : (
-        (props.children as JSX.Element)
-      )}
+      {(typeof props.children === "function" ? (props.children as () => unknown)() : props.children) as JSX.Element}
     </View>
   );
 }
 
-/** Styled text input adapter bridging `onChangeText` to NSH's `Input` `onChange`. */
+/** Reactive Text adapter allowing `style`, `class`, and text `children` to be getter functions. */
+export function SdkText(props: Record<string, unknown>): JSX.Element {
+  const rest: Record<string, unknown> = {};
+  for (const k of Object.keys(props)) {
+    if (k !== "style" && k !== "class" && k !== "children") {
+      rest[k] = props[k];
+    }
+  }
+  return (
+    <Text
+      {...rest}
+      style={resolve(props.style as MaybeAccessor<TextStyle | undefined>)}
+      class={resolve(props.class as MaybeAccessor<string | undefined>)}
+    >
+      {resolveTextChildren(props.children)}
+    </Text>
+  );
+}
+
+/** Styled button adapter backed by host `Btn`, supporting reactive `variant`, `disabled`, `style`, and `children`. */
+export function SdkButton(props: PluginButtonProps): JSX.Element {
+  const renderBtn = (variant: "primary" | "outline" | "ghost" | "danger") => {
+    const ch = () => resolve(props.children);
+    const isPrim = () => {
+      const c = ch();
+      return typeof c === "string" || typeof c === "number";
+    };
+    return (
+      <Btn
+        testID={props.testID}
+        variant={variant}
+        size={props.size ?? "sm"}
+        icon={resolve(props.icon)}
+        disabled={Boolean(resolve(props.disabled))}
+        onPress={props.onPress}
+        style={resolve(props.style)}
+        textStyle={resolve(props.textStyle)}
+        label={isPrim() ? String(ch()) : undefined}
+      >
+        {isPrim() ? undefined : (ch() as JSX.Element)}
+      </Btn>
+    );
+  };
+
+  if (typeof props.variant === "function") {
+    return (
+      <Each of={[mapButtonVariant(resolve(props.variant))]} key={(v) => v}>
+        {(v) => renderBtn(v())}
+      </Each>
+    );
+  }
+  return renderBtn(mapButtonVariant(props.variant));
+}
+
+/** Host `Icon` adapter exposing Lucide line icons to `ui.js` plugins. */
+export function SdkIcon(props: PluginIconProps): JSX.Element {
+  return (
+    <Icon
+      name={resolve(props.name)}
+      size={props.size}
+      tone={resolve(props.tone)}
+      style={resolve(props.style)}
+    />
+  );
+}
+
+/** Host `Segmented` adapter (light gray track + white active pill) for plugin option groups. */
+export function SdkSegmented(props: PluginSegmentedProps): JSX.Element {
+  const items = () => resolve(props.items);
+  const computedWidth = () => {
+    if (props.itemWidth) return props.itemWidth;
+    const maxLen = items().reduce((m, it) => Math.max(m, it.label.length), 2);
+    return Math.max(54, Math.min(116, maxLen * 14 + 20));
+  };
+  return (
+    <Segmented
+      items={items()}
+      value={resolve(props.value)}
+      onChange={props.onChange}
+      itemWidth={computedWidth()}
+      underline={props.underline}
+      disabled={Boolean(resolve(props.disabled))}
+    />
+  );
+}
+
+/** Host `Chip` adapter supporting reactive `label` and `active` state. */
+export function SdkChip(props: PluginChipProps): JSX.Element {
+  if (typeof props.active === "function") {
+    return (
+      <Each of={[Boolean(resolve(props.active))]} key={(a) => (a ? "1" : "0")}>
+        {(a) => (
+          <Chip
+            label={resolve(props.label)}
+            active={a()}
+            onPress={props.onPress}
+            maxWidth={props.maxWidth}
+          />
+        )}
+      </Each>
+    );
+  }
+  return (
+    <Chip
+      label={resolve(props.label)}
+      active={Boolean(props.active)}
+      onPress={props.onPress}
+      maxWidth={props.maxWidth}
+    />
+  );
+}
+
+/** Styled text input adapter bridging `onChangeText` to NSH's `Input` `onChange`, with reactive props. */
 export function SdkInput(props: PluginInputProps): JSX.Element {
   const multiline = Boolean(props.multiline);
   return (
     <NshInput
-      value={props.value ?? ""}
-      placeholder={props.placeholder}
+      testID={props.testID}
+      value={resolve(props.value) ?? ""}
+      placeholder={resolve(props.placeholder)}
+      disabled={Boolean(resolve(props.disabled))}
       multiline={multiline}
       autoCapitalize="none"
       autoCorrect={false}
@@ -155,20 +322,21 @@ export function SdkInput(props: PluginInputProps): JSX.Element {
         paddingBottom: multiline ? 8 : 4,
         minHeight: multiline ? 120 : 32,
         fontSize: 13,
-        ...props.style,
+        ...resolve(props.style),
       }}
     />
   );
 }
 
-/** Reactive conditional container supporting `when` as a value or thunk, and `children` as an element or reactive render thunk. */
+/** Reactive conditional container supporting `when` as a value or thunk, and `children` as an element or render thunk. */
 export function SdkIf(props: PluginIfProps): JSX.Element {
-  const cond = () => (typeof props.when === "function" ? Boolean((props.when as () => unknown)()) : Boolean(props.when));
+  const condVal = () => (typeof props.when === "function" ? (props.when as () => unknown)() : props.when);
   let seq = 0;
   const rendered = computed<{ key: number; el: JSX.Element } | null>(() => {
-    if (!cond()) return null;
+    const val = condVal();
+    if (!val) return null;
     const ch = props.children;
-    const el = typeof ch === "function" ? (ch as () => JSX.Element)() : (ch as JSX.Element);
+    const el = untracked(() => (typeof ch === "function" ? (ch as (v: unknown) => JSX.Element)(val) : (ch as JSX.Element)));
     seq += 1;
     return { key: seq, el };
   });
@@ -178,6 +346,18 @@ export function SdkIf(props: PluginIfProps): JSX.Element {
         {(item) => item().el}
       </Each>
     </If>
+  );
+}
+
+/** Host `OutputRenderer` adapter so `ui.js` plugins share identical table widths, spacing, and typography. */
+export function SdkOutput(props: PluginOutputProps): JSX.Element {
+  return (
+    <OutputRenderer
+      blocks={resolve(props.blocks) ?? []}
+      summary={resolve(props.summary)}
+      resultSeq={resolve(props.resultSeq)}
+      graphEditorEnabled={false}
+    />
   );
 }
 
@@ -211,14 +391,19 @@ export function createPluginUiSdk(opts: CreatePluginSdkOptions): PluginUiSdk {
     signal,
     computed,
     effect,
+    untracked,
     ui: {
-      View,
-      Text,
+      View: SdkView,
+      Text: SdkText,
       Scroll,
       Canvas,
       Button: SdkButton,
+      Icon: SdkIcon,
+      Segmented: SdkSegmented,
+      Chip: SdkChip,
       Input: SdkInput,
       If: SdkIf,
+      Output: SdkOutput,
     },
     token,
     colorScheme,

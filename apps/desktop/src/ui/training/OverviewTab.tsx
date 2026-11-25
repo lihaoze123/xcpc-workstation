@@ -1,17 +1,18 @@
 // Training space View 1: Overview dashboard.
-// Global time window selector, platform Rating cards, AC/submission/streak KPI cards,
-// dual-mode annual heatmap, Rating trajectory, P75/P90 difficulty trend, and
-// difficulty-bucket + high-difficulty tag distributions with click-to-drilldown.
+// Inline empty-state onboarding when unconfigured, global time window selector with scope caption,
+// platform Rating cards + 3 focused KPI cards (Period Solved, Streak, Today),
+// dual-mode annual heatmap, Rating trajectory, difficulty trend, and distributions with drilldown.
 
-import { Scroll, Text, View } from "nsh";
+import { computed, Scroll, Text, View } from "nsh";
 import { t } from "../i18n";
-import { Btn } from "../kit";
+import { Segmented } from "../kit";
 import { ratingTier } from "../logic";
-import { goSettings } from "../store";
 import { cardShadow, tierColor } from "../theme";
 import { DifficultyTrendCard } from "./DifficultyTrendCard";
 import { DistributionsRow } from "./DistributionsRow";
 import { HeatmapCard } from "./HeatmapCard";
+import { zhEn } from "./locale";
+import { OnboardingEmptyState, type OnboardingOjSource } from "./OnboardingEmptyState";
 import { RatingChartCard } from "./RatingChartCard";
 import {
   platformDisplayName,
@@ -20,15 +21,9 @@ import {
   type TrainingDashboardData,
 } from "./types";
 
-const WINDOWS: readonly { value: TimeWindow; labelKey: "30d" | "90d" | "year" | "all" }[] = [
-  { value: "30d", labelKey: "30d" },
-  { value: "90d", labelKey: "90d" },
-  { value: "year", labelKey: "year" },
-  { value: "all", labelKey: "all" },
-];
-
 function KpiCard(props: {
   label: string;
+  windowBadge?: string;
   value: string;
   sub?: string;
   valueColor?: string;
@@ -40,7 +35,7 @@ function KpiCard(props: {
       class="bg-card border border-border"
       style={{
         flex: 1,
-        minWidth: 148,
+        minWidth: 160,
         borderRadius: 10,
         paddingTop: 12,
         paddingBottom: 12,
@@ -50,9 +45,21 @@ function KpiCard(props: {
         boxShadow: cardShadow(),
       }}
     >
-      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-        {props.label}
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+          {props.label}
+        </Text>
+        <If when={props.windowBadge}>
+          <View
+            class="bg-muted"
+            style={{ height: 17, paddingLeft: 5, paddingRight: 5, borderRadius: 4, justifyContent: "center" }}
+          >
+            <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+              {props.windowBadge!}
+            </Text>
+          </View>
+        </If>
+      </View>
       <Text
         style={{
           fontSize: 22,
@@ -79,6 +86,8 @@ function KpiCard(props: {
 
 export function OverviewTab(props: {
   data: TrainingDashboardData | undefined;
+  ojSources?: readonly OnboardingOjSource[];
+  hasConfiguredAccounts?: boolean;
   window: TimeWindow;
   tagMinRating: number | null;
   onWindowChange: (w: TimeWindow) => void;
@@ -86,87 +95,78 @@ export function OverviewTab(props: {
   onTagMinRatingChange: (min: number | null) => void;
   onDrilldownBucket: (bucket: DifficultyBucket) => void;
   onDrilldownTag: (tag: string, minRating: number | null) => void;
+  onAccountConfigured?: () => void;
+  onOpenManualLog?: () => void;
 }) {
   const d = () => props.data;
   const hasAnyData = () => {
     const cur = d();
     if (!cur) return false;
-    return cur.accounts.length > 0 || cur.kpi.total_submissions > 0 || cur.rating_series.length > 0;
+    return (
+      cur.accounts.length > 0 ||
+      Boolean(cur.has_local_records) ||
+      cur.kpi.total_ac > 0 ||
+      cur.kpi.total_submissions > 0 ||
+      cur.rating_series.length > 0
+    );
+  };
+
+  const hasRatingHistory = () => {
+    const cur = d();
+    if (!cur) return false;
+    return cur.rating_series.some((s) => s.points.length > 0);
+  };
+
+  const hasDifficultyTrend = () => {
+    const cur = d();
+    if (!cur) return false;
+    return cur.difficulty_trend.some((p) => p.p75 != null || p.p90 != null);
+  };
+
+  const windowItems = computed(() => [
+    { value: "30d" as const, label: t("training.window.30d"), testID: "training-window-30d" },
+    { value: "90d" as const, label: t("training.window.90d"), testID: "training-window-90d" },
+    { value: "year" as const, label: t("training.window.year"), testID: "training-window-year" },
+    { value: "all" as const, label: t("training.window.all"), testID: "training-window-all" },
+  ]);
+
+  const activeWindowLabel = () => {
+    switch (props.window) {
+      case "30d":
+        return t("training.window.30d");
+      case "90d":
+        return t("training.window.90d");
+      case "year":
+        return t("training.window.year");
+      case "all":
+        return t("training.window.all");
+    }
   };
 
   return (
-    <Scroll style={{ flex: 1 }} contentStyle={{ padding: 20, gap: 16, paddingBottom: 32 }}>
+    <Scroll
+      testID="training-overview-scroll"
+      style={{ flex: 1, minHeight: 0 }}
+      contentStyle={{ padding: 20, gap: 16, paddingBottom: 36 }}
+    >
       <If
         when={hasAnyData()}
         else={
-          <View
-            testID="training-overview-empty"
-            class="bg-card border border-border"
-            style={{
-              borderRadius: 10,
-              padding: 28,
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              boxShadow: cardShadow(),
-            }}
-          >
-            <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
-              {t("training.empty.title")}
-            </Text>
-            <Text style={{ fontSize: 12.5, textAlign: "center", maxWidth: 420 }} class="text-muted-foreground">
-              {t("training.empty.desc")}
-            </Text>
-            <Btn
-              testID="training-empty-settings-btn"
-              label={t("training.empty.openPlugins")}
-              variant="primary"
-              onPress={() => goSettings("plugins")}
-            />
-          </View>
+          <OnboardingEmptyState
+            sources={props.ojSources ?? []}
+            onAccountConfigured={props.onAccountConfigured ?? (() => {})}
+            onOpenManualLog={props.onOpenManualLog}
+          />
         }
       >
         {/* Global time window selector */}
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Each of={WINDOWS} key={(w) => w.value}>
-              {(item) => {
-                const active = () => props.window === item().value;
-                return (
-                  <View
-                    testID={`training-window-${item().value}`}
-                    onPress={() => props.onWindowChange(item().value)}
-                    class={active() ? "bg-accent border border-border" : "bg-card border border-border hover:bg-muted"}
-                    style={{
-                      height: 26,
-                      paddingLeft: 10,
-                      paddingRight: 10,
-                      borderRadius: 6,
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text
-                      style={{ fontSize: 12, fontWeight: active() ? 600 : 400 }}
-                      class={active() ? "text-foreground" : "text-secondary-foreground"}
-                    >
-                      {t(`training.window.${item().labelKey}` as const)}
-                    </Text>
-                  </View>
-                );
-              }}
-            </Each>
-          </View>
-
-          <If when={d()}>
-            {(cur) => (
-              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                {t("training.kpi.windowSummary", {
-                  ac: cur().kpi.window_ac,
-                  subs: cur().kpi.window_submissions,
-                })}
-              </Text>
-            )}
-          </If>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Segmented
+            items={windowItems()}
+            value={props.window}
+            onChange={props.onWindowChange}
+            itemWidth={68}
+          />
         </View>
 
         {/* Platform Rating cards (when accounts exist) */}
@@ -238,39 +238,28 @@ export function OverviewTab(props: {
           </View>
         </If>
 
-        {/* Core KPI cards: Today, Week, Month, Total, Streak */}
+        {/* 3 focused KPI cards: Period Solved (follows window), Streak, Today */}
         <If when={d()}>
           {(cur) => (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
               <KpiCard
-                testID="training-kpi-today"
-                label={t("training.kpi.today")}
-                value={String(cur().kpi.today_ac)}
-                sub={t("training.kpi.subsCount", { count: cur().kpi.today_submissions })}
-              />
-              <KpiCard
-                testID="training-kpi-week"
-                label={t("training.kpi.week")}
-                value={String(cur().kpi.week_ac)}
-                sub={t("training.kpi.subsCount", { count: cur().kpi.week_submissions })}
-              />
-              <KpiCard
-                testID="training-kpi-month"
-                label={t("training.kpi.month")}
-                value={String(cur().kpi.month_ac)}
-                sub={t("training.kpi.subsCount", { count: cur().kpi.month_submissions })}
-              />
-              <KpiCard
-                testID="training-kpi-total"
-                label={t("training.kpi.total")}
-                value={String(cur().kpi.total_ac)}
-                sub={t("training.kpi.subsCount", { count: cur().kpi.total_submissions })}
+                testID="training-kpi-window"
+                label={zhEn("周期内过题", "Period Solved")}
+                windowBadge={activeWindowLabel()}
+                value={String(cur().kpi.window_ac)}
+                sub={t("training.kpi.subsCount", { count: cur().kpi.window_submissions })}
               />
               <KpiCard
                 testID="training-kpi-streak"
-                label={t("training.kpi.streak")}
+                label={zhEn("连续天数", "Streak")}
                 value={t("training.kpi.days", { count: cur().kpi.streak_days })}
                 sub={t("training.kpi.longestStreak", { count: cur().kpi.longest_streak_days })}
+              />
+              <KpiCard
+                testID="training-kpi-today"
+                label={zhEn("今日", "Today")}
+                value={String(cur().kpi.today_ac)}
+                sub={t("training.kpi.subsCount", { count: cur().kpi.today_submissions })}
               />
             </View>
           )}
@@ -288,14 +277,16 @@ export function OverviewTab(props: {
           )}
         </If>
 
-        {/* Rating curve + P75/P90 Difficulty breakthrough trend */}
-        <If when={d()}>
-          {(cur) => (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
-              <RatingChartCard series={cur().rating_series} />
-              <DifficultyTrendCard points={cur().difficulty_trend} />
-            </View>
-          )}
+        {/* Rating curve (only when rating history exists) + Solved problem difficulty trend */}
+        <If when={d() && (hasRatingHistory() || hasDifficultyTrend())}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+            <If when={hasRatingHistory()}>
+              <RatingChartCard series={d()!.rating_series} />
+            </If>
+            <If when={hasDifficultyTrend() || hasRatingHistory()}>
+              <DifficultyTrendCard points={d()!.difficulty_trend} />
+            </If>
+          </View>
         </If>
 
         {/* Difficulty buckets + Tag distribution */}
@@ -304,6 +295,7 @@ export function OverviewTab(props: {
             <DistributionsRow
               buckets={cur().difficulty_buckets}
               tags={cur().tag_distribution}
+              windowLabel={activeWindowLabel()}
               tagMinRating={props.tagMinRating}
               onTagMinRatingChange={props.onTagMinRatingChange}
               onSelectBucket={props.onDrilldownBucket}

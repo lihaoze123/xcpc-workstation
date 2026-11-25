@@ -44,22 +44,23 @@ pub use crate::types::{
     BatchItemResultJs, BatchMutationResultJs, BatchStartResultJs, BatchTaskEventJs,
     BatchTaskItemJs, BatchTaskSnapshotJs, CleanUnusedAssetsResultJs, ColdStartSnapshotJs,
     ContestDetailJs, ContestItemDetailJs, ContestMetaPatchJs, ContestStatsJs,
-    CreateProblemFromUrlResultJs, DetectedCompilerJs, DialogLabelsJs, ExportBookStatusJs,
-    ExportOjResultJs, ExportPluginResultJs, FreezeResultJs, FuzzyHitJs, GroupSummaryJs,
-    IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs, JsonReportResultJs,
-    LimitsJs, MarkdownSpanJs, MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs,
-    PackageBuildStatusJs, PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs,
-    PackageInspectionResultJs, PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs,
-    PlatformSyncReportJs, PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs,
-    PluginSummaryJs, PluginUiSourceResultJs, PluginsOverviewJs, PolygonImportResultJs,
-    PreviewDiagnostic, PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult,
-    PreviewStart, PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs,
-    ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs,
-    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
-    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
-    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
-    TrainingSubmissionsQueryJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    CreateProblemFromUrlResultJs, DetectedCompilerJs, DialogLabelsJs, EditorialListResultJs,
+    EditorialSummaryJs, ExportBookStatusJs, ExportOjResultJs, ExportPluginResultJs, FreezeResultJs,
+    FuzzyHitJs, GroupSummaryJs, IngestProblemRequestJs, IngestProblemResultJs,
+    InstallPluginResultJs, JsonReportResultJs, LimitsJs, ManualLogResultJs, MarkdownSpanJs,
+    MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs,
+    PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
+    PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs,
+    PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
+    PluginUiSourceResultJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic,
+    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
+    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
+    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs,
+    RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs,
+    SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs,
+    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs,
+    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
+    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
     WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
@@ -2352,7 +2353,12 @@ impl Preview {
     }
 
     /// Runs a plugin's `verify(ctx)` action off the UI thread.
-    pub async fn verify_plugin(this: Instance<Self>, plugin_id: String) -> VerifyPluginResultJs {
+    /// When `handle` is provided, verifies that candidate handle without requiring it to be saved first.
+    pub async fn verify_plugin(
+        this: Instance<Self>,
+        plugin_id: String,
+        handle: Option<String>,
+    ) -> VerifyPluginResultJs {
         if this.is_disposed() {
             return VerifyPluginResultJs {
                 ok: false,
@@ -2361,7 +2367,7 @@ impl Preview {
             };
         }
         let state = this.with(|p| p.state.clone());
-        blocking(move || state.verify_plugin(&plugin_id))
+        blocking(move || state.verify_plugin(&plugin_id, handle.as_deref()))
             .await
             .unwrap_or_else(|e| VerifyPluginResultJs {
                 ok: false,
@@ -2437,6 +2443,17 @@ impl Preview {
     /// workspace, deduplicating by `[[source]]` and refreshing the workspace index.
     pub fn training_ingest_problem(&self, req: IngestProblemRequestJs) -> IngestProblemResultJs {
         self.state.training_ingest_problem(req)
+    }
+
+    /// Records a manual training log entry (workspace check-in or standalone) into
+    /// `training/logs.jsonl`, optionally creating a linked library problem.
+    pub fn training_log_record(&self, req_json: String) -> ManualLogResultJs {
+        self.state.training_log_record(&req_json)
+    }
+
+    /// Lists non-empty problem editorials in the open workspace, filtered by `queryJson`.
+    pub fn training_list_editorials(&self, query_json: String) -> EditorialListResultJs {
+        self.state.training_list_editorials(&query_json)
     }
 
     /// Opens an external `http://` or `https://` URL in the user's default browser.
