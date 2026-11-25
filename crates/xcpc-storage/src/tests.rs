@@ -2441,12 +2441,12 @@ fn training_logs_atomic_append_read_clear_and_derivation() {
     };
 
     // Append creates training/ dir and writes atomically.
-    ws.append_training_log(&TrainingLogEntry {
-        at: "2026-11-24T10:00:00Z".into(),
-        problem_id: Some("two-sum".into()),
-        source: Some(src.clone()),
-        status: TrainingLogStatus::Todo,
-    })
+    ws.append_training_log(&TrainingLogEntry::for_problem(
+        "2026-11-24T10:00:00Z",
+        Some("two-sum".into()),
+        Some(src.clone()),
+        TrainingLogStatus::Todo,
+    ))
     .unwrap();
 
     // External attempted overrides manual todo -> Attempted.
@@ -2464,16 +2464,16 @@ fn training_logs_atomic_append_read_clear_and_derivation() {
     );
 
     // Manual upsolved + external AC -> Upsolved.
-    ws.append_training_log(&TrainingLogEntry {
-        at: "2026-11-24T11:00:00Z".into(),
-        problem_id: None,
-        source: Some(ProblemSource {
+    ws.append_training_log(&TrainingLogEntry::for_problem(
+        "2026-11-24T11:00:00Z",
+        None,
+        Some(ProblemSource {
             platform: "CODEFORCES".into(),
             id: "1999a".into(),
             url: None,
         }),
-        status: TrainingLogStatus::Upsolved,
-    })
+        TrainingLogStatus::Upsolved,
+    ))
     .unwrap();
     assert_eq!(
         ws.derive_problem_training_status(
@@ -2489,12 +2489,12 @@ fn training_logs_atomic_append_read_clear_and_derivation() {
     );
 
     // Clear resets manual override -> external AC yields Ac, no sync yields None.
-    ws.append_training_log(&TrainingLogEntry {
-        at: "2026-11-24T12:00:00Z".into(),
-        problem_id: Some("two-sum".into()),
-        source: None,
-        status: TrainingLogStatus::Clear,
-    })
+    ws.append_training_log(&TrainingLogEntry::for_problem(
+        "2026-11-24T12:00:00Z",
+        Some("two-sum".into()),
+        None,
+        TrainingLogStatus::Clear,
+    ))
     .unwrap();
 
     let logs = ws.read_training_logs().unwrap();
@@ -2542,12 +2542,12 @@ fn training_logs_atomic_append_read_clear_and_derivation() {
     // Read-only workspace rejects append_training_log.
     let ro = Workspace::open(dir.path(), true).unwrap();
     let err = ro
-        .append_training_log(&TrainingLogEntry {
-            at: "2026-11-24T13:00:00Z".into(),
-            problem_id: Some("two-sum".into()),
-            source: None,
-            status: TrainingLogStatus::Ac,
-        })
+        .append_training_log(&TrainingLogEntry::for_problem(
+            "2026-11-24T13:00:00Z",
+            Some("two-sum".into()),
+            None,
+            TrainingLogStatus::Ac,
+        ))
         .unwrap_err();
     assert_eq!(err.code(), "read_only");
 
@@ -2575,12 +2575,12 @@ fn training_logs_rejects_symlink_escape() {
     assert_eq!(err.code(), "path_escape");
 
     let err = ws
-        .append_training_log(&TrainingLogEntry {
-            at: "2026-11-24T10:00:00Z".into(),
-            problem_id: Some("two-sum".into()),
-            source: None,
-            status: TrainingLogStatus::Todo,
-        })
+        .append_training_log(&TrainingLogEntry::for_problem(
+            "2026-11-24T10:00:00Z",
+            Some("two-sum".into()),
+            None,
+            TrainingLogStatus::Todo,
+        ))
         .unwrap_err();
     assert_eq!(err.code(), "path_escape");
 }
@@ -2665,4 +2665,183 @@ fn find_problem_by_source_and_create_problem_with_options() {
         .create_problem_with_options("ro-prob", "RO", &CreateProblemOptions::default())
         .unwrap_err();
     assert_eq!(err.code(), "read_only");
+}
+
+#[test]
+fn append_training_log_supports_standalone_manual_and_validates() {
+    use xcpc_domain::{TrainingLogEntry, TrainingLogStatus};
+
+    let (_dir, ws) = workspace();
+
+    // Standalone manual entry without problem_id or source succeeds and round-trips.
+    let manual = TrainingLogEntry {
+        at: "2026-11-25T09:00:00Z".into(),
+        problem_id: None,
+        source: None,
+        status: TrainingLogStatus::Ac,
+        title: Some("QOJ 1234 Tree DP".into()),
+        url: Some("https://qoj.ac/problem/1234".into()),
+        platform: Some("qoj".into()),
+        rating: Some(2100),
+        tags: vec!["dp".into(), "trees".into()],
+        note: Some("rerooting".into()),
+    };
+    ws.append_training_log(&manual).unwrap();
+    let logs = ws.read_training_logs().unwrap();
+    assert_eq!(logs, vec![manual]);
+
+    // Invalid problem_id is rejected by check_id.
+    let bad_id = TrainingLogEntry::for_problem(
+        "2026-11-25T09:01:00Z",
+        Some("../escape".into()),
+        None,
+        TrainingLogStatus::Ac,
+    );
+    assert_eq!(
+        ws.append_training_log(&bad_id).unwrap_err().code(),
+        "invalid_id"
+    );
+
+    // Missing problem_id, source, and title is rejected.
+    let empty = TrainingLogEntry {
+        at: "2026-11-25T09:02:00Z".into(),
+        problem_id: None,
+        source: None,
+        status: TrainingLogStatus::Todo,
+        title: Some("   ".into()),
+        url: None,
+        platform: None,
+        rating: None,
+        tags: Vec::new(),
+        note: None,
+    };
+    assert_eq!(
+        ws.append_training_log(&empty).unwrap_err().code(),
+        "invalid_file"
+    );
+}
+
+#[test]
+fn list_editorials_filters_empty_extracts_excerpt_and_sorts() {
+    use std::time::{Duration, UNIX_EPOCH};
+    use xcpc_domain::ProblemSource;
+
+    let (dir, ws) = workspace();
+
+    // `two-sum` already exists in the fixture workspace; remove its editorial if any.
+    let _ = fs::remove_file(dir.path().join("problems/two-sum/editorial.md"));
+
+    // Problem with no editorial.md -> excluded.
+    ws.create_problem_with_options("p-none", "No Editorial", &CreateProblemOptions::default())
+        .unwrap();
+
+    // Problem with whitespace-only editorial.md -> excluded.
+    ws.create_problem_with_options(
+        "p-blank",
+        "Blank Editorial",
+        &CreateProblemOptions::default(),
+    )
+    .unwrap();
+    ws.write("problems/p-blank/editorial.md", b"   \n\t\n  ")
+        .unwrap();
+
+    // Problem A: older mtime, rich markdown heading + emphasis.
+    ws.create_problem_with_options(
+        "p-alpha",
+        "Alpha Problem",
+        &CreateProblemOptions {
+            sources: vec![ProblemSource {
+                platform: "codeforces".into(),
+                id: "2000A".into(),
+                url: None,
+            }],
+            tags: vec!["dp".into()],
+            difficulty: None,
+            rating: Some(1900),
+        },
+    )
+    .unwrap();
+    ws.write(
+        "problems/p-alpha/editorial.md",
+        "## 思路\n\n使用 **单调栈** 维护 *前缀最小值* 即可在 $O(n)$ 内完成。\n第三行不应进入摘要。\n"
+            .as_bytes(),
+    )
+    .unwrap();
+
+    // Problem B: newer mtime, long line to test 140-char cap.
+    ws.create_problem_with_options(
+        "p-beta",
+        "Beta Problem",
+        &CreateProblemOptions {
+            sources: vec![],
+            tags: vec!["graphs".into()],
+            difficulty: None,
+            rating: Some(2200),
+        },
+    )
+    .unwrap();
+    let long_body = format!("# 结论\n{}", "一二三四五六七八九十".repeat(20));
+    ws.write("problems/p-beta/editorial.md", long_body.as_bytes())
+        .unwrap();
+
+    // Problem C: same mtime as p-beta to verify tie-break by problem_id ascending (`p-beta` < `p-gamma`).
+    ws.create_problem_with_options("p-gamma", "Gamma Problem", &CreateProblemOptions::default())
+        .unwrap();
+    ws.write(
+        "problems/p-gamma/editorial.md",
+        b"> Key observation\n- Use `DFS` order.\n",
+    )
+    .unwrap();
+
+    // Set deterministic mtimes: p-alpha older, p-beta and p-gamma newer & tied.
+    let older = UNIX_EPOCH + Duration::from_secs(1_732_000_000);
+    let newer = UNIX_EPOCH + Duration::from_secs(1_732_500_000);
+    fs::File::options()
+        .write(true)
+        .open(dir.path().join("problems/p-alpha/editorial.md"))
+        .unwrap()
+        .set_modified(older)
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(dir.path().join("problems/p-beta/editorial.md"))
+        .unwrap()
+        .set_modified(newer)
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(dir.path().join("problems/p-gamma/editorial.md"))
+        .unwrap()
+        .set_modified(newer)
+        .unwrap();
+
+    let list = ws.list_editorials().unwrap();
+    let ids: Vec<&str> = list.iter().map(|e| e.problem_id.as_str()).collect();
+    assert_eq!(ids, vec!["p-beta", "p-gamma", "p-alpha"]);
+
+    // Verify p-beta (capped at 140 chars, ends with ellipsis).
+    let beta = &list[0];
+    assert_eq!(beta.title, "Beta Problem");
+    assert_eq!(beta.rating, Some(2200));
+    assert_eq!(beta.tags, vec!["graphs"]);
+    assert!(beta.excerpt.chars().count() <= 140);
+    assert!(beta.excerpt.ends_with('…'));
+    assert!(beta.excerpt.starts_with("结论 "));
+    assert!(beta.updated_at.ends_with('Z'));
+
+    // Verify p-gamma (blockquote & list & inline code stripped).
+    let gamma = &list[1];
+    assert_eq!(gamma.excerpt, "Key observation Use DFS order.");
+    assert_eq!(gamma.updated_at, beta.updated_at);
+
+    // Verify p-alpha (heading `#`, `**`, `*` stripped, third line omitted).
+    let alpha = &list[2];
+    assert_eq!(alpha.title, "Alpha Problem");
+    assert_eq!(alpha.rating, Some(1900));
+    assert_eq!(alpha.sources.len(), 1);
+    assert_eq!(
+        alpha.excerpt,
+        "思路 使用 单调栈 维护 前缀最小值 即可在 $O(n)$ 内完成。"
+    );
+    assert!(alpha.updated_at < beta.updated_at);
 }

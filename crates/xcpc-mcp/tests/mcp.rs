@@ -26,7 +26,18 @@ struct McpClient {
 
 impl McpClient {
     fn spawn(workspace: &Path, read_only: bool) -> Self {
+        Self::spawn_inner(workspace, None, read_only)
+    }
+
+    fn spawn_with_data_dir(workspace: &Path, data_dir: &Path, read_only: bool) -> Self {
+        Self::spawn_inner(workspace, Some(data_dir), read_only)
+    }
+
+    fn spawn_inner(workspace: &Path, data_dir: Option<&Path>, read_only: bool) -> Self {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_xcpc"));
+        if let Some(dd) = data_dir {
+            cmd.env("XCPC_DATA_DIR", dd);
+        }
         cmd.arg("-w").arg(workspace);
         if read_only {
             cmd.arg("--read-only");
@@ -168,7 +179,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
 
     let list = client.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 31);
+    assert_eq!(tools.len(), 33);
 
     let mut read_only_map = std::collections::BTreeMap::new();
     for tool in tools {
@@ -193,6 +204,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "audit_contest",
         "run_external_solution",
         "get_training_dashboard",
+        "list_training_editorials",
     ] {
         assert_eq!(
             read_only_map.get(read_tool),
@@ -221,6 +233,7 @@ fn tools_list_has_all_ten_tools_and_no_unfreeze() {
         "export_oj_package",
         "set_training_status",
         "ingest_problem",
+        "log_training_record",
     ] {
         assert_eq!(
             read_only_map.get(write_tool),
@@ -1735,4 +1748,125 @@ fn mcp_phase_3d_sanitize_audit_and_external_solution() {
         }),
     );
     assert_eq!(err_code(&bad_ext), "invalid_arguments");
+}
+
+#[test]
+fn mcp_manual_training_log_and_list_editorials() {
+    let dir = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+
+    // Add editorial.md to alpha (rating=800, tags=["math"]) and beta (rating=1900, tags=["dp", "graphs"]).
+    fs::write(
+        dir.path().join("problems/alpha/editorial.md"),
+        "# Alpha Editorial\n\nAdd the two integers directly.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("problems/beta/problem.toml"),
+        "title = \"Beta DP\"\nrating = 1900\ntags = [\"dp\", \"graphs\"]\n[limits]\ntime = \"2s\"\nmemory = \"512MB\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("problems/beta/editorial.md"),
+        "Use dynamic programming over the DAG.\n",
+    )
+    .unwrap();
+
+    let mut client = McpClient::spawn_with_data_dir(dir.path(), data_dir.path(), false);
+
+    // 1. Standalone manual log (does not create a library problem).
+    let standalone = client.call_tool(
+        "log_training_record",
+        json!({
+            "title": "Luogu P1001",
+            "platform": "luogu",
+            "rating": 1200,
+            "tags": ["implementation", "math"],
+            "status": "ac",
+            "at": "2026-11-24T10:00:00Z",
+            "note": "warm-up",
+        }),
+    );
+    assert_ne!(standalone["isError"], true, "{standalone}");
+    let sc = &standalone["structuredContent"];
+    assert_eq!(sc["ok"], true);
+    assert_eq!(sc["created_in_library"], false);
+    assert!(sc["library_problem_id"].is_null());
+    assert_eq!(sc["entry"]["title"], "Luogu P1001");
+    assert_eq!(sc["entry"]["platform"], "luogu");
+    assert_eq!(sc["entry"]["rating"], 1200);
+    assert_eq!(sc["entry"]["status"], "ac");
+    assert_eq!(sc["entry"]["note"], "warm-up");
+
+    // 2. Manual log with `create_in_library: true` creates a library problem and links it.
+    let with_lib = client.call_tool(
+        "log_training_record",
+        json!({
+            "title": "Offline Segment Tree",
+            "platform": "local",
+            "rating": 2100,
+            "tags": ["data-structures"],
+            "status": "upsolved",
+            "create_in_library": true,
+        }),
+    );
+    assert_ne!(with_lib["isError"], true, "{with_lib}");
+    let wsc = &with_lib["structuredContent"];
+    assert_eq!(wsc["ok"], true);
+    assert_eq!(wsc["created_in_library"], true);
+    let lib_id = wsc["library_problem_id"].as_str().unwrap();
+    assert!(
+        dir.path()
+            .join("problems")
+            .join(lib_id)
+            .join("problem.toml")
+            .is_file()
+    );
+
+    // 3. `list_training_editorials` returns both editorials and supports search/tag/rating filters.
+    let all_eds = client.call_tool("list_training_editorials", json!({}));
+    assert_ne!(all_eds["isError"], true, "{all_eds}");
+    let asc = &all_eds["structuredContent"];
+    assert_eq!(asc["ok"], true);
+    assert_eq!(asc["total"], 2);
+    assert_eq!(asc["items"].as_array().unwrap().len(), 2);
+
+    let filtered_tag = client.call_tool("list_training_editorials", json!({ "tag": "dp" }));
+    assert_ne!(filtered_tag["isError"], true, "{filtered_tag}");
+    assert_eq!(filtered_tag["structuredContent"]["total"], 1);
+    assert_eq!(
+        filtered_tag["structuredContent"]["items"][0]["problem_id"],
+        "beta"
+    );
+
+    let filtered_rating = client.call_tool(
+        "list_training_editorials",
+        json!({ "min_rating": 1500, "max_rating": 2000 }),
+    );
+    assert_ne!(filtered_rating["isError"], true, "{filtered_rating}");
+    assert_eq!(filtered_rating["structuredContent"]["total"], 1);
+    assert_eq!(
+        filtered_rating["structuredContent"]["items"][0]["problem_id"],
+        "beta"
+    );
+
+    let filtered_search = client.call_tool("list_training_editorials", json!({ "search": "DAG" }));
+    assert_ne!(filtered_search["isError"], true, "{filtered_search}");
+    assert_eq!(filtered_search["structuredContent"]["total"], 1);
+    assert_eq!(
+        filtered_search["structuredContent"]["items"][0]["problem_id"],
+        "beta"
+    );
+
+    // 4. Read-only MCP client blocks `log_training_record` but allows `list_training_editorials`.
+    let mut ro = McpClient::spawn_with_data_dir(dir.path(), data_dir.path(), true);
+    let ro_log = ro.call_tool(
+        "log_training_record",
+        json!({ "title": "Blocked", "status": "ac" }),
+    );
+    assert_eq!(err_code(&ro_log), "read_only");
+
+    let ro_eds = ro.call_tool("list_training_editorials", json!({}));
+    assert_ne!(ro_eds["isError"], true, "{ro_eds}");
+    assert_eq!(ro_eds["structuredContent"]["total"], 2);
 }

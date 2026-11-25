@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use xcpc_plugin::{
@@ -120,11 +121,51 @@ impl SyncEngine {
         config.save(&self.data_dir)
     }
 
-    /// Runs incremental (or full) sync across enabled `oj_source` plugins with configured handles.
+    /// Updates or clears the configured handle for `platform`.
+    ///
+    /// Whenever the handle changes to a different user or is cleared to empty, purges all
+    /// user-specific rows for `platform` from `oj_sync.db` (keeping shared `oj_contests` and
+    /// `oj_problem_meta`), clears the plugin's incremental `sync_cursor` in `KvStore`, and clears
+    /// any stale plugin error.
+    pub fn set_handle(&self, platform: &str, handle: &str) -> Result<()> {
+        let platform_key = platform.trim().to_ascii_lowercase();
+        if platform_key.is_empty() {
+            return Ok(());
+        }
+        let mut config = SyncConfig::load(&self.data_dir)?;
+        let prev_handle = config.handle_for(&platform_key).map(str::to_owned);
+        let next_trimmed = handle.trim();
+        let next_handle = (!next_trimmed.is_empty()).then(|| next_trimmed.to_owned());
+
+        config.set_handle(&platform_key, handle);
+        config.save(&self.data_dir)?;
+
+        if prev_handle.as_deref() != next_handle.as_deref() {
+            if SyncDb::db_path(&self.data_dir).exists() {
+                let db = SyncDb::open(&self.data_dir)?;
+                db.purge_platform_user_data(&platform_key)?;
+            }
+            let pm = self.plugin_manager();
+            if let Ok(kv) = pm.kv_store(&platform_key) {
+                let _ = kv.delete(CURSOR_KV_KEY);
+            }
+            let _ = pm.clear_error(&platform_key);
+        }
+
+        Ok(())
+    }
+
+    /// Runs incremental (or full) sync across enabled `oj_source` plugins with configured handles,
+    /// and aggregates upcoming contests from all enabled `oj_source` plugins (even those without a
+    /// configured handle).
     ///
     /// Plugin errors are isolated per platform: a failing plugin records its error via
     /// [`PluginManager::record_error`] and is reported in [`SyncReport::platforms`] without
     /// aborting other platforms.
+    ///
+    /// `config.last_synced_at` is only updated when at least one configured account actually
+    /// completes a sync, so syncing with no configured accounts never writes a misleading
+    /// timestamp.
     pub fn sync(&self, options: &SyncOptions) -> Result<SyncReport> {
         let pm = self.plugin_manager();
         let mut config = SyncConfig::load(&self.data_dir)?;
@@ -164,6 +205,10 @@ impl SyncEngine {
                         contests_synced: 0,
                         error: Some(msg),
                     });
+                } else {
+                    // Upcoming contests do not require an account handle; aggregate them from
+                    // every enabled `oj_source` plugin (best-effort, isolated).
+                    let _ = self.sync_platform_contests(&pm, &mut db, &platform_id, &synced_at);
                 }
                 continue;
             };
@@ -179,7 +224,11 @@ impl SyncEngine {
 
             match outcome {
                 Ok(report) => {
-                    let _ = pm.clear_error(&platform_id);
+                    if report.ok {
+                        let _ = pm.clear_error(&platform_id);
+                    } else if let Some(ref msg) = report.error {
+                        let _ = pm.record_error(&platform_id, msg);
+                    }
                     reports.push(report);
                 }
                 Err(err) => {
@@ -200,13 +249,104 @@ impl SyncEngine {
             }
         }
 
-        config.last_synced_at = Some(synced_at.clone());
-        config.save(&self.data_dir)?;
+        if reports.iter().any(|r| r.ok) {
+            config.last_synced_at = Some(synced_at.clone());
+            config.save(&self.data_dir)?;
+        }
 
         Ok(SyncReport {
             synced_at,
             platforms: reports,
         })
+    }
+
+    /// Fetches upcoming contests from all enabled `oj_source` plugins (matching `platform` when
+    /// `Some`), even when no handle is configured, and persists them into `oj_sync.db`.
+    pub fn sync_contests(&self, platform: Option<&str>) -> Result<Vec<PlatformSyncReport>> {
+        let pm = self.plugin_manager();
+        let config = SyncConfig::load(&self.data_dir)?;
+        let mut db = SyncDb::open(&self.data_dir)?;
+        let synced_at = now_rfc3339_utc();
+
+        let plugins = pm.list_plugins()?;
+        let mut reports = Vec::new();
+
+        for plugin in plugins {
+            if !plugin.enabled
+                || !plugin
+                    .manifest
+                    .capabilities
+                    .contains(&PluginCapability::OjSource)
+            {
+                continue;
+            }
+            let platform_id = plugin.manifest.id.clone();
+            if let Some(target) = platform
+                && !platform_id.eq_ignore_ascii_case(target.trim())
+            {
+                continue;
+            }
+            let handle = config.handle_for(&platform_id).unwrap_or("").to_string();
+
+            match self.sync_platform_contests(&pm, &mut db, &platform_id, &synced_at) {
+                Ok(contests_synced) => {
+                    reports.push(PlatformSyncReport {
+                        platform: platform_id,
+                        handle,
+                        ok: true,
+                        account_synced: false,
+                        summary_synced: false,
+                        submissions_synced: 0,
+                        rating_history_synced: 0,
+                        contests_synced,
+                        error: None,
+                    });
+                }
+                Err(err) => {
+                    reports.push(PlatformSyncReport {
+                        platform: platform_id,
+                        handle,
+                        ok: false,
+                        account_synced: false,
+                        summary_synced: false,
+                        submissions_synced: 0,
+                        rating_history_synced: 0,
+                        contests_synced: 0,
+                        error: Some(err.to_string()),
+                    });
+                }
+            }
+        }
+
+        Ok(reports)
+    }
+
+    fn sync_platform_contests(
+        &self,
+        pm: &PluginManager,
+        db: &mut SyncDb,
+        platform_id: &str,
+        synced_at: &str,
+    ) -> Result<usize> {
+        let loaded = pm.load_plugin(platform_id)?;
+        let kv = Arc::new(pm.kv_store(platform_id)?);
+        let host_ctx = HostContext {
+            manifest: loaded.info.manifest.clone(),
+            http_client: Arc::clone(&self.http_client),
+            credentials: Arc::clone(&self.credentials),
+            kv,
+            workspace: None,
+            limits: SandboxLimits::default(),
+        };
+        let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
+        if !client.supports("fetchContests")? {
+            return Ok(0);
+        }
+        let oj_ctx = OjContext {
+            handle: String::new(),
+        };
+        let contests = client.fetch_contests(&oj_ctx)?;
+        db.upsert_contests(platform_id, &contests, synced_at)
     }
 
     fn sync_platform(
@@ -220,20 +360,67 @@ impl SyncEngine {
     ) -> Result<PlatformSyncReport> {
         let loaded = pm.load_plugin(platform_id)?;
         let kv = Arc::new(pm.kv_store(platform_id)?);
+        let default_limits = SandboxLimits::default();
         let host_ctx = HostContext {
             manifest: loaded.info.manifest.clone(),
             http_client: Arc::clone(&self.http_client),
             credentials: Arc::clone(&self.credentials),
             kv: Arc::clone(&kv),
             workspace: None,
-            limits: SandboxLimits::default(),
+            limits: SandboxLimits {
+                timeout: Duration::from_secs(120),
+                ..default_limits
+            },
         };
         let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
         let oj_ctx = OjContext {
             handle: handle.to_string(),
         };
 
-        let cursor = if full {
+        if client.supports("verify")? {
+            let verified = client.verify(&oj_ctx)?;
+            if !verified.ok {
+                let msg = verified
+                    .message
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or_else(|| format!("account verification failed for '{handle}'"));
+                return Ok(PlatformSyncReport {
+                    platform: platform_id.to_string(),
+                    handle: handle.to_string(),
+                    ok: false,
+                    account_synced: false,
+                    summary_synced: false,
+                    submissions_synced: 0,
+                    rating_history_synced: 0,
+                    contests_synced: 0,
+                    error: Some(msg),
+                });
+            }
+        }
+
+        // If `sync_config.json` was edited outside `SyncEngine::set_handle`, detect a handle
+        // switch against cached account/summary rows and purge stale user data & cursor.
+        let cached_handle = db
+            .list_accounts()?
+            .into_iter()
+            .find(|a| a.platform.eq_ignore_ascii_case(platform_id))
+            .map(|a| a.handle)
+            .or_else(|| {
+                db.list_summaries().ok().and_then(|list| {
+                    list.into_iter()
+                        .find(|s| s.platform.eq_ignore_ascii_case(platform_id))
+                        .map(|s| s.handle)
+                })
+            });
+        let handle_switched = cached_handle
+            .as_deref()
+            .is_some_and(|prev| !prev.eq_ignore_ascii_case(handle));
+        if handle_switched {
+            db.purge_platform_user_data(platform_id)?;
+            let _ = kv.delete(CURSOR_KV_KEY);
+        }
+
+        let cursor = if full || handle_switched {
             None
         } else {
             kv.get(CURSOR_KV_KEY)?
@@ -318,6 +505,41 @@ pub(crate) fn resolve_problem_url_with_manager(
     credentials: &Arc<dyn CredentialStore>,
     url: &str,
 ) -> Result<Option<ResolvedProblemUrl>> {
+    resolve_problem_url_inner(pm, data_dir, http_client, credentials, url, true)
+}
+
+/// Offline-safe URL resolver: parses known OJ URLs via enabled `oj_source` plugins and
+/// enriches from `<data_dir>/oj_sync.db` cache only, never issuing network requests.
+pub(crate) fn resolve_problem_url_offline(
+    pm: &PluginManager,
+    data_dir: &Path,
+    url: &str,
+) -> Result<Option<ResolvedProblemUrl>> {
+    struct OfflineHttpClient;
+    impl HttpClient for OfflineHttpClient {
+        fn send(
+            &self,
+            _req: &xcpc_plugin::HttpRequest,
+        ) -> std::result::Result<xcpc_plugin::HttpResponse, xcpc_plugin::PluginError> {
+            Err(xcpc_plugin::PluginError::PermissionDenied {
+                plugin_id: "offline".into(),
+                permission: "network".into(),
+            })
+        }
+    }
+    let http: Arc<dyn HttpClient> = Arc::new(OfflineHttpClient);
+    let creds: Arc<dyn CredentialStore> = Arc::new(SystemKeyringStore::new());
+    resolve_problem_url_inner(pm, data_dir, &http, &creds, url, false)
+}
+
+fn resolve_problem_url_inner(
+    pm: &PluginManager,
+    data_dir: &Path,
+    http_client: &Arc<dyn HttpClient>,
+    credentials: &Arc<dyn CredentialStore>,
+    url: &str,
+    fetch_remote: bool,
+) -> Result<Option<ResolvedProblemUrl>> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -354,8 +576,12 @@ pub(crate) fn resolve_problem_url_with_manager(
             continue;
         };
 
-        let mut db = SyncDb::open(data_dir)?;
-        let cached = db.lookup_problem_meta(&parsed.platform, &parsed.problem_id)?;
+        let cached = if SyncDb::db_path(data_dir).exists() {
+            let db = SyncDb::open(data_dir)?;
+            db.lookup_problem_meta(&parsed.platform, &parsed.problem_id)?
+        } else {
+            None
+        };
 
         let mut title = cached.as_ref().and_then(|m| m.title.clone());
         let mut raw_rating = cached.as_ref().and_then(|m| m.raw_rating);
@@ -364,7 +590,7 @@ pub(crate) fn resolve_problem_url_with_manager(
         let mut statement_md = None;
         let mut samples = Vec::new();
 
-        if title.is_none() && client.supports("fetchProblem")? {
+        if fetch_remote && title.is_none() && client.supports("fetchProblem")? {
             let oj_ctx = OjContext {
                 handle: config
                     .handle_for(&parsed.platform)
@@ -397,16 +623,18 @@ pub(crate) fn resolve_problem_url_with_manager(
                 samples = detail.samples;
 
                 // Cache newly fetched metadata for subsequent lookups.
-                let _ = db.upsert_problem_meta(&CachedProblemMeta {
-                    platform: parsed.platform.clone(),
-                    problem_key: parsed.problem_id.clone(),
-                    title: title.clone(),
-                    url: detail.url.or_else(|| Some(parsed.url.clone())),
-                    raw_rating,
-                    normalized_rating,
-                    tags: tags.clone(),
-                    updated_at: now_rfc3339_utc(),
-                });
+                if let Ok(mut db) = SyncDb::open(data_dir) {
+                    let _ = db.upsert_problem_meta(&CachedProblemMeta {
+                        platform: parsed.platform.clone(),
+                        problem_key: parsed.problem_id.clone(),
+                        title: title.clone(),
+                        url: detail.url.or_else(|| Some(parsed.url.clone())),
+                        raw_rating,
+                        normalized_rating,
+                        tags: tags.clone(),
+                        updated_at: now_rfc3339_utc(),
+                    });
+                }
             }
         }
 

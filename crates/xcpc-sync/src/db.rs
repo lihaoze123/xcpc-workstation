@@ -289,6 +289,35 @@ impl SyncDb {
         Ok(account.rating_history.len())
     }
 
+    /// Deletes all user-specific cached rows for `platform` (`oj_accounts`, `oj_rating_history`,
+    /// `oj_submissions`, and `oj_summaries`) while preserving shared `oj_contests` and
+    /// `oj_problem_meta`.
+    pub fn purge_platform_user_data(&self, platform: &str) -> Result<()> {
+        let p = platform.trim().to_ascii_lowercase();
+        if p.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM oj_accounts WHERE LOWER(platform) = ?1",
+            params![&p],
+        )?;
+        tx.execute(
+            "DELETE FROM oj_rating_history WHERE LOWER(platform) = ?1",
+            params![&p],
+        )?;
+        tx.execute(
+            "DELETE FROM oj_submissions WHERE LOWER(platform) = ?1",
+            params![&p],
+        )?;
+        tx.execute(
+            "DELETE FROM oj_summaries WHERE LOWER(platform) = ?1",
+            params![&p],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Upserts a lightweight summary row (from `syncSummary`).
     pub fn upsert_summary(
         &mut self,

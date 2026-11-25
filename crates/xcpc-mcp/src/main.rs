@@ -666,6 +666,54 @@ enum TrainingCommand {
         #[arg(long)]
         offset: Option<usize>,
     },
+    /// Record a manual training log entry (workspace check-in or standalone external/offline record).
+    Log {
+        /// Existing workspace problem ID (optional; omit for standalone logs).
+        #[arg(long = "problem")]
+        problem: Option<String>,
+        /// Problem title (required for standalone logs unless resolved from URL / problem).
+        #[arg(long)]
+        title: Option<String>,
+        /// Training status to record (`ac`, `upsolved`, `attempted`, `todo`, or `clear`).
+        #[arg(long, default_value = "ac")]
+        status: TrainingStatusArg,
+        /// Difficulty rating (unified integer rating).
+        #[arg(long)]
+        rating: Option<i32>,
+        /// Comma-separated tags (e.g. `dp,graphs`).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Platform label (e.g. `codeforces`, `luogu`, `local`).
+        #[arg(long)]
+        platform: Option<String>,
+        /// External problem URL (offline-resolved via enabled plugins when recognized).
+        #[arg(long)]
+        url: Option<String>,
+        /// Timestamp in RFC 3339 format (defaults to current UTC time).
+        #[arg(long)]
+        at: Option<String>,
+        /// Optional short note for this training entry.
+        #[arg(long)]
+        note: Option<String>,
+        /// Also create (or link) a problem entry in the workspace library.
+        #[arg(long)]
+        create_in_library: bool,
+    },
+    /// List workspace problems that have a non-empty editorial (`editorial.md`).
+    Editorials {
+        /// Free-text search against problem ID, title, tags, and editorial excerpt.
+        #[arg(long)]
+        search: Option<String>,
+        /// Filter by tag (case-insensitive).
+        #[arg(long)]
+        tag: Option<String>,
+        /// Minimum difficulty rating (inclusive).
+        #[arg(long)]
+        min_rating: Option<i32>,
+        /// Maximum difficulty rating (inclusive).
+        #[arg(long)]
+        max_rating: Option<i32>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -4224,12 +4272,12 @@ fn run_training(cli: &Cli, action: &TrainingCommand) -> Result<ExitCode, Fatal> 
             }
             let problem = ws.load_problem(problem_id)?;
             let log_status = status.into_log_status();
-            let entry = TrainingLogEntry {
-                at: xcpc_sync::now_rfc3339_utc(),
-                problem_id: Some(problem.id.clone()),
-                source: problem.meta.sources.first().cloned(),
-                status: log_status,
-            };
+            let entry = TrainingLogEntry::for_problem(
+                xcpc_sync::now_rfc3339_utc(),
+                Some(problem.id.clone()),
+                problem.meta.sources.first().cloned(),
+                log_status,
+            );
             ws.append_training_log(&entry)?;
 
             let synced = match resolve_data_dir() {
@@ -4359,6 +4407,94 @@ fn run_training(cli: &Cli, action: &TrainingCommand) -> Result<ExitCode, Fatal> 
                 );
             } else {
                 print_training_submissions(&page, *by_problem);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TrainingCommand::Log {
+            problem,
+            title,
+            status,
+            rating,
+            tags,
+            platform,
+            url,
+            at,
+            note,
+            create_in_library,
+        } => {
+            let ws = open_workspace(cli)?;
+            if ws.is_read_only() {
+                return Err(xcpc_storage::Error::ReadOnly.into());
+            }
+            let data_dir = resolve_data_dir()?;
+            let cleaned_tags: Vec<String> = tags
+                .iter()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let req = xcpc_sync::ManualLogRequest {
+                problem_id: problem.clone(),
+                title: title.clone(),
+                url: url.clone(),
+                platform: platform.clone(),
+                rating: *rating,
+                tags: cleaned_tags,
+                status: status.into_log_status(),
+                at: at.clone(),
+                note: note.clone(),
+                create_in_library: *create_in_library,
+            };
+            let res = xcpc_sync::log_training_record(&ws, &data_dir, None, &req)?;
+            if cli.json {
+                let mut value = serde_json::to_value(&res).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                let label = res
+                    .entry
+                    .title
+                    .as_deref()
+                    .or(res.entry.problem_id.as_deref())
+                    .or(res.entry.url.as_deref())
+                    .unwrap_or("(untitled)");
+                let lib = match (&res.library_problem_id, res.created_in_library) {
+                    (Some(id), true) => format!("\tcreated_in_library={id}"),
+                    (Some(id), false) => format!("\tlibrary_problem_id={id}"),
+                    (None, _) => String::new(),
+                };
+                println!(
+                    "{}\tstatus={}\tat={}{}",
+                    label, res.entry.status, res.entry.at, lib
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TrainingCommand::Editorials {
+            search,
+            tag,
+            min_rating,
+            max_rating,
+        } => {
+            let ws = open_workspace(cli)?;
+            let query = xcpc_sync::EditorialQuery {
+                search: search.clone(),
+                tag: tag.clone(),
+                min_rating: *min_rating,
+                max_rating: *max_rating,
+            };
+            let res = xcpc_sync::query_training_editorials(&ws, &query)?;
+            if cli.json {
+                let mut value = serde_json::to_value(&res).expect("serializable");
+                value["ok"] = json!(true);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serializable")
+                );
+            } else {
+                print_training_editorials(&res);
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -4516,6 +4652,29 @@ fn print_training_submissions(page: &xcpc_sync::SubmissionsPage, by_problem: boo
                 ts, row.platform, row.problem_key, rating, row.verdict, title, lib
             );
         }
+    }
+}
+
+fn print_training_editorials(res: &xcpc_sync::EditorialQueryResult) {
+    if res.items.is_empty() {
+        println!("no editorials found (total=0)");
+        return;
+    }
+    println!("editorials: {}", res.total);
+    for item in &res.items {
+        let rating = item
+            .rating
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let tags = if item.tags.is_empty() {
+            "-".to_owned()
+        } else {
+            item.tags.join(",")
+        };
+        println!(
+            "{:<24} {:<5} {:<20} {}\t{}",
+            item.problem_id, rating, tags, item.title, item.updated_at
+        );
     }
 }
 

@@ -9,9 +9,10 @@ use xcpc_storage::{CreateProblemOptions, Workspace, init_workspace};
 
 use crate::analytics::ymd_to_unix_secs;
 use crate::{
-    ContestsQuery, IngestProblemRequest, SubmissionsQuery, SyncConfig, SyncDb, SyncError,
-    TimeWindow, TrainingDashboardQuery, compute_training_dashboard, ingest_problem, query_contests,
-    query_submissions,
+    ContestsQuery, EditorialQuery, IngestProblemRequest, ManualLogRequest, SubmissionsQuery,
+    SyncConfig, SyncDb, SyncError, TimeWindow, TrainingDashboardQuery, compute_training_dashboard,
+    ingest_problem, log_training_record, query_contests, query_submissions,
+    query_training_editorials,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -112,12 +113,12 @@ fn dashboard_analytics_kpis_windows_heatmap_streaks_trend_buckets_tags_and_backl
         },
     )
     .unwrap();
-    ws.append_training_log(&TrainingLogEntry {
-        at: "2026-11-24T00:00:00Z".into(),
-        problem_id: Some("p-todo".into()),
-        source: None,
-        status: TrainingLogStatus::Todo,
-    })
+    ws.append_training_log(&TrainingLogEntry::for_problem(
+        "2026-11-24T00:00:00Z",
+        Some("p-todo".into()),
+        None,
+        TrainingLogStatus::Todo,
+    ))
     .unwrap();
 
     let mut db = SyncDb::open_in_memory().unwrap();
@@ -915,4 +916,529 @@ fn dashboard_and_submissions_performance_with_3000_submissions() {
         elapsed.as_secs_f64() < 2.0,
         "3000-submission analytics took too long: {elapsed:?}"
     );
+}
+
+#[test]
+fn manual_logs_merge_into_dashboard_with_zero_oj_accounts_and_handle_clear() {
+    let data_dir = TempDir::new().unwrap();
+    let ws_dir = TempDir::new().unwrap();
+    init_workspace(ws_dir.path()).unwrap();
+    let ws = Workspace::open(ws_dir.path(), false).unwrap();
+    let pm = PluginManager::new(data_dir.path());
+
+    // 1. Standalone AC today (2026-11-24)
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Local DP Challenge".into()),
+            rating: Some(1800),
+            tags: vec!["dp".into(), "trees".into()],
+            status: TrainingLogStatus::Ac,
+            at: Some("2026-11-24T08:00:00Z".into()),
+            note: Some("Clean rerooting DP".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // 2. Standalone Upsolved yesterday (2026-11-23) -> forms 2-day streak with today
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Gym Graph Flow".into()),
+            platform: Some("gym".into()),
+            rating: Some(2200),
+            tags: vec!["flows".into(), "graphs".into()],
+            status: TrainingLogStatus::Upsolved,
+            at: Some("2026-11-23T15:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // 3. Standalone Attempted (should NOT count as AC, but marks has_local_records)
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Hard Math Problem".into()),
+            rating: Some(2500),
+            tags: vec!["math".into()],
+            status: TrainingLogStatus::Attempted,
+            at: Some("2026-11-22T10:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // 4. Standalone AC then Cleared -> must NOT be counted as a solve!
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Mistaken Solve".into()),
+            rating: Some(2700),
+            tags: vec!["fft".into()],
+            status: TrainingLogStatus::Ac,
+            at: Some("2026-11-21T10:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Mistaken Solve".into()),
+            status: TrainingLogStatus::Clear,
+            at: Some("2026-11-21T11:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Zero OJ accounts, empty SyncDb
+    let db = SyncDb::open_in_memory().unwrap();
+    let cfg = SyncConfig::default();
+    let now = ymd_to_unix_secs(2026, 11, 24) + 12 * 3600;
+
+    let dash = compute_training_dashboard(
+        &db,
+        &cfg,
+        Some(&ws),
+        &TrainingDashboardQuery {
+            window: TimeWindow::Days30,
+            heatmap_year: Some(2026),
+            tag_min_rating: None,
+            now_unix: Some(now),
+        },
+    )
+    .unwrap();
+
+    assert!(dash.accounts.is_empty());
+    assert!(dash.has_local_records);
+    assert_eq!(dash.local_solved_count, 2);
+
+    // KPIs
+    assert_eq!(dash.kpi.total_ac, 2);
+    assert_eq!(dash.kpi.window_ac, 2);
+    assert_eq!(dash.kpi.today_ac, 1);
+    assert_eq!(dash.kpi.week_ac, 2);
+    assert_eq!(dash.kpi.month_ac, 2);
+    assert_eq!(dash.kpi.streak_days, 2);
+    assert_eq!(dash.kpi.longest_streak_days, 2);
+
+    // Heatmap
+    let nov24 = dash
+        .heatmap
+        .iter()
+        .find(|c| c.date == "2026-11-24")
+        .expect("Nov 24 heatmap cell");
+    assert_eq!(nov24.ac_count, 1);
+    assert_eq!(nov24.max_rating, Some(1800));
+    let nov23 = dash
+        .heatmap
+        .iter()
+        .find(|c| c.date == "2026-11-23")
+        .expect("Nov 23 heatmap cell");
+    assert_eq!(nov23.ac_count, 1);
+    assert_eq!(nov23.max_rating, Some(2200));
+    assert!(
+        !dash.heatmap.iter().any(|c| c.date == "2026-11-21"),
+        "cleared entry must not appear in heatmap"
+    );
+
+    // Difficulty buckets: 1800 (idx 4) and 2200 (idx 6)
+    assert_eq!(dash.difficulty_buckets[4].ac_count, 1);
+    assert_eq!(dash.difficulty_buckets[6].ac_count, 1);
+    assert_eq!(dash.difficulty_buckets[8].ac_count, 0); // 2700 was cleared
+
+    // Difficulty trend
+    assert!(!dash.difficulty_trend.is_empty());
+    assert_eq!(
+        dash.difficulty_trend
+            .iter()
+            .map(|p| p.ac_count)
+            .sum::<u64>(),
+        2
+    );
+
+    // Tag distribution: dp, trees, flows, graphs (NOT math or fft)
+    let tag_names: Vec<&str> = dash
+        .tag_distribution
+        .iter()
+        .map(|t| t.tag.as_str())
+        .collect();
+    assert!(tag_names.contains(&"dp"));
+    assert!(tag_names.contains(&"trees"));
+    assert!(tag_names.contains(&"flows"));
+    assert!(tag_names.contains(&"graphs"));
+    assert!(!tag_names.contains(&"math"));
+    assert!(!tag_names.contains(&"fft"));
+}
+
+#[test]
+fn cross_source_dedup_prevents_double_counting_oj_ac_problems() {
+    let data_dir = TempDir::new().unwrap();
+    let ws_dir = TempDir::new().unwrap();
+    init_workspace(ws_dir.path()).unwrap();
+    let ws = Workspace::open(ws_dir.path(), false).unwrap();
+    let pm = PluginManager::new(data_dir.path());
+
+    // Workspace problem linked to Codeforces 1900A
+    ws.create_problem_with_options(
+        "cf-1900a",
+        "Cover in Water",
+        &CreateProblemOptions {
+            sources: vec![ProblemSource {
+                platform: "codeforces".into(),
+                id: "1900A".into(),
+                url: Some("https://codeforces.com/problemset/problem/1900/A".into()),
+            }],
+            tags: vec!["greedy".into()],
+            difficulty: None,
+            rating: Some(800),
+        },
+    )
+    .unwrap();
+
+    // Already AC in oj_sync.db
+    let mut db = SyncDb::open_in_memory().unwrap();
+    let now = ymd_to_unix_secs(2026, 11, 24) + 12 * 3600;
+    db.upsert_submissions(
+        "codeforces",
+        &[make_sub(
+            "codeforces",
+            "s-1900a",
+            "1900A",
+            "Cover in Water",
+            Some(800),
+            &["greedy"],
+            "AC",
+            ymd_to_unix_secs(2026, 11, 24) + 3600,
+        )],
+        "2026-11-24T10:00:00Z",
+    )
+    .unwrap();
+
+    // User ALSO logs manual Ac on workspace problem `cf-1900a`
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            problem_id: Some("cf-1900a".into()),
+            status: TrainingLogStatus::Ac,
+            at: Some("2026-11-24T09:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let dash = compute_training_dashboard(
+        &db,
+        &SyncConfig::default(),
+        Some(&ws),
+        &TrainingDashboardQuery {
+            window: TimeWindow::All,
+            heatmap_year: Some(2026),
+            tag_min_rating: None,
+            now_unix: Some(now),
+        },
+    )
+    .unwrap();
+
+    assert!(dash.has_local_records);
+    assert_eq!(dash.local_solved_count, 0); // deduplicated against CF 1900A
+    assert_eq!(dash.kpi.total_ac, 1);
+    assert_eq!(dash.kpi.window_ac, 1);
+    assert_eq!(dash.kpi.today_ac, 1);
+    assert_eq!(dash.difficulty_buckets[0].ac_count, 1); // <1200 counted once
+    assert_eq!(dash.tag_distribution.len(), 1);
+    assert_eq!(dash.tag_distribution[0].ac_count, 1);
+}
+
+#[test]
+fn log_training_record_create_in_library_url_enrichment_and_readonly() {
+    let data_dir = TempDir::new().unwrap();
+    let ws_dir = TempDir::new().unwrap();
+    init_workspace(ws_dir.path()).unwrap();
+    let ws = Workspace::open(ws_dir.path(), false).unwrap();
+    let pm = PluginManager::new(data_dir.path());
+
+    // 1. Standalone log with create_in_library = true creates problem without fake default limits
+    let res = log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Custom Segment Tree".into()),
+            url: Some("https://example.org/p/seg-1".into()),
+            platform: Some("custom".into()),
+            rating: Some(2100),
+            tags: vec!["data structures".into(), "dp".into()],
+            status: TrainingLogStatus::Upsolved,
+            at: Some("2026-11-24T10:00:00Z".into()),
+            note: Some("Lazy propagation".into()),
+            create_in_library: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert!(res.created_in_library);
+    let pid = res
+        .library_problem_id
+        .as_deref()
+        .expect("library_problem_id populated");
+    assert_eq!(res.entry.problem_id.as_deref(), Some(pid));
+    assert_eq!(res.entry.status, TrainingLogStatus::Upsolved);
+    assert_eq!(res.entry.rating, Some(2100));
+
+    let loaded = ws.load_problem(pid).unwrap();
+    assert_eq!(loaded.meta.title, "Custom Segment Tree");
+    assert_eq!(loaded.meta.rating, Some(2100));
+    assert_eq!(loaded.meta.tags, vec!["data structures", "dp"]);
+    // Fake default limits (1s / 256MB) must be omitted
+    assert!(loaded.meta.limits.time.is_none());
+    assert!(loaded.meta.limits.memory.is_none());
+
+    // 2. Read-only workspace must reject log_training_record
+    let ro_ws = Workspace::open(ws_dir.path(), true).unwrap();
+    let err = log_training_record(
+        &ro_ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Should Fail".into()),
+            status: TrainingLogStatus::Ac,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        SyncError::Storage(xcpc_storage::Error::ReadOnly)
+    ));
+}
+
+#[test]
+fn query_submissions_includes_local_records_and_filters() {
+    let data_dir = TempDir::new().unwrap();
+    let ws_dir = TempDir::new().unwrap();
+    init_workspace(ws_dir.path()).unwrap();
+    let ws = Workspace::open(ws_dir.path(), false).unwrap();
+    let pm = PluginManager::new(data_dir.path());
+
+    // Log one solved local record and one unsolved attempted local record
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Local Solved".into()),
+            rating: Some(1500),
+            tags: vec!["greedy".into()],
+            status: TrainingLogStatus::Ac,
+            at: Some("2026-11-24T10:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    log_training_record(
+        &ws,
+        data_dir.path(),
+        Some(&pm),
+        &ManualLogRequest {
+            title: Some("Local Unsolved".into()),
+            rating: Some(2000),
+            tags: vec!["dp".into()],
+            status: TrainingLogStatus::Attempted,
+            at: Some("2026-11-24T11:00:00Z".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Also add one CF submission in oj_sync.db
+    let mut db = SyncDb::open_in_memory().unwrap();
+    db.upsert_submissions(
+        "codeforces",
+        &[make_sub(
+            "codeforces",
+            "cf-1",
+            "1999A",
+            "CF Problem",
+            Some(900),
+            &["math"],
+            "AC",
+            ymd_to_unix_secs(2026, 11, 24) + 5 * 3600,
+        )],
+        "2026-11-24T12:00:00Z",
+    )
+    .unwrap();
+
+    // Filter by platform = "local"
+    let local_all = query_submissions(
+        &db,
+        Some(&ws),
+        &SubmissionsQuery {
+            by_problem: true,
+            platform: Some("local".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(local_all.total, 2);
+    assert_eq!(
+        local_all.items[0].problem_title.as_deref(),
+        Some("Local Unsolved")
+    );
+    assert!(!local_all.items[0].solved);
+    assert_eq!(local_all.items[0].verdict, "ATTEMPTED");
+    assert_eq!(local_all.items[0].platform, "local");
+    assert!(local_all.items[0].library_problem_id.is_none());
+
+    assert_eq!(
+        local_all.items[1].problem_title.as_deref(),
+        Some("Local Solved")
+    );
+    assert!(local_all.items[1].solved);
+    assert_eq!(local_all.items[1].verdict, "AC");
+
+    // Filter by platform = "local" + unsolved_only = true
+    let local_unsolved = query_submissions(
+        &db,
+        Some(&ws),
+        &SubmissionsQuery {
+            by_problem: true,
+            platform: Some("local".into()),
+            unsolved_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(local_unsolved.total, 1);
+    assert_eq!(
+        local_unsolved.items[0].problem_title.as_deref(),
+        Some("Local Unsolved")
+    );
+
+    // Combined query (no platform filter) returns CF + 2 local records
+    let combined = query_submissions(
+        &db,
+        Some(&ws),
+        &SubmissionsQuery {
+            by_problem: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(combined.total, 3);
+}
+
+#[test]
+fn query_training_editorials_filters_by_search_tag_and_rating() {
+    let ws_dir = TempDir::new().unwrap();
+    init_workspace(ws_dir.path()).unwrap();
+    let ws = Workspace::open(ws_dir.path(), false).unwrap();
+
+    ws.create_problem_with_options(
+        "dp-tree",
+        "Tree Knapsack",
+        &CreateProblemOptions {
+            sources: vec![],
+            tags: vec!["dp".into(), "trees".into()],
+            difficulty: None,
+            rating: Some(1900),
+        },
+    )
+    .unwrap();
+    ws.write(
+        "problems/dp-tree/editorial.md",
+        b"# Solution\nUse subtree size trick to achieve $O(n^2)$.\n",
+    )
+    .unwrap();
+
+    ws.create_problem_with_options(
+        "math-gcd",
+        "GCD Counting",
+        &CreateProblemOptions {
+            sources: vec![],
+            tags: vec!["math".into(), "number theory".into()],
+            difficulty: None,
+            rating: Some(1300),
+        },
+    )
+    .unwrap();
+    ws.write(
+        "problems/math-gcd/editorial.md",
+        b"Apply Mobius inversion on divisors.\n",
+    )
+    .unwrap();
+
+    // Problem without editorial should not appear
+    ws.create_problem_with_options(
+        "no-ed",
+        "No Editorial Yet",
+        &CreateProblemOptions {
+            sources: vec![],
+            tags: vec!["greedy".into()],
+            difficulty: None,
+            rating: Some(1000),
+        },
+    )
+    .unwrap();
+
+    let all = query_training_editorials(&ws, &EditorialQuery::default()).unwrap();
+    assert_eq!(all.total, 2);
+    assert_eq!(
+        all.available_tags,
+        vec!["dp", "math", "number theory", "trees"]
+    );
+
+    // Filter by tag
+    let by_tag = query_training_editorials(
+        &ws,
+        &EditorialQuery {
+            tag: Some("TREES".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(by_tag.total, 1);
+    assert_eq!(by_tag.items[0].problem_id, "dp-tree");
+    assert_eq!(by_tag.available_tags.len(), 4);
+
+    // Filter by search matching excerpt
+    let by_search = query_training_editorials(
+        &ws,
+        &EditorialQuery {
+            search: Some("mobius".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(by_search.total, 1);
+    assert_eq!(by_search.items[0].problem_id, "math-gcd");
+
+    // Filter by rating bounds
+    let by_rating = query_training_editorials(
+        &ws,
+        &EditorialQuery {
+            min_rating: Some(1500),
+            max_rating: Some(2000),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(by_rating.total, 1);
+    assert_eq!(by_rating.items[0].problem_id, "dp-tree");
 }

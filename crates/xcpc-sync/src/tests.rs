@@ -674,6 +674,9 @@ fn error_isolation_records_and_clears_last_error() {
         if url.contains("atcoder.jp/users/chokudai/history/json") {
             return Ok(ok_json(r#"[]"#));
         }
+        if url == "https://atcoder.jp/users/chokudai" {
+            return Ok(ok_json(r#"<html><body>chokudai</body></html>"#));
+        }
         if url.contains("kenkoooo.com/atcoder/atcoder-api/v3/user/submissions") {
             return Ok(ok_json(r#"[]"#));
         }
@@ -823,4 +826,562 @@ module.exports = { syncSubmissions, normalizeRating };
         .expect("problem meta populated");
     assert_eq!(meta.raw_rating, Some(1200));
     assert_eq!(meta.normalized_rating, Some(1320));
+}
+
+#[test]
+fn codeforces_pagination_full_and_incremental_early_stop() {
+    use std::sync::Mutex;
+    use xcpc_plugin::{HostContext, KvStore, OjContext, OjPluginClient, SandboxLimits};
+
+    let data_dir = TempDir::new().unwrap();
+    let pm = PluginManager::new(data_dir.path());
+    let loaded = pm.load_plugin("codeforces").unwrap();
+
+    // Helper to synthesize a descending page of CF user.status rows.
+    let make_page = |start_id: i64, count: usize| -> String {
+        let mut items = Vec::with_capacity(count);
+        for i in 0..count {
+            let id = start_id - i as i64;
+            items.push(format!(
+                r#"{{"id":{id},"creationTimeSeconds":{ts},"programmingLanguage":"C++20","verdict":"OK","problem":{{"contestId":1999,"index":"A","name":"P{id}","rating":1200,"tags":["math"]}}}}"#,
+                ts = 1_700_000_000 + id
+            ));
+        }
+        format!(r#"{{"status":"OK","result":[{}]}}"#, items.join(","))
+    };
+
+    let requested_urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let urls_clone = Arc::clone(&requested_urls);
+    let mode = Arc::new(AtomicUsize::new(1));
+    let mode_clone = Arc::clone(&mode);
+
+    let http = Arc::new(MockHttpClient::new(move |req: &HttpRequest| {
+        urls_clone.lock().unwrap().push(req.url.clone());
+        let m = mode_clone.load(Ordering::SeqCst);
+        if m == 1 {
+            // Full sync: 1500 total submissions across 2 pages (1000 + 500).
+            if req.url.contains("from=1&count=1000") {
+                return Ok(ok_json(&make_page(2500, 1000)));
+            }
+            if req.url.contains("from=1001&count=1000") {
+                return Ok(ok_json(&make_page(1500, 500)));
+            }
+        } else {
+            // Incremental sync: 5 new submissions (2505..=2501) on top of previous 2500..=1001.
+            if req.url.contains("from=1&count=1000") {
+                return Ok(ok_json(&make_page(2505, 1000)));
+            }
+            if req.url.contains("from=1001&count=1000") {
+                return Ok(ok_json(&make_page(1505, 1000)));
+            }
+        }
+        Err(PluginError::Http(format!("unexpected URL: {}", req.url)))
+    }));
+
+    let host_ctx = HostContext {
+        manifest: loaded.info.manifest.clone(),
+        http_client: http,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
+    let oj_ctx = OjContext {
+        handle: "tourist".into(),
+    };
+
+    // 1. Full sync (no cursor) fetches both pages (1000 + 500 = 1500).
+    let full = client.sync_submissions(&oj_ctx, None).unwrap();
+    assert_eq!(full.submissions.len(), 1500);
+    assert_eq!(full.next_cursor.as_deref(), Some("2500"));
+    assert_eq!(requested_urls.lock().unwrap().len(), 2);
+
+    // 2. Incremental sync with cursor "2500" stops after page 1 (does NOT fetch from=1001).
+    mode.store(2, Ordering::SeqCst);
+    requested_urls.lock().unwrap().clear();
+    let inc1 = client.sync_submissions(&oj_ctx, Some("2500")).unwrap();
+    assert_eq!(inc1.submissions.len(), 5);
+    assert_eq!(inc1.submissions[0].submission_id, "2505");
+    assert_eq!(inc1.submissions[4].submission_id, "2501");
+    assert_eq!(inc1.next_cursor.as_deref(), Some("2505"));
+    assert_eq!(requested_urls.lock().unwrap().len(), 1);
+
+    // 3. Incremental sync with cursor "1490" spans page 1 + page 2, then stops on page 2
+    //    without fetching page 3 (from=2001).
+    requested_urls.lock().unwrap().clear();
+    let inc2 = client.sync_submissions(&oj_ctx, Some("1490")).unwrap();
+    assert_eq!(inc2.submissions.len(), 1015); // 2505..=1491
+    assert_eq!(inc2.next_cursor.as_deref(), Some("2505"));
+    assert_eq!(requested_urls.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn atcoder_verify_rejects_nonexistent_user_and_accepts_unrated_existing_user() {
+    use xcpc_plugin::{HostContext, KvStore, OjContext, OjPluginClient, SandboxLimits};
+
+    let data_dir = TempDir::new().unwrap();
+    let pm = PluginManager::new(data_dir.path());
+    let loaded = pm.load_plugin("atcoder").unwrap();
+
+    let http = Arc::new(MockHttpClient::new(|req: &HttpRequest| {
+        if req.url == "https://atcoder.jp/users/no_such_user_zz9/history/json" {
+            return Ok(ok_json("[]"));
+        }
+        if req.url == "https://atcoder.jp/users/no_such_user_zz9" {
+            return Ok(HttpResponse {
+                status: 404,
+                headers: BTreeMap::new(),
+                body: "Not Found".into(),
+            });
+        }
+        if req.url == "https://atcoder.jp/users/fresh_unrated/history/json" {
+            return Ok(ok_json("[]"));
+        }
+        if req.url == "https://atcoder.jp/users/fresh_unrated" {
+            return Ok(HttpResponse {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: "<html><body>fresh_unrated</body></html>".into(),
+            });
+        }
+        if req.url == "https://atcoder.jp/users/chokudai/history/json" {
+            return Ok(ok_json(
+                r#"[{"ContestScreenName":"abc350.contest.atcoder.jp","IsRated":true,"NewRating":2850}]"#,
+            ));
+        }
+        Err(PluginError::Http(format!("unexpected URL: {}", req.url)))
+    }));
+
+    let host_ctx = HostContext {
+        manifest: loaded.info.manifest.clone(),
+        http_client: http,
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
+
+    let missing = client
+        .verify(&OjContext {
+            handle: "no_such_user_zz9".into(),
+        })
+        .unwrap();
+    assert!(!missing.ok);
+    assert_eq!(missing.message.as_deref(), Some("未找到该 AtCoder 账号"));
+
+    let unrated = client
+        .verify(&OjContext {
+            handle: "fresh_unrated".into(),
+        })
+        .unwrap();
+    assert!(unrated.ok);
+    assert_eq!(unrated.handle.as_deref(), Some("fresh_unrated"));
+
+    let rated = client
+        .verify(&OjContext {
+            handle: "chokudai".into(),
+        })
+        .unwrap();
+    assert!(rated.ok);
+    assert_eq!(rated.handle.as_deref(), Some("chokudai"));
+}
+
+#[test]
+fn contest_sync_aggregates_without_handle_and_does_not_fake_last_synced_at() {
+    let data_dir = TempDir::new().unwrap();
+    let http = Arc::new(MockHttpClient::new(|req: &HttpRequest| {
+        let url = req.url.as_str();
+        if url.contains("codeforces.com/api/user.info") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"handle":"tourist","rating":3800}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.rating") {
+            return Ok(ok_json(r#"{"status":"OK","result":[]}"#));
+        }
+        if url.contains("codeforces.com/api/user.status") {
+            return Ok(ok_json(r#"{"status":"OK","result":[]}"#));
+        }
+        if url.contains("codeforces.com/api/contest.list") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"id":2050,"name":"CF Round 990","phase":"BEFORE","startTimeSeconds":1800000000,"durationSeconds":7200,"type":"CF"}]}"#,
+            ));
+        }
+        if url == "https://atcoder.jp/contests/" {
+            return Ok(ok_json(
+                r#"<div id="contest-table-upcoming"><table><tbody>
+                    <tr><td>2026-12-01 21:00:00+0900</td><td><a href="/contests/abc400">AtCoder Beginner Contest 400</a></td><td>01:40</td></tr>
+                </tbody></table></div>"#,
+            ));
+        }
+        Err(PluginError::Http(format!("unexpected URL: {url}")))
+    }));
+
+    let engine = SyncEngine::new(
+        data_dir.path(),
+        http,
+        Arc::new(MemoryCredentialStore::new()),
+    );
+
+    // 1. With NO handles configured: report.platforms is empty, last_synced_at stays None,
+    //    yet upcoming contests from BOTH enabled plugins (CF + AtCoder) are aggregated.
+    let empty_report = engine.sync(&SyncOptions::default()).unwrap();
+    assert!(empty_report.platforms.is_empty());
+    assert!(engine.load_config().unwrap().last_synced_at.is_none());
+
+    let contests = engine.open_db().unwrap().list_contests().unwrap();
+    assert_eq!(contests.len(), 2);
+    assert!(
+        contests
+            .iter()
+            .any(|c| c.platform == "codeforces" && c.contest_id == "2050")
+    );
+    assert!(
+        contests
+            .iter()
+            .any(|c| c.platform == "atcoder" && c.contest_id == "abc400")
+    );
+
+    // 2. With only Codeforces handle configured: AtCoder contests are still aggregated,
+    //    reports only lists Codeforces, and last_synced_at is updated.
+    let mut cfg = SyncConfig::default();
+    cfg.set_handle("codeforces", "tourist");
+    engine.save_config(&cfg).unwrap();
+
+    let cf_only_report = engine.sync(&SyncOptions::default()).unwrap();
+    assert_eq!(cf_only_report.platforms.len(), 1);
+    assert_eq!(cf_only_report.platforms[0].platform, "codeforces");
+    assert!(cf_only_report.platforms[0].ok);
+    assert!(engine.load_config().unwrap().last_synced_at.is_some());
+
+    let contests_after = engine.open_db().unwrap().list_contests().unwrap();
+    assert_eq!(contests_after.len(), 2);
+    assert!(contests_after.iter().any(|c| c.platform == "atcoder"));
+
+    // 3. Dedicated sync_contests(None) refreshes all enabled oj_source plugins without handles.
+    let contest_reports = engine.sync_contests(None).unwrap();
+    assert_eq!(contest_reports.len(), 2);
+    assert!(
+        contest_reports
+            .iter()
+            .all(|r| r.ok && r.contests_synced == 1)
+    );
+}
+
+#[test]
+fn ingest_problem_omits_fake_default_limits() {
+    use crate::{IngestProblemRequest, ingest_problem};
+
+    let data_dir = TempDir::new().unwrap();
+    let ws_dir = TempDir::new().unwrap();
+    xcpc_storage::init_workspace(ws_dir.path()).unwrap();
+    let ws = xcpc_storage::Workspace::open(ws_dir.path(), false).unwrap();
+
+    let res = ingest_problem(
+        &ws,
+        data_dir.path(),
+        None,
+        &IngestProblemRequest {
+            platform: Some("codeforces".into()),
+            problem_key: Some("1999A".into()),
+            title: Some("A+B Again?".into()),
+            rating: Some(800),
+            tags: Some(vec!["math".into()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(res.created);
+
+    let loaded = ws.load_problem(&res.problem_id).unwrap();
+    assert_eq!(loaded.meta.title, "A+B Again?");
+    assert_eq!(loaded.meta.limits.time, None);
+    assert_eq!(loaded.meta.limits.memory, None);
+    assert_eq!(loaded.meta.limits.input, None);
+    assert_eq!(loaded.meta.limits.output, None);
+
+    let raw_toml = std::fs::read_to_string(
+        ws_dir
+            .path()
+            .join("problems")
+            .join(&res.problem_id)
+            .join("problem.toml"),
+    )
+    .unwrap();
+    assert!(
+        !raw_toml.contains("[limits]"),
+        "unexpected [limits] in:\n{raw_toml}"
+    );
+    assert!(
+        !raw_toml.contains("256MB"),
+        "unexpected fake memory limit in:\n{raw_toml}"
+    );
+}
+
+#[test]
+fn builtin_oj_plugin_descriptions_are_plain_chinese() {
+    let data_dir = TempDir::new().unwrap();
+    let plugins = PluginManager::new(data_dir.path()).list_plugins().unwrap();
+
+    let cf = plugins
+        .iter()
+        .find(|p| p.manifest.id == "codeforces")
+        .expect("codeforces plugin present");
+    assert_eq!(cf.manifest.description, "同步 Codeforces 提交与 Rating");
+
+    let ac = plugins
+        .iter()
+        .find(|p| p.manifest.id == "atcoder")
+        .expect("atcoder plugin present");
+    assert_eq!(ac.manifest.description, "同步 AtCoder 提交与 Rating");
+}
+
+#[test]
+fn failed_verification_during_sync_returns_error_and_does_not_advance_last_synced_at() {
+    let data_dir = TempDir::new().unwrap();
+    let http = Arc::new(MockHttpClient::new(|req: &HttpRequest| {
+        let url = req.url.as_str();
+        if url == "https://atcoder.jp/users/no_such_user_zz9x/history/json" {
+            return Ok(ok_json("[]"));
+        }
+        if url == "https://atcoder.jp/users/no_such_user_zz9x" {
+            return Ok(HttpResponse {
+                status: 404,
+                headers: BTreeMap::new(),
+                body: "Not Found".into(),
+            });
+        }
+        if url == "https://atcoder.jp/contests/" {
+            return Ok(ok_json("<html></html>"));
+        }
+        if url.contains("codeforces.com/api/contest.list") {
+            return Ok(ok_json(r#"{"status":"OK","result":[]}"#));
+        }
+        if url.contains("codeforces.com/api/user.info") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"handle":"tourist","rating":3800}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.rating") {
+            return Ok(ok_json(r#"{"status":"OK","result":[]}"#));
+        }
+        if url.contains("codeforces.com/api/user.status") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[
+                    {"id":2002,"creationTimeSeconds":1722961000,"programmingLanguage":"C++20","verdict":"OK","problem":{"contestId":1999,"index":"A","name":"A+B Again?","rating":800,"tags":["math"]}},
+                    {"id":2001,"creationTimeSeconds":1722960500,"programmingLanguage":"C++20","verdict":"OK","problem":{"contestId":1999,"index":"B","name":"Card Game","rating":1000,"tags":["greedy"]}}
+                ]}"#,
+            ));
+        }
+        Err(PluginError::Http(format!("unexpected URL: {url}")))
+    }));
+
+    let engine = SyncEngine::new(
+        data_dir.path(),
+        http,
+        Arc::new(MemoryCredentialStore::new()),
+    );
+
+    // 1. Configure only a non-existent AtCoder handle -> sync must report ok: false and NOT set last_synced_at.
+    let mut cfg = SyncConfig::default();
+    cfg.set_handle("atcoder", "no_such_user_zz9x");
+    engine.save_config(&cfg).unwrap();
+
+    let failed_report = engine.sync(&SyncOptions::default()).unwrap();
+    assert_eq!(failed_report.platforms.len(), 1);
+    assert_eq!(failed_report.platforms[0].platform, "atcoder");
+    assert!(!failed_report.platforms[0].ok);
+    assert_eq!(
+        failed_report.platforms[0].error.as_deref(),
+        Some("未找到该 AtCoder 账号")
+    );
+    assert!(
+        engine.load_config().unwrap().last_synced_at.is_none(),
+        "failed verification must not advance last_synced_at"
+    );
+
+    // Plugin last_error should also record the verification error.
+    let plugins = engine.plugin_manager().list_plugins().unwrap();
+    let ac_info = plugins.iter().find(|p| p.manifest.id == "atcoder").unwrap();
+    assert_eq!(ac_info.last_error.as_deref(), Some("未找到该 AtCoder 账号"));
+
+    // 2. Full sync on a valid Codeforces handle ignores stored cursor and advances last_synced_at.
+    let mut cfg2 = SyncConfig::default();
+    cfg2.set_handle("codeforces", "tourist");
+    engine.save_config(&cfg2).unwrap();
+
+    // Seed cursor at latest ID so incremental sync gets 0, while full sync re-fetches all 2.
+    engine
+        .plugin_manager()
+        .kv_store("codeforces")
+        .unwrap()
+        .set("sync_cursor", serde_json::json!("2002"))
+        .unwrap();
+
+    let inc_report = engine
+        .sync(&SyncOptions {
+            platform: Some("codeforces".into()),
+            full: false,
+        })
+        .unwrap();
+    assert!(inc_report.platforms[0].ok);
+    assert_eq!(inc_report.platforms[0].submissions_synced, 0);
+
+    let full_report = engine
+        .sync(&SyncOptions {
+            platform: Some("codeforces".into()),
+            full: true,
+        })
+        .unwrap();
+    assert!(full_report.platforms[0].ok);
+    assert_eq!(full_report.platforms[0].submissions_synced, 2);
+    assert!(engine.load_config().unwrap().last_synced_at.is_some());
+}
+
+#[test]
+fn handle_switch_and_clear_purges_old_user_db_rows_and_cursor() {
+    let data_dir = TempDir::new().unwrap();
+    let http = Arc::new(MockHttpClient::new(|req: &HttpRequest| {
+        let url = req.url.as_str();
+        if url.contains("codeforces.com/api/user.info?handles=alice") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"handle":"alice","rating":2100,"maxRating":2200,"rank":"master"}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.rating?handle=alice") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"contestId":1900,"contestName":"CF 900","oldRating":2000,"newRating":2100,"rank":100,"ratingUpdateTimeSeconds":1700000000}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.status?handle=alice") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[
+                    {"id":9000,"creationTimeSeconds":1700001000,"programmingLanguage":"C++20","verdict":"OK","problem":{"contestId":1900,"index":"A","name":"Alice Problem","rating":1200,"tags":["math"]}}
+                ]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.info?handles=bob") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"handle":"bob","rating":1500,"maxRating":1550,"rank":"specialist"}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.rating?handle=bob") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"contestId":1800,"contestName":"CF 800","oldRating":1400,"newRating":1500,"rank":500,"ratingUpdateTimeSeconds":1690000000}]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/user.status?handle=bob") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[
+                    {"id":500,"creationTimeSeconds":1690001000,"programmingLanguage":"C++20","verdict":"OK","problem":{"contestId":1800,"index":"A","name":"Bob Problem","rating":900,"tags":["greedy"]}}
+                ]}"#,
+            ));
+        }
+        if url.contains("codeforces.com/api/contest.list") {
+            return Ok(ok_json(
+                r#"{"status":"OK","result":[{"id":2050,"name":"CF Round 990","phase":"BEFORE","startTimeSeconds":1800000000,"durationSeconds":7200,"type":"CF"}]}"#,
+            ));
+        }
+        Err(PluginError::Http(format!("unexpected URL: {url}")))
+    }));
+
+    let engine = SyncEngine::new(
+        data_dir.path(),
+        http,
+        Arc::new(MemoryCredentialStore::new()),
+    );
+
+    // 1. Configure alice and sync.
+    engine.set_handle("codeforces", "alice").unwrap();
+    let rep_a = engine
+        .sync(&SyncOptions {
+            platform: Some("codeforces".into()),
+            full: false,
+        })
+        .unwrap();
+    assert!(rep_a.platforms[0].ok);
+    assert_eq!(rep_a.platforms[0].submissions_synced, 1);
+    assert_eq!(
+        engine
+            .plugin_manager()
+            .kv_store("codeforces")
+            .unwrap()
+            .get("sync_cursor")
+            .unwrap(),
+        Some(serde_json::json!("9000"))
+    );
+
+    // 2. Switch to bob: alice's DB rows & sync_cursor must be purged immediately, while shared contests & problem_meta remain.
+    engine.set_handle("codeforces", "bob").unwrap();
+    {
+        let db = engine.open_db().unwrap();
+        assert!(db.list_accounts().unwrap().is_empty());
+        assert!(
+            db.list_rating_history(Some("codeforces"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.list_submissions(Some("codeforces")).unwrap().is_empty());
+        assert_eq!(db.list_contests().unwrap().len(), 1);
+        assert!(
+            db.lookup_problem_meta("codeforces", "1900A")
+                .unwrap()
+                .is_some()
+        );
+    }
+    assert_eq!(
+        engine
+            .plugin_manager()
+            .kv_store("codeforces")
+            .unwrap()
+            .get("sync_cursor")
+            .unwrap(),
+        None
+    );
+
+    // 3. Sync bob (whose submission ID 500 < alice's old cursor 9000): must fetch bob's submission and not mix alice's.
+    let rep_b = engine
+        .sync(&SyncOptions {
+            platform: Some("codeforces".into()),
+            full: false,
+        })
+        .unwrap();
+    assert!(rep_b.platforms[0].ok);
+    assert_eq!(rep_b.platforms[0].submissions_synced, 1);
+    {
+        let db = engine.open_db().unwrap();
+        let accts = db.list_accounts().unwrap();
+        assert_eq!(accts.len(), 1);
+        assert_eq!(accts[0].handle, "bob");
+        let subs = db.list_submissions(Some("codeforces")).unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].handle, "bob");
+        assert_eq!(subs[0].submission_id, "500");
+    }
+
+    // 4. Clear handle: purges bob's DB rows & cursor while keeping shared contests.
+    engine.set_handle("codeforces", "").unwrap();
+    assert_eq!(engine.load_config().unwrap().handle_for("codeforces"), None);
+    {
+        let db = engine.open_db().unwrap();
+        assert!(db.list_accounts().unwrap().is_empty());
+        assert!(
+            db.list_rating_history(Some("codeforces"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.list_submissions(Some("codeforces")).unwrap().is_empty());
+        assert_eq!(db.list_contests().unwrap().len(), 1);
+    }
+    assert_eq!(
+        engine
+            .plugin_manager()
+            .kv_store("codeforces")
+            .unwrap()
+            .get("sync_cursor")
+            .unwrap(),
+        None
+    );
 }

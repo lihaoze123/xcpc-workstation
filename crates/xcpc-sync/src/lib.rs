@@ -9,10 +9,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use analytics::{
-    ContestCalendarItem, ContestsQuery, DifficultyBucket, DifficultyTrendPoint, HeatmapCell,
-    PlatformAccountMetric, PlatformRatingSeries, RatingPoint, SubmissionViewRow, SubmissionsPage,
-    SubmissionsQuery, TagStat, TimeWindow, TrainingDashboard, TrainingDashboardQuery, TrainingKpi,
-    WorkspaceBacklogItem, compute_training_dashboard, query_contests, query_submissions,
+    ContestCalendarItem, ContestsQuery, DifficultyBucket, DifficultyTrendPoint, EditorialQuery,
+    EditorialQueryResult, HeatmapCell, PlatformAccountMetric, PlatformRatingSeries, RatingPoint,
+    SubmissionViewRow, SubmissionsPage, SubmissionsQuery, TagStat, TimeWindow, TrainingDashboard,
+    TrainingDashboardQuery, TrainingKpi, WorkspaceBacklogItem, compute_training_dashboard,
+    query_contests, query_submissions, query_training_editorials,
 };
 pub use config::{CONFIG_FILENAME, SyncConfig};
 pub use db::{
@@ -20,11 +21,15 @@ pub use db::{
     CachedSummary, DB_FILENAME, SyncDb,
 };
 pub use error::{Result, SyncError};
-pub use ingest::{IngestProblemRequest, IngestProblemResult, ingest_problem};
+pub use ingest::{
+    IngestProblemRequest, IngestProblemResult, ManualLogRequest, ManualLogResult, ingest_problem,
+    log_training_record,
+};
 pub use scheduler::{
     PlatformSyncReport, ResolvedProblemUrl, SyncEngine, SyncOptions, SyncReport,
     suggest_problem_slug,
 };
+pub use xcpc_domain::EditorialSummary;
 
 /// Desktop application ID from `apps/desktop/nsh.json`, used to share `<dataDir>`
 /// seamlessly between the CLI and the NSH desktop application.

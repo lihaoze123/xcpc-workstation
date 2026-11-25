@@ -3,14 +3,20 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use xcpc_domain::{ProblemSource, TrainingLogEntry, TrainingLogStatus, check_id};
+use xcpc_domain::{
+    LimitsPatch, Patch, ProblemMetaPatch, ProblemSource, TrainingLogEntry, TrainingLogStatus,
+    check_id,
+};
 use xcpc_plugin::{CredentialStore, HttpClient, PluginManager, SystemKeyringStore, UreqHttpClient};
 use xcpc_storage::{CreateProblemOptions, Workspace};
 
+use crate::analytics::parse_rfc3339_to_unix_secs;
 use crate::db::SyncDb;
 use crate::error::{Result, SyncError};
 use crate::now_rfc3339_utc;
-use crate::scheduler::{resolve_problem_url_with_manager, suggest_problem_slug};
+use crate::scheduler::{
+    resolve_problem_url_offline, resolve_problem_url_with_manager, suggest_problem_slug,
+};
 
 /// Request payload for [`ingest_problem`] (from a synced submission, external URL, or manual input).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +53,234 @@ pub struct IngestProblemResult {
     pub tags: Vec<String>,
 }
 
+/// Request payload for [`log_training_record`] (workspace check-in or standalone manual log).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualLogRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    pub status: TrainingLogStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub create_in_library: bool,
+}
+
+impl Default for ManualLogRequest {
+    fn default() -> Self {
+        Self {
+            problem_id: None,
+            title: None,
+            url: None,
+            platform: None,
+            rating: None,
+            tags: Vec::new(),
+            status: TrainingLogStatus::Ac,
+            at: None,
+            note: None,
+            create_in_library: false,
+        }
+    }
+}
+
+/// Outcome of [`log_training_record`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualLogResult {
+    pub entry: TrainingLogEntry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_problem_id: Option<String>,
+    pub created_in_library: bool,
+}
+
+/// Records a manual training entry into `training/logs.jsonl`, optionally enriching from
+/// offline OJ URL parsing / local `oj_sync.db` cache and optionally creating a linked
+/// problem in the workspace library (`create_in_library = true`).
+pub fn log_training_record(
+    workspace: &Workspace,
+    data_dir: &Path,
+    plugins: Option<&PluginManager>,
+    req: &ManualLogRequest,
+) -> Result<ManualLogResult> {
+    if workspace.is_read_only() {
+        return Err(xcpc_storage::Error::ReadOnly.into());
+    }
+
+    let req_problem_id = req
+        .problem_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let req_title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let req_url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let req_platform = req
+        .platform
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase);
+    let req_note = req.note.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    let at = match req.at.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => {
+            if parse_rfc3339_to_unix_secs(raw).is_none() {
+                return Err(SyncError::InvalidInput(format!(
+                    "invalid RFC3339 timestamp {raw:?}"
+                )));
+            }
+            raw.to_string()
+        }
+        None => now_rfc3339_utc(),
+    };
+
+    // Deduplicate and clean explicit tags while preserving order.
+    let mut cleaned_tags: Vec<String> = Vec::new();
+    let mut seen_tags: HashSet<String> = HashSet::new();
+    for raw_tag in &req.tags {
+        let t = raw_tag.trim();
+        if !t.is_empty() && seen_tags.insert(t.to_ascii_lowercase()) {
+            cleaned_tags.push(t.to_string());
+        }
+    }
+
+    // Offline-safe URL resolution (never blocks on network) when a URL is provided.
+    let resolved = if let Some(url) = req_url {
+        if let Some(pm) = plugins {
+            resolve_problem_url_offline(pm, data_dir, url)
+                .ok()
+                .flatten()
+        } else {
+            let owned_pm = PluginManager::new(data_dir);
+            resolve_problem_url_offline(&owned_pm, data_dir, url)
+                .ok()
+                .flatten()
+        }
+    } else {
+        None
+    };
+
+    let mut source = resolved.as_ref().map(|r| ProblemSource {
+        platform: r.platform.trim().to_ascii_lowercase(),
+        id: r.problem_key.trim().to_string(),
+        url: Some(r.url.clone()),
+    });
+
+    let mut final_platform = req_platform
+        .or_else(|| {
+            resolved
+                .as_ref()
+                .map(|r| r.platform.trim().to_ascii_lowercase())
+        })
+        .filter(|s| !s.is_empty());
+    let final_url = req_url
+        .map(str::to_owned)
+        .or_else(|| resolved.as_ref().map(|r| r.url.clone()));
+    let mut final_title = req_title
+        .map(str::to_owned)
+        .or_else(|| resolved.as_ref().and_then(|r| r.title.clone()));
+    let final_rating = req.rating.or_else(|| {
+        resolved
+            .as_ref()
+            .and_then(|r| r.normalized_rating.or(r.raw_rating))
+            .and_then(|v| i32::try_from(v).ok())
+    });
+    let final_tags = if !cleaned_tags.is_empty() {
+        cleaned_tags
+    } else {
+        resolved
+            .as_ref()
+            .map(|r| r.tags.clone())
+            .unwrap_or_default()
+    };
+
+    let mut entry_problem_id: Option<String> = None;
+    let mut library_problem_id: Option<String> = None;
+    let mut created_in_library = false;
+
+    if let Some(pid) = req_problem_id {
+        let problem = workspace.load_problem(pid)?;
+        if source.is_none() {
+            source = problem.meta.sources.first().cloned();
+        }
+        if final_platform.is_none() {
+            final_platform = source
+                .as_ref()
+                .map(|s| s.platform.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty());
+        }
+        entry_problem_id = Some(problem.id.clone());
+        library_problem_id = Some(problem.id);
+    } else if req.create_in_library {
+        if source.is_none() && final_title.is_none() {
+            return Err(SyncError::InvalidInput(
+                "must provide `problem_id`, recognizable `url`, or `title` to create a library problem"
+                    .into(),
+            ));
+        }
+        let ingest_req = IngestProblemRequest {
+            url: final_url.clone(),
+            platform: source
+                .as_ref()
+                .map(|s| s.platform.clone())
+                .or_else(|| final_platform.clone()),
+            problem_key: source.as_ref().map(|s| s.id.clone()),
+            id: None,
+            title: final_title.clone(),
+            tags: (!final_tags.is_empty()).then_some(final_tags.clone()),
+            rating: final_rating.map(i64::from),
+            initial_status: None,
+        };
+        let res = ingest_problem_inner(workspace, data_dir, plugins, &ingest_req, false)?;
+        if source.is_none() {
+            source = res.source;
+        }
+        if final_title.is_none() {
+            final_title = Some(res.title);
+        }
+        entry_problem_id = Some(res.problem_id.clone());
+        library_problem_id = Some(res.problem_id);
+        created_in_library = res.created;
+    } else if let Some(ref src) = source {
+        library_problem_id = workspace.find_problem_by_source(&src.platform, &src.id)?;
+    }
+
+    let entry = TrainingLogEntry {
+        at,
+        problem_id: entry_problem_id,
+        source,
+        status: req.status,
+        title: final_title,
+        url: final_url,
+        platform: final_platform,
+        rating: final_rating,
+        tags: final_tags,
+        note: req_note.map(str::to_owned),
+    };
+
+    entry.validate().map_err(SyncError::InvalidInput)?;
+    workspace.append_training_log(&entry)?;
+
+    Ok(ManualLogResult {
+        entry,
+        library_problem_id,
+        created_in_library,
+    })
+}
+
 /// Ingests an external OJ problem (by URL or `(platform, problem_key)`) into `workspace`.
 ///
 /// - Enforces workspace read-only boundaries (`xcpc_storage::Error::ReadOnly`).
@@ -61,6 +295,16 @@ pub fn ingest_problem(
     data_dir: &Path,
     plugins: Option<&PluginManager>,
     req: &IngestProblemRequest,
+) -> Result<IngestProblemResult> {
+    ingest_problem_inner(workspace, data_dir, plugins, req, true)
+}
+
+fn ingest_problem_inner(
+    workspace: &Workspace,
+    data_dir: &Path,
+    plugins: Option<&PluginManager>,
+    req: &IngestProblemRequest,
+    allow_network: bool,
 ) -> Result<IngestProblemResult> {
     if workspace.is_read_only() {
         return Err(xcpc_storage::Error::ReadOnly.into());
@@ -86,13 +330,20 @@ pub fn ingest_problem(
 
     // 1. Resolve URL via enabled `oj_source` plugins if provided.
     let resolved = if let Some(url) = req_url {
-        let http: Arc<dyn HttpClient> = Arc::new(UreqHttpClient::new());
-        let creds: Arc<dyn CredentialStore> = Arc::new(SystemKeyringStore::new());
-        if let Some(pm) = plugins {
-            resolve_problem_url_with_manager(pm, data_dir, &http, &creds, url)?
+        if allow_network {
+            let http: Arc<dyn HttpClient> = Arc::new(UreqHttpClient::new());
+            let creds: Arc<dyn CredentialStore> = Arc::new(SystemKeyringStore::new());
+            if let Some(pm) = plugins {
+                resolve_problem_url_with_manager(pm, data_dir, &http, &creds, url)?
+            } else {
+                let owned_pm = PluginManager::new(data_dir);
+                resolve_problem_url_with_manager(&owned_pm, data_dir, &http, &creds, url)?
+            }
+        } else if let Some(pm) = plugins {
+            resolve_problem_url_offline(pm, data_dir, url)?
         } else {
             let owned_pm = PluginManager::new(data_dir);
-            resolve_problem_url_with_manager(&owned_pm, data_dir, &http, &creds, url)?
+            resolve_problem_url_offline(&owned_pm, data_dir, url)?
         }
     } else {
         None
@@ -143,12 +394,12 @@ pub fn ingest_problem(
         && let Some(existing_id) = workspace.find_problem_by_source(&src.platform, &src.id)?
     {
         if let Some(status) = req.initial_status {
-            workspace.append_training_log(&TrainingLogEntry {
-                at: now_rfc3339_utc(),
-                problem_id: Some(existing_id.clone()),
-                source: Some(src.clone()),
+            workspace.append_training_log(&TrainingLogEntry::for_problem(
+                now_rfc3339_utc(),
+                Some(existing_id.clone()),
+                Some(src.clone()),
                 status,
-            })?;
+            ))?;
         }
         let existing = workspace.load_problem(&existing_id)?;
         let existing_source = existing
@@ -218,15 +469,28 @@ pub fn ingest_problem(
     };
 
     // 6. Atomically create the problem (never writing training status into `problem.toml`).
+    // Clear the placeholder default limits (`1s` / `256MB`) written by `create_problem_with_options`
+    // because OJ submission metadata does not provide true time/memory limits.
     let created = workspace.create_problem_with_options(&slug, &title, &options)?;
+    workspace.update_problem_meta(
+        &created.id,
+        &ProblemMetaPatch {
+            limits: LimitsPatch {
+                time: Patch::Clear,
+                memory: Patch::Clear,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )?;
 
     if let Some(status) = req.initial_status {
-        workspace.append_training_log(&TrainingLogEntry {
-            at: now_rfc3339_utc(),
-            problem_id: Some(created.id.clone()),
-            source: source.clone(),
+        workspace.append_training_log(&TrainingLogEntry::for_problem(
+            now_rfc3339_utc(),
+            Some(created.id.clone()),
+            source.clone(),
             status,
-        })?;
+        ))?;
     }
 
     Ok(IngestProblemResult {

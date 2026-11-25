@@ -1414,6 +1414,10 @@ impl std::str::FromStr for TrainingLogStatus {
 }
 
 /// One append-only status event line in `training/logs.jsonl`.
+///
+/// Supports both workspace problem check-ins (`problem_id` and/or `source`) and
+/// standalone manual training records (`title`, with optional `url`, `platform`,
+/// `rating`, `tags`, `note`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingLogEntry {
     pub at: String,
@@ -1422,17 +1426,74 @@ pub struct TrainingLogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<ProblemSource>,
     pub status: TrainingLogStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl TrainingLogEntry {
+    /// Constructs a workspace problem check-in entry with all standalone metadata fields empty.
+    pub fn for_problem(
+        at: impl Into<String>,
+        problem_id: Option<String>,
+        source: Option<ProblemSource>,
+        status: TrainingLogStatus,
+    ) -> Self {
+        Self {
+            at: at.into(),
+            problem_id,
+            source,
+            status,
+            title: None,
+            url: None,
+            platform: None,
+            rating: None,
+            tags: Vec::new(),
+            note: None,
+        }
+    }
+
+    /// Validates that this entry identifies a target via at least one of:
+    /// non-empty `problem_id`, valid `source` (non-empty `platform` and `id`), or non-empty `title`.
+    pub fn validate(&self) -> Result<(), String> {
+        let has_problem_id = self
+            .problem_id
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+        let has_source = self
+            .source
+            .as_ref()
+            .is_some_and(|s| !s.platform.trim().is_empty() && !s.id.trim().is_empty());
+        let has_title = self.title.as_deref().is_some_and(|s| !s.trim().is_empty());
+        if !has_problem_id && !has_source && !has_title {
+            return Err(
+                "training log entry must specify at least one of `problem_id`, `source`, or `title`"
+                    .to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// Serializes this entry to a single compact JSON line (no trailing newline).
     pub fn to_json_line(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|e| e.to_string())
     }
 
-    /// Parses a single JSON line from `training/logs.jsonl`.
+    /// Parses a single JSON line from `training/logs.jsonl` and validates that it has
+    /// a non-empty `problem_id`, valid `source`, or non-empty `title`.
     pub fn from_json_line(line: &str) -> Result<Self, String> {
-        serde_json::from_str(line).map_err(|e| e.to_string())
+        let entry: Self = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        entry.validate()?;
+        Ok(entry)
     }
 
     /// Returns `true` if this log entry refers to `problem_id` or any external identity in `sources`.
@@ -1444,6 +1505,22 @@ impl TrainingLogEntry {
             .as_ref()
             .is_some_and(|entry_src| sources.iter().any(|src| src.matches_source(entry_src)))
     }
+}
+
+/// Summary metadata for a workspace problem with a non-empty `editorial.md`,
+/// used to populate the Training Dashboard's Editorials (`题解`) tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorialSummary {
+    pub problem_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<ProblemSource>,
+    pub excerpt: String,
+    pub updated_at: String,
 }
 
 /// Synced external OJ status for a problem (derived from `<dataDir>/oj_sync.db`).
@@ -2086,35 +2163,63 @@ score = [20, 40]
 
     #[test]
     fn training_log_entry_omits_none_fields_and_roundtrips() {
-        let entry = TrainingLogEntry {
-            at: "2026-11-24T12:00:00Z".into(),
-            problem_id: Some("cf-1999a".into()),
-            source: Some(ProblemSource {
+        let entry = TrainingLogEntry::for_problem(
+            "2026-11-24T12:00:00Z",
+            Some("cf-1999a".into()),
+            Some(ProblemSource {
                 platform: "codeforces".into(),
                 id: "1999A".into(),
                 url: None,
             }),
-            status: TrainingLogStatus::Upsolved,
-        };
+            TrainingLogStatus::Upsolved,
+        );
         let line = entry.to_json_line().unwrap();
+        let val: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let obj = val.as_object().unwrap();
         assert!(!line.contains("\"url\""));
+        assert!(!obj.contains_key("title"));
+        assert!(!obj.contains_key("platform"));
+        assert!(!obj.contains_key("rating"));
+        assert!(!obj.contains_key("tags"));
+        assert!(!obj.contains_key("note"));
         assert!(line.contains("\"problem_id\":\"cf-1999a\""));
         assert!(line.contains("\"status\":\"upsolved\""));
         assert_eq!(TrainingLogEntry::from_json_line(&line).unwrap(), entry);
 
-        let minimal = TrainingLogEntry {
-            at: "2026-11-24T12:01:00Z".into(),
+        // Legacy JSONL line without new fields parses identically.
+        let legacy = r#"{"at":"2026-11-24T12:00:00Z","problem_id":"cf-1999a","source":{"platform":"codeforces","id":"1999A"},"status":"upsolved"}"#;
+        assert_eq!(TrainingLogEntry::from_json_line(legacy).unwrap(), entry);
+
+        // Standalone manual record (no problem_id, no source) round-trips cleanly.
+        let manual = TrainingLogEntry {
+            at: "2026-11-25T08:30:00Z".into(),
             problem_id: None,
             source: None,
-            status: TrainingLogStatus::Clear,
+            status: TrainingLogStatus::Ac,
+            title: Some("P1001 A+B Problem".into()),
+            url: Some("https://www.luogu.com.cn/problem/P1001".into()),
+            platform: Some("luogu".into()),
+            rating: Some(800),
+            tags: vec!["implementation".into(), "math".into()],
+            note: Some("warm-up".into()),
         };
-        let min_line = minimal.to_json_line().unwrap();
-        assert!(!min_line.contains("problem_id"));
-        assert!(!min_line.contains("source"));
+        let manual_line = manual.to_json_line().unwrap();
+        assert!(!manual_line.contains("\"problem_id\""));
+        assert!(!manual_line.contains("\"source\""));
+        assert!(manual_line.contains("\"title\":\"P1001 A+B Problem\""));
+        assert!(manual_line.contains("\"rating\":800"));
         assert_eq!(
-            TrainingLogEntry::from_json_line(&min_line).unwrap(),
-            minimal
+            TrainingLogEntry::from_json_line(&manual_line).unwrap(),
+            manual
         );
+
+        // Entries missing all of problem_id, source, and title (or blank) are rejected.
+        let missing_all = r#"{"at":"2026-11-24T12:01:00Z","status":"clear"}"#;
+        assert!(TrainingLogEntry::from_json_line(missing_all).is_err());
+
+        let blank_only =
+            r#"{"at":"2026-11-24T12:01:00Z","problem_id":"  ","title":"   ","status":"ac"}"#;
+        assert!(TrainingLogEntry::from_json_line(blank_only).is_err());
     }
 
     #[test]
@@ -2125,44 +2230,57 @@ score = [20, 40]
             url: None,
         }];
         let entries = vec![
+            TrainingLogEntry::for_problem(
+                "2026-11-20T00:00:00Z",
+                Some("other-problem".into()),
+                None,
+                TrainingLogStatus::Ac,
+            ),
+            // Standalone manual entry without problem_id or source must not affect workspace problems.
             TrainingLogEntry {
-                at: "2026-11-20T00:00:00Z".into(),
-                problem_id: Some("other-problem".into()),
+                at: "2026-11-20T12:00:00Z".into(),
+                problem_id: None,
                 source: None,
                 status: TrainingLogStatus::Ac,
+                title: Some("Offline Paper Problem".into()),
+                url: None,
+                platform: Some("manual".into()),
+                rating: Some(1800),
+                tags: vec!["dp".into()],
+                note: None,
             },
-            TrainingLogEntry {
-                at: "2026-11-21T00:00:00Z".into(),
-                problem_id: Some("cf-1999a".into()),
-                source: None,
-                status: TrainingLogStatus::Todo,
-            },
-            TrainingLogEntry {
-                at: "2026-11-22T00:00:00Z".into(),
-                problem_id: None,
-                source: Some(ProblemSource {
+            TrainingLogEntry::for_problem(
+                "2026-11-21T00:00:00Z",
+                Some("cf-1999a".into()),
+                None,
+                TrainingLogStatus::Todo,
+            ),
+            TrainingLogEntry::for_problem(
+                "2026-11-22T00:00:00Z",
+                None,
+                Some(ProblemSource {
                     platform: "codeforces".into(),
                     id: "1999A".into(),
                     url: None,
                 }),
-                status: TrainingLogStatus::Upsolved,
-            },
-            TrainingLogEntry {
-                at: "2026-11-23T00:00:00Z".into(),
-                problem_id: Some("cf-1999a".into()),
-                source: None,
-                status: TrainingLogStatus::Clear,
-            },
+                TrainingLogStatus::Upsolved,
+            ),
+            TrainingLogEntry::for_problem(
+                "2026-11-23T00:00:00Z",
+                Some("cf-1999a".into()),
+                None,
+                TrainingLogStatus::Clear,
+            ),
         ];
 
-        // Up to entry 2 -> Todo.
-        assert_eq!(
-            resolve_manual_status(&entries[..2], "cf-1999a", &sources),
-            Some(TrainingStatus::Todo)
-        );
-        // Up to entry 3 -> matched by case-insensitive source -> Upsolved.
+        // Up to entry 3 -> Todo (standalone manual entry ignored).
         assert_eq!(
             resolve_manual_status(&entries[..3], "cf-1999a", &sources),
+            Some(TrainingStatus::Todo)
+        );
+        // Up to entry 4 -> matched by case-insensitive source -> Upsolved.
+        assert_eq!(
+            resolve_manual_status(&entries[..4], "cf-1999a", &sources),
             Some(TrainingStatus::Upsolved)
         );
         // After Clear -> None.
@@ -2170,16 +2288,16 @@ score = [20, 40]
 
         // Subsequent manual status after Clear takes effect.
         let mut extended = entries;
-        extended.push(TrainingLogEntry {
-            at: "2026-11-24T00:00:00Z".into(),
-            problem_id: None,
-            source: Some(ProblemSource {
+        extended.push(TrainingLogEntry::for_problem(
+            "2026-11-24T00:00:00Z",
+            None,
+            Some(ProblemSource {
                 platform: "CODEFORCES".into(),
                 id: "1999A".into(),
                 url: None,
             }),
-            status: TrainingLogStatus::Attempted,
-        });
+            TrainingLogStatus::Attempted,
+        ));
         assert_eq!(
             resolve_manual_status(&extended, "cf-1999a", &sources),
             Some(TrainingStatus::Attempted)

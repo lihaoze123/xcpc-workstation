@@ -4,7 +4,9 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use xcpc_domain::{ProblemSource, TrainingStatus};
+use xcpc_domain::{
+    EditorialSummary, Problem, ProblemSource, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
+};
 use xcpc_storage::Workspace;
 
 use crate::config::SyncConfig;
@@ -210,6 +212,10 @@ pub struct TrainingDashboard {
     pub window: TimeWindow,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_synced_at: Option<String>,
+    #[serde(default)]
+    pub has_local_records: bool,
+    #[serde(default)]
+    pub local_solved_count: u64,
     pub accounts: Vec<PlatformAccountMetric>,
     pub kpi: TrainingKpi,
     pub available_years: Vec<i32>,
@@ -221,6 +227,28 @@ pub struct TrainingDashboard {
     pub tag_distribution: Vec<TagStat>,
     pub unsolved_problems: Vec<SubmissionViewRow>,
     pub workspace_backlog: Vec<WorkspaceBacklogItem>,
+}
+
+/// Query parameters for [`query_training_editorials`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorialQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_rating: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rating: Option<i32>,
+}
+
+/// Response payload for [`query_training_editorials`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorialQueryResult {
+    pub items: Vec<EditorialSummary>,
+    pub total: usize,
+    #[serde(default)]
+    pub available_tags: Vec<String>,
 }
 
 /// Query parameters for [`query_contests`].
@@ -338,16 +366,22 @@ pub fn compute_training_dashboard(
 
     let summary_solved_keys = build_summary_solved_set(&cached_summaries);
 
-    // Pre-scan workspace once if provided (for library_problem_id mapping + workspace_backlog).
+    // Pre-scan workspace once if provided (for library_problem_id mapping, manual logs, and backlog).
     let ws_info = if let Some(ws) = workspace {
         collect_workspace_training_info(db, ws)?
     } else {
         WorkspaceTrainingInfo::default()
     };
     let source_to_problem = ws_info.source_map;
+    let problems_by_id = ws_info.problems_by_id;
+    let manual_logs = ws_info.logs;
     let workspace_backlog = ws_info.backlog;
     let library_todo_count = ws_info.todo_count;
     let library_attempted_count = ws_info.attempted_count;
+
+    // Track OJ keys & normalized URLs for cross-source deduplication with local manual logs.
+    let mut oj_known_keys: HashSet<(String, String)> = summary_solved_keys.clone();
+    let mut oj_url_to_key: HashMap<String, (String, String)> = HashMap::new();
 
     // Per-platform submission aggregates + global KPI sets.
     let mut platform_sub_counts: HashMap<String, u64> = HashMap::new();
@@ -391,6 +425,13 @@ pub fn compute_training_dashboard(
         let p_lower = sub.platform.trim().to_ascii_lowercase();
         let k_lower = sub.problem_key.trim().to_ascii_lowercase();
         let pk = (p_lower.clone(), k_lower.clone());
+        oj_known_keys.insert(pk.clone());
+        if let Some(ref url) = sub.problem_url {
+            let norm = normalize_url(url);
+            if !norm.is_empty() {
+                oj_url_to_key.entry(norm).or_insert_with(|| pk.clone());
+            }
+        }
         let ac = is_ac_verdict(&sub.verdict);
         let sub_day = sub.submitted_at.div_euclid(SECS_PER_DAY);
         let (sub_year, sub_month, _) = days_to_ymd(sub_day);
@@ -563,6 +604,113 @@ pub fn compute_training_dashboard(
         });
     }
 
+    // Merge local manual training logs from `training/logs.jsonl`, deduplicating against OJ solves.
+    let mut oj_solved_keys: HashSet<(String, String)> = all_ac_set.clone();
+    oj_solved_keys.extend(summary_solved_keys.iter().cloned());
+
+    let mut has_local_records = false;
+    let mut local_solved_count = 0u64;
+
+    if !manual_logs.is_empty() {
+        let resolved_manual = resolve_manual_log_problems(
+            &manual_logs,
+            &problems_by_id,
+            &source_to_problem,
+            &oj_known_keys,
+            &oj_url_to_key,
+        );
+        for rec in resolved_manual.into_values() {
+            if rec.latest_status == TrainingLogStatus::Clear {
+                continue;
+            }
+            has_local_records = true;
+
+            if !matches!(
+                rec.latest_status,
+                TrainingLogStatus::Ac | TrainingLogStatus::Upsolved
+            ) {
+                continue;
+            }
+            if oj_solved_keys.contains(&rec.canonical_key) {
+                // Already solved in `oj_sync.db`; never double-count.
+                continue;
+            }
+
+            local_solved_count += 1;
+            total_ac += 1;
+            total_submissions += 1;
+
+            let pk = rec.canonical_key;
+            let at = rec.effective_ac_at.unwrap_or(rec.latest_at);
+            let ac_day = at.div_euclid(SECS_PER_DAY);
+            let (ac_year, ac_month, _) = days_to_ymd(ac_day);
+            years_set.insert(ac_year);
+            all_ac_set.insert(pk.clone());
+            all_ac_days.insert(ac_day);
+
+            if ac_day == today_day {
+                today_submissions += 1;
+                today_ac_set.insert(pk.clone());
+            }
+            if at >= week_cutoff {
+                week_submissions += 1;
+                week_ac_set.insert(pk.clone());
+            }
+            if at >= month_cutoff {
+                month_submissions += 1;
+                month_ac_set.insert(pk.clone());
+            }
+
+            let in_window = window_cutoff.is_none_or(|c| at >= c);
+            if in_window {
+                window_submissions += 1;
+                window_ac_set.insert(pk.clone());
+
+                let entry =
+                    window_ac_problems
+                        .entry(pk.clone())
+                        .or_insert_with(|| WindowAcProblem {
+                            rating: None,
+                            tags: Vec::new(),
+                        });
+                if entry.rating.is_none() && rec.rating.is_some() {
+                    entry.rating = rec.rating;
+                }
+                if entry.tags.is_empty() && !rec.tags.is_empty() {
+                    entry.tags = rec.tags.clone();
+                }
+
+                let period = if use_iso_week {
+                    let (iy, iw) = iso_week_from_days(ac_day);
+                    format!("{iy:04}-W{iw:02}")
+                } else {
+                    format!("{ac_year:04}-{ac_month:02}")
+                };
+                let period_entry = trend_periods
+                    .entry(period)
+                    .or_default()
+                    .entry(pk.clone())
+                    .or_insert(None);
+                if period_entry.is_none() && rec.rating.is_some() {
+                    *period_entry = rec.rating;
+                }
+            }
+
+            if ac_year == heatmap_year {
+                let cell = heatmap_days.entry(ac_day).or_insert_with(|| DayAgg {
+                    ac_keys: HashSet::new(),
+                    submission_count: 0,
+                    max_rating: None,
+                });
+                cell.submission_count += 1;
+                cell.ac_keys.insert(pk);
+                if let Some(r) = rec.rating {
+                    cell.max_rating = Some(cell.max_rating.map_or(r, |prev| prev.max(r)));
+                }
+            }
+        }
+    }
+
     // Compute streaks.
     let (streak_days, longest_streak_days) = compute_streaks(&all_ac_days, today_day);
 
@@ -726,6 +874,8 @@ pub fn compute_training_dashboard(
     Ok(TrainingDashboard {
         window: query.window,
         last_synced_at: config.last_synced_at.clone(),
+        has_local_records,
+        local_solved_count,
         accounts,
         kpi,
         available_years,
@@ -822,19 +972,128 @@ pub fn query_submissions(
     let summaries = db.list_summaries()?;
 
     let mut solved_set = build_summary_solved_set(&summaries);
+    let mut oj_known_keys: HashSet<(String, String)> = solved_set.clone();
+    let mut oj_url_to_key: HashMap<String, (String, String)> = HashMap::new();
     for sub in &submissions {
+        let pk = (
+            sub.platform.trim().to_ascii_lowercase(),
+            sub.problem_key.trim().to_ascii_lowercase(),
+        );
+        oj_known_keys.insert(pk.clone());
+        if let Some(ref url) = sub.problem_url {
+            let norm = normalize_url(url);
+            if !norm.is_empty() {
+                oj_url_to_key.entry(norm).or_insert_with(|| pk.clone());
+            }
+        }
         if is_ac_verdict(&sub.verdict) {
-            solved_set.insert((
-                sub.platform.trim().to_ascii_lowercase(),
-                sub.problem_key.trim().to_ascii_lowercase(),
-            ));
+            solved_set.insert(pk);
         }
     }
 
-    let rows: Vec<SubmissionViewRow> = if query.by_problem {
-        aggregate_submissions_by_problem(&submissions, &solved_set)
+    let (problems_by_id, source_map, manual_logs) = if let Some(ws) = workspace {
+        let (p_map, s_map) = load_workspace_problem_maps(ws)?;
+        let logs = ws.read_training_logs()?;
+        (p_map, s_map, logs)
     } else {
-        submissions
+        (HashMap::new(), HashMap::new(), Vec::new())
+    };
+
+    let mut rows: Vec<SubmissionViewRow> = if query.by_problem {
+        let mut out = aggregate_submissions_by_problem(&submissions, &solved_set);
+        if !manual_logs.is_empty() {
+            let resolved_manual = resolve_manual_log_problems(
+                &manual_logs,
+                &problems_by_id,
+                &source_map,
+                &oj_known_keys,
+                &oj_url_to_key,
+            );
+            let mut existing_idx: HashMap<(String, String), usize> = HashMap::new();
+            for (i, row) in out.iter().enumerate() {
+                existing_idx.insert(
+                    (
+                        row.platform.trim().to_ascii_lowercase(),
+                        row.problem_key.trim().to_ascii_lowercase(),
+                    ),
+                    i,
+                );
+            }
+            for rec in resolved_manual.into_values() {
+                if rec.latest_status == TrainingLogStatus::Clear {
+                    continue;
+                }
+                let manual_solved = matches!(
+                    rec.latest_status,
+                    TrainingLogStatus::Ac | TrainingLogStatus::Upsolved
+                );
+                if let Some(&idx) = existing_idx.get(&rec.canonical_key) {
+                    let row = &mut out[idx];
+                    if manual_solved && !row.solved {
+                        row.solved = true;
+                        row.verdict = "AC".to_string();
+                    }
+                    if row.library_problem_id.is_none() && rec.problem_id.is_some() {
+                        row.library_problem_id = rec.problem_id;
+                    }
+                    if row.problem_title.is_none() && rec.title.is_some() {
+                        row.problem_title = rec.title;
+                    }
+                    if row.problem_url.is_none() && rec.url.is_some() {
+                        row.problem_url = rec.url;
+                    }
+                    if row.normalized_rating.is_none() && rec.rating.is_some() {
+                        row.normalized_rating = rec.rating;
+                    }
+                    if row.tags.is_empty() && !rec.tags.is_empty() {
+                        row.tags = rec.tags;
+                    }
+                } else {
+                    if let Some(ref pf) = platform_filter
+                        && pf != "local"
+                        && !rec.display_platform.eq_ignore_ascii_case(pf)
+                    {
+                        continue;
+                    }
+                    let solved = manual_solved || solved_set.contains(&rec.canonical_key);
+                    let verdict = if solved {
+                        "AC".to_string()
+                    } else {
+                        manual_status_verdict(rec.latest_status).to_string()
+                    };
+                    let submission_id =
+                        format!("local:{}:{}", rec.canonical_key.0, rec.canonical_key.1);
+                    out.push(SubmissionViewRow {
+                        platform: rec.display_platform,
+                        submission_id,
+                        handle: "local".to_string(),
+                        contest_id: None,
+                        problem_index: None,
+                        problem_key: rec.display_key,
+                        problem_title: rec.title,
+                        problem_url: rec.url,
+                        raw_rating: rec.rating,
+                        normalized_rating: rec.rating,
+                        tags: rec.tags,
+                        verdict,
+                        language: None,
+                        submitted_at: rec.latest_at,
+                        attempt_count: rec.attempt_count.max(1),
+                        solved,
+                        library_problem_id: rec.problem_id,
+                    });
+                }
+            }
+            out.sort_by(|a, b| {
+                b.submitted_at
+                    .cmp(&a.submitted_at)
+                    .then_with(|| a.platform.cmp(&b.platform))
+                    .then_with(|| a.problem_key.cmp(&b.problem_key))
+            });
+        }
+        out
+    } else {
+        let mut out: Vec<SubmissionViewRow> = submissions
             .into_iter()
             .map(|sub| {
                 let solved = solved_set.contains(&(
@@ -861,8 +1120,88 @@ pub fn query_submissions(
                     library_problem_id: None,
                 }
             })
-            .collect()
+            .collect();
+
+        if !manual_logs.is_empty() {
+            let resolved_manual = resolve_manual_log_problems(
+                &manual_logs,
+                &problems_by_id,
+                &source_map,
+                &oj_known_keys,
+                &oj_url_to_key,
+            );
+            for (idx, entry) in manual_logs.iter().enumerate() {
+                if entry.status == TrainingLogStatus::Clear {
+                    continue;
+                }
+                let Some(ctx) = resolve_manual_entry_context(
+                    entry,
+                    &problems_by_id,
+                    &source_map,
+                    &oj_known_keys,
+                    &oj_url_to_key,
+                ) else {
+                    continue;
+                };
+                if let Some(ref pf) = platform_filter
+                    && pf != "local"
+                    && !ctx.display_platform.eq_ignore_ascii_case(pf)
+                {
+                    continue;
+                }
+                let effective_manual_solved =
+                    resolved_manual.get(&ctx.canonical_key).is_some_and(|rec| {
+                        matches!(
+                            rec.latest_status,
+                            TrainingLogStatus::Ac | TrainingLogStatus::Upsolved
+                        )
+                    });
+                let solved = matches!(
+                    entry.status,
+                    TrainingLogStatus::Ac | TrainingLogStatus::Upsolved
+                ) || effective_manual_solved
+                    || solved_set.contains(&ctx.canonical_key);
+                let verdict = manual_status_verdict(entry.status).to_string();
+                let submitted_at = parse_rfc3339_to_unix_secs(&entry.at).unwrap_or(0);
+                out.push(SubmissionViewRow {
+                    platform: ctx.display_platform,
+                    submission_id: format!("local:{idx}"),
+                    handle: "local".to_string(),
+                    contest_id: None,
+                    problem_index: None,
+                    problem_key: ctx.display_key,
+                    problem_title: ctx.title,
+                    problem_url: ctx.url,
+                    raw_rating: ctx.rating,
+                    normalized_rating: ctx.rating,
+                    tags: ctx.tags,
+                    verdict,
+                    language: None,
+                    submitted_at,
+                    attempt_count: 1,
+                    solved,
+                    library_problem_id: ctx.problem_id,
+                });
+            }
+            out.sort_by(|a, b| {
+                b.submitted_at
+                    .cmp(&a.submitted_at)
+                    .then_with(|| a.platform.cmp(&b.platform))
+                    .then_with(|| a.problem_key.cmp(&b.problem_key))
+                    .then_with(|| b.submission_id.cmp(&a.submission_id))
+            });
+        }
+        out
     };
+
+    if workspace.is_some() && !rows.is_empty() {
+        for row in &mut rows {
+            if row.library_problem_id.is_none() {
+                row.library_problem_id =
+                    lookup_library_problem_id(&source_map, &row.platform, &row.problem_key);
+            }
+        }
+    }
 
     let filtered: Vec<SubmissionViewRow> = rows
         .into_iter()
@@ -920,24 +1259,94 @@ pub fn query_submissions(
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(DEFAULT_SUBMISSIONS_LIMIT);
 
-    let mut page_items: Vec<SubmissionViewRow> =
+    let page_items: Vec<SubmissionViewRow> =
         filtered.into_iter().skip(offset).take(limit).collect();
-
-    if let Some(ws) = workspace
-        && !page_items.is_empty()
-    {
-        let source_map = build_workspace_source_map(ws)?;
-        for row in &mut page_items {
-            row.library_problem_id =
-                lookup_library_problem_id(&source_map, &row.platform, &row.problem_key);
-        }
-    }
 
     Ok(SubmissionsPage {
         total,
         offset,
         limit,
         items: page_items,
+    })
+}
+
+/// Queries workspace problems that have a non-empty `editorial.md`, filtering by search
+/// (problem_id, title, excerpt, tags, sources), tag, and rating bounds.
+pub fn query_training_editorials(
+    workspace: &Workspace,
+    query: &EditorialQuery,
+) -> Result<EditorialQueryResult> {
+    let all = workspace.list_editorials()?;
+
+    let mut tag_display_map: BTreeMap<String, String> = BTreeMap::new();
+    for item in &all {
+        for raw in &item.tags {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                tag_display_map
+                    .entry(trimmed.to_ascii_lowercase())
+                    .or_insert_with(|| trimmed.to_string());
+            }
+        }
+    }
+    let available_tags: Vec<String> = tag_display_map.into_values().collect();
+
+    let search_filter = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase);
+    let tag_filter = query
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase);
+
+    let items: Vec<EditorialSummary> = all
+        .into_iter()
+        .filter(|item| {
+            if let Some(min_r) = query.min_rating
+                && item.rating.is_none_or(|r| r < min_r)
+            {
+                return false;
+            }
+            if let Some(max_r) = query.max_rating
+                && item.rating.is_none_or(|r| r > max_r)
+            {
+                return false;
+            }
+            if let Some(ref tf) = tag_filter
+                && !item.tags.iter().any(|t| t.trim().eq_ignore_ascii_case(tf))
+            {
+                return false;
+            }
+            if let Some(ref needle) = search_filter {
+                let id_match = item.problem_id.to_ascii_lowercase().contains(needle);
+                let title_match = item.title.to_ascii_lowercase().contains(needle);
+                let excerpt_match = item.excerpt.to_ascii_lowercase().contains(needle);
+                let tag_match = item
+                    .tags
+                    .iter()
+                    .any(|t| t.to_ascii_lowercase().contains(needle));
+                let source_match = item.sources.iter().any(|s| {
+                    s.platform.to_ascii_lowercase().contains(needle)
+                        || s.id.to_ascii_lowercase().contains(needle)
+                });
+                if !(id_match || title_match || excerpt_match || tag_match || source_match) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    let total = items.len();
+    Ok(EditorialQueryResult {
+        items,
+        total,
+        available_tags,
     })
 }
 
@@ -1060,8 +1469,12 @@ fn aggregate_submissions_by_problem(
     out
 }
 
-fn build_workspace_source_map(workspace: &Workspace) -> Result<HashMap<(String, String), String>> {
-    let mut map = HashMap::new();
+#[allow(clippy::type_complexity)]
+fn load_workspace_problem_maps(
+    workspace: &Workspace,
+) -> Result<(HashMap<String, Problem>, HashMap<(String, String), String>)> {
+    let mut problems_by_id = HashMap::new();
+    let mut source_map = HashMap::new();
     for id in workspace.list_problems()? {
         let Ok(problem) = workspace.load_problem(&id) else {
             continue;
@@ -1070,11 +1483,284 @@ fn build_workspace_source_map(workspace: &Workspace) -> Result<HashMap<(String, 
             let p = src.platform.trim().to_ascii_lowercase();
             let k = src.id.trim().to_ascii_lowercase();
             if !p.is_empty() && !k.is_empty() {
-                map.entry((p, k)).or_insert_with(|| id.clone());
+                source_map
+                    .entry((p, k))
+                    .or_insert_with(|| problem.id.clone());
+            }
+        }
+        problems_by_id.insert(problem.id.clone(), problem);
+    }
+    Ok((problems_by_id, source_map))
+}
+
+fn manual_status_verdict(status: TrainingLogStatus) -> &'static str {
+    match status {
+        TrainingLogStatus::Ac | TrainingLogStatus::Upsolved => "AC",
+        TrainingLogStatus::Attempted => "ATTEMPTED",
+        TrainingLogStatus::Todo => "TODO",
+        TrainingLogStatus::Clear => "CLEAR",
+    }
+}
+
+fn normalize_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+struct ManualEntryContext {
+    canonical_key: (String, String),
+    problem_id: Option<String>,
+    display_platform: String,
+    display_key: String,
+    title: Option<String>,
+    url: Option<String>,
+    rating: Option<i64>,
+    tags: Vec<String>,
+}
+
+struct ResolvedManualProblem {
+    canonical_key: (String, String),
+    problem_id: Option<String>,
+    display_platform: String,
+    display_key: String,
+    title: Option<String>,
+    url: Option<String>,
+    rating: Option<i64>,
+    tags: Vec<String>,
+    latest_status: TrainingLogStatus,
+    latest_at: i64,
+    effective_ac_at: Option<i64>,
+    attempt_count: u64,
+}
+
+fn resolve_manual_entry_context(
+    entry: &TrainingLogEntry,
+    problems_by_id: &HashMap<String, Problem>,
+    source_map: &HashMap<(String, String), String>,
+    oj_known_keys: &HashSet<(String, String)>,
+    oj_url_to_key: &HashMap<String, (String, String)>,
+) -> Option<ManualEntryContext> {
+    let entry_pid = entry
+        .problem_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let entry_src = entry
+        .source
+        .as_ref()
+        .filter(|s| !s.platform.trim().is_empty() && !s.id.trim().is_empty());
+
+    let ws_prob: Option<&Problem> =
+        entry_pid
+            .and_then(|pid| problems_by_id.get(pid))
+            .or_else(|| {
+                entry_src.and_then(|src| {
+                    let key = (
+                        src.platform.trim().to_ascii_lowercase(),
+                        src.id.trim().to_ascii_lowercase(),
+                    );
+                    source_map.get(&key).and_then(|pid| problems_by_id.get(pid))
+                })
+            });
+
+    let linked_pid = ws_prob
+        .map(|p| p.id.clone())
+        .or_else(|| entry_pid.map(str::to_owned));
+
+    // Determine external (platform, id) if linked to an external OJ problem.
+    let external_pair: Option<(String, String, Option<String>)> = if let Some(src) = entry_src {
+        Some((
+            src.platform.trim().to_ascii_lowercase(),
+            src.id.trim().to_string(),
+            src.url.clone(),
+        ))
+    } else if let Some(prob) = ws_prob {
+        let best_src = prob
+            .meta
+            .sources
+            .iter()
+            .find(|s| {
+                !s.platform.trim().is_empty()
+                    && !s.id.trim().is_empty()
+                    && oj_known_keys.contains(&(
+                        s.platform.trim().to_ascii_lowercase(),
+                        s.id.trim().to_ascii_lowercase(),
+                    ))
+            })
+            .or_else(|| {
+                prob.meta
+                    .sources
+                    .iter()
+                    .find(|s| !s.platform.trim().is_empty() && !s.id.trim().is_empty())
+            });
+        best_src.map(|s| {
+            (
+                s.platform.trim().to_ascii_lowercase(),
+                s.id.trim().to_string(),
+                s.url.clone(),
+            )
+        })
+    } else if let Some(url) = entry.url.as_deref() {
+        let norm = normalize_url(url);
+        oj_url_to_key
+            .get(&norm)
+            .map(|(p, k)| (p.clone(), k.clone(), Some(url.trim().to_string())))
+    } else {
+        None
+    };
+
+    let title = entry
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| ws_prob.map(|p| p.meta.title.clone()));
+
+    let url = entry
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| external_pair.as_ref().and_then(|(_, _, u)| u.clone()));
+
+    let rating = entry
+        .rating
+        .map(i64::from)
+        .or_else(|| ws_prob.and_then(|p| p.meta.rating).map(i64::from));
+
+    let tags = if !entry.tags.is_empty() {
+        entry.tags.clone()
+    } else if let Some(prob) = ws_prob {
+        prob.meta.tags.clone()
+    } else {
+        Vec::new()
+    };
+
+    let canonical_key = if let Some((ref p, ref k, _)) = external_pair {
+        (p.clone(), k.to_ascii_lowercase())
+    } else if let Some(ref pid) = linked_pid {
+        (
+            "local".to_string(),
+            format!("id:{}", pid.to_ascii_lowercase()),
+        )
+    } else if let Some(ref u) = url {
+        ("local".to_string(), format!("url:{}", normalize_url(u)))
+    } else if let Some(ref t) = title {
+        (
+            "local".to_string(),
+            format!("title:{}", t.trim().to_ascii_lowercase()),
+        )
+    } else {
+        return None;
+    };
+
+    let display_platform = entry
+        .platform
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .or_else(|| external_pair.as_ref().map(|(p, _, _)| p.clone()))
+        .unwrap_or_else(|| "local".to_string());
+
+    let display_key = external_pair
+        .as_ref()
+        .map(|(_, k, _)| k.clone())
+        .or_else(|| linked_pid.clone())
+        .or_else(|| title.clone())
+        .or_else(|| url.clone())
+        .unwrap_or_else(|| canonical_key.1.clone());
+
+    Some(ManualEntryContext {
+        canonical_key,
+        problem_id: linked_pid,
+        display_platform,
+        display_key,
+        title,
+        url,
+        rating,
+        tags,
+    })
+}
+
+fn resolve_manual_log_problems(
+    logs: &[TrainingLogEntry],
+    problems_by_id: &HashMap<String, Problem>,
+    source_map: &HashMap<(String, String), String>,
+    oj_known_keys: &HashSet<(String, String)>,
+    oj_url_to_key: &HashMap<String, (String, String)>,
+) -> HashMap<(String, String), ResolvedManualProblem> {
+    let mut map: HashMap<(String, String), ResolvedManualProblem> = HashMap::new();
+
+    for entry in logs {
+        let Some(ctx) = resolve_manual_entry_context(
+            entry,
+            problems_by_id,
+            source_map,
+            oj_known_keys,
+            oj_url_to_key,
+        ) else {
+            continue;
+        };
+        let ts = parse_rfc3339_to_unix_secs(&entry.at).unwrap_or(0);
+        let is_ac = matches!(
+            entry.status,
+            TrainingLogStatus::Ac | TrainingLogStatus::Upsolved
+        );
+
+        let rec = map
+            .entry(ctx.canonical_key.clone())
+            .or_insert_with(|| ResolvedManualProblem {
+                canonical_key: ctx.canonical_key,
+                problem_id: ctx.problem_id.clone(),
+                display_platform: ctx.display_platform.clone(),
+                display_key: ctx.display_key.clone(),
+                title: ctx.title.clone(),
+                url: ctx.url.clone(),
+                rating: ctx.rating,
+                tags: ctx.tags.clone(),
+                latest_status: entry.status,
+                latest_at: ts,
+                effective_ac_at: None,
+                attempt_count: 0,
+            });
+
+        if rec.problem_id.is_none() && ctx.problem_id.is_some() {
+            rec.problem_id = ctx.problem_id;
+        }
+        if ctx.title.is_some() {
+            rec.title = ctx.title;
+        }
+        if ctx.url.is_some() {
+            rec.url = ctx.url;
+        }
+        if ctx.rating.is_some() {
+            rec.rating = ctx.rating;
+        }
+        if !ctx.tags.is_empty() {
+            rec.tags = ctx.tags;
+        }
+        if rec.display_platform == "local" && ctx.display_platform != "local" {
+            rec.display_platform = ctx.display_platform;
+        }
+
+        rec.latest_status = entry.status;
+        rec.latest_at = ts;
+
+        if entry.status == TrainingLogStatus::Clear {
+            rec.effective_ac_at = None;
+        } else {
+            rec.attempt_count += 1;
+            if is_ac {
+                rec.effective_ac_at = Some(ts);
+            } else {
+                rec.effective_ac_at = None;
             }
         }
     }
-    Ok(map)
+
+    map
 }
 
 fn lookup_library_problem_id(
@@ -1090,6 +1776,8 @@ fn lookup_library_problem_id(
 #[derive(Default)]
 struct WorkspaceTrainingInfo {
     source_map: HashMap<(String, String), String>,
+    problems_by_id: HashMap<String, Problem>,
+    logs: Vec<TrainingLogEntry>,
     backlog: Vec<WorkspaceBacklogItem>,
     todo_count: u64,
     attempted_count: u64,
@@ -1140,33 +1828,35 @@ fn collect_workspace_training_info(
     let mut todo_count = 0u64;
     let mut attempted_count = 0u64;
 
+    let mut problems_by_id: HashMap<String, Problem> = HashMap::with_capacity(problems.len());
     for problem in problems {
         let status = derived.get(&problem.id).copied().unwrap_or_default();
         match status {
             TrainingStatus::Todo => {
                 todo_count += 1;
                 backlog.push(WorkspaceBacklogItem {
-                    problem_id: problem.id,
-                    title: problem.meta.title,
+                    problem_id: problem.id.clone(),
+                    title: problem.meta.title.clone(),
                     status,
                     rating: problem.meta.rating,
-                    tags: problem.meta.tags,
-                    sources: problem.meta.sources,
+                    tags: problem.meta.tags.clone(),
+                    sources: problem.meta.sources.clone(),
                 });
             }
             TrainingStatus::Attempted => {
                 attempted_count += 1;
                 backlog.push(WorkspaceBacklogItem {
-                    problem_id: problem.id,
-                    title: problem.meta.title,
+                    problem_id: problem.id.clone(),
+                    title: problem.meta.title.clone(),
                     status,
                     rating: problem.meta.rating,
-                    tags: problem.meta.tags,
-                    sources: problem.meta.sources,
+                    tags: problem.meta.tags.clone(),
+                    sources: problem.meta.sources.clone(),
                 });
             }
             TrainingStatus::None | TrainingStatus::Ac | TrainingStatus::Upsolved => {}
         }
+        problems_by_id.insert(problem.id.clone(), problem);
     }
 
     backlog.sort_by(|a, b| {
@@ -1182,6 +1872,8 @@ fn collect_workspace_training_info(
 
     Ok(WorkspaceTrainingInfo {
         source_map,
+        problems_by_id,
+        logs,
         backlog,
         todo_count,
         attempted_count,
@@ -1370,4 +2062,82 @@ pub(crate) fn iso_week_from_days(days: i64) -> (i32, u32) {
     let jan1_days = ymd_to_days(iso_year, 1, 1);
     let iso_week = ((thu_days - jan1_days) / 7 + 1) as u32;
     (iso_year, iso_week)
+}
+
+/// Parses an RFC 3339 timestamp (e.g. `2026-11-24T12:34:56Z`, `2026-11-24T20:34:56+08:00`,
+/// with optional fractional seconds) or `YYYY-MM-DD` date into Unix seconds (UTC).
+pub(crate) fn parse_rfc3339_to_unix_secs(raw: &str) -> Option<i64> {
+    let s = raw.trim();
+    if s.len() < 10 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let year: i32 = s[0..4].parse().ok()?;
+    let month: u32 = s[5..7].parse().ok()?;
+    let day: u32 = s[8..10].parse().ok()?;
+    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
+        return None;
+    }
+
+    let base_day_secs = ymd_to_unix_secs(year, month, day);
+    if s.len() == 10 {
+        return Some(base_day_secs);
+    }
+
+    if !matches!(bytes[10], b'T' | b't' | b' ') || s.len() < 19 {
+        return None;
+    }
+    if bytes[13] != b':' || bytes[16] != b':' {
+        return None;
+    }
+    let hour: i64 = s[11..13].parse().ok()?;
+    let minute: i64 = s[14..16].parse().ok()?;
+    let second: i64 = s[17..19].parse().ok()?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
+        return None;
+    }
+
+    let mut rest = &s[19..];
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        let digits = after_dot.bytes().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        rest = &after_dot[digits..];
+    }
+
+    let offset_secs: i64 = if rest.eq_ignore_ascii_case("Z") {
+        0
+    } else if rest.len() == 6 && (rest.starts_with('+') || rest.starts_with('-')) {
+        let rb = rest.as_bytes();
+        if rb[3] != b':' {
+            return None;
+        }
+        let sign = if rb[0] == b'-' { -1 } else { 1 };
+        let oh: i64 = rest[1..3].parse().ok()?;
+        let om: i64 = rest[4..6].parse().ok()?;
+        if !(0..=23).contains(&oh) || !(0..=59).contains(&om) {
+            return None;
+        }
+        sign * (oh * 3600 + om * 60)
+    } else {
+        return None;
+    };
+
+    Some(base_day_secs + hour * 3600 + minute * 60 + second - offset_secs)
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            if leap { 29 } else { 28 }
+        }
+        _ => 0,
+    }
 }

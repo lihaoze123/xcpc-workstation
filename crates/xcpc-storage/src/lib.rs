@@ -18,8 +18,10 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
+pub use xcpc_domain::EditorialSummary;
 use xcpc_domain::{
     ContestItem, ContestMeta, Language, MAX_CONTEST_PROBLEMS, MAX_GROUP_NAME_CHARS, Problem,
     ProblemMeta, ProblemSource, Sample, SampleInventory, Statement, SyncedProblemStatus,
@@ -562,10 +564,18 @@ impl Workspace {
 
     /// Atomically appends one status event line to `training/logs.jsonl`.
     ///
-    /// Enforces read-only mode and workspace path boundaries, creates `training/` if needed,
-    /// and writes via read-modify-[`write_atomic`].
+    /// Enforces read-only mode and workspace path boundaries, validates `problem_id`
+    /// (when present) and ensures at least one of `problem_id`, `source`, or `title`
+    /// is non-empty, creates `training/` if needed, and writes via read-modify-[`write_atomic`].
     pub fn append_training_log(&self, entry: &TrainingLogEntry) -> Result<()> {
         self.check_writable(TRAINING_LOGS_REL_PATH)?;
+        if let Some(ref id) = entry.problem_id {
+            check_id(id)?;
+        }
+        entry.validate().map_err(|msg| Error::Invalid {
+            path: TRAINING_LOGS_REL_PATH.to_owned(),
+            message: msg,
+        })?;
         let line = entry.to_json_line().map_err(|msg| Error::Invalid {
             path: TRAINING_LOGS_REL_PATH.to_owned(),
             message: msg,
@@ -581,6 +591,50 @@ impl Workspace {
         updated.push_str(&line);
         updated.push('\n');
         self.write(TRAINING_LOGS_REL_PATH, updated.as_bytes())
+    }
+
+    /// Scans workspace problems and returns summaries for every problem whose
+    /// `editorial.md` exists and contains non-whitespace content, sorted by
+    /// `updated_at` descending (tie-break by `problem_id` ascending).
+    pub fn list_editorials(&self) -> Result<Vec<EditorialSummary>> {
+        let mut items = Vec::new();
+        for id in self.list_problems()? {
+            let editorial_rel = format!("problems/{id}/editorial.md");
+            let editorial_path = self.resolve(&editorial_rel)?;
+            if !editorial_path.is_file() {
+                continue;
+            }
+            let text = self.read_text(&editorial_rel)?;
+            if text.trim().is_empty() {
+                continue;
+            }
+            let meta_rel = format!("problems/{id}/problem.toml");
+            let Ok(meta_raw) = self.read_text(&meta_rel) else {
+                continue;
+            };
+            let Ok(meta) = parse_toml::<ProblemMeta>(&meta_rel, &meta_raw) else {
+                continue;
+            };
+            let updated_at = fs::metadata(&editorial_path)
+                .and_then(|m| m.modified())
+                .map(system_time_to_rfc3339_utc)
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned());
+            items.push(EditorialSummary {
+                problem_id: id,
+                title: meta.title,
+                rating: meta.rating.and_then(|r| i32::try_from(r).ok()),
+                tags: meta.tags,
+                sources: meta.sources,
+                excerpt: extract_editorial_excerpt(&text),
+                updated_at,
+            });
+        }
+        items.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.problem_id.cmp(&b.problem_id))
+        });
+        Ok(items)
     }
 
     /// Derives the effective [`TrainingStatus`] for one problem by loading `training/logs.jsonl`
@@ -1425,6 +1479,140 @@ impl Workspace {
         ids.sort();
         Ok(ids)
     }
+}
+
+fn system_time_to_rfc3339_utc(time: SystemTime) -> String {
+    let secs = match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(err) => -(err.duration().as_secs() as i64),
+    };
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let hour = rem / 3_600;
+    let minute = (rem % 3_600) / 60;
+    let second = rem % 60;
+
+    // Howard Hinnant's civil-from-days algorithm.
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(m <= 2);
+
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Extracts a concise plain-text excerpt from the first 1–2 non-empty lines of
+/// `editorial.md`, stripping Markdown heading `#`, blockquote, list, and emphasis
+/// markers, and capping cleanly at 140 Unicode scalar values.
+fn extract_editorial_excerpt(markdown: &str) -> String {
+    const MAX_CHARS: usize = 140;
+    let mut lines = Vec::with_capacity(2);
+    for raw_line in markdown.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("```")
+            || trimmed.starts_with("~~~")
+            || is_horizontal_rule(trimmed)
+        {
+            continue;
+        }
+        let cleaned = clean_markdown_excerpt_line(trimmed);
+        if cleaned.is_empty() {
+            continue;
+        }
+        lines.push(cleaned);
+        if lines.len() >= 2 {
+            break;
+        }
+    }
+    let joined = lines.join(" ");
+    if joined.chars().count() <= MAX_CHARS {
+        return joined;
+    }
+    let truncated: String = joined.chars().take(MAX_CHARS - 1).collect();
+    format!("{}…", truncated.trim_end())
+}
+
+fn is_horizontal_rule(s: &str) -> bool {
+    let mut ch = None;
+    let mut count = 0usize;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if matches!(c, '-' | '*' | '_') && ch.is_none_or(|prev| prev == c) {
+            ch = Some(c);
+            count += 1;
+        } else {
+            return false;
+        }
+    }
+    count >= 3
+}
+
+fn clean_markdown_excerpt_line(line: &str) -> String {
+    let mut s = line.trim();
+    // Strip leading blockquote markers (`>`).
+    while let Some(rest) = s.strip_prefix('>') {
+        s = rest.trim_start();
+    }
+    // Strip ATX heading markers (`#`, `##`, ...).
+    let hash_count = s.bytes().take_while(|&b| b == b'#').count();
+    if hash_count > 0 {
+        let after = &s[hash_count..];
+        if after.is_empty() || after.starts_with(char::is_whitespace) {
+            s = after.trim_start();
+            // Also strip optional closing `#`s.
+            s = s.trim_end_matches('#').trim_end();
+        }
+    }
+    // Strip unordered list bullets (`- `, `* `, `+ `).
+    if let Some(rest) = s
+        .strip_prefix("- ")
+        .or_else(|| s.strip_prefix("* "))
+        .or_else(|| s.strip_prefix("+ "))
+    {
+        s = rest.trim_start();
+    } else {
+        // Strip ordered list prefix (`1. `, `2) `).
+        let digits = s.bytes().take_while(|b| b.is_ascii_digit()).count();
+        if digits > 0 {
+            let after = &s[digits..];
+            if let Some(rest) = after
+                .strip_prefix(". ")
+                .or_else(|| after.strip_prefix(") "))
+            {
+                s = rest.trim_start();
+            }
+        }
+    }
+
+    // Strip common inline Markdown emphasis/code markers.
+    let stripped = s
+        .replace("**", "")
+        .replace("__", "")
+        .replace("~~", "")
+        .replace('`', "");
+
+    // Strip paired/boundary single `*` emphasis markers while preserving spaced `*` (e.g. `$a * b$`).
+    let mut out = String::with_capacity(stripped.len());
+    for token in stripped.split_whitespace() {
+        let clean_tok = token.trim_matches('*');
+        if clean_tok.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(clean_tok);
+    }
+    out
 }
 
 fn sanitize_template_image_name(raw_name: &str) -> (String, String) {

@@ -168,6 +168,8 @@ impl Server {
             "get_training_dashboard" => self.tool_get_training_dashboard(obj),
             "set_training_status" => self.tool_set_training_status(obj),
             "ingest_problem" => self.tool_ingest_problem(obj),
+            "log_training_record" => self.tool_log_training_record(obj),
+            "list_training_editorials" => self.tool_list_training_editorials(obj),
             _ => Err(None),
         }
     }
@@ -1416,12 +1418,12 @@ impl Server {
             }
         };
 
-        let entry = TrainingLogEntry {
-            at: xcpc_sync::now_rfc3339_utc(),
-            problem_id: Some(problem.id.clone()),
+        let entry = TrainingLogEntry::for_problem(
+            xcpc_sync::now_rfc3339_utc(),
+            Some(problem.id.clone()),
             source,
-            status: log_status,
-        };
+            log_status,
+        );
         self.ws
             .append_training_log(&entry)
             .map_err(|e| fail(e.code(), e.to_string()))?;
@@ -1505,6 +1507,94 @@ impl Server {
         value["ok"] = json!(true);
         Ok(structured(value))
     }
+
+    fn tool_log_training_record(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
+        if self.ws.is_read_only() {
+            return Err(fail("read_only", "the workspace is open read-only"));
+        }
+        reject_unknown_keys(
+            args,
+            &[
+                "problem_id",
+                "title",
+                "url",
+                "platform",
+                "rating",
+                "tags",
+                "status",
+                "at",
+                "note",
+                "create_in_library",
+            ],
+            "log_training_record",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let problem_id = opt_str(args, "problem_id").map_err(|m| fail("invalid_arguments", m))?;
+        let title = opt_str(args, "title").map_err(|m| fail("invalid_arguments", m))?;
+        let url = opt_str(args, "url").map_err(|m| fail("invalid_arguments", m))?;
+        let platform = opt_str(args, "platform").map_err(|m| fail("invalid_arguments", m))?;
+        let rating = opt_i32(args, "rating").map_err(|m| fail("invalid_arguments", m))?;
+        let tags = opt_str_vec(args, "tags").map_err(|m| fail("invalid_arguments", m))?;
+        let status = match opt_str(args, "status").map_err(|m| fail("invalid_arguments", m))? {
+            None => TrainingLogStatus::Ac,
+            Some(raw) => raw
+                .parse::<TrainingLogStatus>()
+                .map_err(|m| fail("invalid_arguments", m))?,
+        };
+        let at = opt_str(args, "at").map_err(|m| fail("invalid_arguments", m))?;
+        let note = opt_str(args, "note").map_err(|m| fail("invalid_arguments", m))?;
+        let create_in_library = opt_bool(args, "create_in_library")
+            .map_err(|m| fail("invalid_arguments", m))?
+            .unwrap_or(false);
+
+        let data_dir = mcp_data_dir()?;
+        let req = xcpc_sync::ManualLogRequest {
+            problem_id,
+            title,
+            url,
+            platform,
+            rating,
+            tags,
+            status,
+            at,
+            note,
+            create_in_library,
+        };
+        let res =
+            xcpc_sync::log_training_record(&self.ws, &data_dir, None, &req).map_err(sync_err)?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
+
+    fn tool_list_training_editorials(
+        &mut self,
+        args: &Map<String, Value>,
+    ) -> Result<Value, ToolErr> {
+        reject_unknown_keys(
+            args,
+            &["search", "tag", "min_rating", "max_rating"],
+            "list_training_editorials",
+        )
+        .map_err(|m| fail("invalid_arguments", m))?;
+
+        let search = opt_str(args, "search").map_err(|m| fail("invalid_arguments", m))?;
+        let tag = opt_str(args, "tag").map_err(|m| fail("invalid_arguments", m))?;
+        let min_rating = opt_i32(args, "min_rating").map_err(|m| fail("invalid_arguments", m))?;
+        let max_rating = opt_i32(args, "max_rating").map_err(|m| fail("invalid_arguments", m))?;
+
+        let query = xcpc_sync::EditorialQuery {
+            search,
+            tag,
+            min_rating,
+            max_rating,
+        };
+        let res = xcpc_sync::query_training_editorials(&self.ws, &query).map_err(sync_err)?;
+        let mut value = serde_json::to_value(&res).expect("serializable");
+        value["ok"] = json!(true);
+        Ok(structured(value))
+    }
 }
 
 fn mcp_data_dir() -> Result<PathBuf, ToolErr> {
@@ -1568,6 +1658,8 @@ fn is_known_tool(name: &str) -> bool {
             | "get_training_dashboard"
             | "set_training_status"
             | "ingest_problem"
+            | "log_training_record"
+            | "list_training_editorials"
     )
 }
 
@@ -2274,6 +2366,47 @@ fn training_tools() -> Value {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
         },
+        {
+            "name": "log_training_record",
+            "title": "Log manual training record",
+            "description": "Append a manual training record (workspace problem check-in or standalone external/offline problem) \
+                to `training/logs.jsonl`, optionally enriching from offline URL parsing / `oj_sync.db` and optionally creating \
+                a linked problem in the workspace library (`create_in_library: true`). Refused under `--read-only`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "problem_id": { "type": "string", "description": "Optional existing workspace problem ID (slug under problems/)." },
+                    "title": { "type": "string", "description": "Problem title (required for standalone logs unless resolved from URL or problem_id)." },
+                    "url": { "type": "string", "description": "Optional external problem URL (offline-resolved via enabled plugins when recognized)." },
+                    "platform": { "type": "string", "description": "Optional platform label (e.g. codeforces, luogu, local)." },
+                    "rating": { "type": "integer", "description": "Optional unified difficulty rating." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional tags list." },
+                    "status": { "type": "string", "enum": ["todo", "attempted", "ac", "upsolved", "clear"], "description": "Training status to record (default \"ac\")." },
+                    "at": { "type": "string", "description": "Optional RFC 3339 timestamp (defaults to current UTC time)." },
+                    "note": { "type": "string", "description": "Optional short note for this training entry." },
+                    "create_in_library": { "type": "boolean", "description": "If true, also create (or link) the problem in the workspace library (default false)." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+        },
+        {
+            "name": "list_training_editorials",
+            "title": "List training editorials",
+            "description": "Read-only list of workspace problems with a non-empty `editorial.md`, filterable by free-text search, \
+                tag, and difficulty rating range. Returns summaries with excerpt and updated_at.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "search": { "type": "string", "description": "Optional free-text search against problem ID, title, tags, and excerpt." },
+                    "tag": { "type": "string", "description": "Optional tag filter (case-insensitive)." },
+                    "min_rating": { "type": "integer", "description": "Optional minimum difficulty rating (inclusive)." },
+                    "max_rating": { "type": "integer", "description": "Optional maximum difficulty rating (inclusive)." },
+                },
+                "additionalProperties": false,
+            },
+            "annotations": { "readOnlyHint": true },
+        },
     ])
 }
 
@@ -2535,6 +2668,8 @@ mod tests {
                 "get_training_dashboard",
                 "set_training_status",
                 "ingest_problem",
+                "log_training_record",
+                "list_training_editorials",
             ]
         );
         assert!(

@@ -1669,3 +1669,228 @@ extension = ".txt"
     assert_eq!(evil_exp_json["error"]["code"], "ZIP_SLIP");
     assert!(!tmp.path().join("escape.txt").exists());
 }
+
+#[test]
+fn training_log_cli_standalone_library_and_read_only() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+
+    // 1. Standalone manual log (no --problem, no --create-in-library).
+    let out = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "log",
+            "--title",
+            "Luogu P1001",
+            "--status",
+            "ac",
+            "--rating",
+            "1200",
+            "--tags",
+            "math,implementation",
+            "--platform",
+            "luogu",
+            "--url",
+            "https://www.luogu.com.cn/problem/P1001",
+            "--at",
+            "2026-11-24T08:30:00Z",
+            "--note",
+            "fast ac",
+            "--json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = parse_json_stdout(&out);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["created_in_library"], false);
+    assert!(json["library_problem_id"].is_null());
+    assert_eq!(json["entry"]["title"], "Luogu P1001");
+    assert_eq!(json["entry"]["platform"], "luogu");
+    assert_eq!(json["entry"]["rating"], 1200);
+    assert_eq!(json["entry"]["status"], "ac");
+    assert_eq!(json["entry"]["at"], "2026-11-24T08:30:00Z");
+    assert_eq!(json["entry"]["note"], "fast ac");
+    assert_eq!(
+        json["entry"]["tags"].as_array().unwrap(),
+        &vec![Value::from("math"), Value::from("implementation")]
+    );
+
+    // 2. Manual log with `--create-in-library` creates a problem under `problems/`.
+    let out_lib = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "log",
+            "--title",
+            "Tree Centroid",
+            "--status",
+            "upsolved",
+            "--rating",
+            "2200",
+            "--tags",
+            "trees,divide-and-conquer",
+            "--platform",
+            "local",
+            "--create-in-library",
+            "--json",
+        ],
+    );
+    assert!(
+        out_lib.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out_lib.stderr)
+    );
+    let json_lib = parse_json_stdout(&out_lib);
+    assert_eq!(json_lib["ok"], true);
+    assert_eq!(json_lib["created_in_library"], true);
+    let lib_id = json_lib["library_problem_id"].as_str().unwrap();
+    assert!(
+        ws.path()
+            .join("problems")
+            .join(lib_id)
+            .join("problem.toml")
+            .is_file()
+    );
+
+    // 3. Human-readable output for workspace check-in (default status = ac).
+    let out_human = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "log", "--problem", "p1", "--note", "re-solved"],
+    );
+    assert!(
+        out_human.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out_human.stderr)
+    );
+    let stdout = String::from_utf8(out_human.stdout).unwrap();
+    assert!(stdout.contains("status=ac"), "unexpected output: {stdout}");
+
+    // 4. `--read-only` refuses `xcpc training log`.
+    let out_ro = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "--read-only",
+            "training",
+            "log",
+            "--title",
+            "Blocked",
+            "--json",
+        ],
+    );
+    assert!(!out_ro.status.success());
+    let json_ro = parse_json_stdout(&out_ro);
+    assert_eq!(json_ro["ok"], false);
+    assert_eq!(json_ro["error"]["code"], "read_only");
+}
+
+#[test]
+fn training_editorials_cli_filters_and_output() {
+    let ws = setup_workspace();
+    let data_dir = tempfile::tempdir().unwrap();
+
+    // `p1` (rating=1600, tags=["dp"]) gets an editorial.
+    fs::write(
+        ws.path().join("problems/p1/editorial.md"),
+        "# Solution\n\nPrefix sums and dynamic programming.\n",
+    )
+    .unwrap();
+
+    // Add `p2` (rating=2100, tags=["graphs"]) with an editorial.
+    let p2 = ws.path().join("problems/p2");
+    fs::create_dir_all(p2.join("samples")).unwrap();
+    fs::write(
+        p2.join("problem.toml"),
+        "title = \"Shortest Path\"\nrating = 2100\ntags = [\"graphs\"]\n",
+    )
+    .unwrap();
+    fs::write(p2.join("statement.md"), "Find shortest path.\n").unwrap();
+    fs::write(
+        p2.join("editorial.md"),
+        "Run Dijkstra with a binary heap.\n",
+    )
+    .unwrap();
+
+    // Add `p3` with NO editorial (must be excluded).
+    let p3 = ws.path().join("problems/p3");
+    fs::create_dir_all(p3.join("samples")).unwrap();
+    fs::write(p3.join("problem.toml"), "title = \"No Editorial\"\n").unwrap();
+    fs::write(p3.join("statement.md"), "No editorial yet.\n").unwrap();
+
+    // 1. All editorials JSON.
+    let all = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "editorials", "--json"],
+    );
+    assert!(
+        all.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&all.stderr)
+    );
+    let all_json = parse_json_stdout(&all);
+    assert_eq!(all_json["ok"], true);
+    assert_eq!(all_json["total"], 2);
+    assert_eq!(all_json["items"].as_array().unwrap().len(), 2);
+
+    // 2. Filter by `--tag graphs`.
+    let by_tag = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "editorials", "--tag", "graphs", "--json"],
+    );
+    assert!(by_tag.status.success());
+    let by_tag_json = parse_json_stdout(&by_tag);
+    assert_eq!(by_tag_json["total"], 1);
+    assert_eq!(by_tag_json["items"][0]["problem_id"], "p2");
+
+    // 3. Filter by `--search Dijkstra`.
+    let by_search = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "editorials", "--search", "Dijkstra", "--json"],
+    );
+    assert!(by_search.status.success());
+    let by_search_json = parse_json_stdout(&by_search);
+    assert_eq!(by_search_json["total"], 1);
+    assert_eq!(by_search_json["items"][0]["problem_id"], "p2");
+
+    // 4. Filter by `--min-rating 1500 --max-rating 1800`.
+    let by_rating = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &[
+            "training",
+            "editorials",
+            "--min-rating",
+            "1500",
+            "--max-rating",
+            "1800",
+            "--json",
+        ],
+    );
+    assert!(by_rating.status.success());
+    let by_rating_json = parse_json_stdout(&by_rating);
+    assert_eq!(by_rating_json["total"], 1);
+    assert_eq!(by_rating_json["items"][0]["problem_id"], "p1");
+
+    // 5. Human-readable table output.
+    let human = run_xcpc(
+        Some(ws.path()),
+        data_dir.path(),
+        &["training", "editorials"],
+    );
+    assert!(human.status.success());
+    let stdout = String::from_utf8(human.stdout).unwrap();
+    assert!(stdout.contains("editorials: 2"), "unexpected: {stdout}");
+    assert!(stdout.contains("p1"), "unexpected: {stdout}");
+    assert!(stdout.contains("p2"), "unexpected: {stdout}");
+}
