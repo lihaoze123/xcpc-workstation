@@ -814,6 +814,9 @@ capabilities = ["oj_source"]
             description: "VJudge plugin".into(),
             download_url: "https://repo.example.com/vjudge.zip".into(),
             sha256: good_sha.clone(),
+            capabilities: vec![],
+            has_ui: false,
+            official: false,
             permissions: None,
         }],
     };
@@ -834,12 +837,14 @@ capabilities = ["oj_source"]
         }
     });
 
+    // Default official repo is pre-populated when `plugin_repos.json` does not exist yet.
+    assert_eq!(mgr.list_repos().unwrap().len(), 1);
     mgr.add_repo(
         "https://repo.example.com/index.json",
         Some("Community".into()),
     )
     .unwrap();
-    assert_eq!(mgr.list_repos().unwrap().len(), 1);
+    assert_eq!(mgr.list_repos().unwrap().len(), 2);
 
     let fetched = mgr
         .fetch_repo_catalog("https://repo.example.com/index.json", &mock_http)
@@ -869,7 +874,7 @@ capabilities = ["oj_source"]
         mgr.remove_repo("https://repo.example.com/index.json")
             .unwrap()
     );
-    assert!(mgr.list_repos().unwrap().is_empty());
+    assert_eq!(mgr.list_repos().unwrap().len(), 1);
 }
 
 #[test]
@@ -991,230 +996,107 @@ fn render_svg_to_rgba_and_highlight_code_primitives() {
 }
 
 #[test]
-fn builtin_four_tool_plugins_and_export_copy_with_ui_js() {
+fn builtin_plugins_restricted_to_oj_and_local_ui_tool_works() {
     use crate::commands::PluginCommandAction;
     use crate::tool::ToolOutputBlock;
 
     let data_dir = tempfile::tempdir().unwrap();
     let mgr = PluginManager::new(data_dir.path());
 
-    // 1. list_tools should include all 4 built-in tool plugins
+    // Phase 4D: main repo built-in plugins are restricted to codeforces & atcoder; no built-in tools.
+    let builtins: Vec<String> = mgr
+        .list_plugins()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.manifest.id)
+        .collect();
+    assert_eq!(
+        builtins,
+        vec!["atcoder".to_string(), "codeforces".to_string()]
+    );
+    assert!(mgr.list_tools().is_empty());
+
+    // Install a local tool plugin with ui.js and commands.
+    let src = tempfile::tempdir().unwrap();
+    let plugin_dir = src.path().join("demo-ui-tool");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("manifest.toml"),
+        r#"
+id = "demo-ui-tool"
+name = "Demo UI Tool"
+version = "1.0.0"
+description = "Test tool with ui.js and command"
+entry = "index.js"
+ui_entry = "ui.js"
+capabilities = ["tool", "commands"]
+
+[[commands]]
+id = "open"
+title = "Open Demo UI Tool"
+context = "global"
+
+[[tools]]
+id = "echo"
+name = "Echo"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_dir.join("index.js"),
+        r#"
+module.exports = {
+  runTool(toolId, inputs) {
+    return {
+      summary: "ok:" + toolId,
+      blocks: [{ type: "text", content: String((inputs && inputs.text) || "hi") }]
+    };
+  },
+  runCommand(cmdId) {
+    return { type: "open_tool", plugin_id: "demo-ui-tool" };
+  }
+};
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_dir.join("ui.js"),
+        "module.exports = { render(sdk) { return sdk.h(sdk.ui.Text, null, 'hello'); } };",
+    )
+    .unwrap();
+
+    mgr.install_from_dir(&plugin_dir).unwrap();
     let tools = mgr.list_tools();
-    let ids: Vec<&str> = tools.iter().map(|t| t.plugin_id.as_str()).collect();
-    assert!(ids.contains(&"graph-editor"), "got: {ids:?}");
-    assert!(ids.contains(&"math-bitwise"), "got: {ids:?}");
-    assert!(ids.contains(&"complexity-mem"), "got: {ids:?}");
-    assert!(ids.contains(&"string-lab"), "got: {ids:?}");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].plugin_id, "demo-ui-tool");
+    assert!(tools[0].has_ui);
+    assert!(!tools[0].is_builtin);
 
-    let graph_group = tools
-        .iter()
-        .find(|t| t.plugin_id == "graph-editor")
-        .unwrap();
-    assert!(graph_group.has_ui);
-    assert_eq!(graph_group.ui_entry.as_deref(), Some("ui.js"));
-    assert!(graph_group.is_builtin);
+    let ui_src = mgr.read_ui_source("demo-ui-tool").unwrap().unwrap();
+    assert!(ui_src.contains("render(sdk)"));
 
-    // read_ui_source works for built-ins with ui.js and returns None for headless plugins
-    let graph_ui = mgr.read_ui_source("graph-editor").unwrap().unwrap();
-    assert!(graph_ui.contains("module.exports = { render }"));
-    let math_ui = mgr.read_ui_source("math-bitwise").unwrap().unwrap();
-    assert!(math_ui.contains("module.exports = { render }"));
-    assert!(mgr.read_ui_source("complexity-mem").unwrap().is_none());
-
-    // export_builtin_copy must export ui.js as well as manifest.toml and index.js
-    let exported_dir = mgr.export_builtin_copy("graph-editor").unwrap();
-    assert!(exported_dir.join("manifest.toml").is_file());
-    assert!(exported_dir.join("index.js").is_file());
-    assert!(exported_dir.join("ui.js").is_file());
-    let override_ui = mgr.read_ui_source("graph-editor").unwrap().unwrap();
-    assert_eq!(override_ui, graph_ui);
-
-    // 2. graph-editor: edge_list, parent_array, adj_list, coords + open command
-    let g_edge = mgr
+    let out = mgr
         .run_tool(
-            "graph-editor",
-            "parse-graph",
-            serde_json::json!({
-                "format": "edge_list",
-                "text": "1 2 5\n1 3 2\n2 4 1",
-                "directed": true,
-                "weighted": true,
-                "layout": "force"
-            }),
+            "demo-ui-tool",
+            "echo",
+            serde_json::json!({ "text": "42" }),
             None,
         )
         .unwrap();
-    assert_eq!(g_edge.blocks.len(), 2);
-    match &g_edge.blocks[0] {
-        ToolOutputBlock::Graph {
-            nodes,
-            edges,
-            directed,
-            ..
-        } => {
-            assert_eq!(nodes.len(), 4);
-            assert_eq!(edges.len(), 3);
-            assert_eq!(*directed, Some(true));
-        }
-        other => panic!("expected Graph block, got {other:?}"),
-    }
-    match &g_edge.blocks[1] {
-        ToolOutputBlock::Svg { svg, .. } => assert!(svg.contains("<svg")),
-        other => panic!("expected Svg block, got {other:?}"),
-    }
+    assert_eq!(out.summary.as_deref(), Some("ok:echo"));
+    assert!(matches!(out.blocks[0], ToolOutputBlock::Text { ref content, .. } if content == "42"));
 
-    let g_parent = mgr
-        .run_tool(
-            "graph-editor",
-            "parse-graph",
-            serde_json::json!({
-                "format": "parent_array",
-                "text": "1 1 2 2",
-                "one_indexed": true,
-                "layout": "tree"
-            }),
-            None,
-        )
-        .unwrap();
-    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_parent.blocks[0] {
-        assert_eq!(nodes.len(), 5);
-        assert_eq!(edges.len(), 4);
-    } else {
-        panic!("expected Graph block");
-    }
-
-    let g_adj = mgr
-        .run_tool(
-            "graph-editor",
-            "parse-graph",
-            serde_json::json!({
-                "format": "adj_list",
-                "text": "1: 2(7) 3(4)\n2: 3(1)",
-            }),
-            None,
-        )
-        .unwrap();
-    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_adj.blocks[0] {
-        assert_eq!(nodes.len(), 3);
-        assert_eq!(edges.len(), 3);
-    } else {
-        panic!("expected Graph block");
-    }
-
-    let g_coords = mgr
-        .run_tool(
-            "graph-editor",
-            "parse-graph",
-            serde_json::json!({
-                "format": "coords",
-                "text": "1 0 0\n2 10 0\nedge 1 2",
-                "layout": "coords"
-            }),
-            None,
-        )
-        .unwrap();
-    if let ToolOutputBlock::Graph { nodes, edges, .. } = &g_coords.blocks[0] {
-        assert_eq!(nodes.len(), 2);
-        assert_eq!(edges.len(), 1);
-    } else {
-        panic!("expected Graph block");
-    }
-
-    let open_graph_cmd = mgr
-        .run_command("graph-editor", "open", serde_json::json!({}), None)
+    let cmd = mgr
+        .run_command("demo-ui-tool", "open", serde_json::json!({}), None)
         .unwrap();
     assert_eq!(
-        open_graph_cmd,
+        cmd,
         PluginCommandAction::OpenTool {
-            plugin_id: "graph-editor".into(),
+            plugin_id: "demo-ui-tool".to_string(),
             tool_id: None,
             initial_inputs: None,
         }
     );
-
-    // 3. math-bitwise: bitwise, number-theory, mod-reference + open command
-    let bw = mgr
-        .run_tool(
-            "math-bitwise",
-            "bitwise",
-            serde_json::json!({ "value": "0xFF" }),
-            None,
-        )
-        .unwrap();
-    assert!(bw.summary.as_deref().unwrap().contains("popcount=8"));
-
-    let nt = mgr
-        .run_tool(
-            "math-bitwise",
-            "number-theory",
-            serde_json::json!({
-                "n": "360",
-                "a": "3",
-                "b": "998244351",
-                "mod": "998244353",
-                "crt": "2 3; 3 5; 2 7"
-            }),
-            None,
-        )
-        .unwrap();
-    assert_eq!(nt.blocks.len(), 3);
-    let nt_json = serde_json::to_string(&nt).unwrap();
-    assert!(nt_json.contains("2^3 × 3^2 × 5"));
-    assert!(nt_json.contains("x ≡ 23 (mod 105)"));
-
-    let mods = mgr
-        .run_tool("math-bitwise", "mod-reference", serde_json::json!({}), None)
-        .unwrap();
-    let mods_json = serde_json::to_string(&mods).unwrap();
-    assert!(mods_json.contains("998244353"));
-    assert!(mods_json.contains("1000000007"));
-    assert!(mods_json.contains("469762049"));
-
-    let open_math_cmd = mgr
-        .run_command("math-bitwise", "open", serde_json::json!({}), None)
-        .unwrap();
-    assert_eq!(
-        open_math_cmd,
-        PluginCommandAction::OpenTool {
-            plugin_id: "math-bitwise".into(),
-            tool_id: None,
-            initial_inputs: None,
-        }
-    );
-
-    // 4. complexity-mem: complexity & memory
-    let cpx = mgr
-        .run_tool(
-            "complexity-mem",
-            "complexity",
-            serde_json::json!({ "n": 200000, "time_limit_sec": 1, "const_factor": 1 }),
-            None,
-        )
-        .unwrap();
-    assert!(!cpx.blocks.is_empty());
-    let mem = mgr
-        .run_tool(
-            "complexity-mem",
-            "memory",
-            serde_json::json!({ "data_type": "int64", "dimensions": "1024x1024", "limit_mb": 256 }),
-            None,
-        )
-        .unwrap();
-    assert!(mem.summary.as_deref().unwrap().contains("8.000 MiB"));
-
-    // 5. string-lab: analyze
-    let str_res = mgr
-        .run_tool(
-            "string-lab",
-            "analyze",
-            serde_json::json!({ "text": "abacaba", "pattern": "aba" }),
-            None,
-        )
-        .unwrap();
-    let str_json = serde_json::to_string(&str_res).unwrap();
-    assert!(str_json.contains("[0, 4]"));
-    assert!(str_json.contains("abacaba"));
-    assert_eq!(str_res.blocks.len(), 4);
 }
 
 #[test]
@@ -1906,6 +1788,9 @@ capabilities = ["oj_source"]
         description: "Claims to be benign-tool".into(),
         download_url: "https://repo.example.com/spoof.zip".into(),
         sha256: sha256_hex(&spoofed_zip),
+        capabilities: vec![],
+        has_ui: false,
+        official: false,
         permissions: None,
     };
     let zip_clone = spoofed_zip.clone();
@@ -1976,4 +1861,167 @@ capabilities = ["tool"]
         matches!(err, PluginError::ZipSlip(_)),
         "expected ZipSlip for symlink escape in load_plugin, got: {err:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn link_plugin_security_unregistered_and_inner_escape_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let dev_root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let dev_dir = dev_root.path().join("my-dev-tool");
+    std::fs::create_dir_all(&dev_dir).unwrap();
+    std::fs::write(
+        dev_dir.join("manifest.toml"),
+        r#"
+id = "my-dev-tool"
+name = "My Dev Tool"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["tool"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dev_dir.join("index.js"),
+        "module.exports = { runTool() { return { blocks: [{ type: 'text', content: 'ok' }] }; } };",
+    )
+    .unwrap();
+
+    let mgr = PluginManager::new(data_dir.path());
+
+    // 1. Registered link succeeds and shows is_linked = true.
+    let linked = mgr.link_plugin_dir(&dev_dir).unwrap();
+    assert!(linked.is_linked);
+    assert!(linked.link_target.is_some());
+    assert!(mgr.load_plugin("my-dev-tool").is_ok());
+
+    // 2. Unregistered symlink in plugins/ is strictly rejected.
+    let rogue_dir = outside.path().join("rogue");
+    std::fs::create_dir_all(&rogue_dir).unwrap();
+    std::fs::write(
+        rogue_dir.join("manifest.toml"),
+        "id = \"rogue\"\nname = \"Rogue\"\nversion = \"0.1.0\"\nentry = \"index.js\"\n",
+    )
+    .unwrap();
+    std::fs::write(rogue_dir.join("index.js"), "module.exports = {};").unwrap();
+    symlink(&rogue_dir, mgr.plugins_dir().join("rogue")).unwrap();
+    let rogue_err = mgr.load_plugin("rogue").unwrap_err();
+    assert!(
+        matches!(rogue_err, PluginError::ZipSlip(_)),
+        "expected ZipSlip for unregistered symlink, got: {rogue_err:?}"
+    );
+    // `list_plugins` must also omit unregistered symlinks.
+    assert!(
+        !mgr.list_plugins()
+            .unwrap()
+            .iter()
+            .any(|p| p.manifest.id == "rogue")
+    );
+
+    // 3. Inner symlink escape inside a registered linked plugin is still rejected.
+    let secret = outside.path().join("secret.js");
+    std::fs::write(&secret, "module.exports = {};").unwrap();
+    std::fs::remove_file(dev_dir.join("index.js")).unwrap();
+    symlink(&secret, dev_dir.join("index.js")).unwrap();
+    let escape_err = mgr.load_plugin("my-dev-tool").unwrap_err();
+    assert!(
+        matches!(escape_err, PluginError::ZipSlip(_)),
+        "expected ZipSlip for inner symlink escape, got: {escape_err:?}"
+    );
+
+    // 4. Unlink removes symlink and registration without deleting dev_dir.
+    assert!(mgr.unlink_plugin("my-dev-tool").unwrap());
+    assert!(dev_dir.exists());
+    assert!(!mgr.plugins_dir().join("my-dev-tool").exists());
+    assert!(mgr.list_links().unwrap().is_empty());
+}
+
+#[test]
+fn quickjs_error_stack_contains_real_plugin_filename() {
+    let manifest = PluginManifest::from_toml_str(
+        r#"
+id = "stack-demo"
+name = "Stack Demo"
+version = "0.1.0"
+entry = "index.js"
+capabilities = ["tool"]
+"#,
+    )
+    .unwrap();
+    let source = "function boom() {\n  throw new Error('kaboom');\n}\nmodule.exports = { runTool() { boom(); } };";
+    let host_ctx = HostContext {
+        manifest,
+        http_client: Arc::new(MockHttpClient::new(|_| unreachable!())),
+        credentials: Arc::new(MemoryCredentialStore::default()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        limits: SandboxLimits::default(),
+    };
+    let err = PluginRuntime::call_function(source, "runTool", &[], &host_ctx).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("xcpc-plugin://stack-demo/index.js"),
+        "expected stack trace to reference real plugin filename, got: {msg}"
+    );
+}
+
+#[test]
+fn default_official_repo_respects_removal() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let mgr = PluginManager::new(data_dir.path());
+    let initial = mgr.list_repos().unwrap();
+    assert_eq!(initial.len(), 1);
+    let url = initial[0].url.clone();
+    assert!(mgr.remove_repo(&url).unwrap());
+    // Once removed, `plugin_repos.json` exists with empty list and does not re-add official repo.
+    assert!(mgr.list_repos().unwrap().is_empty());
+}
+
+#[test]
+fn check_and_pack_plugin_dir_and_vite_scaffold() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugin_dir = tmp.path().join("my-sample-tool");
+    init_plugin_scaffold(&plugin_dir, ScaffoldKind::Tool).unwrap();
+    // Add dev artifacts that must NOT be packed into the zip.
+    std::fs::create_dir_all(plugin_dir.join("node_modules/foo")).unwrap();
+    std::fs::write(plugin_dir.join("node_modules/foo/bar.js"), "ignored").unwrap();
+    std::fs::create_dir_all(plugin_dir.join("src")).unwrap();
+    std::fs::write(plugin_dir.join("src/index.ts"), "ignored").unwrap();
+
+    let report = crate::check_plugin_dir(&plugin_dir);
+    assert!(report.ok, "unexpected check issues: {:?}", report.issues);
+    assert!(report.exports.iter().any(|e| e == "runTool"));
+
+    let out_zip = tmp.path().join("dist.zip");
+    let packed = crate::pack_plugin_dir(&plugin_dir, Some(&out_zip)).unwrap();
+    assert_eq!(packed.plugin_id, "my-sample-tool");
+    assert_eq!(packed.sha256.len(), 64);
+    assert!(packed.files.contains(&"manifest.toml".to_string()));
+    assert!(packed.files.contains(&"index.js".to_string()));
+    assert!(
+        !packed
+            .files
+            .iter()
+            .any(|f| f.starts_with("node_modules") || f.starts_with("src/"))
+    );
+
+    // Missing required export must fail check & pack.
+    std::fs::write(plugin_dir.join("index.js"), "module.exports = {};").unwrap();
+    let bad_report = crate::check_plugin_dir(&plugin_dir);
+    assert!(!bad_report.ok);
+    assert!(bad_report.issues.iter().any(|i| i.code == "MISSING_EXPORT"));
+    assert!(crate::pack_plugin_dir(&plugin_dir, Some(&out_zip)).is_err());
+
+    // Vite scaffold generates expected TypeScript/JSX project layout.
+    let vite_dir = tmp.path().join("vite-tool");
+    crate::init_plugin_scaffold_vite(&vite_dir, ScaffoldKind::Tool).unwrap();
+    assert!(vite_dir.join("package.json").is_file());
+    assert!(vite_dir.join("vite.config.ts").is_file());
+    assert!(vite_dir.join("tsconfig.json").is_file());
+    assert!(vite_dir.join("manifest.toml").is_file());
+    assert!(vite_dir.join("src/index.ts").is_file());
+    assert!(vite_dir.join("src/ui.tsx").is_file());
 }

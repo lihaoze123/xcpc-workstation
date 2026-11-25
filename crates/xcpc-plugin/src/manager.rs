@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,13 +8,31 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::builtin::{BUILTIN_PLUGINS, find_builtin};
-use crate::credentials::CredentialStore;
+use crate::credentials::{CredentialStore, MemoryCredentialStore};
 use crate::error::{PluginError, Result};
-use crate::http::{HttpClient, HttpRequest};
+use crate::http::{HttpClient, HttpRequest, MockHttpClient};
 use crate::kv::{KvStore, write_atomic};
-use crate::manifest::{PluginManifest, PluginPermissionSummary};
+use crate::manifest::{
+    PluginCapability, PluginManifest, PluginPermissionSummary, validate_plugin_id,
+};
 use crate::runtime::{HostContext, PluginLogEntry, PluginRuntime, SandboxLimits};
 use crate::workspace::WorkspaceReader;
+
+pub const OFFICIAL_PLUGIN_REPO_URL: &str =
+    "https://raw.githubusercontent.com/lihaoze123/xcpc-plugins/main/index.json";
+pub const OFFICIAL_PLUGIN_REPO_NAME: &str = "XCPC Official";
+pub const OFFICIAL_PLUGIN_REPO_ENV: &str = "XCPC_OFFICIAL_PLUGIN_REPO";
+
+/// Returns the effective official plugin repository URL, honoring `XCPC_OFFICIAL_PLUGIN_REPO` if set.
+pub fn official_repo_url() -> String {
+    if let Ok(raw) = std::env::var(OFFICIAL_PLUGIN_REPO_ENV) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    OFFICIAL_PLUGIN_REPO_URL.to_string()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +51,22 @@ pub struct InstalledPlugin {
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub is_linked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_target: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginLinkEntry {
+    pub id: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PluginLinksFile {
+    #[serde(default)]
+    links: Vec<PluginLinkEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +111,12 @@ pub struct RepoPluginEntry {
     pub description: String,
     pub download_url: String,
     pub sha256: String,
+    #[serde(default)]
+    pub capabilities: Vec<PluginCapability>,
+    #[serde(default)]
+    pub has_ui: bool,
+    #[serde(default)]
+    pub official: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<PluginPermissionSummary>,
 }
@@ -101,6 +141,38 @@ pub struct PluginTestReport {
     pub duration_ms: u64,
     pub result: serde_json::Value,
     pub logs: Vec<PluginLogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCheckIssue {
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCheckReport {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub exports: Vec<String>,
+    #[serde(default)]
+    pub has_ui: bool,
+    #[serde(default)]
+    pub issues: Vec<PluginCheckIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginPackReport {
+    pub plugin_id: String,
+    pub version: String,
+    pub output_path: PathBuf,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub files: Vec<String>,
 }
 
 pub struct PluginManager {
@@ -130,6 +202,30 @@ impl PluginManager {
         self.data_dir.join("plugin_repos.json")
     }
 
+    pub fn links_path(&self) -> PathBuf {
+        self.data_dir.join("plugin_links.json")
+    }
+
+    pub fn list_links(&self) -> Result<Vec<PluginLinkEntry>> {
+        let path = self.links_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = std::fs::read_to_string(path)?;
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let file: PluginLinksFile = serde_json::from_str(&raw)?;
+        Ok(file.links)
+    }
+
+    fn save_links(&self, links: &[PluginLinkEntry]) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(&PluginLinksFile {
+            links: links.to_vec(),
+        })?;
+        write_atomic(&self.links_path(), &bytes)
+    }
+
     fn load_state(&self) -> Result<PluginsStateFile> {
         let path = self.state_path();
         if !path.exists() {
@@ -147,9 +243,66 @@ impl PluginManager {
         write_atomic(&self.state_path(), &bytes)
     }
 
-    /// Lists all discovered plugins (built-ins + local overrides/installs, local wins on ID collision).
+    /// Resolves a candidate directory inside `<dataDir>/plugins/` enforcing the symlink security model:
+    /// - Regular directories must canonicalize inside `<dataDir>/plugins/`.
+    /// - Symlinks are allowed ONLY when `(dir_name, canonical_target)` is explicitly registered in `plugin_links.json`.
+    fn validate_plugin_root(
+        &self,
+        entry_path: &Path,
+        dir_name: &str,
+        canonical_plugins_dir: &Path,
+        links: &[PluginLinkEntry],
+    ) -> Result<Option<(PathBuf, bool, Option<PathBuf>)>> {
+        let meta = match std::fs::symlink_metadata(entry_path) {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
+        if meta.file_type().is_symlink() {
+            let Some(reg) = links.iter().find(|l| l.id == dir_name) else {
+                // Unregistered symlink is strictly rejected.
+                return Err(PluginError::ZipSlip(format!(
+                    "unregistered symlink plugin '{}'",
+                    entry_path.display()
+                )));
+            };
+            let canonical_entry = std::fs::canonicalize(entry_path).map_err(|e| {
+                PluginError::InvalidPackage(format!(
+                    "broken plugin symlink '{}': {e}",
+                    entry_path.display()
+                ))
+            })?;
+            let canonical_registered = std::fs::canonicalize(&reg.target).map_err(|e| {
+                PluginError::InvalidPackage(format!(
+                    "broken registered plugin link target '{}': {e}",
+                    reg.target
+                ))
+            })?;
+            if canonical_entry != canonical_registered || !canonical_entry.is_dir() {
+                return Err(PluginError::ZipSlip(format!(
+                    "symlink '{}' does not match registered target '{}'",
+                    entry_path.display(),
+                    reg.target
+                )));
+            }
+            Ok(Some((canonical_entry.clone(), true, Some(canonical_entry))))
+        } else if meta.is_dir() {
+            let canonical_entry = std::fs::canonicalize(entry_path)?;
+            if !canonical_entry.starts_with(canonical_plugins_dir) {
+                return Err(PluginError::ZipSlip(format!(
+                    "plugin directory '{}' escapes plugins root",
+                    entry_path.display()
+                )));
+            }
+            Ok(Some((canonical_entry, false, None)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Lists all discovered plugins (built-ins + local overrides/installs/registered links, local wins on ID collision).
     pub fn list_plugins(&self) -> Result<Vec<InstalledPlugin>> {
         let state = self.load_state()?;
+        let links = self.list_links().unwrap_or_default();
         let mut by_id: BTreeMap<String, InstalledPlugin> = BTreeMap::new();
 
         for builtin in BUILTIN_PLUGINS {
@@ -163,30 +316,42 @@ impl PluginManager {
                     enabled: st.map(|s| s.enabled).unwrap_or(true),
                     last_error: st.and_then(|s| s.last_error.clone()),
                     local_dir: None,
+                    is_linked: false,
+                    link_target: None,
                 },
             );
         }
 
         let plugins_dir = self.plugins_dir();
         if plugins_dir.is_dir() {
+            let canonical_plugins_dir = std::fs::canonicalize(&plugins_dir)?;
             for entry in std::fs::read_dir(&plugins_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if !path.is_dir() {
+                let Some(dir_name) = entry.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                if dir_name.starts_with('.') {
                     continue;
                 }
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with('.'))
-                {
+                let Ok(Some((resolved_root, is_linked, link_target))) =
+                    self.validate_plugin_root(&path, &dir_name, &canonical_plugins_dir, &links)
+                else {
+                    continue;
+                };
+                let manifest_raw =
+                    match read_plugin_file_safe(&resolved_root, "manifest.toml", "manifest") {
+                        Ok(raw) => raw,
+                        Err(_) => continue,
+                    };
+                let manifest = match PluginManifest::from_toml_str(&manifest_raw) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                // For linked plugins, enforce that manifest.id matches the registered symlink name.
+                if is_linked && manifest.id != dir_name {
                     continue;
                 }
-                let manifest_path = path.join("manifest.toml");
-                if !manifest_path.is_file() {
-                    continue;
-                }
-                let manifest = PluginManifest::from_file(&manifest_path)?;
                 let origin = if find_builtin(&manifest.id).is_some() {
                     PluginOrigin::LocalOverride
                 } else {
@@ -200,7 +365,9 @@ impl PluginManager {
                         origin,
                         enabled: st.map(|s| s.enabled).unwrap_or(true),
                         last_error: st.and_then(|s| s.last_error.clone()),
-                        local_dir: Some(path),
+                        local_dir: Some(resolved_root),
+                        is_linked,
+                        link_target,
                     },
                 );
             }
@@ -211,6 +378,16 @@ impl PluginManager {
 
     /// Loads a plugin's manifest and JS sources by ID.
     pub fn load_plugin(&self, id: &str) -> Result<LoadedPlugin> {
+        // Explicit check: if `<plugins_dir>/<id>` exists as an unregistered symlink, return a clear security error.
+        let direct_path = self.plugins_dir().join(id);
+        if let Ok(meta) = std::fs::symlink_metadata(&direct_path)
+            && meta.file_type().is_symlink()
+        {
+            let canonical_plugins_dir = std::fs::canonicalize(self.plugins_dir())?;
+            let links = self.list_links().unwrap_or_default();
+            let _ = self.validate_plugin_root(&direct_path, id, &canonical_plugins_dir, &links)?;
+        }
+
         let plugins = self.list_plugins()?;
         let info = plugins
             .into_iter()
@@ -237,6 +414,102 @@ impl PluginManager {
         } else {
             Err(PluginError::NotFound(id.to_string()))
         }
+    }
+
+    /// Links a local development plugin directory into `<dataDir>/plugins/<id>` and registers it in `plugin_links.json`.
+    pub fn link_plugin_dir(&self, dir: &Path) -> Result<InstalledPlugin> {
+        if !dir.is_dir() {
+            return Err(PluginError::InvalidPackage(format!(
+                "plugin directory does not exist: '{}'",
+                dir.display()
+            )));
+        }
+        let canonical_target = std::fs::canonicalize(dir)?;
+        let manifest_raw = read_plugin_file_safe(&canonical_target, "manifest.toml", "manifest")?;
+        let manifest = PluginManifest::from_toml_str(&manifest_raw)?;
+        validate_plugin_id(&manifest.id)?;
+        // Validate entry files exist and do not escape `canonical_target`.
+        let _ = read_plugin_file_safe(&canonical_target, &manifest.entry, "entry")?;
+        if let Some(ref ui) = manifest.ui_entry {
+            let _ = read_plugin_file_safe(&canonical_target, ui, "ui_entry")?;
+        }
+
+        let plugins_dir = self.plugins_dir();
+        std::fs::create_dir_all(&plugins_dir)?;
+        let link_path = plugins_dir.join(&manifest.id);
+
+        if let Ok(meta) = std::fs::symlink_metadata(&link_path) {
+            if meta.file_type().is_symlink() {
+                remove_symlink_path(&link_path)?;
+            } else {
+                return Err(PluginError::InvalidPackage(format!(
+                    "plugin '{}' is already installed locally at '{}'; remove it before linking",
+                    manifest.id,
+                    link_path.display()
+                )));
+            }
+        }
+
+        create_dir_symlink(&canonical_target, &link_path)?;
+
+        let mut links = self.list_links()?;
+        links.retain(|l| l.id != manifest.id);
+        links.push(PluginLinkEntry {
+            id: manifest.id.clone(),
+            target: canonical_target.to_string_lossy().to_string(),
+        });
+        self.save_links(&links)?;
+
+        let plugins = self.list_plugins()?;
+        plugins
+            .into_iter()
+            .find(|p| p.manifest.id == manifest.id)
+            .ok_or(PluginError::NotFound(manifest.id))
+    }
+
+    /// Unlinks a registered development plugin symlink without touching the developer's source directory.
+    pub fn unlink_plugin(&self, id: &str) -> Result<bool> {
+        validate_plugin_id(id)?;
+        let mut links = self.list_links()?;
+        let before = links.len();
+        links.retain(|l| l.id != id);
+        let removed_reg = links.len() != before;
+        if removed_reg {
+            self.save_links(&links)?;
+        }
+
+        let link_path = self.plugins_dir().join(id);
+        let mut removed_link = false;
+        if let Ok(meta) = std::fs::symlink_metadata(&link_path)
+            && meta.file_type().is_symlink()
+        {
+            remove_symlink_path(&link_path)?;
+            removed_link = true;
+        }
+        Ok(removed_reg || removed_link)
+    }
+
+    /// Removes a locally installed or linked plugin. Never deletes the target of a symlinked dev plugin.
+    pub fn uninstall_plugin(&self, id: &str) -> Result<bool> {
+        validate_plugin_id(id)?;
+        let path = self.plugins_dir().join(id);
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            return self.unlink_plugin(id);
+        };
+        if meta.file_type().is_symlink() {
+            return self.unlink_plugin(id);
+        }
+        if meta.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+            let mut links = self.list_links().unwrap_or_default();
+            let before = links.len();
+            links.retain(|l| l.id != id);
+            if links.len() != before {
+                let _ = self.save_links(&links);
+            }
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub fn kv_store(&self, plugin_id: &str) -> Result<KvStore> {
@@ -335,6 +608,13 @@ impl PluginManager {
             .tempdir_in(&plugins_dir)?;
         copy_dir_recursive(src, staging.path())?;
 
+        let was_symlink = std::fs::symlink_metadata(&dest)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        if was_symlink {
+            let _ = self.unlink_plugin(&manifest.id);
+        }
+
         let backup = if dest.exists() {
             let backup_dir = tempfile::Builder::new()
                 .prefix(&format!(".{}.backup-", manifest.id))
@@ -419,7 +699,10 @@ impl PluginManager {
     pub fn list_repos(&self) -> Result<Vec<PluginRepoConfig>> {
         let path = self.repos_path();
         if !path.exists() {
-            return Ok(Vec::new());
+            return Ok(vec![PluginRepoConfig {
+                url: official_repo_url(),
+                name: Some(OFFICIAL_PLUGIN_REPO_NAME.to_string()),
+            }]);
         }
         let raw = std::fs::read_to_string(path)?;
         if raw.trim().is_empty() {
@@ -1027,5 +1310,513 @@ pub fn test_plugin_dir(
         duration_ms,
         result: call.value,
         logs: call.logs,
+    })
+}
+
+fn create_dir_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link_path)?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link_path)?;
+        Ok(())
+    }
+}
+
+fn remove_symlink_path(link_path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(link_path)?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path))?;
+        Ok(())
+    }
+}
+
+fn derive_scaffold_id(dir: &Path) -> String {
+    let folder_name = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("my-plugin")
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if folder_name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    {
+        folder_name
+    } else {
+        format!("p-{folder_name}")
+    }
+}
+
+/// Scaffolds a Vite + TypeScript/JSX plugin project using `@xcpc/plugin-sdk`.
+pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
+    std::fs::create_dir_all(dir.join("src"))?;
+    let id = derive_scaffold_id(dir);
+
+    let package_json = format!(
+        r#"{{
+  "name": "xcpc-plugin-{id}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {{
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  }},
+  "devDependencies": {{
+    "@xcpc/plugin-sdk": "^0.1.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }}
+}}
+"#
+    );
+
+    let vite_config_ts = r#"import { defineConfig } from "vite";
+import { xcpcPlugin } from "@xcpc/plugin-sdk/vite";
+
+export default defineConfig({
+  plugins: [xcpcPlugin()],
+});
+"#;
+
+    let tsconfig_json = r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+    "skipLibCheck": true
+  },
+  "include": ["src", "vite.config.ts"]
+}
+"#;
+
+    let gitignore = "node_modules/\ndist/\n*.zip\n";
+
+    let (manifest_toml, index_ts, ui_tsx) = match kind {
+        ScaffoldKind::Oj => (
+            format!(
+                r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
+id = "{id}"
+name = "My OJ Plugin"
+version = "0.1.0"
+description = "Custom OJ data source plugin."
+entry = "index.js"
+capabilities = ["oj_source"]
+
+[permissions]
+domains = ["example.com"]
+workspace_read = false
+"#
+            ),
+            r#"import type { OjContext, OjSummarySync, OjVerifyResult, ParsedProblemUrl } from "@xcpc/plugin-sdk/host";
+
+export function verify(ctx: OjContext): OjVerifyResult {
+  return { ok: true, handle: ctx.handle };
+}
+
+export function syncSummary(ctx: OjContext): OjSummarySync {
+  return {
+    handle: ctx.handle,
+    solved_count: 0,
+    submission_count: 0,
+    solved_problem_keys: [],
+  };
+}
+
+export function normalizeRating(raw: number): number | null {
+  return typeof raw === "number" ? Math.round(raw) : null;
+}
+
+export function parseProblemUrl(_url: string): ParsedProblemUrl | null {
+  return null;
+}
+"#
+            .to_string(),
+            None,
+        ),
+        ScaffoldKind::Tool => (
+            format!(
+                r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
+id = "{id}"
+name = "My Tool Plugin"
+version = "0.1.0"
+description = "Custom offline tool plugin."
+entry = "index.js"
+ui_entry = "ui.js"
+capabilities = ["tool"]
+
+[permissions]
+domains = []
+workspace_read = false
+
+[[tools]]
+id = "hello"
+name = "Hello Tool"
+description = "Example tool action."
+
+[[tools.inputs]]
+name = "text"
+label = "Input Text"
+kind = "string"
+required = true
+"#
+            ),
+            r#"import type { ToolExecutionResult } from "@xcpc/plugin-sdk/host";
+
+export function runTool(
+  toolId: string,
+  inputs: Record<string, unknown>,
+): ToolExecutionResult {
+  if (toolId === "hello") {
+    const text = String(inputs?.text ?? "");
+    return {
+      summary: `Greeted ${text || "world"}`,
+      blocks: [
+        { type: "text", content: `Hello, ${text || "world"}!` },
+      ],
+    };
+  }
+  throw new Error(`Unknown tool: ${toolId}`);
+}
+"#
+            .to_string(),
+            Some(
+                r#"import { h, signal, ui, useTool, storage } from "@xcpc/plugin-sdk/ui";
+
+export function render() {
+  const name = signal<string>(storage.get<string>("name") ?? "XCPC");
+  const result = useTool("hello", () => ({ text: name() }));
+
+  return (
+    <ui.Col style={{ flex: 1, padding: 16, gap: 12 }}>
+      <ui.Card style={{ gap: 8 }}>
+        <ui.Text style={{ fontSize: 13, fontWeight: 600 }}>Hello Tool</ui.Text>
+        <ui.Input
+          value={name}
+          placeholder="Type something..."
+          onChangeText={(next) => {
+            name.set(next);
+            storage.set("name", next);
+          }}
+        />
+      </ui.Card>
+      <ui.Output
+        blocks={() => result.data()?.blocks ?? []}
+        summary={() => result.data()?.summary}
+      />
+    </ui.Col>
+  );
+}
+"#
+                .to_string(),
+            ),
+        ),
+    };
+
+    write_atomic(&dir.join("package.json"), package_json.as_bytes())?;
+    write_atomic(&dir.join("vite.config.ts"), vite_config_ts.as_bytes())?;
+    write_atomic(&dir.join("tsconfig.json"), tsconfig_json.as_bytes())?;
+    write_atomic(&dir.join(".gitignore"), gitignore.as_bytes())?;
+    write_atomic(&dir.join("manifest.toml"), manifest_toml.as_bytes())?;
+    write_atomic(&dir.join("src/index.ts"), index_ts.as_bytes())?;
+    if let Some(ui) = ui_tsx {
+        write_atomic(&dir.join("src/ui.tsx"), ui.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Performs static + runtime dry-run validation of a plugin directory.
+pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
+    let mut issues: Vec<PluginCheckIssue> = Vec::new();
+    let push_err = |issues: &mut Vec<PluginCheckIssue>, code: &str, msg: String| {
+        issues.push(PluginCheckIssue {
+            severity: "error".to_string(),
+            code: code.to_string(),
+            message: msg,
+        });
+    };
+
+    if !dir.is_dir() {
+        push_err(
+            &mut issues,
+            "DIR_NOT_FOUND",
+            format!("plugin directory does not exist: '{}'", dir.display()),
+        );
+        return PluginCheckReport {
+            ok: false,
+            plugin_id: None,
+            version: None,
+            exports: Vec::new(),
+            has_ui: false,
+            issues,
+        };
+    }
+
+    let manifest_raw = match read_plugin_file_safe(dir, "manifest.toml", "manifest") {
+        Ok(raw) => raw,
+        Err(e) => {
+            push_err(&mut issues, e.code(), e.to_string());
+            return PluginCheckReport {
+                ok: false,
+                plugin_id: None,
+                version: None,
+                exports: Vec::new(),
+                has_ui: false,
+                issues,
+            };
+        }
+    };
+
+    let manifest = match PluginManifest::from_toml_str(&manifest_raw) {
+        Ok(m) => m,
+        Err(e) => {
+            push_err(&mut issues, e.code(), e.to_string());
+            return PluginCheckReport {
+                ok: false,
+                plugin_id: None,
+                version: None,
+                exports: Vec::new(),
+                has_ui: false,
+                issues,
+            };
+        }
+    };
+
+    let plugin_id = manifest.id.clone();
+    let version = manifest.version.clone();
+    let has_ui = manifest.ui_entry.is_some();
+
+    // Check entry file existence + sandbox + dry-run load.
+    let mut exports = Vec::new();
+    match read_plugin_file_safe(dir, &manifest.entry, "entry") {
+        Ok(entry_source) => {
+            let host_ctx = HostContext {
+                manifest: manifest.clone(),
+                http_client: Arc::new(MockHttpClient::new(|_| {
+                    Err(PluginError::Http(
+                        "network disabled during plugin check".into(),
+                    ))
+                })),
+                credentials: Arc::new(MemoryCredentialStore::default()),
+                kv: Arc::new(KvStore::in_memory()),
+                workspace: None,
+                limits: SandboxLimits::default(),
+            };
+            match PluginRuntime::list_exports(&entry_source, &host_ctx) {
+                Ok(found) => {
+                    exports = found;
+                    let has_fn = |name: &str| exports.iter().any(|e| e == name);
+                    for cap in &manifest.capabilities {
+                        match cap {
+                            PluginCapability::OjSource => {
+                                if !has_fn("normalizeRating") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "oj_source capability requires exported function 'normalizeRating'".into(),
+                                    );
+                                }
+                                if !has_fn("syncAccount") && !has_fn("syncSummary") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "oj_source capability requires exported function 'syncSummary' or 'syncAccount'".into(),
+                                    );
+                                }
+                            }
+                            PluginCapability::Tool => {
+                                if !has_fn("runTool") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "tool capability requires exported function 'runTool'"
+                                            .into(),
+                                    );
+                                }
+                            }
+                            PluginCapability::Commands => {
+                                if !has_fn("runCommand") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "commands capability requires exported function 'runCommand'".into(),
+                                    );
+                                }
+                            }
+                            PluginCapability::Importer => {
+                                if !has_fn("importPackage") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "importer capability requires exported function 'importPackage'".into(),
+                                    );
+                                }
+                            }
+                            PluginCapability::Exporter => {
+                                if !has_fn("exportPackage") {
+                                    push_err(
+                                        &mut issues,
+                                        "MISSING_EXPORT",
+                                        "exporter capability requires exported function 'exportPackage'".into(),
+                                    );
+                                }
+                            }
+                            PluginCapability::Credentials => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    push_err(&mut issues, e.code(), e.to_string());
+                }
+            }
+        }
+        Err(e) => {
+            push_err(&mut issues, e.code(), e.to_string());
+        }
+    }
+
+    // Check optional ui_entry syntax and render(sdk) export contract.
+    if let Some(ref ui_rel) = manifest.ui_entry {
+        match read_plugin_file_safe(dir, ui_rel, "ui_entry") {
+            Ok(ui_source) => {
+                let ui_filename = format!("xcpc-plugin://{plugin_id}/{ui_rel}");
+                match PluginRuntime::check_ui_source(&ui_source, &ui_filename) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        push_err(
+                            &mut issues,
+                            "MISSING_UI_RENDER",
+                            format!("ui_entry '{ui_rel}' must export a render(sdk) function"),
+                        );
+                    }
+                    Err(e) => {
+                        push_err(&mut issues, e.code(), format!("ui_entry '{ui_rel}': {e}"));
+                    }
+                }
+            }
+            Err(e) => {
+                push_err(&mut issues, e.code(), e.to_string());
+            }
+        }
+    }
+
+    let ok = !issues.iter().any(|i| i.severity == "error");
+    PluginCheckReport {
+        ok,
+        plugin_id: Some(plugin_id),
+        version: Some(version),
+        exports,
+        has_ui,
+        issues,
+    }
+}
+
+/// Validates and packs a plugin directory into a clean distributable `.zip` containing only whitelisted runtime files.
+pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackReport> {
+    let report = check_plugin_dir(dir);
+    if !report.ok {
+        let summary = report
+            .issues
+            .iter()
+            .map(|i| format!("[{}] {}", i.code, i.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PluginError::InvalidPackage(format!(
+            "plugin check failed: {summary}"
+        )));
+    }
+
+    let manifest = PluginManifest::from_file(&dir.join("manifest.toml"))?;
+    let canonical_dir = std::fs::canonicalize(dir)?;
+
+    let mut rel_files: Vec<String> = Vec::new();
+    let mut push_if_safe = |rel: &str| -> Result<()> {
+        let normalized = rel.replace('\\', "/");
+        if rel_files.contains(&normalized) {
+            return Ok(());
+        }
+        let candidate = canonical_dir.join(&normalized);
+        let canonical = std::fs::canonicalize(&candidate)?;
+        if !canonical.starts_with(&canonical_dir) {
+            return Err(PluginError::ZipSlip(format!(
+                "file '{normalized}' escapes plugin directory"
+            )));
+        }
+        if canonical.is_file() {
+            rel_files.push(normalized);
+        }
+        Ok(())
+    };
+
+    push_if_safe("manifest.toml")?;
+    push_if_safe(&manifest.entry)?;
+    if let Some(ref ui) = manifest.ui_entry {
+        push_if_safe(ui)?;
+    }
+    for optional_doc in ["README.md", "LICENSE", "LICENSE.md", "LICENSE.txt"] {
+        if canonical_dir.join(optional_doc).is_file() {
+            push_if_safe(optional_doc)?;
+        }
+    }
+
+    let out_path = match out_zip {
+        Some(p) => p.to_path_buf(),
+        None => dir.join(format!("{}-{}.zip", manifest.id, manifest.version)),
+    };
+
+    let mut zip_buf = Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut zip_buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        for rel in &rel_files {
+            let bytes = std::fs::read(canonical_dir.join(rel))?;
+            writer
+                .start_file(rel, options)
+                .map_err(|e| PluginError::InvalidPackage(format!("zip write error: {e}")))?;
+            writer.write_all(&bytes)?;
+        }
+        writer
+            .finish()
+            .map_err(|e| PluginError::InvalidPackage(format!("zip finish error: {e}")))?;
+    }
+
+    let zip_bytes = zip_buf.into_inner();
+    let sha256 = sha256_hex(&zip_bytes);
+    let size_bytes = zip_bytes.len() as u64;
+    write_atomic(&out_path, &zip_bytes)?;
+
+    Ok(PluginPackReport {
+        plugin_id: manifest.id,
+        version: manifest.version,
+        output_path: out_path,
+        sha256,
+        size_bytes,
+        files: rel_files,
     })
 }

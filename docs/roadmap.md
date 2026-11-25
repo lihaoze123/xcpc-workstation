@@ -269,7 +269,7 @@
 
 ## Phase 4：插件体系、个人训练看板与选手工具箱
 
-2026-11-24 深度对齐确认（候选 Phase 3E 排到远期），参考 `lihaoze123/cptracker` 看板实践，按「**混合沙箱插件 + 数据看板驱动 + 只记状态与题解 + 离线实战工具箱**」拆分为 **4A → 4B → 4C** 三步推进，详细规格见 [specs/phase-4-training-and-ecosystem.md](./specs/phase-4-training-and-ecosystem.md)：
+2026-11-24 深度对齐确认（候选 Phase 3E 排到远期），参考 `lihaoze123/cptracker` 看板实践，按「**混合沙箱插件 + 数据看板驱动 + 只记状态与题解 + 离线实战工具箱**」拆分为 **4A → 4B → 4C → 4D** 四步推进，详细规格见 [specs/phase-4-training-and-ecosystem.md](./specs/phase-4-training-and-ecosystem.md) 与 [specs/phase-4d-plugin-sdk-and-ecosystem.md](./specs/phase-4d-plugin-sdk-and-ecosystem.md)：
 
 ### Phase 4A：插件底座、官方 OJ 插件、训练状态与题库联动
 
@@ -297,13 +297,29 @@
    - 无头 `index.js` 插件复用宿主文本/Markdown/表格/只读图视图/`svg`&`image`（`resvg` 直出预览与导出 PNG，支持 CodeSnap 类插件）与 CLI `xcpc tool list|run`；
    - 桌面 UI `ui.js` 插件采用 Obsidian / VS Code 信任模型直跑 NSH 渲染层（安装前显式提示非沙箱边界，自由度拉满）；
    - `commands` 挂载至 `Cmd+K`；`importer`/`exporter` 接入导入导出入口并由 Core 统一执行沙箱与门禁落盘。
-2. **4 个官方内置默认工具插件**（与 CF/AtCoder 同机制：预装、可禁用、可导出本地副本魔改，全面狗粮化验证 Plugin SDK）：
+2. **4 个官方内置默认工具插件**（4C 阶段先内置验证双层 Plugin SDK，4D 迁出至独立官方收录仓库并以新 SDK + Vite 重构）：
    - `graph-editor`（`ui.js` 标杆，对标 `another_graph_editor`：文本边表 ↔ 画布双向联动、拖拽与树/力导向/坐标系布局、着色/重标号/导出图片）；
    - `math-bitwise`（64 位按位翻转、进制转换、质因数分解、`gcd/exgcd`、模逆元/快速幂、CRT、常用模数速查）；
    - `complexity-mem`（运算量安全边界与数组精确 MB 估算）；
    - `string-lab`（KMP 前缀函数、Z 函数、Manacher、SA / LCP 表格对齐展示）。
 
-**不做**：比赛复盘页（`training/reviews/*.md`）、独立待补队列页、耗时/VP/错因标签录入表单、单平台多账号合并、Competitive Companion 端口监听、题单（`sheets/*.toml`）、能力雷达图/平台环形图、盲盒抽题、间隔复习提醒、年度总结幻灯片。
+### Phase 4D：Plugin SDK、开发工具链与官方收录仓库
+
+2026-11-25 讨论确认，详细规格见 [specs/phase-4d-plugin-sdk-and-ecosystem.md](./specs/phase-4d-plugin-sdk-and-ecosystem.md)。在保持「纯 JS 免构建」与「Vite + TypeScript/JSX 工程化」双轨共存的前提下，补齐插件开发体验并收敛官方插件边界：
+
+1. **宿主 Plugin UI SDK 与可观测性升级**：
+   - `pluginSdk.tsx` 补齐 `ui.{Each,Row,Col,Card,Switch,Select,Badge}` 与 `sdk.canvas.fitBounds`；新增 `sdk.useTool`（内置防抖与过期请求丢弃）、`sdk.onCleanup`（卸载/热重载副作用清理）与 `sdk.storage`（同步 API，复用 Core `KvStore` 并与 `host.kv` 共享同插件空间）；
+   - 为 `ui.js` 注入 `//# sourceURL=`、为 `rquickjs` 传入真实 `index.js` 文件名，错误堆栈直指真实行号。
+2. **仓内单一 SDK 包 `packages/plugin-sdk`（`@xcpc/plugin-sdk`）**：
+   - 多入口导出 `/host`（QuickJS 沙箱契约）、`/ui`（NSH UI 类型与虚拟模块）、`/vite`（零配置双入口单文件打包、QuickJS 禁用模块编译期护栏、`--watch` 联动）与 `manifest.schema.json`；显式函数式响应式，不做编译期 AST 魔法转换。
+3. **软链热重载与 `xcpc plugin` 工具链**：
+   - 升级 `xcpc plugin init [--vite]`，新增 `link` / `unlink`、`check`（manifest + QuickJS dry-run + 签名校验）、`pack`（先 `check` 再按白名单打 `.zip` 并输出 SHA-256），保留 `test`；
+   - `link` 采用 `<dataDir>/plugins/<id>` 符号链接 + `plugin_links.json` 显式登记（仅放行已登记顶层根，子路径仍严控沙箱），桌面端复用 `notify` 监听 `<dataDir>/plugins/` 与链接目标目录实现免重启原地热重载。
+4. **官方插件边界收敛与独立官方收录仓库**：
+   - 主仓库内置插件仅保留 `codeforces`、`atcoder`（Rust 构建零 Node 依赖）；4 个工具插件迁出至独立官方收录仓库并用 `@xcpc/plugin-sdk` + Vite + TSX 重构，配 CI 自动构建 `.zip` 与 `index.json`；社区 PR 只收 repo 链接与锁版本/SHA-256 元数据（不收第三方源码），经 CI `xcpc plugin check` 校验后合入索引；
+   - 桌面端默认预置官方仓库订阅（可移除，支持 `XCPC_OFFICIAL_PLUGIN_REPO` 覆写），「工具」空态直接展示官方推荐工具供一键安装。
+
+**不做**（Phase 4 整体）：比赛复盘页（`training/reviews/*.md`）、独立待补队列页、耗时/VP/错因标签录入表单、单平台多账号合并、Competitive Companion 端口监听、题单（`sheets/*.toml`）、能力雷达图/平台环形图、盲盒抽题、间隔复习提醒、年度总结幻灯片、编译期响应式语法糖与独立 HMR 守护进程。
 
 ## 待定与远期（尚未排期）
 

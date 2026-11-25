@@ -24,9 +24,11 @@ pub use io_ext::{
 };
 pub use kv::KvStore;
 pub use manager::{
-    InstalledPlugin, LoadedPlugin, PluginManager, PluginOrigin, PluginRepoConfig, PluginTestReport,
-    RepoCatalog, RepoPluginEntry, ScaffoldKind, extract_zip_safe, init_plugin_scaffold, sha256_hex,
-    test_plugin_dir,
+    InstalledPlugin, LoadedPlugin, OFFICIAL_PLUGIN_REPO_ENV, OFFICIAL_PLUGIN_REPO_NAME,
+    OFFICIAL_PLUGIN_REPO_URL, PluginCheckIssue, PluginCheckReport, PluginLinkEntry, PluginManager,
+    PluginOrigin, PluginPackReport, PluginRepoConfig, PluginTestReport, RepoCatalog,
+    RepoPluginEntry, ScaffoldKind, check_plugin_dir, extract_zip_safe, init_plugin_scaffold,
+    init_plugin_scaffold_vite, official_repo_url, pack_plugin_dir, sha256_hex, test_plugin_dir,
 };
 pub use manifest::{
     CommandContext, CommandSpec, CredentialFieldSpec, ExporterSpec, ImporterSpec, PluginCapability,

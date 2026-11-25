@@ -115,6 +115,8 @@ pub struct PluginToolGroup {
     #[serde(default)]
     pub tools: Vec<ToolSpec>,
     pub is_builtin: bool,
+    #[serde(default)]
+    pub is_linked: bool,
 }
 
 impl PluginManager {
@@ -136,6 +138,7 @@ impl PluginManager {
                     ui_entry: p.manifest.ui_entry,
                     tools: p.manifest.tools,
                     is_builtin: matches!(p.origin, PluginOrigin::Builtin),
+                    is_linked: p.is_linked,
                 }
             })
             .collect()

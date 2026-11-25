@@ -433,9 +433,22 @@ function ToolPluginRow(props: {
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
-            {p().name}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+              {p().name}
+            </Text>
+            <If when={Boolean(p().isLinked)}>
+              <View
+                class="bg-muted border border-border"
+                style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+                tooltip={p().linkTarget ? tip(p().linkTarget!) : undefined}
+              >
+                <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+                  {t("tools.devLink")}
+                </Text>
+              </View>
+            </If>
+          </View>
           <If when={desc().length > 0}>
             <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
               {desc()}

@@ -25,6 +25,7 @@ export interface PluginToolGroup {
   ui_entry?: string | null;
   tools: ToolSpec[];
   is_builtin: boolean;
+  is_linked?: boolean;
 }
 
 export interface GraphNode {

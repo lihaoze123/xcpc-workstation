@@ -51,17 +51,17 @@ pub use crate::types::{
     MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs,
     PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
     PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs,
-    PluginCredentialFieldJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
-    PluginUiSourceResultJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic,
-    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
-    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
-    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs,
-    RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs,
-    SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs,
-    ToolchainStatusJs, TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs,
-    UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs,
-    WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem,
+    PluginCredentialFieldJs, PluginKvResultJs, PluginPickFileResultJs, PluginRenderPngResultJs,
+    PluginRepoConfigJs, PluginSummaryJs, PluginUiSourceResultJs, PluginWatchEventJs,
+    PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer, PreviewLocationJs,
+    PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
+    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
+    RatingBucketJs, RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs,
+    ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs, SaveReportResultJs, SaveResult,
+    SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs, ToolchainStatusJs,
+    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 pub use crate::vim_bridge::{VimKeyBridge, VimKeyBridgeEvent, VimKeyBridgeProps};
 
@@ -92,6 +92,7 @@ impl Drop for Preview {
         // any pending `next_change` / `next_batch_event` blocking on `mpsc::Receiver::recv()`
         // wakes up immediately and never leaks.
         self.state.stop_batch_task();
+        self.state.stop_plugin_watcher();
         let old_watcher = self.state.stop_watcher();
         drop(old_watcher);
     }
@@ -2684,6 +2685,148 @@ impl Preview {
     /// Lists commands registered by enabled plugins matching `context` (`"global" | "problem" | "contest"`).
     pub fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
         self.state.plugin_list_commands(context)
+    }
+
+    /// Synchronously reads a key from the plugin's persistent KV store (`<dataDir>/plugin_kv/<id>.json`).
+    pub fn plugin_kv_get(&self, plugin_id: String, key: String) -> PluginKvResultJs {
+        self.state.plugin_kv_get(&plugin_id, &key)
+    }
+
+    /// Synchronously writes a JSON-encoded value into the plugin's persistent KV store.
+    pub fn plugin_kv_set(
+        &self,
+        plugin_id: String,
+        key: String,
+        value_json: String,
+    ) -> ActionResult {
+        self.state.plugin_kv_set(&plugin_id, &key, &value_json)
+    }
+
+    /// Synchronously deletes a key from the plugin's persistent KV store.
+    pub fn plugin_kv_delete(&self, plugin_id: String, key: String) -> PluginKvResultJs {
+        self.state.plugin_kv_delete(&plugin_id, &key)
+    }
+
+    /// Prompts the user to pick a single local file (up to 16 MiB) and returns its UTF-8 text (when valid)
+    /// and base64 bytes for `sdk.pickFile(...)`.
+    pub async fn plugin_pick_file_dialog(
+        extensions: Option<Vec<String>>,
+        title: Option<String>,
+    ) -> PluginPickFileResultJs {
+        use base64::Engine as _;
+        const MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+        let mut dialog = OpenDialog::files().title(title.as_deref().unwrap_or("选择文件"));
+        if let Some(exts) = extensions {
+            let clean: Vec<String> = exts
+                .into_iter()
+                .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+            if !clean.is_empty() {
+                let refs: Vec<&str> = clean.iter().map(String::as_str).collect();
+                dialog = dialog.filter(FileFilter::new("Files", refs));
+            }
+        }
+        let picked = match pick_paths(dialog).await {
+            Ok(Some(paths)) => paths.into_iter().next(),
+            Ok(None) => None,
+            Err(err) => {
+                return PluginPickFileResultJs {
+                    ok: false,
+                    cancelled: false,
+                    error: Some(err),
+                    ..Default::default()
+                };
+            }
+        };
+        let Some(path) = picked else {
+            return PluginPickFileResultJs {
+                ok: false,
+                cancelled: true,
+                ..Default::default()
+            };
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_owned());
+        match blocking(
+            move || -> Result<(String, Option<String>, String), String> {
+                let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+                if meta.len() > MAX_BYTES {
+                    return Err(format!("file exceeds 16 MiB limit ({} bytes)", meta.len()));
+                }
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let text = String::from_utf8(bytes.clone()).ok();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                Ok((name, text, b64))
+            },
+        )
+        .await
+        {
+            Ok(Ok((name, text, content_base64))) => PluginPickFileResultJs {
+                ok: true,
+                cancelled: false,
+                name: Some(name),
+                text,
+                content_base64: Some(content_base64),
+                error: None,
+            },
+            Ok(Err(err)) => PluginPickFileResultJs {
+                ok: false,
+                cancelled: false,
+                error: Some(err),
+                ..Default::default()
+            },
+            Err(err) => PluginPickFileResultJs {
+                ok: false,
+                cancelled: false,
+                error: Some(format!("read file task failed: {err}")),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Long-polling async notification when plugin files (`manifest.toml`, `index.js`, `ui.js`,
+    /// or `plugin_links.json`) change in `<dataDir>/plugins/` or any registered linked target dir.
+    pub async fn next_plugin_change(this: Instance<Self>) -> PluginWatchEventJs {
+        if this.is_disposed() {
+            return PluginWatchEventJs {
+                kind: "closed".into(),
+                paths: Vec::new(),
+            };
+        }
+        let rx = this.with(|p| p.state.ensure_plugin_watcher());
+        let Some(rx) = rx else {
+            return PluginWatchEventJs {
+                kind: "closed".into(),
+                paths: Vec::new(),
+            };
+        };
+        blocking(move || {
+            let guard = match rx.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    return PluginWatchEventJs {
+                        kind: "closed".into(),
+                        paths: Vec::new(),
+                    };
+                }
+            };
+            match guard.recv() {
+                Ok(ev) => ev,
+                Err(_) => PluginWatchEventJs {
+                    kind: "closed".into(),
+                    paths: Vec::new(),
+                },
+            }
+        })
+        .await
+        .unwrap_or_else(|_| PluginWatchEventJs {
+            kind: "closed".into(),
+            paths: Vec::new(),
+        })
     }
 
     /// Runs a plugin command `runCommand(commandId, ctx)` off the UI thread.

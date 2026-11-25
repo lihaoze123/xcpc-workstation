@@ -1,0 +1,44 @@
+{
+  "name": "@xcpc/plugin-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript/JSX SDK and Vite build plugin for XCPC Workstation plugins.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./host": {
+      "types": "./host.d.ts",
+      "default": "./host.js"
+    },
+    "./ui": {
+      "types": "./ui.d.ts",
+      "default": "./ui.js"
+    },
+    "./vite": {
+      "types": "./vite.d.ts",
+      "import": "./vite.mjs",
+      "default": "./vite.mjs"
+    },
+    "./manifest.schema.json": "./manifest.schema.json"
+  },
+  "files": [
+    "host.d.ts",
+    "host.js",
+    "ui.d.ts",
+    "ui.js",
+    "vite.d.ts",
+    "vite.mjs",
+    "manifest.schema.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "vite": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

@@ -2090,6 +2090,10 @@ pub struct PluginSummaryJs {
     pub domains: Vec<String>,
     pub workspace_read: bool,
     pub has_unsandboxed_ui: bool,
+    #[prop(default)]
+    pub is_linked: bool,
+    #[prop(skip_none)]
+    pub link_target: Option<String>,
     pub credentials: Vec<PluginCredentialFieldJs>,
     #[prop(skip_none)]
     pub handle: Option<String>,
@@ -2157,6 +2161,12 @@ pub struct RepoPluginEntryJs {
     pub description: String,
     pub download_url: String,
     pub sha256: String,
+    #[prop(default)]
+    pub capabilities: Vec<String>,
+    #[prop(default)]
+    pub has_ui: bool,
+    #[prop(default)]
+    pub official: bool,
     #[prop(skip_none)]
     pub permissions: Option<RepoPluginPermissionJs>,
 }
@@ -2325,6 +2335,43 @@ pub struct PluginRenderPngResultJs {
     pub ok: bool,
     #[prop(skip_none)]
     pub png_base64: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Result of synchronous plugin KV read/delete (`pluginKvGet` / `pluginKvDelete`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginKvResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub found: bool,
+    #[prop(skip_none)]
+    pub value_json: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// Long-polling notification event emitted when plugin files change on disk (`nextPluginChange`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginWatchEventJs {
+    /// `"changed"` or `"closed"`.
+    pub kind: String,
+    #[prop(default)]
+    pub paths: Vec<String>,
+}
+
+/// Result of picking and reading a local file via `pluginPickFileDialog`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginPickFileResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub cancelled: bool,
+    #[prop(skip_none)]
+    pub name: Option<String>,
+    #[prop(skip_none)]
+    pub text: Option<String>,
+    #[prop(skip_none)]
+    pub content_base64: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }

@@ -31,10 +31,10 @@ use crate::types::{
     ActionResult, CreateProblemFromUrlResultJs, EditorialListResultJs, EditorialSummaryJs,
     ExportPluginResultJs, IngestProblemRequestJs, IngestProblemResultJs, InstallPluginResultJs,
     JsonReportResultJs, ManualLogResultJs, PlatformSyncReportJs, PluginCredentialFieldJs,
-    PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs, PluginUiSourceResultJs,
-    PluginsOverviewJs, ProblemSourceJs, RepoCatalogResultJs, RepoPluginEntryJs,
-    RepoPluginPermissionJs, ResolvedProblemUrlJs, SyncReportJs, TrainingSubmissionsQueryJs,
-    VerifyPluginResultJs,
+    PluginKvResultJs, PluginRenderPngResultJs, PluginRepoConfigJs, PluginSummaryJs,
+    PluginUiSourceResultJs, PluginWatchEventJs, PluginsOverviewJs, ProblemSourceJs,
+    RepoCatalogResultJs, RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs,
+    SyncReportJs, TrainingSubmissionsQueryJs, VerifyPluginResultJs,
 };
 
 fn origin_str(origin: PluginOrigin) -> &'static str {
@@ -386,6 +386,8 @@ impl State {
                     domains: m.permissions.domains,
                     workspace_read: m.permissions.workspace_read,
                     has_unsandboxed_ui: m.ui_entry.is_some(),
+                    is_linked: p.is_linked,
+                    link_target: p.link_target.map(|t| t.to_string_lossy().into_owned()),
                     credentials,
                     handle,
                     last_error: p.last_error,
@@ -427,11 +429,14 @@ impl State {
         };
         let pm = PluginManager::new(dir);
         match pm.export_builtin_copy(id) {
-            Ok(path) => ExportPluginResultJs {
-                ok: true,
-                path: Some(path.display().to_string()),
-                error: None,
-            },
+            Ok(path) => {
+                self.refresh_plugin_watcher();
+                ExportPluginResultJs {
+                    ok: true,
+                    path: Some(path.display().to_string()),
+                    error: None,
+                }
+            }
             Err(e) => ExportPluginResultJs {
                 ok: false,
                 path: None,
@@ -464,13 +469,16 @@ impl State {
             pm.install_from_dir(path)
         };
         match installed {
-            Ok(p) => InstallPluginResultJs {
-                ok: true,
-                cancelled: false,
-                plugin_id: Some(p.manifest.id),
-                overview: Some(self.get_plugins_overview()),
-                error: None,
-            },
+            Ok(p) => {
+                self.refresh_plugin_watcher();
+                InstallPluginResultJs {
+                    ok: true,
+                    cancelled: false,
+                    plugin_id: Some(p.manifest.id),
+                    overview: Some(self.get_plugins_overview()),
+                    error: None,
+                }
+            }
             Err(e) => InstallPluginResultJs {
                 ok: false,
                 cancelled: false,
@@ -534,6 +542,16 @@ impl State {
                         description: p.description,
                         download_url: p.download_url,
                         sha256: p.sha256,
+                        capabilities: p
+                            .capabilities
+                            .iter()
+                            .map(|c| capability_str(*c).to_owned())
+                            .collect(),
+                        has_ui: p.has_ui
+                            || p.permissions
+                                .as_ref()
+                                .is_some_and(|perm| perm.has_unsandboxed_ui),
+                        official: p.official,
                         permissions: p.permissions.map(|perm| RepoPluginPermissionJs {
                             domains: perm.domains,
                             workspace_read: perm.workspace_read,
@@ -591,13 +609,16 @@ impl State {
             };
         };
         match pm.install_from_repo_entry(entry, &http) {
-            Ok(installed) => InstallPluginResultJs {
-                ok: true,
-                cancelled: false,
-                plugin_id: Some(installed.manifest.id),
-                overview: Some(self.get_plugins_overview()),
-                error: None,
-            },
+            Ok(installed) => {
+                self.refresh_plugin_watcher();
+                InstallPluginResultJs {
+                    ok: true,
+                    cancelled: false,
+                    plugin_id: Some(installed.manifest.id),
+                    overview: Some(self.get_plugins_overview()),
+                    error: None,
+                }
+            }
             Err(e) => InstallPluginResultJs {
                 ok: false,
                 cancelled: false,
@@ -1655,4 +1676,296 @@ pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()
 #[inline]
 pub(crate) fn default_training_status_str() -> String {
     TrainingStatus::None.as_str().to_owned()
+}
+
+// ---- Phase 4D: Synchronous Plugin KV Bridge & `notify` Hot Reload Watcher --------------
+
+impl State {
+    pub(crate) fn plugin_kv_get(&self, plugin_id: &str, key: &str) -> PluginKvResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return PluginKvResultJs {
+                    ok: false,
+                    found: false,
+                    value_json: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let pm = PluginManager::new(dir);
+        let store = match pm.kv_store(plugin_id) {
+            Ok(s) => s,
+            Err(e) => {
+                return PluginKvResultJs {
+                    ok: false,
+                    found: false,
+                    value_json: None,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
+        match store.get(key) {
+            Ok(Some(val)) => PluginKvResultJs {
+                ok: true,
+                found: true,
+                value_json: serde_json::to_string(&val).ok(),
+                error: None,
+            },
+            Ok(None) => PluginKvResultJs {
+                ok: true,
+                found: false,
+                value_json: None,
+                error: None,
+            },
+            Err(e) => PluginKvResultJs {
+                ok: false,
+                found: false,
+                value_json: None,
+                error: Some(e.to_string()),
+            },
+        }
+    }
+
+    pub(crate) fn plugin_kv_set(
+        &self,
+        plugin_id: &str,
+        key: &str,
+        value_json: &str,
+    ) -> ActionResult {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return ActionResult::err("data_dir", err),
+        };
+        let val: serde_json::Value = match serde_json::from_str(value_json) {
+            Ok(v) => v,
+            Err(e) => return ActionResult::err("invalid_json", e.to_string()),
+        };
+        let pm = PluginManager::new(dir);
+        let store = match pm.kv_store(plugin_id) {
+            Ok(s) => s,
+            Err(e) => return ActionResult::err("plugin_error", e.to_string()),
+        };
+        match store.set(key, val) {
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::err("plugin_error", e.to_string()),
+        }
+    }
+
+    pub(crate) fn plugin_kv_delete(&self, plugin_id: &str, key: &str) -> PluginKvResultJs {
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => {
+                return PluginKvResultJs {
+                    ok: false,
+                    found: false,
+                    value_json: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let pm = PluginManager::new(dir);
+        let store = match pm.kv_store(plugin_id) {
+            Ok(s) => s,
+            Err(e) => {
+                return PluginKvResultJs {
+                    ok: false,
+                    found: false,
+                    value_json: None,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
+        match store.delete(key) {
+            Ok(removed) => PluginKvResultJs {
+                ok: true,
+                found: removed,
+                value_json: None,
+                error: None,
+            },
+            Err(e) => PluginKvResultJs {
+                ok: false,
+                found: false,
+                value_json: None,
+                error: Some(e.to_string()),
+            },
+        }
+    }
+}
+
+enum PluginWatchControl {
+    Refresh,
+    Stop,
+}
+
+/// Watches `<dataDir>/plugins/`, `<dataDir>/plugin_links.json`, and all registered symlinked
+/// development plugin target directories for `manifest.toml` / `index.js` / `ui.js` changes.
+pub(crate) struct PluginFileWatcher {
+    ctrl_tx: std::sync::mpsc::Sender<PluginWatchControl>,
+    event_rx: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PluginWatchEventJs>>>,
+}
+
+impl PluginFileWatcher {
+    pub(crate) fn start(data_dir: PathBuf) -> Option<Self> {
+        use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+        use std::collections::BTreeSet;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (raw_tx, raw_rx) = mpsc::channel::<notify::Result<Event>>();
+        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
+            let _ = raw_tx.send(res);
+        })
+        .ok()?;
+
+        let (ctrl_tx, ctrl_rx) = mpsc::channel::<PluginWatchControl>();
+        let (event_tx, event_rx) = mpsc::channel::<PluginWatchEventJs>();
+
+        let sync_watches =
+            |w: &mut RecommendedWatcher, watched: &mut BTreeSet<PathBuf>, data_dir: &Path| {
+                let mut desired: BTreeSet<PathBuf> = BTreeSet::new();
+                if data_dir.is_dir() {
+                    desired.insert(data_dir.to_path_buf());
+                }
+                let plugins_dir = data_dir.join("plugins");
+                if plugins_dir.is_dir() {
+                    desired.insert(plugins_dir.clone());
+                }
+                let pm = PluginManager::new(data_dir);
+                if let Ok(links) = pm.list_links() {
+                    for link in links {
+                        let p = PathBuf::from(&link.target);
+                        if p.is_dir() {
+                            desired.insert(p);
+                        }
+                    }
+                }
+                // Unwatch removed targets.
+                for old in watched.difference(&desired) {
+                    let _ = w.unwatch(old);
+                }
+                // Watch newly added targets.
+                for new_path in desired.difference(watched) {
+                    let mode = if new_path == data_dir {
+                        RecursiveMode::NonRecursive
+                    } else {
+                        RecursiveMode::Recursive
+                    };
+                    let _ = w.watch(new_path, mode);
+                }
+                *watched = desired;
+            };
+
+        std::thread::Builder::new()
+            .name("xcpc-plugin-watcher".into())
+            .spawn(move || {
+                let mut watched = BTreeSet::new();
+                sync_watches(&mut watcher, &mut watched, &data_dir);
+
+                let is_relevant_path = |p: &Path| -> bool {
+                    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                        return false;
+                    };
+                    matches!(
+                        name,
+                        "manifest.toml" | "index.js" | "ui.js" | "plugin_links.json"
+                    )
+                };
+
+                loop {
+                    // Check control messages non-blockingly.
+                    while let Ok(cmd) = ctrl_rx.try_recv() {
+                        match cmd {
+                            PluginWatchControl::Refresh => {
+                                sync_watches(&mut watcher, &mut watched, &data_dir);
+                            }
+                            PluginWatchControl::Stop => {
+                                return;
+                            }
+                        }
+                    }
+
+                    match raw_rx.recv_timeout(Duration::from_millis(200)) {
+                        Ok(Ok(ev)) => {
+                            let mut changed_paths: BTreeSet<String> = BTreeSet::new();
+                            let mut links_changed = false;
+                            for p in &ev.paths {
+                                if is_relevant_path(p) {
+                                    if p.file_name().and_then(|n| n.to_str())
+                                        == Some("plugin_links.json")
+                                    {
+                                        links_changed = true;
+                                    }
+                                    changed_paths.insert(p.to_string_lossy().into_owned());
+                                } else if p.parent() == Some(data_dir.join("plugins").as_path()) {
+                                    // New plugin directory or symlink created/removed directly in plugins/
+                                    links_changed = true;
+                                    changed_paths.insert(p.to_string_lossy().into_owned());
+                                }
+                            }
+                            if changed_paths.is_empty() {
+                                continue;
+                            }
+                            // 150ms debounce window to coalesce `vite build --watch` multi-file writes.
+                            let debounce = Duration::from_millis(150);
+                            while let Ok(next_res) = raw_rx.recv_timeout(debounce) {
+                                if let Ok(next_ev) = next_res {
+                                    for p in &next_ev.paths {
+                                        if is_relevant_path(p) {
+                                            if p.file_name().and_then(|n| n.to_str())
+                                                == Some("plugin_links.json")
+                                            {
+                                                links_changed = true;
+                                            }
+                                            changed_paths.insert(p.to_string_lossy().into_owned());
+                                        }
+                                    }
+                                }
+                            }
+                            if links_changed {
+                                sync_watches(&mut watcher, &mut watched, &data_dir);
+                            }
+                            if event_tx
+                                .send(PluginWatchEventJs {
+                                    kind: "changed".to_owned(),
+                                    paths: changed_paths.into_iter().collect(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Ok(Err(_)) => {}
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            })
+            .ok()?;
+
+        Some(Self {
+            ctrl_tx,
+            event_rx: Arc::new(std::sync::Mutex::new(event_rx)),
+        })
+    }
+
+    pub(crate) fn refresh(&self) {
+        let _ = self.ctrl_tx.send(PluginWatchControl::Refresh);
+    }
+
+    pub(crate) fn receiver(
+        &self,
+    ) -> Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PluginWatchEventJs>>> {
+        Arc::clone(&self.event_rx)
+    }
+
+    pub(crate) fn stop(&self) {
+        let _ = self.ctrl_tx.send(PluginWatchControl::Stop);
+    }
+}
+
+impl Drop for PluginFileWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }

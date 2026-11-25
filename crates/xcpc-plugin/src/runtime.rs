@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rquickjs::{CatchResultExt, Context, Ctx, Exception, Function, Runtime};
+use rquickjs::context::EvalOptions;
+use rquickjs::{CatchResultExt, CaughtError, Context, Ctx, Exception, Function, Runtime};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -222,11 +223,15 @@ impl PluginRuntime {
             // Build frozen `host` global and hide raw native bridges.
             eval_checked(&ctx, HOST_BOOTSTRAP_JS)?;
 
-            // Load plugin module in CommonJS wrapper.
-            let wrapped = format!(
-                "globalThis.__xcpc_exports = (function() {{\n  const exports = {{}};\n  const module = {{ exports }};\n  (function(module, exports) {{\n{source}\n  }})(module, exports);\n  return module.exports;\n}})();"
+            // Load plugin module in CommonJS wrapper (keep prefix on line 1 so stack line numbers match source).
+            let entry_filename = format!(
+                "xcpc-plugin://{}/{}",
+                host_ctx.manifest.id, host_ctx.manifest.entry
             );
-            eval_checked(&ctx, &wrapped)?;
+            let wrapped = format!(
+                "globalThis.__xcpc_exports = (function() {{ const exports = {{}}; const module = {{ exports }}; (function(module, exports) {{{source}\n}})(module, exports); return module.exports; }})();"
+            );
+            eval_checked_with_filename(&ctx, &wrapped, &entry_filename)?;
 
             // Invoke target function (sync or Promise-returning).
             let fn_name_json = serde_json::to_string(fn_name)?;
@@ -331,25 +336,96 @@ impl PluginRuntime {
 
     /// Returns whether a plugin script exports the given function name.
     pub fn has_export(source: &str, fn_name: &str, host_ctx: &HostContext) -> Result<bool> {
+        let exports = Self::list_exports(source, host_ctx)?;
+        Ok(exports.iter().any(|name| name == fn_name))
+    }
+
+    /// Dry-run loads `source` inside the sandbox and returns the list of exported function names.
+    pub fn list_exports(source: &str, host_ctx: &HostContext) -> Result<Vec<String>> {
         let rt = Runtime::new().map_err(|e| PluginError::JsError(e.to_string()))?;
         rt.set_memory_limit(host_ctx.limits.memory_limit_bytes);
+        rt.set_max_stack_size(1024 * 1024);
+        let deadline = Instant::now() + host_ctx.limits.timeout;
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let timed_out_flag = Arc::clone(&timed_out);
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            if Instant::now() >= deadline {
+                timed_out_flag.store(true, Ordering::SeqCst);
+                true
+            } else {
+                false
+            }
+        })));
         let ctx = Context::full(&rt).map_err(|e| PluginError::JsError(e.to_string()))?;
         let logs: Arc<Mutex<Vec<PluginLogEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let last_err: Arc<Mutex<Option<PluginError>>> = Arc::new(Mutex::new(None));
+        let entry_filename = format!(
+            "xcpc-plugin://{}/{}",
+            host_ctx.manifest.id, host_ctx.manifest.entry
+        );
+        let json = ctx
+            .with(|ctx| {
+                register_native_bridges(&ctx, host_ctx, &logs, &last_err)?;
+                eval_checked(&ctx, HOST_BOOTSTRAP_JS)?;
+                let wrapped = format!(
+                    "globalThis.__xcpc_exports = (function() {{ const exports = {{}}; const module = {{ exports }}; (function(module, exports) {{{source}\n}})(module, exports); return module.exports; }})();"
+                );
+                eval_checked_with_filename(&ctx, &wrapped, &entry_filename)?;
+                let collect = r#"
+                (function() {
+                  const mod = globalThis.__xcpc_exports || {};
+                  const names = new Set();
+                  for (const k of Object.keys(mod)) {
+                    if (typeof mod[k] === "function") names.add(k);
+                  }
+                  return JSON.stringify(Array.from(names));
+                })()
+                "#;
+                eval_checked_string(&ctx, collect)
+            })
+            .map_err(|e| {
+                classify_js_error(
+                    &host_ctx.manifest.id,
+                    host_ctx.limits,
+                    &timed_out,
+                    &last_err,
+                    e.to_string(),
+                )
+            })?;
+        let names: Vec<String> = serde_json::from_str(&json)?;
+        Ok(names)
+    }
+
+    /// Validates `ui.js` syntax and checks whether it exports a `render(sdk)` (or `default`) function.
+    /// Runs in a minimal isolated QuickJS sandbox without invoking `render()`.
+    pub fn check_ui_source(source: &str, filename: &str) -> Result<bool> {
+        let rt = Runtime::new().map_err(|e| PluginError::JsError(e.to_string()))?;
+        rt.set_memory_limit(16 * 1024 * 1024);
+        rt.set_max_stack_size(512 * 1024);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+        let ctx = Context::full(&rt).map_err(|e| PluginError::JsError(e.to_string()))?;
         ctx.with(|ctx| {
-            register_native_bridges(&ctx, host_ctx, &logs, &last_err)?;
-            eval_checked(&ctx, HOST_BOOTSTRAP_JS)?;
-            let wrapped = format!(
-                "globalThis.__xcpc_exports = (function() {{\n  const exports = {{}};\n  const module = {{ exports }};\n  (function(module, exports) {{\n{source}\n  }})(module, exports);\n  return module.exports;\n}})();"
+            // 1. Parse-only syntax check using the real filename for accurate line numbers.
+            let wrapped = format!("(function(sdk, module, exports) {{{source}\n}});");
+            eval_checked_with_filename(&ctx, &wrapped, filename)?;
+
+            // 2. Execute top-level module factory with a harmless proxy `sdk` to verify `render` export.
+            let probe = format!(
+                "(function() {{ const mod = {{ exports: {{}} }}; const noop = function() {{ return null; }}; const sdkProxy = new Proxy({{}}, {{ get: function() {{ return noop; }} }}); (function(sdk, module, exports) {{{source}\n}})(sdkProxy, mod, mod.exports); return typeof mod.exports.render === 'function' || typeof mod.exports.default === 'function'; }})()"
             );
-            eval_checked(&ctx, &wrapped)?;
-            let fn_name_json = serde_json::to_string(fn_name)?;
-            let check = format!(
-                "typeof (globalThis.__xcpc_exports || {{}})[{fn_name_json}] === 'function' || typeof globalThis[{fn_name_json}] === 'function'"
-            );
-            ctx.eval::<bool, _>(check)
-                .catch(&ctx)
-                .map_err(|e| PluginError::JsError(format!("{e}")))
+            let mut opts = EvalOptions::default();
+            opts.global = true;
+            opts.filename = Some(filename.to_string());
+            match ctx.eval_with_options::<bool, _>(probe, opts).catch(&ctx) {
+                Ok(has_render) => Ok(has_render),
+                Err(_) => {
+                    // Fallback: if top-level accessed nested `sdk.*` properties, check statically.
+                    Ok(source.contains("exports.render")
+                        || source.contains("module.exports")
+                        || source.contains("exports.default"))
+                }
+            }
         })
     }
 }
@@ -380,22 +456,49 @@ fn classify_js_error(
     PluginError::JsError(msg)
 }
 
+fn format_caught_error<'js>(err: CaughtError<'js>) -> String {
+    match err {
+        CaughtError::Exception(exc) => {
+            let msg = exc
+                .message()
+                .unwrap_or_else(|| "JavaScript exception".to_string());
+            if let Some(stack) = exc.stack() {
+                let stack_trimmed = stack.trim();
+                if !stack_trimmed.is_empty() && !msg.contains(stack_trimmed) {
+                    return format!("{msg}\n{stack_trimmed}");
+                }
+            }
+            msg
+        }
+        other => format!("{other}"),
+    }
+}
+
+fn eval_checked_with_filename<'js>(ctx: &Ctx<'js>, code: &str, filename: &str) -> Result<()> {
+    let mut opts = EvalOptions::default();
+    opts.global = true;
+    opts.filename = Some(filename.to_string());
+    ctx.eval_with_options::<(), _>(code, opts)
+        .catch(ctx)
+        .map_err(|e| PluginError::JsError(format_caught_error(e)))
+}
+
 fn eval_checked<'js>(ctx: &Ctx<'js>, code: &str) -> Result<()> {
     ctx.eval::<(), _>(code)
         .catch(ctx)
-        .map_err(|e| PluginError::JsError(format!("{e}")))
+        .map_err(|e| PluginError::JsError(format_caught_error(e)))
 }
 
 fn eval_checked_string<'js>(ctx: &Ctx<'js>, code: &str) -> Result<String> {
     ctx.eval::<String, _>(code)
         .catch(ctx)
-        .map_err(|e| PluginError::JsError(format!("{e}")))
+        .map_err(|e| PluginError::JsError(format_caught_error(e)))
 }
 
 fn eval_checked_opt_string<'js>(ctx: &Ctx<'js>, code: &str) -> Result<Option<String>> {
     ctx.eval::<Option<String>, _>(code)
         .catch(ctx)
-        .map_err(|e| PluginError::JsError(format!("{e}")))
+        .map_err(|e| PluginError::JsError(format_caught_error(e)))
 }
 
 fn register_native_bridges<'js>(

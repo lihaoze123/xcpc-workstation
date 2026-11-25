@@ -360,9 +360,13 @@ capabilities = ["tool"]
         &["plugin", "repo", "list", "--json"],
     ));
     let repos = r_list["repos"].as_array().unwrap();
-    assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0]["url"], repo_url);
-    assert_eq!(repos[0]["name"], "Community");
+    // Default official repo + newly added community repo.
+    assert_eq!(repos.len(), 2);
+    assert!(
+        repos
+            .iter()
+            .any(|r| r["url"] == repo_url && r["name"] == "Community")
+    );
 
     let r_rm = parse_json_stdout(&run_xcpc(
         None,
@@ -377,7 +381,7 @@ capabilities = ["tool"]
         data_dir.path(),
         &["plugin", "repo", "list", "--json"],
     ));
-    assert!(r_list2["repos"].as_array().unwrap().is_empty());
+    assert_eq!(r_list2["repos"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -1137,179 +1141,103 @@ fn tool_list_includes_four_official_builtin_plugins() {
     let json = parse_json_stdout(&out);
     assert_eq!(json["ok"], true);
 
+    // Phase 4D: main repo has zero built-in tool plugins (tools live in external official repo).
     let plugins = json["plugins"].as_array().expect("plugins array");
-    let ids: Vec<&str> = plugins
-        .iter()
-        .filter_map(|p| p["plugin_id"].as_str())
-        .collect();
-    for expected in [
-        "graph-editor",
-        "math-bitwise",
-        "complexity-mem",
-        "string-lab",
-    ] {
-        assert!(ids.contains(&expected), "missing {expected} in {ids:?}");
-    }
-
-    let graph = plugins
-        .iter()
-        .find(|p| p["plugin_id"] == "graph-editor")
-        .unwrap();
-    assert_eq!(graph["has_ui"], true);
-    assert_eq!(graph["is_builtin"], true);
     assert!(
-        graph["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["ref"] == "graph-editor:parse-graph"
-                && !t["inputs"].as_array().unwrap().is_empty())
+        plugins.is_empty(),
+        "expected no built-in tools, got {plugins:?}"
     );
 
-    let comp = plugins
-        .iter()
-        .find(|p| p["plugin_id"] == "complexity-mem")
-        .unwrap();
-    assert_eq!(comp["has_ui"], false);
-    assert!(
-        comp["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["ref"] == "complexity-mem:complexity")
+    // Installing a local tool plugin makes it immediately discoverable by `xcpc tool list`.
+    let tmp = tempfile::tempdir().unwrap();
+    let local_tool = tmp.path().join("demo-tool");
+    let init = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "init",
+            local_tool.to_str().unwrap(),
+            "--kind",
+            "tool",
+            "--json",
+        ],
     );
+    assert!(init.status.success());
+    let inst = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "install", local_tool.to_str().unwrap(), "--json"],
+    );
+    assert!(inst.status.success());
 
-    // Human mode prints cleanly
+    let listed = parse_json_stdout(&run_xcpc(
+        None,
+        data_dir.path(),
+        &["tool", "list", "--json"],
+    ));
+    let installed_plugins = listed["plugins"].as_array().unwrap();
+    assert_eq!(installed_plugins.len(), 1);
+    assert_eq!(installed_plugins[0]["plugin_id"], "demo-tool");
+
     let human = run_xcpc(None, data_dir.path(), &["tool", "list"]);
     assert!(human.status.success());
     let stdout = String::from_utf8_lossy(&human.stdout);
-    assert!(stdout.contains("complexity-mem:complexity"), "{stdout}");
-    assert!(stdout.contains("graph-editor:parse-graph"), "{stdout}");
+    assert!(stdout.contains("demo-tool:hello"), "{stdout}");
 }
 
 #[test]
-fn tool_run_executes_all_four_official_builtin_tools() {
+fn tool_run_executes_installed_tool_plugin() {
     let data_dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let local_tool = tmp.path().join("echo-tool");
+    assert!(
+        run_xcpc(
+            None,
+            data_dir.path(),
+            &[
+                "plugin",
+                "init",
+                local_tool.to_str().unwrap(),
+                "--kind",
+                "tool"
+            ],
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run_xcpc(
+            None,
+            data_dir.path(),
+            &["plugin", "install", local_tool.to_str().unwrap()],
+        )
+        .status
+        .success()
+    );
 
-    // 1. complexity-mem:complexity
-    let out1 = run_xcpc(
+    let out = run_xcpc(
         None,
         data_dir.path(),
         &[
             "tool",
             "run",
-            "complexity-mem:complexity",
+            "echo-tool:hello",
             "--input",
-            "n=200000",
+            "text=XCPC",
             "--json",
         ],
     );
     assert!(
-        out1.status.success(),
+        out.status.success(),
         "stderr: {}",
-        String::from_utf8_lossy(&out1.stderr)
+        String::from_utf8_lossy(&out.stderr)
     );
-    let j1 = parse_json_stdout(&out1);
-    assert_eq!(j1["ok"], true);
-    assert_eq!(j1["plugin_id"], "complexity-mem");
-    assert_eq!(j1["tool_id"], "complexity");
-    let b1 = j1["blocks"].as_array().expect("blocks");
-    assert!(!b1.is_empty());
-    assert!(b1.iter().any(|b| b["type"] == "table"));
-
-    // 2. string-lab:analyze
-    let out2 = run_xcpc(
-        None,
-        data_dir.path(),
-        &[
-            "tool",
-            "run",
-            "string-lab:analyze",
-            "--input",
-            "text=abacaba",
-            "--json",
-        ],
-    );
-    assert!(
-        out2.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out2.stderr)
-    );
-    let j2 = parse_json_stdout(&out2);
-    assert_eq!(j2["ok"], true);
-    let b2 = j2["blocks"].as_array().expect("blocks");
-    assert!(!b2.is_empty());
-    assert!(b2.iter().any(|b| b["type"] == "table"));
-
-    // 3. math-bitwise:number-theory
-    let out3 = run_xcpc(
-        None,
-        data_dir.path(),
-        &[
-            "tool",
-            "run",
-            "math-bitwise:number-theory",
-            "--input",
-            "n=998244353",
-            "--json",
-        ],
-    );
-    assert!(
-        out3.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out3.stderr)
-    );
-    let j3 = parse_json_stdout(&out3);
-    assert_eq!(j3["ok"], true);
-    let b3 = j3["blocks"].as_array().expect("blocks");
-    assert!(!b3.is_empty());
-    assert!(b3.iter().any(|b| b["type"] == "table"));
-
-    // 4. graph-editor:parse-graph
-    let out4 = run_xcpc(
-        None,
-        data_dir.path(),
-        &[
-            "tool",
-            "run",
-            "graph-editor:parse-graph",
-            "--input",
-            "text=1 2\n2 3",
-            "--json",
-        ],
-    );
-    assert!(
-        out4.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out4.stderr)
-    );
-    let j4 = parse_json_stdout(&out4);
-    assert_eq!(j4["ok"], true);
-    let b4 = j4["blocks"].as_array().expect("blocks");
-    assert!(b4.iter().any(|b| b["type"] == "graph"));
-    assert!(b4.iter().any(|b| b["type"] == "svg"));
-    let graph_block = b4.iter().find(|b| b["type"] == "graph").unwrap();
-    assert_eq!(graph_block["nodes"].as_array().unwrap().len(), 3);
-    assert_eq!(graph_block["edges"].as_array().unwrap().len(), 2);
-
-    // Human mode renders table/graph/svg cleanly without panicking
-    let human = run_xcpc(
-        None,
-        data_dir.path(),
-        &[
-            "tool",
-            "run",
-            "graph-editor:parse-graph",
-            "--input-json",
-            r#"{"format":"edge_list","directed":true}"#,
-            "--input",
-            "text=1 2\n2 3",
-        ],
-    );
-    assert!(human.status.success());
-    let human_stdout = String::from_utf8_lossy(&human.stdout);
-    assert!(human_stdout.contains("1 -> 2"), "{human_stdout}");
-    assert!(human_stdout.contains("<svg"), "{human_stdout}");
+    let j = parse_json_stdout(&out);
+    assert_eq!(j["ok"], true);
+    assert_eq!(j["plugin_id"], "echo-tool");
+    assert_eq!(j["tool_id"], "hello");
+    assert_eq!(j["blocks"][0]["content"], "Hello, XCPC!");
 }
 
 #[test]
@@ -1893,4 +1821,128 @@ fn training_editorials_cli_filters_and_output() {
     assert!(stdout.contains("editorials: 2"), "unexpected: {stdout}");
     assert!(stdout.contains("p1"), "unexpected: {stdout}");
     assert!(stdout.contains("p2"), "unexpected: {stdout}");
+}
+
+#[test]
+fn phase4d_plugin_cli_init_vite_check_pack_link_unlink() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+
+    // 1. `xcpc plugin init --kind tool --vite`
+    let vite_dir = tmp.path().join("my-vite-tool");
+    let init_vite = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "init",
+            vite_dir.to_str().unwrap(),
+            "--kind",
+            "tool",
+            "--vite",
+            "--json",
+        ],
+    );
+    assert!(
+        init_vite.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&init_vite.stderr)
+    );
+    let init_vite_json = parse_json_stdout(&init_vite);
+    assert_eq!(init_vite_json["ok"], true);
+    assert_eq!(init_vite_json["vite"], true);
+    assert!(vite_dir.join("package.json").is_file());
+    assert!(vite_dir.join("vite.config.ts").is_file());
+    assert!(vite_dir.join("src/index.ts").is_file());
+    assert!(vite_dir.join("src/ui.tsx").is_file());
+
+    // 2. Plain JS tool -> `check` -> `pack` -> `link` -> `list` -> `unlink`
+    let plain_dir = tmp.path().join("plain-tool");
+    let init_plain = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "init",
+            plain_dir.to_str().unwrap(),
+            "--kind",
+            "tool",
+            "--json",
+        ],
+    );
+    assert!(init_plain.status.success());
+
+    let check = run_xcpc(
+        None,
+        data_dir.path(),
+        &["plugin", "check", plain_dir.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        check.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let check_json = parse_json_stdout(&check);
+    assert_eq!(check_json["ok"], true);
+    assert_eq!(check_json["plugin_id"], "plain-tool");
+
+    let out_zip = tmp.path().join("plain-tool.zip");
+    let pack = run_xcpc(
+        None,
+        data_dir.path(),
+        &[
+            "plugin",
+            "pack",
+            plain_dir.to_str().unwrap(),
+            "-o",
+            out_zip.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(
+        pack.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&pack.stderr)
+    );
+    let pack_json = parse_json_stdout(&pack);
+    assert_eq!(pack_json["ok"], true);
+    assert_eq!(pack_json["sha256"].as_str().unwrap().len(), 64);
+    assert!(out_zip.is_file());
+
+    #[cfg(unix)]
+    {
+        let link = run_xcpc(
+            None,
+            data_dir.path(),
+            &["plugin", "link", plain_dir.to_str().unwrap(), "--json"],
+        );
+        assert!(
+            link.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&link.stderr)
+        );
+        let link_json = parse_json_stdout(&link);
+        assert_eq!(link_json["plugin"]["is_linked"], true);
+
+        let list = run_xcpc(None, data_dir.path(), &["plugin", "list", "--json"]);
+        assert!(list.status.success());
+        let list_json = parse_json_stdout(&list);
+        let found = list_json["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "plain-tool")
+            .expect("linked plugin should appear in list");
+        assert_eq!(found["is_linked"], true);
+
+        let unlink = run_xcpc(
+            None,
+            data_dir.path(),
+            &["plugin", "unlink", "plain-tool", "--json"],
+        );
+        assert!(unlink.status.success());
+        let unlink_json = parse_json_stdout(&unlink);
+        assert_eq!(unlink_json["removed"], true);
+        assert!(plain_dir.exists(), "unlink must never delete source dir");
+    }
 }

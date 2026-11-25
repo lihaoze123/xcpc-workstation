@@ -522,13 +522,39 @@ enum PluginCommand {
         /// Built-in plugin ID.
         id: String,
     },
-    /// Scaffold a new plugin directory (`manifest.toml`, `index.js`, `xcpc-plugin.d.ts`).
+    /// Scaffold a new plugin directory (plain JS by default, or Vite + TypeScript/JSX with `--vite`).
     Init {
         /// Target directory to scaffold into.
         dir: PathBuf,
         /// Plugin template kind (`oj` or `tool`).
         #[arg(long, default_value = "oj")]
         kind: PluginScaffoldKind,
+        /// Generate a Vite + TypeScript/JSX project using `@xcpc/plugin-sdk`.
+        #[arg(long)]
+        vite: bool,
+    },
+    /// Link a local development plugin directory into `<dataDir>/plugins/<id>` for live hot reload.
+    Link {
+        /// Path to the local plugin directory containing `manifest.toml`.
+        dir: PathBuf,
+    },
+    /// Unlink a registered development plugin without deleting its source directory.
+    Unlink {
+        /// Plugin ID to unlink.
+        id: String,
+    },
+    /// Validate a plugin directory (manifest, sandbox paths, QuickJS dry-run exports, and optional `ui.js`).
+    Check {
+        /// Path to the plugin directory (e.g. `dist/`).
+        dir: PathBuf,
+    },
+    /// Check and pack a plugin directory into a clean distributable `.zip` with SHA-256 checksum.
+    Pack {
+        /// Path to the plugin directory (e.g. `dist/`).
+        dir: PathBuf,
+        /// Optional output `.zip` path (defaults to `<dir>/<id>-<version>.zip`).
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
     },
     /// Run a local plugin directory directly without installing it.
     Test {
@@ -3812,6 +3838,8 @@ fn plugin_summary_json(p: &xcpc_plugin::InstalledPlugin) -> serde_json::Value {
         "capabilities": p.manifest.capabilities,
         "domains": p.manifest.permissions.domains,
         "has_unsandboxed_ui": p.manifest.ui_entry.is_some(),
+        "is_linked": p.is_linked,
+        "link_target": p.link_target.as_ref().map(|d| d.display().to_string()),
         "last_error": p.last_error,
         "local_dir": p.local_dir.as_ref().map(|d| d.display().to_string()),
     })
@@ -3984,9 +4012,32 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        PluginCommand::Init { dir, kind } => {
-            xcpc_plugin::init_plugin_scaffold(dir, kind.into_scaffold_kind())?;
-            let files = ["manifest.toml", "index.js", "xcpc-plugin.d.ts"];
+        PluginCommand::Init { dir, kind, vite } => {
+            let files: Vec<&str> = if *vite {
+                xcpc_plugin::init_plugin_scaffold_vite(dir, kind.into_scaffold_kind())?;
+                match kind {
+                    PluginScaffoldKind::Oj => vec![
+                        "package.json",
+                        "vite.config.ts",
+                        "tsconfig.json",
+                        ".gitignore",
+                        "manifest.toml",
+                        "src/index.ts",
+                    ],
+                    PluginScaffoldKind::Tool => vec![
+                        "package.json",
+                        "vite.config.ts",
+                        "tsconfig.json",
+                        ".gitignore",
+                        "manifest.toml",
+                        "src/index.ts",
+                        "src/ui.tsx",
+                    ],
+                }
+            } else {
+                xcpc_plugin::init_plugin_scaffold(dir, kind.into_scaffold_kind())?;
+                vec!["manifest.toml", "index.js", "xcpc-plugin.d.ts"]
+            };
             if cli.json {
                 println!(
                     "{}",
@@ -3994,15 +4045,126 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                         "ok": true,
                         "dir": dir.display().to_string(),
                         "kind": kind.as_str(),
+                        "vite": vite,
                         "files": files,
                     }))
                     .expect("serializable")
                 );
             } else {
-                println!("scaffolded {} plugin in {}", kind.as_str(), dir.display());
+                println!(
+                    "scaffolded {} plugin{} in {}",
+                    kind.as_str(),
+                    if *vite { " (vite)" } else { "" },
+                    dir.display()
+                );
                 for f in files {
                     println!("  {f}");
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Link { dir } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let linked = pm.link_plugin_dir(dir)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "plugin": plugin_summary_json(&linked),
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "linked plugin {} -> {}",
+                    linked.manifest.id,
+                    linked
+                        .link_target
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| dir.display().to_string())
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Unlink { id } => {
+            let pm = xcpc_plugin::PluginManager::new(resolve_data_dir()?);
+            let removed = pm.unlink_plugin(id)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "id": id,
+                        "removed": removed,
+                    }))
+                    .expect("serializable")
+                );
+            } else if removed {
+                println!("unlinked plugin {id}");
+            } else {
+                println!("plugin {id} was not linked");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginCommand::Check { dir } => {
+            let report = xcpc_plugin::check_plugin_dir(dir);
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).expect("serializable")
+                );
+            } else if report.ok {
+                println!(
+                    "ok: plugin {} ({}) — exports: [{}]{}",
+                    report.plugin_id.as_deref().unwrap_or("?"),
+                    report.version.as_deref().unwrap_or("?"),
+                    report.exports.join(", "),
+                    if report.has_ui { " + ui.js" } else { "" }
+                );
+            } else {
+                eprintln!(
+                    "check failed for {} ({} issue(s)):",
+                    dir.display(),
+                    report.issues.len()
+                );
+                for issue in &report.issues {
+                    eprintln!("  [{}] {}: {}", issue.severity, issue.code, issue.message);
+                }
+            }
+            if report.ok {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::from(1))
+            }
+        }
+        PluginCommand::Pack { dir, output } => {
+            let report = xcpc_plugin::pack_plugin_dir(dir, output.as_deref())?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "plugin_id": report.plugin_id,
+                        "version": report.version,
+                        "output_path": report.output_path.display().to_string(),
+                        "sha256": report.sha256,
+                        "size_bytes": report.size_bytes,
+                        "files": report.files,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!(
+                    "packed {} ({}) -> {} ({} bytes)",
+                    report.plugin_id,
+                    report.version,
+                    report.output_path.display(),
+                    report.size_bytes
+                );
+                println!("  sha256: {}", report.sha256);
+                println!("  files:  {}", report.files.join(", "));
             }
             Ok(ExitCode::SUCCESS)
         }

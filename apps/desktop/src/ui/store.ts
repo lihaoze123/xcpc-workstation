@@ -564,6 +564,25 @@ export function startWatch() {
   })();
 }
 
+let pluginWatchStarted = false;
+
+/** The `nextPluginChange()` loop: watches `<dataDir>/plugins/` and linked dev plugin targets for hot reload. */
+export function startPluginWatch() {
+  if (pluginWatchStarted) return;
+  if (typeof preview.nextPluginChange !== "function") return;
+  pluginWatchStarted = true;
+  void (async () => {
+    for (;;) {
+      const ev = await preview.nextPluginChange();
+      if (ev.kind === "closed") {
+        pluginWatchStarted = false;
+        return;
+      }
+      notifyPluginsChanged();
+    }
+  })();
+}
+
 /** Picks a Polygon ZIP via the native file dialog, imports it off the UI thread, and opens the imported item. */
 export async function importPolygon() {
   if (!hasWorkspace() || info().readOnly || importingPolygon()) return;

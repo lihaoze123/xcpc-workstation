@@ -193,6 +193,8 @@ pub(crate) struct State {
     pub(crate) credentials: Arc<dyn xcpc_plugin::CredentialStore>,
     /// Ensures silent startup auto-sync fires at most once per session.
     pub(crate) startup_sync_triggered: AtomicBool,
+    /// Watches `<dataDir>/plugins/` and registered linked dev plugin directories for hot reload.
+    pub(crate) plugin_watcher: Mutex<Option<crate::plugins::PluginFileWatcher>>,
 }
 
 impl Drop for State {
@@ -204,6 +206,7 @@ impl Drop for State {
             build.cancelled = true;
         }
         self.stop_batch_task();
+        self.stop_plugin_watcher();
         xcpc_trace::flush_if_env_configured();
         if let Ok(mut core) = self.core.lock() {
             core.watch_session = None;
@@ -275,6 +278,7 @@ impl State {
             dirty_inputs_backup: Mutex::new(None),
             credentials: Arc::new(xcpc_plugin::SystemKeyringStore::new()),
             startup_sync_triggered: AtomicBool::new(false),
+            plugin_watcher: Mutex::new(None),
         };
 
         if let Some(ws) = workspace {
@@ -286,6 +290,31 @@ impl State {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn ensure_plugin_watcher(
+        &self,
+    ) -> Option<Arc<Mutex<std::sync::mpsc::Receiver<crate::types::PluginWatchEventJs>>>> {
+        let mut slot = self.plugin_watcher.lock().ok()?;
+        if slot.is_none() {
+            let dir = self.effective_data_dir().ok()?;
+            *slot = crate::plugins::PluginFileWatcher::start(dir);
+        }
+        slot.as_ref().map(|w| w.receiver())
+    }
+
+    pub(crate) fn refresh_plugin_watcher(&self) {
+        if let Ok(slot) = self.plugin_watcher.lock()
+            && let Some(ref w) = *slot
+        {
+            w.refresh();
+        }
+    }
+
+    pub(crate) fn stop_plugin_watcher(&self) {
+        if let Ok(mut slot) = self.plugin_watcher.lock() {
+            drop(slot.take());
+        }
     }
 
     pub(crate) fn workspace_root(&self) -> Option<PathBuf> {

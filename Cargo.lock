@@ -5695,6 +5695,7 @@ name = "xcpc-desktop"
 version = "0.3.0-beta.1"
 dependencies = [
  "base64 0.22.1",
+ "notify",
  "nsh-base",
  "nsh-core",
  "png",

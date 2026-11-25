@@ -43,6 +43,7 @@ import {
   requestNewWorkspace,
   selectedContest,
   space,
+  startPluginWatch,
   startWatch,
   studio,
 } from "./src/ui/store";
@@ -214,6 +215,7 @@ function App() {
   }, { when: "always" });
 
   startWatch();
+  startPluginWatch();
 
   const workspaceEntries = computed<MenuEntry[]>(() => {
     const cur = info().root;
