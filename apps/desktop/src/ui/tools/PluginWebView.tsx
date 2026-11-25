@@ -25,7 +25,7 @@ import { zhEn } from "../training/locale";
 import { classifyPluginUiError, formatPluginError, type PluginUiErrorInfo } from "./pluginErrors";
 
 export const PLUGIN_WEBVIEW_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none';";
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';";
 
 const FALLBACK_LIGHT_VARS: Record<string, string> = {
   "--xcpc-bg": "#FAFAFA",
@@ -106,10 +106,13 @@ export function buildThemeCssVars(scheme: "light" | "dark"): Record<string, stri
   };
 }
 
-/** Validates external URLs opened by plugins (only `http://` and `https://`). */
-export function isAllowedExternalUrl(url: string): boolean {
-  const trimmed = url.trim().toLowerCase();
-  return trimmed.startsWith("https://") || trimmed.startsWith("http://");
+/** Generates a per-mount random bridge token so untrusted pages cannot forge host RPCs. */
+function generateBridgeToken(): string {
+  const bytes: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    bytes.push(Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0"));
+  }
+  return bytes.join("");
 }
 
 function escapeInlineScriptJson(value: unknown): string {
@@ -125,7 +128,7 @@ function formatCssVarsBlock(vars: Record<string, string>): string {
     .join("");
 }
 
-function buildBridgeScript(opts: {
+function buildIframeBridgeScript(opts: {
   pluginId: string;
   theme: "light" | "dark";
   cssVars: Record<string, string>;
@@ -177,12 +180,13 @@ function applyTheme(theme,vars){
 
 applyTheme(currentTheme,boot.cssVars);
 
-function postRaw(obj){
-  var str=JSON.stringify(obj);
-  if(window.nsh&&typeof window.nsh.postMessage==="function"){
-    window.nsh.postMessage(str);
-    return true;
-  }
+function postToParent(obj){
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage(obj,"*");
+      return true;
+    }
+  }catch(_e){}
   return false;
 }
 
@@ -190,7 +194,7 @@ function rpc(method,params){
   return new Promise(function(resolve,reject){
     var id=nextId++;
     pending[id]={resolve:resolve,reject:reject};
-    if(!postRaw({__xcpc:"rpc",id:id,method:method,params:params||{}})){
+    if(!postToParent({__xcpc:"rpc",id:id,method:method,params:params||{}})){
       delete pending[id];
       reject(new Error("XCPC host bridge unavailable"));
     }
@@ -198,10 +202,25 @@ function rpc(method,params){
 }
 
 function notify(method,params){
-  postRaw({__xcpc:"notify",method:method,params:params||{}});
+  postToParent({__xcpc:"notify",method:method,params:params||{}});
 }
 
+window.addEventListener("error",function(ev){
+  var msg=(ev&&ev.message)||"Uncaught plugin error";
+  var loc=ev&&ev.lineno?(" ("+ev.lineno+":"+(ev.colno||0)+")"):"";
+  var stack=ev&&ev.error&&ev.error.stack?String(ev.error.stack):"";
+  notify("runtimeError",{message:String(msg)+loc,details:stack});
+});
+
+window.addEventListener("unhandledrejection",function(ev){
+  var reason=ev&&ev.reason;
+  var msg=reason&&reason.message?String(reason.message):String(reason||"Unhandled promise rejection");
+  var stack=reason&&reason.stack?String(reason.stack):"";
+  notify("runtimeError",{message:msg,details:stack});
+});
+
 window.addEventListener("message",function(ev){
+  if(ev.source!==window.parent)return;
   var data=ev&&ev.data;
   if(typeof data==="string"){
     try{data=JSON.parse(data);}catch(_e){return;}
@@ -251,8 +270,7 @@ var xcpc={
     notify("toast",{text:String(text||""),tone:tone||"info"});
   },
   clipboard:{
-    writeText:function(text){return rpc("clipboard.writeText",{text:String(text||"")});},
-    readText:function(){return rpc("clipboard.readText",{});}
+    writeText:function(text){return rpc("clipboard.writeText",{text:String(text||"")});}
   },
   files:{
     saveText:function(defaultName,content){
@@ -271,9 +289,6 @@ var xcpc={
     }else{
       notify("openTool",{pluginId:String(pluginId||""),payload:toolIdOrPayload});
     }
-  },
-  openExternal:function(url){
-    notify("openExternal",{url:String(url||"")});
   }
 };
 
@@ -286,8 +301,16 @@ try{
 }
 
 /**
- * Injects strict CSP, host theme CSS variables, and the `window.xcpc` bridge script
- * into the plugin's raw HTML `<head>` (or prepends cleanly if no `<head>` tag exists).
+ * Wraps raw plugin HTML inside a host-generated outer document with a strict CSP
+ * and a sandboxed `<iframe sandbox="allow-scripts" srcdoc="...">`.
+ *
+ * Security invariants:
+ * - Outer document enforces CSP before byte 0 of plugin HTML is parsed (immune to
+ *   commented `<head>` or pre-`<head>` `<script>` bypasses).
+ * - `sandbox="allow-scripts"` omits `allow-top-navigation` and `allow-same-origin`,
+ *   preventing top-level navigation and direct access to `window.nsh.postMessage`.
+ * - Outer shell authenticates relayed RPCs with a per-mount `bridgeToken` never
+ *   exposed to the plugin iframe.
  */
 export function injectPluginHtml(
   rawHtml: string,
@@ -296,38 +319,78 @@ export function injectPluginHtml(
     theme: "light" | "dark";
     cssVars: Record<string, string>;
     initialPayload?: unknown;
+    bridgeToken?: string;
   },
 ): string {
-  const headInjection = [
+  const token = opts.bridgeToken ?? generateBridgeToken();
+  const innerPrefix = [
     `<meta charset="UTF-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">`,
     `<style id="xcpc-host-theme">:root{${formatCssVarsBlock(opts.cssVars)}}</style>`,
-    `<script>${buildBridgeScript(opts)}</script>`,
+    `<script>${buildIframeBridgeScript(opts)}</script>`,
   ].join("\n");
 
-  const headOpenMatch = /<head\b[^>]*>/i.exec(rawHtml);
-  if (headOpenMatch) {
-    const idx = headOpenMatch.index + headOpenMatch[0].length;
-    return `${rawHtml.slice(0, idx)}\n${headInjection}\n${rawHtml.slice(idx)}`;
-  }
+  // Prepend cleanly after <!doctype> if present, never relying on regex-matching <head>.
+  const doctypeMatch = /^\s*<!doctype\b[^>]*>/i.exec(rawHtml);
+  const innerHtml = doctypeMatch
+    ? `${doctypeMatch[0]}\n${innerPrefix}\n${rawHtml.slice(doctypeMatch[0].length)}`
+    : `<!doctype html>\n${innerPrefix}\n${rawHtml}`;
 
-  const htmlOpenMatch = /<html\b[^>]*>/i.exec(rawHtml);
-  if (htmlOpenMatch) {
-    const idx = htmlOpenMatch.index + htmlOpenMatch[0].length;
-    return `${rawHtml.slice(0, idx)}\n<head>\n${headInjection}\n</head>\n${rawHtml.slice(idx)}`;
-  }
+  const outerBootstrap = escapeInlineScriptJson({
+    token,
+    srcdoc: innerHtml,
+  });
 
-  const doctypeMatch = /<!doctype\b[^>]*>/i.exec(rawHtml);
-  if (doctypeMatch) {
-    const idx = doctypeMatch.index + doctypeMatch[0].length;
-    return `${rawHtml.slice(0, idx)}\n<head>\n${headInjection}\n</head>\n${rawHtml.slice(idx)}`;
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">
+<style>html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;display:block;overflow:hidden;background:transparent;}</style>
+</head>
+<body>
+<iframe id="xcpc-plugin-frame" sandbox="allow-scripts"></iframe>
+<script>
+(function(){
+var cfg=${outerBootstrap};
+var frame=document.getElementById("xcpc-plugin-frame");
+if(frame){frame.srcdoc=cfg.srcdoc;}
+window.addEventListener("message",function(ev){
+  if(frame&&ev.source===frame.contentWindow){
+    if(ev.origin!=="null")return;
+    var data=ev.data;
+    if(!data||typeof data!=="object")return;
+    if(data.__xcpc!=="rpc"&&data.__xcpc!=="notify")return;
+    var wrapped={
+      __xcpc:data.__xcpc,
+      token:cfg.token,
+      id:data.id,
+      method:data.method,
+      params:data.params
+    };
+    if(window.nsh&&typeof window.nsh.postMessage==="function"){
+      window.nsh.postMessage(JSON.stringify(wrapped));
+    }
+    return;
   }
-
-  return `<head>\n${headInjection}\n</head>\n${rawHtml}`;
+  var hostMsg=ev&&ev.data;
+  if(typeof hostMsg==="string"){
+    try{hostMsg=JSON.parse(hostMsg);}catch(_e){return;}
+  }
+  if(!hostMsg||typeof hostMsg!=="object")return;
+  if((hostMsg.__xcpc==="res"||hostMsg.__xcpc==="theme")&&frame&&frame.contentWindow){
+    frame.contentWindow.postMessage(hostMsg,"*");
+  }
+});
+})();
+</script>
+</body>
+</html>`;
 }
 
 interface BridgeRpcMessage {
   __xcpc: "rpc" | "notify";
+  token?: string;
   id?: number;
   method: string;
   params?: Record<string, unknown>;
@@ -344,8 +407,17 @@ export function PluginWebView(props: {
   const reloadTick = signal(0);
   let webViewRef: WebViewRef | undefined;
   let loadGen = 0;
+  let activeBridgeToken = "";
+  let navigatedAway = false;
+
+  const isTrustedPluginUrl = (url?: string): boolean => {
+    if (!url) return true;
+    const lower = url.trim().toLowerCase();
+    return lower === "" || lower === "about:blank" || lower === "about:srcdoc";
+  };
 
   const postToWebView = (payload: unknown) => {
+    if (navigatedAway) return;
     try {
       webViewRef?.postMessage(JSON.stringify(payload));
     } catch {
@@ -361,6 +433,8 @@ export function PluginWebView(props: {
     void reloadTick();
 
     loadGen += 1;
+    navigatedAway = false;
+    activeBridgeToken = generateBridgeToken();
     untracked(() => {
       showDetails.set(false);
       if (typeof preview.loadPluginUiHtml !== "function") {
@@ -385,6 +459,7 @@ export function PluginWebView(props: {
           theme: scheme,
           cssVars: buildThemeCssVars(scheme),
           initialPayload: props.getInitialPayload?.(),
+          bridgeToken: activeBridgeToken,
         });
         errorInfo.set(null);
         htmlDoc.set(injected);
@@ -470,10 +545,6 @@ export function PluginWebView(props: {
         return undefined;
       }
 
-      case "clipboard.readText": {
-        return await Clipboard.readText();
-      }
-
       case "files.saveText": {
         const content = String(params.content ?? params.text ?? "");
         const defaultName = String(params.defaultName ?? "output.txt");
@@ -513,6 +584,7 @@ export function PluginWebView(props: {
   };
 
   const handleMessage = (e: { data: string }) => {
+    if (navigatedAway || !activeBridgeToken) return;
     let msg: BridgeRpcMessage;
     try {
       msg = JSON.parse(e.data) as BridgeRpcMessage;
@@ -520,6 +592,8 @@ export function PluginWebView(props: {
       return;
     }
     if (!msg || typeof msg !== "object") return;
+    // Reject any message not authenticated by our outer host shell's per-mount token.
+    if (msg.token !== activeBridgeToken) return;
     const params = msg.params ?? {};
 
     if (msg.__xcpc === "notify") {
@@ -536,11 +610,14 @@ export function PluginWebView(props: {
         const targetId = String(params.pluginId ?? "");
         const toolId = typeof params.toolId === "string" ? params.toolId : undefined;
         if (targetId) openToolPlugin(targetId, { toolId, payload: params.payload });
-      } else if (msg.method === "openExternal") {
-        const url = String(params.url ?? "");
-        if (isAllowedExternalUrl(url)) {
-          Preview.openExternalUrl(url);
-        }
+      } else if (msg.method === "runtimeError") {
+        const errMsg = String(params.message ?? "Uncaught plugin error");
+        const details = params.details ? String(params.details) : errMsg;
+        errorInfo.set({
+          title: zhEn("插件页面运行出错", "Plugin page runtime error"),
+          summary: errMsg,
+          details,
+        });
       }
       return;
     }
@@ -606,6 +683,18 @@ export function PluginWebView(props: {
                 html={doc()}
                 incognito
                 onMessage={handleMessage}
+                onLoadStart={(nav) => {
+                  if (!isTrustedPluginUrl(nav?.url)) {
+                    navigatedAway = true;
+                    activeBridgeToken = "";
+                  }
+                }}
+                onNavigationStateChange={(nav) => {
+                  if (!isTrustedPluginUrl(nav?.url)) {
+                    navigatedAway = true;
+                    activeBridgeToken = "";
+                  }
+                }}
                 onError={handleWebViewError}
                 style={{ flex: 1 }}
               />

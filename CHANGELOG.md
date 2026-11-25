@@ -2,6 +2,38 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0-beta.1] - 2026-11-25
+
+Phase 4（4A–4D）首个预览版：在题库、出版与本地 Polygon 之外补齐**混合沙箱插件引擎、个人训练看板、纯净 WebView 插件化工具箱与插件开发生态**。
+
+### 新增
+
+- **混合沙箱插件底座与安全模型**（`xcpc-plugin`）：
+  - Rust Core 内嵌 `rquickjs` 沙箱（64 MiB 内存上限、2 秒单次超时、域名白名单逐跳重定向校验、系统 `keyring` 凭据托管、插件作用域 KV 存储），支持 `oj_source`、`tool`、`commands`、`importer`、`exporter` 与 `credentials` 扩展点。
+  - **Core 层强制信任门（`pending_trust`）**：声明了外网域名、凭据或 `workspace_read` 权限的外部插件在所有安装路径（目录/ZIP、仓库、CLI、开发链接）安装后默认处于「待信任」并拒绝执行，需经 GUI 确认弹窗或 `xcpc plugin trust <id>` 放行；持久化来源仓库（`source_repo`），跨仓库覆写或权限扩大自动重置信任。
+  - **纯 Web `<WebView>` 沙箱插件界面（`ui_entry = "ui.html"`）**：采用宿主受控外层壳 + `<iframe sandbox="allow-scripts" srcdoc>` + 每次挂载随机桥接令牌 + 严格 CSP（`default-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'`）+ NSH 原生 `capabilities.webview.hosts = []` 禁导航，通过 `window.xcpc` 提供 `runTool`、`storage`、`workspace`、`toast`、`clipboard.writeText`、`files`、`openTool` 与实时主题 CSS 变量（`--xcpc-*`），彻底隔绝外联泄露与主线程卡顿。
+  - 仓库订阅强制 HTTPS（仅豁免本地回环地址），下载校验 SHA-256 与 Zip Slip / 软链越界防护，自动跟随 GitHub Release 302 重定向并逐跳校验 HTTPS。
+- **个人训练看板与 OJ 同步**（`xcpc-sync`）：
+  - 内置 **Codeforces** 与 **AtCoder**（Algorithm Rating）官方 OJ 插件，全局 `<dataDir>/oj_sync.db` 跨工作区共享，工作区 `training/logs.jsonl` 仅记录状态变更（不污染 `problem.toml`）；支持 `workspace.toml` 配置 `training = false`。
+  - 「训练」空间四视图：**总览**（多平台 Rating、双模式年度热力图、段位色带 Rating 曲线、有效难度 P75/P90 突破趋势、难度分桶与高难标签短板）、**比赛日历**、**提交**（按提交/按题去重 + 一键收入题库 + 居中防跳动「手动记一题」弹窗）与**题解**（聚合工作区全部非空 `editorial.md` 与实时排版预览）。
+  - 新增 `get_training_dashboard`、`set_training_status`、`ingest_problem` MCP 工具与对应 CLI 命令。
+- **纯净「工具」Tab 与独立官方插件仓库（`xcpc-plugins`）**：
+  - 主仓库仅内置 2 个核心 OJ 插件（构建零 Node 依赖）；4 个官方离线工具（图论与几何画板、数论与位运算工作台、复杂度与内存估算、字符串算法调试器）迁出至独立官方仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)，默认预置订阅并在「工具」空态与仓库浏览器中一键安装。
+  - `math-bitwise` 与 `graph-editor` 升级为纯 Web 单文件 `ui.html`（毫秒级位格翻转、原生 60fps Canvas2D、改边表保留既有节点坐标）。
+- **Plugin SDK 与开发工具链**（`@xcpc/plugin-sdk` v0.2.0）：
+  - 新增 `packages/plugin-sdk`（导出 `/host`、`/ui`、`/vite` 与 `manifest.schema.json`），`@xcpc/plugin-sdk/vite` 支持单文件 IIFE `dist/ui.html` + `dist/index.js` 双入口打包与 QuickJS 禁用 API 编译期护栏。
+  - 升级 `xcpc plugin` CLI：`init [--kind tool|oj] [--vite]`、`install <path-or-id>`、`uninstall`、`trust`、`link` / `unlink`、`check`、`pack`、`test` 与 `repo list|add|remove|catalog`；桌面端按插件 ID 粒度监听文件变更实现免重启热重载（兼容 Linux 与 Windows）。
+
+### 变更
+
+- 左侧导航升级为 5 项：`题库`、`比赛`、`训练`、`工具`、`设置`；「设置 → 插件」统一管理 OJ 账号、凭据、插件安装/卸载/恢复内置版本与仓库源。
+- `xcpc-engine` 支持 `XCPC_SKIP_EMBED_FONTS=1` 便于独立 CI 构建 CLI；`xcpc-plugins` CI 自动构建并原子发布 `official-latest` Release（含全部插件 zip、`index.json` 与 `xcpc-plugin-sdk.tgz`）。
+
+### 修复
+
+- 修复插件文件监听器误响应 `Access` / `Metadata` 事件导致的自激热重载循环与输入回弹。
+- 修复仓库拉取失败时的中文 locale / JSON 解析错误提示与重复渲染，以及无头测试对系统 locale / 全局 `<dataDir>` 的依赖。
+
 ## [0.3.0-beta.1] - 2026-11-24
 
 Phase 3「本地 Polygon」首个预览版：在出版工作台之上补齐出题、验题与 OJ 数据包流转，并完成一轮以 release 实测为准的流畅性优化。

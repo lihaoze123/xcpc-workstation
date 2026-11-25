@@ -171,12 +171,15 @@ export function inlineHtmlBundle(html, { jsChunks = [], cssAssets = [] } = {}) {
     const scriptTag = `<script>\n${escapedJs}\n</script>`;
     const escapedName = escapeRegExp(chunk.fileName);
     const scriptRe = new RegExp(
-      `<script\\b[^>]*\\bsrc=["'][^"']*${escapedName}["'][^>]*>\\s*<\\/script>`,
+      `<script\\b[^>]*\\bsrc=["'][^"']*${escapedName}["'][^>]*>\\s*<\\/script>\\s*`,
       "i",
     );
+    // Always remove Vite's <head> module script tag and inject the classic IIFE
+    // right before </body> so the DOM (e.g. #app) is already parsed before execution.
     if (scriptRe.test(out)) {
-      out = out.replace(scriptRe, () => scriptTag);
-    } else if (/<\/body>/i.test(out)) {
+      out = out.replace(scriptRe, "");
+    }
+    if (/<\/body>/i.test(out)) {
       out = out.replace(/<\/body>/i, () => `${scriptTag}\n</body>`);
     } else {
       out = `${out}\n${scriptTag}`;

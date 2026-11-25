@@ -52,7 +52,6 @@ export interface XcpcWorkspaceBridge {
 
 export interface XcpcClipboardBridge {
   writeText(text: string): Promise<void>;
-  readText(): Promise<string>;
 }
 
 export interface XcpcFilesBridge {
@@ -72,7 +71,6 @@ export interface XcpcBridge {
   readonly clipboard: XcpcClipboardBridge;
   readonly files: XcpcFilesBridge;
   openTool(pluginId: string, toolId?: string, payload?: unknown): void;
-  openExternal(url: string): void;
   readonly theme: XcpcTheme;
   onThemeChange(callback: (theme: XcpcTheme) => void): () => void;
   readonly initialPayload?: unknown;

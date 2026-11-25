@@ -1,5 +1,6 @@
 import { describe, expect, open, test } from "nsh/test";
 import { Preview } from "xcpc-workstation/native";
+import { languagePref } from "./i18n";
 import { spaceName, windowTitle } from "./logic";
 import {
   activeToolPayload,
@@ -17,7 +18,6 @@ import { classifyPluginUiError, formatPluginError } from "./tools/pluginErrors";
 import {
   buildThemeCssVars,
   injectPluginHtml,
-  isAllowedExternalUrl,
   PLUGIN_WEBVIEW_CSP,
 } from "./tools/PluginWebView";
 import {
@@ -88,32 +88,43 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
       theme: "dark",
       cssVars: darkVars,
       initialPayload: { note: "test </script> <!-- safe" },
+      bridgeToken: "tok-fixed-1234",
     });
 
+    // Outer host shell enforces CSP before byte 0 of plugin HTML and isolates plugin inside sandboxed iframe.
     expect(injected).toContain(`<meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">`);
     expect(injected).toContain("connect-src 'none'");
-    expect(injected).toContain('id="xcpc-host-theme"');
-    expect(injected).toContain("--xcpc-bg:");
+    expect(injected).toContain("form-action 'none'");
+    expect(injected).toContain('<iframe id="xcpc-plugin-frame" sandbox="allow-scripts"></iframe>');
+    expect(injected).not.toContain("allow-top-navigation");
+    expect(injected).not.toContain("allow-same-origin");
+    expect(injected).toContain("tok-fixed-1234");
     expect(injected).toContain("window.nsh.postMessage");
-    expect(injected).toContain('Object.defineProperty(window,"xcpc"');
+    // S4: clipboard.readText and openExternal are not exposed to untrusted plugins.
+    expect(injected).not.toContain("clipboard.readText");
+    expect(injected).not.toContain("openExternal");
     // Payload with `</script>` must be safely escaped so it cannot break out of the injected script tag.
     expect(injected).toContain("<\\/script>");
     expect(injected).not.toContain('test </script>');
 
-    // Fragment HTML without `<head>` still gets a cleanly prepended `<head>`.
-    const fragment = injectPluginHtml("<main>Hello</main>", {
-      pluginId: "frag",
+    // S1 & S2: Commented <head> and pre-<head> <script> cannot bypass outer CSP or break out of srcdoc.
+    const attackS1 = injectPluginHtml(`<!--<head>--><script>fetch("http://evil")</script>`, {
+      pluginId: "evil-s1",
       theme: "light",
       cssVars: lightVars,
     });
-    expect(fragment.startsWith("<head>")).toBe(true);
-    expect(fragment).toContain("<main>Hello</main>");
+    expect(attackS1.indexOf(PLUGIN_WEBVIEW_CSP)).toBeLessThan(attackS1.indexOf("evil"));
+    expect(attackS1).toContain('<iframe id="xcpc-plugin-frame" sandbox="allow-scripts"></iframe>');
 
-    // External URL validator only allows http(s).
-    expect(isAllowedExternalUrl("https://codeforces.com")).toBe(true);
-    expect(isAllowedExternalUrl("http://127.0.0.1:8080")).toBe(true);
-    expect(isAllowedExternalUrl("javascript:alert(1)")).toBe(false);
-    expect(isAllowedExternalUrl("file:///etc/passwd")).toBe(false);
+    const attackS2 = injectPluginHtml(
+      `<!doctype html><html><script>new Image().src="http://evil"</script><head></head></html>`,
+      {
+        pluginId: "evil-s2",
+        theme: "light",
+        cssVars: lightVars,
+      },
+    );
+    expect(attackS2.indexOf(PLUGIN_WEBVIEW_CSP)).toBeLessThan(attackS2.indexOf("http://evil"));
   });
 
   test("New Issue C: per-plugin revision isolates unrelated plugin changes", () => {
@@ -205,35 +216,42 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
   });
 
   test("Awkward 7, 10 & New Issue D: plugin error mapper formats raw codes, Chinese locale network errors, and ureq errors", () => {
-    expect(formatPluginError("CHECKSUM_MISMATCH: expected sha256 '000'")).toContain("校验失败");
-    expect(formatPluginError("SYMLINK_ESCAPE: /etc/passwd")).toContain("符号链接");
-    expect(formatPluginError("ZIP_SLIP: ../evil")).toContain("非法文件路径");
-    expect(formatPluginError("PLUGIN_UNTRUSTED: demo")).toContain("确认信任");
-    expect(formatPluginError("HTTP_NOT_ALLOWED: http://example.com")).toContain("HTTPS");
+    const prevLang = languagePref();
+    languagePref.set("zh-CN");
+    try {
+      expect(formatPluginError("CHECKSUM_MISMATCH: expected sha256 '000'")).toContain("校验失败");
+      expect(formatPluginError("SYMLINK_ESCAPE: /etc/passwd")).toContain("符号链接");
+      expect(formatPluginError("ZIP_SLIP: ../evil")).toContain("非法文件路径");
+      expect(formatPluginError("PLUGIN_UNTRUSTED: demo")).toContain("确认信任");
+      expect(formatPluginError("HTTP_NOT_ALLOWED: http://example.com")).toContain("HTTPS");
+      expect(formatPluginError("JSON_ERROR: expected value at line 1 column 1")).toContain("索引格式无效");
 
-    // New Issue D: Chinese OS locale errors & ureq transport errors
-    expect(
-      formatPluginError(
-        "HTTP_ERROR: http://127.0.0.1:18767/index.json: Connection Failed: Connect error: 连接被拒绝 (os error 111)",
-      ),
-    ).toContain("网络连接失败");
-    expect(formatPluginError("无法连接到远程主机")).toContain("网络连接失败");
-    expect(formatPluginError("连接超时 (os error 110)")).toContain("网络连接失败");
-    expect(formatPluginError("名称解析失败")).toContain("网络连接失败");
-    expect(formatPluginError("HTTP_ERROR: dns failed for example.invalid")).toContain("网络连接失败");
-    expect(formatPluginError("HTTP_ERROR: unexpected status 503")).toBe("unexpected status 503");
+      // New Issue D: Chinese OS locale errors & ureq transport errors
+      expect(
+        formatPluginError(
+          "HTTP_ERROR: http://127.0.0.1:18767/index.json: Connection Failed: Connect error: 连接被拒绝 (os error 111)",
+        ),
+      ).toContain("网络连接失败");
+      expect(formatPluginError("无法连接到远程主机")).toContain("网络连接失败");
+      expect(formatPluginError("连接超时 (os error 110)")).toContain("网络连接失败");
+      expect(formatPluginError("名称解析失败")).toContain("网络连接失败");
+      expect(formatPluginError("HTTP_ERROR: dns failed for example.invalid")).toContain("网络连接失败");
+      expect(formatPluginError("HTTP_ERROR: unexpected status 503")).toBe("unexpected status 503");
 
-    const mountErr = classifyPluginUiError("SyntaxError: bad token\n    at xcpc-plugin://bad/ui.html:1:5", "mount");
-    expect(mountErr.title).toBe("插件界面加载失败");
-    expect(mountErr.details).toContain("xcpc-plugin://bad/ui.html:1:5");
+      const mountErr = classifyPluginUiError("SyntaxError: bad token\n    at xcpc-plugin://bad/ui.html:1:5", "mount");
+      expect(mountErr.title).toBe("插件界面加载失败");
+      expect(mountErr.details).toContain("xcpc-plugin://bad/ui.html:1:5");
 
-    const timeoutErr = classifyPluginUiError("TIMEOUT: script interrupted after 2000ms", "action");
-    expect(timeoutErr.title).toBe("插件操作超时");
-    expect(timeoutErr.summary).toContain("超时");
+      const timeoutErr = classifyPluginUiError("TIMEOUT: script interrupted after 2000ms", "action");
+      expect(timeoutErr.title).toBe("插件操作超时");
+      expect(timeoutErr.summary).toContain("超时");
 
-    const untrustedErr = classifyPluginUiError("PLUGIN_UNTRUSTED: net-plugin", "mount");
-    expect(untrustedErr.untrusted).toBe(true);
-    expect(untrustedErr.title).toBe("插件尚未信任");
+      const untrustedErr = classifyPluginUiError("PLUGIN_UNTRUSTED: net-plugin", "mount");
+      expect(untrustedErr.untrusted).toBe(true);
+      expect(untrustedErr.title).toBe("插件尚未信任");
+    } finally {
+      languagePref.set(prevLang);
+    }
   });
 
   test("Blocker 1: typing into a plugin tool input works cleanly with plugin watching active", async () => {

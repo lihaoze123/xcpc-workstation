@@ -2,10 +2,14 @@
 
 import { mount, signal, View } from "nsh";
 import "../theme";
+import { languagePref } from "../i18n";
 import { startPluginWatch } from "../store";
 import { ToolsView } from "../ToolsView";
 import { HeadlessToolRunner } from "./HeadlessToolRunner";
 import type { PluginToolGroup } from "./types";
+
+// Pin locale so headless tests do not depend on CI's C.UTF-8 environment.
+languagePref.set("zh-CN");
 
 const BOOL_DEMO_GROUP: PluginToolGroup = {
   plugin_id: "graph-editor",

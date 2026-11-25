@@ -4,7 +4,7 @@
 
 ## 项目
 
-**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、训练看板，并原生支持 MCP。**当前优先级是出版**。Phase 0（技术验证）已完成，Phase 1（最短出版链路）已有完整实现：`crates/xcpc-domain`、`xcpc-storage`、`xcpc-convert`（含 `publish` 管线）、`xcpc-engine`（Typst 引擎，内嵌 `olymp-classic` 和 MiTeX 作用域）、`xcpc-mcp`（`xcpc` CLI 与 `xcpc mcp`）、`apps/desktop`（打开题目或比赛，编辑 + 预览），以及基准回归管线。
+**XCPC Workstation** 是本地优先的**个人** XCPC 工作站：以题库为底座，提供活引用式组卷、与参考模板版式一致的 PDF 出版、本地 Polygon 出题验题、混合沙箱插件与训练看板，并原生支持 MCP。Phase 0–4（出版、本地 Polygon、插件体系、训练看板与纯 Web `<WebView>` 插件生态）均已落地，核心 crate 包括 `xcpc-domain`、`xcpc-storage`、`xcpc-convert`、`xcpc-engine`、`xcpc-judge`、`xcpc-packages`、`xcpc-plugin`、`xcpc-sync`、`xcpc-mcp`，桌面端位于 `apps/desktop`，插件 SDK 位于 `packages/plugin-sdk`。
 
 完整规格在 `docs/` 下，按需阅读：
 

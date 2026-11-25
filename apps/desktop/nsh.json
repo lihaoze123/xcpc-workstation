@@ -1,9 +1,21 @@
 {
   "name": "XCPC Workstation",
   "id": "dev.xcpc.workstation",
-  "version": "0.3.0-beta.1",
-  "build": 4,
+  "version": "0.4.0-beta.1",
+  "build": 5,
   "rust": ".",
+  "capabilities": {
+    "webview": {
+      "hosts": []
+    },
+    "clipboard": true,
+    "statusBar": true,
+    "application": true,
+    "windows": true,
+    "openUrl": {
+      "schemes": ["https", "http"]
+    }
+  },
   "updater": {
     "github": "lihaoze123/xcpc-workstation",
     "publicKey": "pwNYzmuxVIlJQUm37UN13Bl14aXIFbYnEx/WmZ8zXME="

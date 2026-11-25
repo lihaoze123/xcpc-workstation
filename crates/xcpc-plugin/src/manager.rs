@@ -1458,7 +1458,7 @@ module.exports = { verify, syncSummary, normalizeRating, parseProblemUrl };
                 r#"id = "{id}"
 name = "{display_name}"
 version = "0.1.0"
-description = "Custom offline tool plugin."
+description = "本地离线工具插件"
 entry = "index.js"
 ui_entry = "ui.html"
 capabilities = ["tool"]
@@ -1524,7 +1524,7 @@ module.exports = { runTool };
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.35));
-      background: var(--xcpc-surface, transparent);
+      background: var(--xcpc-card, transparent);
       color: inherit;
       font: inherit;
     }}
@@ -1532,7 +1532,7 @@ module.exports = { runTool };
       margin: 0;
       padding: 10px;
       border-radius: 8px;
-      background: var(--xcpc-surface, rgba(128, 128, 128, 0.1));
+      background: var(--xcpc-card, rgba(128, 128, 128, 0.1));
       white-space: pre-wrap;
     }}
   </style>
@@ -1805,7 +1805,7 @@ export function parseProblemUrl(_url: string): ParsedProblemUrl | null {
 id = "{id}"
 name = "{display_name}"
 version = "0.1.0"
-description = "Custom offline tool plugin."
+description = "本地离线工具插件"
 entry = "index.js"
 ui_entry = "ui.html"
 capabilities = ["tool"]
@@ -1936,7 +1936,7 @@ input {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--xcpc-border, rgba(128, 128, 128, 0.35));
-  background: var(--xcpc-surface, transparent);
+  background: var(--xcpc-card, transparent);
   color: inherit;
   font: inherit;
 }
@@ -1945,7 +1945,7 @@ pre {
   margin: 0;
   padding: 10px;
   border-radius: 8px;
-  background: var(--xcpc-surface, rgba(128, 128, 128, 0.1));
+  background: var(--xcpc-card, rgba(128, 128, 128, 0.1));
   white-space: pre-wrap;
 }
 "#
@@ -2116,7 +2116,13 @@ pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
             }
         }
         Err(e) => {
-            push_err(&mut issues, e.code(), e.detail());
+            let mut detail = e.detail();
+            if dir.join("package.json").is_file()
+                && (dir.join("vite.config.ts").is_file() || dir.join("vite.config.js").is_file())
+            {
+                detail.push_str(" (hint: Vite source directory detected — run `npm run build` and check `dist/` instead)");
+            }
+            push_err(&mut issues, e.code(), detail);
         }
     }
 

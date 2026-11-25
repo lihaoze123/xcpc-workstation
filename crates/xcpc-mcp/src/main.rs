@@ -4143,6 +4143,14 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                 for f in files {
                     println!("  {f}");
                 }
+                if *vite {
+                    println!("\nNext steps:");
+                    println!("  cd {}", dir.display());
+                    println!("  npm install");
+                    println!("  npm run build");
+                    println!("  xcpc plugin check dist");
+                    println!("  xcpc plugin link dist");
+                }
             }
             Ok(ExitCode::SUCCESS)
         }

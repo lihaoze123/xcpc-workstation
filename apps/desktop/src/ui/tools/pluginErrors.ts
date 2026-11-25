@@ -86,6 +86,17 @@ export function formatPluginError(raw?: string | null, fallback?: string): strin
     return zhEn("插件超出内存限制，已在沙箱中中止", "Plugin exceeded memory limit and was stopped");
   }
   if (
+    upper.includes("JSON_ERROR") ||
+    lower.includes("expected value at line") ||
+    lower.includes("eof while parsing") ||
+    lower.includes("invalid json")
+  ) {
+    return zhEn(
+      "仓库索引格式无效，请检查地址是否为有效的 index.json",
+      "Invalid repository index format (expected a valid index.json)",
+    );
+  }
+  if (
     lower.includes("status 404") ||
     lower.includes("404 not found") ||
     lower.includes("http 404")

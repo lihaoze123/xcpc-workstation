@@ -128,9 +128,8 @@ xcpc -w ./my-xcpc import polygon ./contest-package.zip
 ## 路线图与当前状态
 
 - **Phase 1–2.5（已完成）**：开放目录题库与多人 Git 协同工作区、活引用组卷 / 定稿 / 归档、`olymp-classic` / `cnoi-classic` / `minimal` 声明式模板引擎、出版工作室、简体中文 / English 国际化、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制、CLI 与 MCP 服务。
-- **Phase 3A–3C（已完成）**：本地 Polygon 全链路（原生 `g++`/`clang++` + 内置 `testlib.h`、三级内容哈希缓存、严格验收门禁与对拍）、Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出、题库分组 / 多选批量操作与 `Ctrl+K` 优化、stdio 交互题 / 多轮通信题（`runs = N`）/ OI 子任务与 `quitp` 部分分，以及官方出题 Skill。
-- **Phase 3D（规划中）**：整场验题与质量体检（ASan / UBSan UB 体检模式、验题人外部提交零污染试跑、比赛级质量仪表盘与 Markdown 验题报告）。
-- **Phase 4（规划中）**：Codeforces / AtCoder / QOJ 训练同步、训练看板与待补队列。
+- **Phase 3A–3D（已完成）**：本地 Polygon 全链路（原生 `g++`/`clang++` + 内置 `testlib.h`、三级内容哈希缓存、严格验收门禁、对拍、ASan/UBSan 体检、外部验题人零污染试跑与整场审计）、Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出、题库分组 / 批量操作、交互题 / 多轮通信题 / OI 子任务，以及官方出题 Skill。
+- **Phase 4A–4D（已完成）**：混合沙箱插件引擎（Core QuickJS + 强制 `pending_trust` 信任门 + 纯 Web `<WebView>` 沙箱 `ui.html`）、Codeforces / AtCoder 训练同步与高密度训练看板（双模式热力图、Rating 曲线、难度突破趋势、比赛日历、提交检索与题解聚合）、纯净插件化「工具」Tab、`@xcpc/plugin-sdk` + Vite 单文件工具链与独立官方插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)。
 
 完整设计规格与阶段细节见 [`docs/`](./docs/README.md)（[产品规格](./docs/product.md)、[系统架构](./docs/architecture.md)、[题面版式](./docs/statement-style.md)、[设计系统](./docs/design-system.md)、[路线图](./docs/roadmap.md)）。
 

@@ -247,7 +247,7 @@ export function PluginRepoBrowserModal(props: {
         const map: Record<string, PluginSummaryJs> = {};
         for (const p of overview.plugins ?? []) map[p.id] = p;
         installedMap.set(map);
-        props.onInstalled?.(id);
+        // Do not switch the background tool while the modal is still open (avoids jarring background jumps).
       } else {
         showToast({
           tone: "issues",
@@ -307,7 +307,6 @@ export function PluginRepoBrowserModal(props: {
         open={props.open}
         onClose={props.onClose}
         width={560}
-        topOffset={72}
         testID="plugin-repo-browser-modal"
       >
         <View style={{ padding: 18, gap: 14 }}>
@@ -440,13 +439,21 @@ export function PluginRepoBrowserModal(props: {
                                 {repo().url}
                               </Text>
                             </If>
-                            <If when={Boolean(failedMsg())}>
-                              <Text
-                                style={{ fontSize: 11, numberOfLines: 1, textOverflow: "ellipsis" }}
-                                class="text-destructive"
-                              >
-                                {failedMsg()}
-                              </Text>
+                            <If
+                              when={
+                                repoErrors().find(
+                                  (e) => e.repoUrl.trim() === repo().url.trim(),
+                                )?.message
+                              }
+                            >
+                              {(msg) => (
+                                <Text
+                                  style={{ fontSize: 11, numberOfLines: 2, textOverflow: "ellipsis" }}
+                                  class="text-destructive"
+                                >
+                                  {msg()}
+                                </Text>
+                              )}
                             </If>
                           </View>
                           <Btn
