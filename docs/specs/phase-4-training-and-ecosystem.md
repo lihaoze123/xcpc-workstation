@@ -9,7 +9,7 @@
    - **Core 层（`index.js`，GUI / CLI / MCP 共用）**：Rust Core 内嵌 QuickJS 沙箱运行，宿主提供域名白名单 HTTP、HTML 选择器、系统钥匙串凭据托管、Rust 高性能渲染/分词原语（`highlight` / `svgToRgba` / `typstToRgba`）与可选 `workspace_read` 受控只读查询。官方 `codeforces` / `atcoder` 同步器自身即作为预装插件运行在这套协议上。
    - **桌面 UI 层（可选 `ui.js`，仅桌面端，Obsidian / VS Code 信任模型）**：允许需要 120fps 实时交互画布或高度自定义界面的工具插件直接加载桌面端 JS 模块并调用 NSH 组件、`<Canvas>`、主题 Token 与 Rust 渲染 Hook（安装/启用时显式标明「包含非沙箱桌面界面代码，仅安装信任来源」）。
 2. **数据看板驱动**：借鉴 `lihaoze123/cptracker`，打开「训练」直接落地在高密度量化看板，聚焦**每日题数 / 每日最高难度双模式热力图**、**跨平台难度统一换算**、**有效难度突破趋势（P75/P90）**、**Rating 曲线**、**高难标签短板**与**近期比赛日历**。
-3. **只记状态，笔记归题解**：本地训练记录（`training/logs.jsonl`）只记状态变更（`todo` / `attempted` / `ac` / `upsolved` / `clear`）；思路、错因与总结直接写进题目自己的 `editorial.md`，绝不造第二套笔记或复盘系统。
+3. **只记状态与轻量打卡，笔记归题解**：本地训练记录（`training/logs.jsonl`）支持工作区题目状态打卡（`todo` / `attempted` / `ac` / `upsolved` / `clear`）与独立手工练题记录（标题、可选链接/平台/难度/标签/简注），与外部 OJ 同步合并去重后汇入看板；思路、错因与总结直接写进题目自己的 `editorial.md`，并通过训练空间的「题解」Tab 聚合浏览，绝不造第二套笔记或复盘系统。
 4. **全局共享与工作区隔离**：插件目录（`<dataDir>/plugins/`）、账号配置（每平台单 handle）、凭据与同步缓存（`<dataDir>/oj_sync.db`）存放在用户全局目录，多工作区共享；`training/logs.jsonl` 留在工作区进 Git；训练状态**永不写入 `problem.toml`**。工作区在 `workspace.toml` 中设 `training = false` 时隐藏「训练」入口与题库状态列，多人出题仓零打扰。
 5. **完全应用内收题 + 纯净插件化工具箱**：不做 Competitive Companion 端口监听，改为应用内「从同步记录一键收入题库」与「按 URL 快速新建题目」；左侧导航新增常驻「工具」Tab 作为纯净的工具插件容器，4 大官方离线工具全部以「内置默认插件」形态交付（与 `codeforces`/`atcoder` 同机制，可禁用、可导出本地副本魔改），全面狗粮化验证双层 Plugin SDK。
 
@@ -94,8 +94,10 @@ xcpc-workspace/
 └── training/
     └── logs.jsonl            # 追加写入的极简状态事件（每行一个 JSON）
 ```
-- `logs.jsonl` 每行：`{ "at": "...", "problem_id": "cf-1999a", "source": { "platform": "codeforces", "id": "1999A" }, "status": "upsolved" }`。
-- 运行时状态派生规则（`xcpc-domain`）：合并 `<dataDir>/oj_sync.db`（按 `[[source]]` 匹配）与 `training/logs.jsonl` 最新手动状态；优先级 `ac` / `upsolved` > `attempted` > `todo` > `none`（`clear` 清除手动覆盖；外部已 AC 且手动标 `upsolved` 时展示「已补」）。
+- `logs.jsonl` 向后兼容两类记录（每行至少包含 `problem_id`、`source` 或 `title` 之一）：
+  - 工作区题目状态打卡：`{ "at": "...", "problem_id": "cf-1999a", "source": { "platform": "codeforces", "id": "1999A" }, "status": "upsolved" }`；
+  - 独立手工练题记录（无须先建题库目录）：`{ "at": "...", "status": "ac", "title": "QOJ 1234", "url": "https://...", "platform": "qoj", "rating": 2100, "tags": ["dp"], "note": "..." }`（可选字段为空时省略）。
+- 运行时状态派生规则（`xcpc-domain`）：合并 `<dataDir>/oj_sync.db`（按 `[[source]]` 匹配）与 `training/logs.jsonl` 最新手动状态（仅匹配 `problem_id` 或 `source`，独立手工记录不影响无关题目）；优先级 `ac` / `upsolved` > `attempted` > `todo` > `none`（`clear` 清除手动覆盖；外部已 AC 且手动标 `upsolved` 时展示「已补」）。同时，训练看板将 `oj_sync.db` 与 `training/logs.jsonl` 合并去重后统一统计。
 
 ---
 
@@ -113,16 +115,17 @@ xcpc-workspace/
 4. **训练状态与题库联动**：`training/logs.jsonl` 原子追加与运行时状态派生；题库筛选新增「训练状态」，状态列融入紧凑标记，右键/详情一键切换状态；支持新建题目时粘贴 URL 自动解析（走插件 `parseProblemUrl` + `oj_sync.db` 补全）。
 5. **设置页与 CLI**：「设置 → 插件」完整管理界面；CLI 新增 `xcpc plugin list|install|enable|disable`、`xcpc sync [--platform …] [--full] [--json]`、`xcpc training status`、`xcpc problem from-url`。
 
-### Phase 4B：高密度训练看板 + 近期比赛日历 + 提交检索与一键收题 + MCP
-1. **「训练」空间三视图（`总览` | `比赛日历` | `提交`）**，右上角常驻手动「同步」按钮与上次同步时间：
+### Phase 4B：高密度训练看板 + 近期比赛日历 + 提交检索与一键收题 + 题解聚合 + MCP
+1. **「训练」空间四视图（`总览` | `比赛日历` | `提交` | `题解`）**，右上角常驻手动「同步」按钮与上次同步时间：
    - **`总览`**：
-     - 顶部指标卡：各平台当前/最高 Rating（段位着色、`tabular-nums`）、今日/本周/本月/累计去重 AC 与提交数、连续过题天数（Streak），以及全局时间窗口切换（`近 30 天` / `近 90 天` / `今年` / `全部`）；
+     - 顶部指标卡：各平台当前/最高 Rating（段位着色、`tabular-nums`）、今日/本周/本月/累计去重 AC 与提交数（合并外部 OJ 同步与 `training/logs.jsonl` 本地记录并去重）、连续过题天数（Streak），以及全局时间窗口切换（`近 30 天` / `近 90 天` / `今年` / `全部`）；
      - **双模式年度热力图**（借鉴 `cptracker`）：支持「**每日题数 / 每日最高难度**」切换 + 跨年选择器；
      - **Rating 曲线**：带经典段位背景色带，悬停显示比赛名、排名与 Rating 变化；
      - **有效难度突破趋势**：按周/月追踪 AC 难度 P75 / P90 走势，量化是否在持续打硬仗；
      - **难度分桶与高难标签短板（双栏）**：按统一 Rating 分桶的过题柱状图 + 支持按最低难度过滤（`全部 / ≥1600 / ≥1900 / ≥2200`）的标签分布，点击可钻取至「提交」页。
    - **`比赛日历`**：聚合所有已启用 `oj_source` 插件的近期/未来比赛，本地时间排期、倒计时显示、按平台筛选、一键在浏览器打开赛页。
-   - **`提交`**：支持「**按提交 / 按题目去重**」切换（方便筛出 WA/TLE 未过题），多维筛选（平台/结果/难度/标签/搜索），每行支持一键「收入题库」（静默入库 + 右下角单槽 Toast「已收入题库 · 打开」直达工作室写 `editorial.md`）。
+   - **`提交`**：支持「**按提交 / 按题目去重**」切换（方便筛出 WA/TLE 未过题），合并展示外部同步记录与本地手工记录，多维筛选（平台/结果/难度/标签/搜索），支持快速录入独立手工练题记录（写入 `training/logs.jsonl`），每行支持一键「收入题库」（静默入库 + 右下角单槽 Toast「已收入题库 · 打开」直达工作室写 `editorial.md`）。
+   - **`题解`**：直接扫描并聚合工作区内所有非空的 `problems/<slug>/editorial.md`（保持单一事实源），左侧按 `editorial.md` 修改时间倒序列出题目标题、难度、标签、来源与自动提取的纯文本摘要，右侧实时预览所选题目的题解排版并提供直达工作室编辑的入口。
 2. **精简 3 个 MCP 工具与 CLI**（写操作受 `--read-only` 约束）：
    - `get_training_dashboard`（只读：指标、难度/标签分布、P75/P90 趋势、同步未过题与题库 `todo`/`attempted` 题）；
    - `set_training_status`（写：追加 `training/logs.jsonl`）；
