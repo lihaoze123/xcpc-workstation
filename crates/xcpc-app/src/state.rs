@@ -817,6 +817,15 @@ impl State {
             let (compiled, doc, report) = match compiled {
                 Ok(r) => r,
                 Err(error) => {
+                    xcpc_trace::log_error(
+                        "engine",
+                        format!("Preview compile error for {}: {}", request.id, error),
+                        Some(serde_json::json!({
+                            "id": request.id,
+                            "target": request.target,
+                            "compileMs": (elapsed * 100.0).round() / 100.0,
+                        })),
+                    );
                     return PreviewResult {
                         error: Some(error),
                         compile_ms: elapsed,
@@ -824,6 +833,17 @@ impl State {
                     };
                 }
             };
+            if elapsed > 50.0 {
+                xcpc_trace::record_slow_event(
+                    "engine",
+                    "compile_preview",
+                    elapsed,
+                    Some(serde_json::json!({
+                        "id": request.id,
+                        "target": request.target,
+                    })),
+                );
+            }
             let (Some(compiled), Some(doc)) = (compiled, doc) else {
                 let (error, diagnostics, starts) = preview_report(&report);
                 return PreviewResult {

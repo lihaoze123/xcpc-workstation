@@ -157,16 +157,67 @@ impl AppController {
         }
     }
 
+    /// Returns true when `XCPC_O11Y=1` requested opening the diagnostics window on launch.
+    pub fn o11y_env_enabled() -> bool {
+        xcpc_trace::o11y_env_enabled()
+    }
+
+    /// Polls incremental Rust trace events, structured logs, and pixel cache stats as JSON.
+    pub fn o11y_poll_delta(after_event_seq: f64, after_log_seq: f64) -> String {
+        let ev_seq = if after_event_seq > 0.0 {
+            after_event_seq as u64
+        } else {
+            0
+        };
+        let lg_seq = if after_log_seq > 0.0 {
+            after_log_seq as u64
+        } else {
+            0
+        };
+        let delta = xcpc_trace::poll_delta(ev_seq, lg_seq, 4_000, 1_000);
+        let cache_stats = cache::pixel_cache_stats();
+        serde_json::json!({
+            "delta": delta,
+            "cacheStats": cache_stats,
+        })
+        .to_string()
+    }
+
+    /// Clears buffered Rust trace events, always-on logs, and slow events.
+    pub fn o11y_clear() {
+        xcpc_trace::clear_all();
+    }
+
     // ---- Workspace & settings ----------------------------------------------------------
 
     /// Opens the workspace at `path` instead.
     pub fn open_workspace(&self, path: String, read_only: bool) -> WorkspaceInfo {
         match Workspace::open(&path, read_only) {
-            Ok(ws) => self.switch(ws),
-            Err(e) => WorkspaceInfo {
-                error: Some(e.human_message()),
-                ..Default::default()
-            },
+            Ok(ws) => {
+                let info = self.switch(ws);
+                xcpc_trace::log_info(
+                    "desktop",
+                    format!("Opened workspace: {}", info.root),
+                    Some(serde_json::json!({
+                        "problems": info.problems.len(),
+                        "contests": info.contests.len(),
+                        "readOnly": info.read_only,
+                    })),
+                );
+                info
+            }
+            Err(e) => {
+                let msg = e.human_message();
+                xcpc_trace::log_error(
+                    "desktop",
+                    format!("Failed to open workspace {path}: {msg}"),
+                    None,
+                );
+                WorkspaceInfo {
+                    error: Some(msg),
+                    ..Default::default()
+                }
+            }
         }
     }
 

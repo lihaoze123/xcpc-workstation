@@ -29,6 +29,7 @@ import { ToolsView } from "./src/ui/ToolsView";
 import { TrainingView } from "./src/ui/TrainingView";
 import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
+import { bindDiagnosticsLifecycle, openDiagnosticsWindow } from "./src/ui/o11y/windowManager";
 import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
 import {
   activeSnippetStudio,
@@ -222,6 +223,7 @@ function App() {
   keymap.bind({
     "mod+k": () => traceInteraction("palette.toggle", () => paletteOpen.set(!paletteOpen())),
     "mod+/": () => shortcutsOpen.set(!shortcutsOpen()),
+    "ctrl+shift+d": () => openDiagnosticsWindow(),
     "mod+1": () => goVisibleSlot(0),
     "mod+2": () => goVisibleSlot(1),
     "mod+3": () => goVisibleSlot(2),
@@ -231,6 +233,7 @@ function App() {
     "mod+o": () => void pickWorkspace(),
   }, { when: "always" });
 
+  bindDiagnosticsLifecycle();
   startWatch();
   startPluginWatch();
 

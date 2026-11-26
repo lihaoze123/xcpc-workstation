@@ -68,7 +68,20 @@ pub struct PixelCache {
     pub(crate) budget: usize,
     pub(crate) total_bytes: usize,
     clock: u64,
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
     pub(crate) entries: HashMap<String, PixelEntry>,
+}
+
+/// Snapshot of pixel-cache occupancy and hit-rate counters for diagnostics.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PixelCacheStats {
+    pub total_bytes: usize,
+    pub budget_bytes: usize,
+    pub entry_count: usize,
+    pub hits: u64,
+    pub misses: u64,
 }
 
 impl PixelCache {
@@ -77,7 +90,19 @@ impl PixelCache {
             budget,
             total_bytes: 0,
             clock: 0,
+            hits: 0,
+            misses: 0,
             entries: HashMap::new(),
+        }
+    }
+
+    pub fn stats(&self) -> PixelCacheStats {
+        PixelCacheStats {
+            total_bytes: self.total_bytes,
+            budget_bytes: self.budget,
+            entry_count: self.entries.len(),
+            hits: self.hits,
+            misses: self.misses,
         }
     }
 
@@ -91,8 +116,10 @@ impl PixelCache {
         if let Some(entry) = self.entries.get_mut(key) {
             self.clock = next;
             entry.last_used = next;
+            self.hits = self.hits.saturating_add(1);
             true
         } else {
+            self.misses = self.misses.saturating_add(1);
             false
         }
     }
@@ -203,6 +230,11 @@ impl PixelCache {
 /// byte-budgeted LRU cache.
 pub static PIXELS: LazyLock<Mutex<PixelCache>> =
     LazyLock::new(|| Mutex::new(PixelCache::with_budget(PIXEL_CACHE_BUDGET)));
+
+/// Returns a point-in-time snapshot of the global pixel cache occupancy and hit/miss counters.
+pub fn pixel_cache_stats() -> PixelCacheStats {
+    PIXELS.lock().map(|cache| cache.stats()).unwrap_or_default()
+}
 
 /// One sampled mapping from a 1-based Markdown line to a 0-based preview page and vertical
 /// offset (`y_pt`, typographic points from top of page).
@@ -449,6 +481,18 @@ pub(crate) fn rasterize_cached(
     }
 
     let render_ms = start.elapsed().as_secs_f64() * 1000.0;
+    if !cancelled && render_ms > 50.0 {
+        xcpc_trace::record_slow_event(
+            "engine",
+            "rasterize_cached",
+            render_ms,
+            Some(serde_json::json!({
+                "scale": scale,
+                "rendered": rendered_count,
+                "viewPages": view.len(),
+            })),
+        );
+    }
     if cancelled {
         return (
             PreviewResult {

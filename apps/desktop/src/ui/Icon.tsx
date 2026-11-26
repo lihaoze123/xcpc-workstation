@@ -3,6 +3,7 @@
 import { type ColorValue, type StyleProp, type ViewStyle } from "nsh";
 import { Icon as NshIcon } from "nsh-icon";
 import {
+  Activity,
   ArrowLeft,
   ArrowRight,
   Bold,
@@ -24,6 +25,7 @@ import {
   FilePenLine,
   FileText,
   FilterX,
+  Flag,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -44,6 +46,7 @@ import {
   Palette,
   PanelLeft,
   PanelRight,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -65,6 +68,7 @@ import {
 } from "nsh-icon-lucide";
 
 const ICONS = {
+  activity: Activity,
   arrowLeft: ArrowLeft,
   arrowRight: ArrowRight,
   bold: Bold,
@@ -86,6 +90,7 @@ const ICONS = {
   filePenLine: FilePenLine,
   fileText: FileText,
   filterX: FilterX,
+  flag: Flag,
   folder: Folder,
   folderOpen: FolderOpen,
   folderPlus: FolderPlus,
@@ -106,6 +111,7 @@ const ICONS = {
   palette: Palette,
   panelLeft: PanelLeft,
   panelRight: PanelRight,
+  pause: Pause,
   pencil: Pencil,
   play: Play,
   plus: Plus,

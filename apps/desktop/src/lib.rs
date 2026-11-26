@@ -106,6 +106,21 @@ impl Preview {
         xcpc_app::AppController::trace_stop().into()
     }
 
+    /// Returns true when `XCPC_O11Y=1` requested opening the diagnostics window on launch.
+    pub fn o11y_env_enabled() -> bool {
+        xcpc_app::AppController::o11y_env_enabled()
+    }
+
+    /// Polls incremental Rust trace events, structured logs, and pixel cache stats as JSON.
+    pub fn o11y_poll_delta(after_event_seq: f64, after_log_seq: f64) -> String {
+        xcpc_app::AppController::o11y_poll_delta(after_event_seq, after_log_seq)
+    }
+
+    /// Clears buffered Rust trace events, always-on logs, and slow events.
+    pub fn o11y_clear() {
+        xcpc_app::AppController::o11y_clear();
+    }
+
     /// Prompts for a save location and writes a merged Rust + JS Chrome Trace JSON file
     /// (compatible with Perfetto UI and `chrome://tracing`).
     pub async fn trace_export_dialog(

@@ -1,4 +1,4 @@
-import { isTraceRecording, traceIpcCall } from "./trace";
+import { traceIpcCall } from "./trace";
 // The app's state shared by the shell and the views: the native bridge, the workspace,
 // the preferences, where the user is (a space, or the studio on an object), the watch
 // loop on external changes, and the studio's actions for the command palette.
@@ -47,16 +47,26 @@ import {
   type AppearancePrefs,
 } from "./theme";
 
-/** Wraps a native bridge object so every sync/async method call auto-records `cat: "ipc"` spans when tracing is enabled (zero overhead when off). */
+const UNTRACED_IPC_METHODS = new Set([
+  "o11yEnvEnabled",
+  "o11yPollDelta",
+  "o11yClear",
+  "traceStatus",
+  "traceStart",
+  "traceStop",
+  "traceExportDialog",
+]);
+
+/** Wraps a native bridge object so every sync/async method call auto-records `cat: "ipc"` spans (and catches >50ms slow calls in always-on mode). */
 export function createTracedPreview<T extends object>(target: T): T {
   return new Proxy(target, {
     get(obj, prop, receiver) {
       const value = Reflect.get(obj, prop, receiver);
       if (typeof value !== "function" || typeof prop !== "string") return value;
-      return (...args: unknown[]) => {
-        if (!isTraceRecording()) return value.apply(obj, args);
-        return traceIpcCall(prop, () => value.apply(obj, args));
-      };
+      if (UNTRACED_IPC_METHODS.has(prop)) {
+        return (...args: unknown[]) => value.apply(obj, args);
+      }
+      return (...args: unknown[]) => traceIpcCall(prop, () => value.apply(obj, args));
     },
   });
 }

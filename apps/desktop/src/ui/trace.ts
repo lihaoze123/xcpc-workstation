@@ -25,11 +25,36 @@ export interface JsTraceEvent {
 const MAX_JS_EVENTS = 100_000;
 const TID_UI_MAIN = 1;
 const TID_IPC = 2;
+const ALWAYS_ON_SLOW_IPC_MS = 50;
 
 let recording = false;
 let clockOffsetUs = 0;
 let rafId: number | null = null;
 let lastFrameMs = 0;
+
+export interface TraceObserver {
+  onFrame?: (dtMs: number, missed: boolean, jank60: boolean) => void;
+  onEvent?: (ev: JsTraceEvent) => void;
+  onSlowIpc?: (name: string, durMs: number, error?: unknown) => void;
+}
+
+const observers = new Set<TraceObserver>();
+
+/** Subscribes to live JS trace events, frame deltas, and always-on slow IPC notifications. */
+export function addTraceObserver(observer: TraceObserver): () => void {
+  observers.add(observer);
+  return () => observers.delete(observer);
+}
+
+/** Current Rust↔JS monotonic clock offset in microseconds. */
+export function getClockOffsetUs(): number {
+  return clockOffsetUs;
+}
+
+/** Updates the Rust↔JS clock offset from an external poll reading. */
+export function updateClockOffsetUs(rustNowUs: number, jsNowMs: number): void {
+  clockOffsetUs = rustNowUs - jsNowMs * 1000.0;
+}
 
 // O(1) circular ring buffer.
 let ring: (JsTraceEvent | undefined)[] = [];
@@ -99,6 +124,9 @@ function pushJsEvent(ev: JsTraceEvent): void {
     ringHead = (ringHead + 1) % MAX_JS_EVENTS;
     ringDropped += 1;
   }
+  if (observers.size > 0) {
+    for (const obs of observers) obs.onEvent?.(ev);
+  }
 }
 
 function snapshotRing(): JsTraceEvent[] {
@@ -138,10 +166,14 @@ function startFrameWatch(): void {
     const vsync = vsyncMs || FALLBACK_VSYNC_MS;
     frameTotal += 1;
     if (dt > frameWorstMs) frameWorstMs = dt;
-    if (isMissedFrame(dt, vsync)) {
+    const missed = isMissedFrame(dt, vsync);
+    const jank60 = missed && isJank60(dt);
+    if (observers.size > 0) {
+      for (const obs of observers) obs.onFrame?.(dt, missed, jank60);
+    }
+    if (missed) {
       frameMissed += 1;
       frameStallMs += dt - vsync;
-      const jank60 = isJank60(dt);
       if (jank60) frameJank60 += 1;
       pushJsEvent({
         name: jank60 ? "ui.long_frame" : "ui.missed_frame",
@@ -293,22 +325,35 @@ export async function traceAsyncSpan<T>(
   }
 }
 
-/** Records a sync or async IPC call span; zero-cost when recording is off. */
+function notifySlowIpc(name: string, durMs: number, error?: unknown): void {
+  if (observers.size === 0) return;
+  if (error !== undefined || durMs > ALWAYS_ON_SLOW_IPC_MS) {
+    for (const obs of observers) obs.onSlowIpc?.(name, durMs, error);
+  }
+}
+
+/** Records a sync or async IPC call span; in always-on mode, zero-alloc timing still catches >50ms slow calls or errors. */
 export function traceIpcCall<T>(name: string, fn: () => T): T {
-  if (!recording) return fn();
+  const live = recording;
+  if (!live && observers.size === 0) return fn();
   const start = nowMs();
   let result: T;
   try {
     result = fn();
   } catch (err) {
-    pushJsEvent({
-      name,
-      cat: "ipc",
-      ph: "X",
-      tsMs: start,
-      durMs: Math.max(0, nowMs() - start),
-      tid: TID_IPC,
-    });
+    const durMs = Math.max(0, nowMs() - start);
+    if (live) {
+      pushJsEvent({
+        name,
+        cat: "ipc",
+        ph: "X",
+        tsMs: start,
+        durMs,
+        tid: TID_IPC,
+        args: { error: true },
+      });
+    }
+    notifySlowIpc(name, durMs, err);
     throw err;
   }
   if (
@@ -316,25 +361,52 @@ export function traceIpcCall<T>(name: string, fn: () => T): T {
     (typeof result === "object" || typeof result === "function") &&
     typeof (result as unknown as PromiseLike<unknown>).then === "function"
   ) {
-    return (result as unknown as Promise<unknown>).finally(() => {
-      pushJsEvent({
-        name,
-        cat: "ipc",
-        ph: "X",
-        tsMs: start,
-        durMs: Math.max(0, nowMs() - start),
-        tid: TID_IPC,
-      });
-    }) as unknown as T;
+    return (result as unknown as Promise<unknown>).then(
+      (val) => {
+        const durMs = Math.max(0, nowMs() - start);
+        if (live) {
+          pushJsEvent({
+            name,
+            cat: "ipc",
+            ph: "X",
+            tsMs: start,
+            durMs,
+            tid: TID_IPC,
+          });
+        }
+        notifySlowIpc(name, durMs);
+        return val;
+      },
+      (err) => {
+        const durMs = Math.max(0, nowMs() - start);
+        if (live) {
+          pushJsEvent({
+            name,
+            cat: "ipc",
+            ph: "X",
+            tsMs: start,
+            durMs,
+            tid: TID_IPC,
+            args: { error: true },
+          });
+        }
+        notifySlowIpc(name, durMs, err);
+        throw err;
+      },
+    ) as unknown as T;
   }
-  pushJsEvent({
-    name,
-    cat: "ipc",
-    ph: "X",
-    tsMs: start,
-    durMs: Math.max(0, nowMs() - start),
-    tid: TID_IPC,
-  });
+  const durMs = Math.max(0, nowMs() - start);
+  if (live) {
+    pushJsEvent({
+      name,
+      cat: "ipc",
+      ph: "X",
+      tsMs: start,
+      durMs,
+      tid: TID_IPC,
+    });
+  }
+  notifySlowIpc(name, durMs);
   return result;
 }
 

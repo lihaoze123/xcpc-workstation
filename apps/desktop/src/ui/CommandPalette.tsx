@@ -11,6 +11,7 @@ import { Icon, type IconName } from "./Icon";
 import { buildPaletteItems, shortcutForSpace } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
 import { Modal } from "./Modal";
+import { openDiagnosticsWindow } from "./o11y/windowManager";
 import { shortcutsOpen } from "./ShortcutsModal";
 import { MONO } from "./theme";
 import { showToast } from "./Toast";
@@ -172,6 +173,7 @@ function actions(): Action[] {
     { id: "a:toolchain", icon: "squareCode", label: t("palette.action.toolchain"), keywords: ["toolchain", "compiler", "g++", "clang++", "cxx", "工具链", "编译器", "gongjulian"], run: () => goSettings("toolchain") },
     { id: "a:shortcuts", icon: "code", label: t("palette.action.shortcuts"), keywords: ["shortcut", "shortcuts", "key", "help", "快捷键", "kuaijiejian"], shortcut: "mod+/", run: () => shortcutsOpen.set(true) },
     { id: "a:about", icon: "fileText", label: t("palette.action.about"), keywords: ["about", "version", "update", "关于", "版本", "更新", "guanyu"], run: () => goSettings("about") },
+    { id: "a:diagnostics", icon: "activity", label: t("palette.action.diagnostics"), keywords: ["o11y", "diagnostics", "perf", "trace", "metrics", "logs", "诊断", "性能", "监控", "日志", "zhenduan", "xingneng"], shortcut: "ctrl+shift+d", run: () => openDiagnosticsWindow() },
     { id: "a:open-workspace", icon: "folderOpen", label: t("palette.action.switchWorkspace"), keywords: ["workspace", "open", "switch", "切换", "打开", "工作区", "gongzuoqu"], shortcut: "mod+o", run: () => void pickWorkspace() },
     { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];

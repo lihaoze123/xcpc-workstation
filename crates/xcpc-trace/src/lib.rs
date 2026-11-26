@@ -16,6 +16,10 @@ use serde_json::{Value, json};
 
 /// Hard cap on buffered events so long recordings never grow unboundedly.
 const MAX_EVENTS: usize = 200_000;
+/// Hard cap on always-on structured logs in the in-memory ring buffer.
+const MAX_LOGS: usize = 5_000;
+/// Hard cap on always-on slow/error events in the in-memory ring buffer.
+const MAX_SLOW_EVENTS: usize = 1_000;
 
 /// Chrome Trace process IDs for clear lane separation in Perfetto.
 pub const PID_RUST: u32 = 1;
@@ -29,6 +33,8 @@ const STATE_ON: u8 = 2;
 static STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
 static EPOCH: OnceLock<Instant> = OnceLock::new();
 static NEXT_TID: AtomicU64 = AtomicU64::new(1);
+static NEXT_EVENT_SEQ: AtomicU64 = AtomicU64::new(1);
+static NEXT_LOG_SEQ: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
     static THREAD_NUM: u64 = NEXT_TID.fetch_add(1, Ordering::Relaxed);
@@ -36,6 +42,8 @@ thread_local! {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceEvent {
+    #[serde(skip)]
+    pub seq: u64,
     pub name: Cow<'static, str>,
     pub cat: Cow<'static, str>,
     pub ph: &'static str,
@@ -46,6 +54,70 @@ pub struct TraceEvent {
     pub tid: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+}
+
+/// Structured log severity level (matches `nsh-o11y` `LogLevel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+/// One structured log entry in the always-on in-memory ring buffer.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRecord {
+    pub seq: u64,
+    pub time_unix_ms: u64,
+    pub ts_us: f64,
+    pub level: LogLevel,
+    pub subsystem: Cow<'static, str>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<Value>,
+}
+
+/// Incremental trace event exported to the live diagnostics window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct O11yEvent {
+    pub seq: u64,
+    pub name: String,
+    pub cat: String,
+    pub ph: &'static str,
+    pub ts_us: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dur_us: Option<f64>,
+    pub pid: u32,
+    pub tid: u64,
+    pub thread_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+}
+
+/// Incremental snapshot polled by the diagnostics window every ~150-250ms.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct O11yDelta {
+    pub enabled: bool,
+    pub o11y_env: bool,
+    pub rust_now_us: f64,
+    pub now_unix_ms: u64,
+    pub event_seq: u64,
+    pub log_seq: u64,
+    pub slow_count: usize,
+    pub dropped_events: u64,
+    pub dropped_logs: u64,
+    pub events: Vec<O11yEvent>,
+    pub logs: Vec<LogRecord>,
 }
 
 /// Event pushed from the JS/UI collector before timeline merge.
@@ -87,6 +159,9 @@ struct Buffer {
     events: VecDeque<TraceEvent>,
     dropped: u64,
     thread_names: HashMap<u64, String>,
+    logs: VecDeque<LogRecord>,
+    dropped_logs: u64,
+    slow_events: VecDeque<O11yEvent>,
 }
 
 static BUFFER: OnceLock<Mutex<Buffer>> = OnceLock::new();
@@ -99,9 +174,21 @@ fn epoch() -> Instant {
     *EPOCH.get_or_init(Instant::now)
 }
 
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Returns true when the `XCPC_O11Y` environment variable requests opening the diagnostics window.
+pub fn o11y_env_enabled() -> bool {
+    env_flag_enabled("XCPC_O11Y")
+}
+
 fn ensure_init() -> u8 {
     let _ = epoch();
-    let initial = if env_flag_enabled("XCPC_TRACE") {
+    let initial = if env_flag_enabled("XCPC_TRACE") || o11y_env_enabled() {
         STATE_ON
     } else {
         STATE_OFF
@@ -161,11 +248,208 @@ pub fn stop() -> TraceStatus {
     status()
 }
 
-/// Clears buffered events without changing the enabled state.
+/// Clears buffered trace events without changing the enabled state or always-on logs.
 pub fn clear() {
     if let Ok(mut buf) = buffer().lock() {
         buf.events.clear();
         buf.dropped = 0;
+    }
+}
+
+/// Clears all buffered trace events, always-on logs, and slow events.
+pub fn clear_all() {
+    if let Ok(mut buf) = buffer().lock() {
+        buf.events.clear();
+        buf.dropped = 0;
+        buf.logs.clear();
+        buf.dropped_logs = 0;
+        buf.slow_events.clear();
+    }
+}
+
+/// Records a structured log entry into the always-on in-memory ring buffer.
+///
+/// Never writes to disk and never blocks on I/O. Safe to call even when live
+/// tracing is disabled.
+pub fn log(
+    level: LogLevel,
+    subsystem: &'static str,
+    message: impl Into<String>,
+    attrs: Option<Value>,
+) {
+    let seq = NEXT_LOG_SEQ.fetch_add(1, Ordering::Relaxed);
+    let rec = LogRecord {
+        seq,
+        time_unix_ms: now_unix_ms(),
+        ts_us: now_us(),
+        level,
+        subsystem: Cow::Borrowed(subsystem),
+        message: message.into(),
+        trace_id: None,
+        span_id: None,
+        attrs,
+    };
+    if let Ok(mut buf) = buffer().lock() {
+        if buf.logs.len() >= MAX_LOGS {
+            buf.logs.pop_front();
+            buf.dropped_logs += 1;
+        }
+        buf.logs.push_back(rec);
+    }
+}
+
+#[inline]
+pub fn log_debug(subsystem: &'static str, message: impl Into<String>, attrs: Option<Value>) {
+    log(LogLevel::Debug, subsystem, message, attrs);
+}
+
+#[inline]
+pub fn log_info(subsystem: &'static str, message: impl Into<String>, attrs: Option<Value>) {
+    log(LogLevel::Info, subsystem, message, attrs);
+}
+
+#[inline]
+pub fn log_warn(subsystem: &'static str, message: impl Into<String>, attrs: Option<Value>) {
+    log(LogLevel::Warn, subsystem, message, attrs);
+}
+
+#[inline]
+pub fn log_error(subsystem: &'static str, message: impl Into<String>, attrs: Option<Value>) {
+    log(LogLevel::Error, subsystem, message, attrs);
+}
+
+/// Records a slow or noteworthy operation into the always-on slow-event ring
+/// and emits a corresponding `WARN` structured log so it can be inspected later
+/// even when the diagnostics window was closed at the time.
+pub fn record_slow_event(cat: &'static str, name: &'static str, dur_ms: f64, args: Option<Value>) {
+    let tid = current_tid();
+    let ts_us = now_us();
+    let seq = NEXT_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tname = std::thread::current()
+        .name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("rust-worker-{tid}"));
+    let ev = O11yEvent {
+        seq,
+        name: name.to_owned(),
+        cat: cat.to_owned(),
+        ph: "X",
+        ts_us: (ts_us - dur_ms * 1000.0).max(0.0),
+        dur_us: Some(dur_ms.max(0.0) * 1000.0),
+        pid: PID_RUST,
+        tid,
+        thread_name: tname,
+        args: args.clone(),
+    };
+    if let Ok(mut buf) = buffer().lock() {
+        if buf.slow_events.len() >= MAX_SLOW_EVENTS {
+            buf.slow_events.pop_front();
+        }
+        buf.slow_events.push_back(ev);
+    }
+    let mut log_attrs = match args {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    log_attrs.insert("durMs".to_owned(), json!((dur_ms * 100.0).round() / 100.0));
+    log_attrs.insert("op".to_owned(), Value::String(name.to_owned()));
+    log(
+        LogLevel::Warn,
+        cat,
+        format!("Slow {name} ({dur_ms:.1} ms)"),
+        Some(Value::Object(log_attrs)),
+    );
+}
+
+/// Polls incremental Rust trace events and structured logs since `(after_event_seq, after_log_seq)`.
+pub fn poll_delta(
+    after_event_seq: u64,
+    after_log_seq: u64,
+    max_events: usize,
+    max_logs: usize,
+) -> O11yDelta {
+    let enabled = is_enabled();
+    let rust_now_us = now_us();
+    let now_unix_ms = now_unix_ms();
+    let Ok(buf) = buffer().lock() else {
+        return O11yDelta {
+            enabled,
+            o11y_env: o11y_env_enabled(),
+            rust_now_us,
+            now_unix_ms,
+            event_seq: after_event_seq,
+            log_seq: after_log_seq,
+            slow_count: 0,
+            dropped_events: 0,
+            dropped_logs: 0,
+            events: Vec::new(),
+            logs: Vec::new(),
+        };
+    };
+
+    let mut events = Vec::new();
+    let mut last_event_seq = after_event_seq;
+    // Include always-on slow events when live tracing hasn't captured them.
+    if after_event_seq == 0 && !buf.slow_events.is_empty() && buf.events.is_empty() {
+        for ev in buf.slow_events.iter().take(max_events) {
+            if ev.seq > after_event_seq {
+                last_event_seq = last_event_seq.max(ev.seq);
+                events.push(ev.clone());
+            }
+        }
+    }
+    for ev in buf.events.iter() {
+        if ev.seq <= after_event_seq {
+            continue;
+        }
+        if events.len() >= max_events {
+            break;
+        }
+        let thread_name = buf
+            .thread_names
+            .get(&ev.tid)
+            .cloned()
+            .unwrap_or_else(|| format!("rust-worker-{}", ev.tid));
+        last_event_seq = last_event_seq.max(ev.seq);
+        events.push(O11yEvent {
+            seq: ev.seq,
+            name: ev.name.to_string(),
+            cat: ev.cat.to_string(),
+            ph: ev.ph,
+            ts_us: ev.ts,
+            dur_us: ev.dur,
+            pid: ev.pid,
+            tid: ev.tid,
+            thread_name,
+            args: ev.args.clone(),
+        });
+    }
+
+    let mut logs = Vec::new();
+    let mut last_log_seq = after_log_seq;
+    for rec in buf.logs.iter() {
+        if rec.seq <= after_log_seq {
+            continue;
+        }
+        if logs.len() >= max_logs {
+            break;
+        }
+        last_log_seq = last_log_seq.max(rec.seq);
+        logs.push(rec.clone());
+    }
+
+    O11yDelta {
+        enabled,
+        o11y_env: o11y_env_enabled(),
+        rust_now_us,
+        now_unix_ms,
+        event_seq: last_event_seq,
+        log_seq: last_log_seq,
+        slow_count: buf.slow_events.len(),
+        dropped_events: buf.dropped,
+        dropped_logs: buf.dropped_logs,
+        events,
+        logs,
     }
 }
 
@@ -184,7 +468,8 @@ pub fn status() -> TraceStatus {
     }
 }
 
-fn push_event(event: TraceEvent) {
+fn push_event(mut event: TraceEvent) {
+    event.seq = NEXT_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tid = event.tid;
     if let Ok(mut buf) = buffer().lock() {
         buf.thread_names.entry(tid).or_insert_with(|| {
@@ -222,6 +507,7 @@ impl Drop for SpanGuard {
             let end_us = now_us();
             let dur = (end_us - span.start_us).max(0.0);
             push_event(TraceEvent {
+                seq: 0,
                 name: Cow::Borrowed(span.name),
                 cat: Cow::Borrowed(span.cat),
                 ph: "X",
@@ -274,6 +560,7 @@ pub fn instant(cat: &'static str, name: &'static str, args: impl FnOnce() -> Val
         return;
     }
     push_event(TraceEvent {
+        seq: 0,
         name: Cow::Borrowed(name),
         cat: Cow::Borrowed(cat),
         ph: "i",
@@ -292,6 +579,7 @@ pub fn counter(cat: &'static str, name: &'static str, value: f64) {
         return;
     }
     push_event(TraceEvent {
+        seq: 0,
         name: Cow::Borrowed(name),
         cat: Cow::Borrowed(cat),
         ph: "C",
@@ -496,5 +784,41 @@ mod tests {
         );
         assert_eq!(parsed["metadata"]["rustEvents"], 3);
         assert_eq!(parsed["metadata"]["jsEvents"], 1);
+    }
+
+    #[test]
+    fn always_on_logs_and_slow_events_survive_when_live_disabled() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        stop();
+        clear_all();
+
+        log_info(
+            "engine",
+            "workspace opened",
+            Some(json!({ "problems": 12 })),
+        );
+        record_slow_event("engine", "compile", 72.5, Some(json!({ "pages": 4 })));
+
+        let delta = poll_delta(0, 0, 100, 100);
+        assert!(!delta.enabled);
+        assert_eq!(delta.logs.len(), 2);
+        assert_eq!(delta.logs[0].level, LogLevel::Info);
+        assert_eq!(delta.logs[0].subsystem, "engine");
+        assert_eq!(delta.logs[1].level, LogLevel::Warn);
+        assert!(delta.logs[1].message.contains("Slow compile"));
+        assert_eq!(delta.slow_count, 1);
+        assert_eq!(delta.events.len(), 1);
+        assert_eq!(delta.events[0].name, "compile");
+
+        // Second poll with returned cursors yields empty deltas.
+        let delta2 = poll_delta(delta.event_seq, delta.log_seq, 100, 100);
+        assert!(delta2.events.is_empty());
+        assert!(delta2.logs.is_empty());
+
+        clear_all();
+        let delta3 = poll_delta(0, 0, 100, 100);
+        assert!(delta3.events.is_empty());
+        assert!(delta3.logs.is_empty());
+        assert_eq!(delta3.slow_count, 0);
     }
 }
