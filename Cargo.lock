@@ -5807,7 +5807,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-app"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "notify",
@@ -5830,7 +5830,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-convert"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "mitex",
  "pulldown-cmark",
@@ -5848,7 +5848,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-desktop"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "nsh-base",
@@ -5865,7 +5865,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-domain"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -5875,7 +5875,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-engine"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "comemo",
  "flate2",
@@ -5897,7 +5897,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-judge"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "dirs",
  "libc",
@@ -5919,7 +5919,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-lint"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -5932,7 +5932,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-mcp"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5954,7 +5954,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-packages"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -5974,7 +5974,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-plugin"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -5998,7 +5998,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-storage"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "image",
  "imagesize 0.15.0",
@@ -6017,7 +6017,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-sync"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "rusqlite",
  "serde",
@@ -6031,7 +6031,7 @@ dependencies = [
 
 [[package]]
 name = "xcpc-trace"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "serde",
  "serde_json",

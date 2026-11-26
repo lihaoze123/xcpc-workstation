@@ -2,6 +2,28 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-beta.2] - 2026-11-27
+
+Windows 平台体验深度修复与极致内存优化版本：解决 Windows 路径前缀越界、出题包评测终端弹窗与校验失败、WebView2 插件桥接与图片剪贴板失效、分段控件与诊断标题栏对齐问题，并将桌面端常规常驻内存压低 70%–90%。
+
+### Windows 平台与出题评测修复
+
+- **统一路径规范化**：新增 `xcpc_storage::canonicalize_clean` 剥离 Windows `\\?\` verbatim 前缀，彻底修复打开/保存出题包文件（如 `validator.cpp`）、文件监听、插件打包与历史工作区记录中的 `path_escape` 误报与重复路径。
+- **零弹窗静默评测与真实内存限制**：Windows 编译器与评测子进程统一附加 `CREATE_NO_WINDOW`，彻底消除检查题目包与 CLI 运行时的控制台弹窗；为 `testlib.h` 启用 `-DFOR_LINUX` 并自动规范化 Windows CRT `\r\n` 输出；将输出临时文件改为 `TempPath` 消除校验器文件共享冲突 `PE`；通过 Job Object + `K32GetProcessMemoryInfo` 补齐真实峰值内存统计与 MLE 判定。
+- **原生双格式图片剪贴板**：新增 Windows 原生 `CF_DIB` + `"PNG"` 双格式原子剪贴板写入（透明通道在 `CF_DIB` 自动白底合成，同时保留无损透明 `"PNG"`），修复 CodeSnap / 图论画板在微信、QQ、画图、Word 等应用粘贴无效果的问题。
+
+### 插件宿主与界面一致性
+
+- **WebView2 插件桥接修复**：放行 WebView2 加载 `<WebView html>` 使用的 `data:text/html` URL（继续由外层 CSP、`sandbox="allow-scripts"` 与每挂载 128-bit token 隔离），修复图论与几何画板空白与插件 RPC 断链。
+- **插件信任确认闭环**：新增独立 `PluginTrustModal` 并在仓库浏览器中正确分层，需要网络权限的插件（如选手名片）安装后即时弹出权限确认并展示「待确认信任」入口。
+- **WebView 插件视觉统一**：向插件 iframe 懒加载注入宿主内嵌的 `Inter` 与 `JetBrains Mono` WOFF2 `@font-face` 与低优先级原生基础样式（6px 细滚动条、自定义 `<select>` 箭头、按钮防换行）；移除纯 Web 插件上方冗余 52pt 顶栏并支持折叠左侧工具栏。
+- **控件与诊断标题栏对齐**：修复 `Segmented` 分段控件（「题面 / 出题」「信息 / 版式」等）垂直居中；绕开 NSH 副窗口右安全区偏差并将诊断窗口标签页移至左侧，高 DPI 下默认窗口与最大化均零重叠。
+
+### 性能与极致内存优化
+
+- **定向 Windows CJK 字体加载 + 跨实例共享**：`compiler.engine` 与 `math_engine` 共享 `Arc<FontStore>` 与 `Arc<LazyHash<Library>>`；内嵌 24 字体改为按需解码；Windows 独立版启动时仅定向扫描 4 个必需 CJK 字体（不再全扫 544 个系统字体），自定义模板引用其他系统字体时自动兜底回退。
+- **缓存预算与离场回收**：像素缓存预算收紧至 48 MiB，Typst `comemo` 驱逐收紧至 2 轮并在切题时立即释放旧目标缓存；非 Studio 空闲、离开 Studio、离开「工具」空间（15 秒自动卸载空闲 WebView2）与关闭诊断窗口时分级回收缓存与堆内存，桌面端常驻内存从 ~1,260 MB 降至 ~76–162 MB，诊断窗口保持 11ms / 0 掉帧。
+
 ## [0.6.0-beta.1] - 2026-11-26
 
 Phase 6（6A–6G）首个预览版：升级宿主框架至 **NSH 0.7.1**，解耦 `xcpc-app` Core 层，推出独立多窗口 **`nsh-o11y` 开发者诊断面板**，并完成桌面端全套**设计系统、排版字体、状态完备性与物理弹簧动效**的体系化焕新。
