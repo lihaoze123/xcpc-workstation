@@ -2,6 +2,30 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0-beta.1] - 2026-11-26
+
+Phase 5（5A–5C）首个预览版：围绕赛前准备与赛时翻阅，推出**活体板子书（Living TRD）与可验证算法模板库**——代码、数学说明、自动化验板与印刷级 PDF 排版同源联动。
+
+### 新增
+
+- **可验证算法模板库与活体板子书模型（`xcpc-domain` / `xcpc-storage`）**：
+  - 开放目录单一事实源：`snippets/<slug>/`（`snippet.toml`、`code.cpp`、`notes.md`、`verify/`）与 `trds/<slug>/`（`trd.toml`、`snapshot/`）；支持模块依赖解析（`#include "xcpc/<slug>.hpp"`）、拓扑排序与循环依赖检测。
+  - **KACTL++ 风格逐行累积短哈希**（`code_hash`）：去空白与注释后的 3 位十六进制短哈希（仅标示实质代码变化行与末行终值），赛时手敲代码后可逐段核对零抄错。
+  - **本地头文件展开器（Bundler）**：支持将含 `#include "xcpc/<slug>.hpp"` 或本地相对头文件的 C++ 源码按依赖拓扑展开为可直接提交 OJ 的单文件代码，并自动收敛公共 `#include` 与宏；提供 CLI `xcpc snippet bundle` 与桌面端一键展开复制弹窗。
+  - **可逆板子书定稿（Finalize / Unfinalize）**：定稿前运行印刷前预检（缺失模板、未通过/过期验板项、超页预算等），错误项阻断定稿，定稿后固化源文件、依赖代码与 PDF 至 `snapshot/` 并进入只读保护。
+- **内置模板验板引擎（`xcpc-judge`）**：
+  - 原生支持三类验板来源：**自包含测试**（`self`）、**工作区题库对拍/标程适配**（`problem`）与 **Library Checker**（`library-checker`，按需拉取与本地缓存用例，支持自定义镜像与离线降级提示）。
+  - 验板结果写入 `.xcpc/verify-cache.json`（不污染工作区内容文件），按源码 + 依赖闭包 + 测试脚本内容哈希自动判定「已通过 / 已过期 / 未通过」。
+- **印刷级 TRD Typst 排版模板（`xcpc-engine` / `xcpc-convert`）**：
+  - 新增 `trd-compact`（A4 横向三栏 KACTL 紧凑风，极简灰度层次、双位章节号与细横线分隔、行号与短哈希双槽、依赖标题映射）与 `trd-book`（A4 纵向单栏书册风），均遵循开放模板体系与声明式 `#let schema`，单模板预览自动适配单栏视图。
+  - 示例工作区内置 6 份经典可验证算法模板与示例板子书（ModInt、NTT、线段树、Dinic、SAM、计算几何），开箱即可体验验板、依赖展开与板子书出版。
+- **桌面端「模板」空间（`apps/desktop`）**：
+  - 左侧导航新增「模板」空间，内分 **模板库**（搜索、标签/验板状态筛选、依赖/被依赖芯片、单栏实时排版预览、一键验板与展开）与 **板子书**（章节编排、拖拽/排序、印刷前预检、实时多栏预览与定稿归档）。
+  - 新增 **SnippetStudio**（代码 / 笔记 / 验板三栏编辑 + `Cmd/Ctrl+I` 可折叠信息抽屉）与 **TrdStudio**（大纲、章节管理、版式参数与定稿弹窗），并支持从题库代码一键「收入模板库」。
+- **CLI、MCP 与 AI Skill（`xcpc-mcp` / `skills/xcpc-trd-curator`）**：
+  - 新增 `xcpc snippet`（`list` / `new` / `show` / `verify` / `bundle` / `delete`）与 `xcpc trd`（`list` / `new` / `compose` / `build` / `preflight` / `finalize` / `unfinalize`）全套子命令与对应 MCP 工具。
+  - 新增面向 AI Agent 的 `xcpc-trd-curator` Skill，用于辅助维护、验板与编排算法模板库和板子书。
+
 ## [0.4.0] - 2026-11-26
 
 Phase 4 正式版：在题库、出版与本地 Polygon 之外，完整交付**混合沙箱插件引擎、个人训练看板、纯 Web `<WebView>` 插件生态与插件开发工具链**。
