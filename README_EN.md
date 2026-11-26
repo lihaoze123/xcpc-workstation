@@ -50,11 +50,15 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/training-en.png" width="100%" alt="XCPC Workstation Training Dashboard: Codeforces / AtCoder ratings, dual-mode annual heatmap, rating curves, and difficulty breakthrough trend" />
+  <img src="./docs/images/trd-en.png" width="100%" alt="XCPC Workstation Living TRD Studio: chapter outline, KACTL++-style 3-column landscape A4 live preview, and cumulative line hashes" />
 </p>
 
 <p align="center">
-  <img src="./docs/images/tools-en.png" width="100%" alt="XCPC Workstation Tools Space: pure-Web sandboxed Graph & Geometry Studio plugin running out of the box with zero permissions" />
+  <img src="./docs/images/training-en.png" width="100%" alt="XCPC Workstation Training Dashboard: Codeforces / AtCoder ratings, rolling 12-month heatmap, rating curves, difficulty breakthrough trend, and tag distribution" />
+</p>
+
+<p align="center">
+  <img src="./docs/images/tools-en.png" width="100%" alt="XCPC Workstation Tools Space: pure-Web sandboxed official plugins (CodeSnap, Graph & Geometry Studio, etc.) running out of the box with zero permissions" />
 </p>
 
 ---
@@ -159,7 +163,7 @@ To match the `olymp.sty` (`ctex` `fontset=founder`) Chinese typography reference
 - **Phase 3A–3D (Completed)**: Local Polygon end-to-end (native `g++`/`clang++` + bundled `testlib.h`, 3-tier content-hash cache, strict verification gate, stress testing, ASan/UBSan check mode, zero-pollution external verifier trial runs & contest audits), Polygon ZIP import & DOMjudge / Hydro minimal ZIP export, library groups / batch operations, stdio interactive / multi-run communication / OI subtasks, plus official problem-creator skills.
 - **Phase 4A–4D (Completed)**: Hybrid sandboxed plugin engine (Core QuickJS + Core-enforced `pending_trust` + pure-Web `<WebView>` sandbox `ui.html`), Codeforces / AtCoder training sync & high-density training dashboard (dual-mode heatmap, rating curve, breakthrough trend, contest calendar, submission search & editorial aggregation), pure plugin-hosted Tools tab, `@xcpc/plugin-sdk` + Vite single-file toolchain, and official plugin repository [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins).
 - **Phase 5A–5C (Completed, v0.5.0)**: Living TRD & verifiable algorithm snippet library (open-directory `snippets/` and `trds/`, dependency DAG, single-file C++ bundler, KACTL++ cumulative verification hashes, 3-source verification including Library Checker, `trd-compact` / `trd-book` templates, reversible finalization, desktop Templates space, and CLI / MCP / `xcpc-trd-curator` skill).
-- **Phase 6A–6C (Completed, v0.6.0-beta.1)**: Upgraded host framework to NSH 0.7.1 with `nshm` modules (`nsh-icon` / `nsh-o11y`), Core decoupling (`xcpc-app`) & `sccache` / `thin` LTO build acceleration, independent multi-window `nsh-o11y` diagnostics console (live metrics, cross-thread waterfall & baseline diff, structured logs, Perfetto export), and trace-driven end-to-end performance & UX polish.
+- **Phase 6A–6G (Completed, v0.6.0-beta.1)**: Upgraded host framework to NSH 0.7.1 with `nshm` modules (`nsh-icon` / `nsh-o11y`), Core decoupling (`xcpc-app`) & `sccache` / `thin` LTO build acceleration, independent multi-window `nsh-o11y` diagnostics console (live metrics, cross-thread waterfall & baseline diff, structured logs, Perfetto export), and a complete design-system & desktop UI overhaul (centralized design/typography/motion tokens, bundled Inter & JetBrains Mono, inset floating panels & key-screen polish, full empty/loading/error/focus-ring state coverage, and physics-based spring motion with `prefers-reduced-motion`).
 
 Full design specifications (in Chinese) live under [`docs/`](./docs/README.md) ([Product](./docs/product.md), [Architecture](./docs/architecture.md), [Statement Style](./docs/statement-style.md), [Design System](./docs/design-system.md), [Roadmap](./docs/roadmap.md)).
 
