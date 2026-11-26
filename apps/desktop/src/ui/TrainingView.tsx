@@ -2,7 +2,7 @@
 // Top bar with 4-view segmented switch (Overview | Contests | Submissions | Editorials) on the left,
 // manual log ("记一题") + conditional OJ last-synced & Sync controls on the right.
 
-import { computed, effect, signal, Text, View } from "nsh";
+import { computed, effect, signal, Text, untracked, View } from "nsh";
 import { t } from "./i18n";
 import { Btn, Segmented } from "./kit";
 import {
@@ -142,8 +142,10 @@ export function TrainingView(props: TrainingViewProps) {
         return;
       }
       // Show cached snapshot immediately (stale-while-revalidate) so space switch never blocks.
+      // Read `dashboard` untracked so the outer reload `effect` never subscribes to `dashboard`
+      // and enters a self-triggering async refetch loop.
       const cached = dashboardCache.get(cacheKey);
-      if (cached && dashboard() !== cached) {
+      if (cached && untracked(dashboard) !== cached) {
         dashboard.set(cached);
       }
       if (typeof preview.trainingDashboardAsync === "function") {

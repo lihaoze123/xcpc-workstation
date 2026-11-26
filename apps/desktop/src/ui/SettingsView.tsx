@@ -32,6 +32,7 @@ import { PluginsPane } from "./PluginsPane";
 import {
   activeRevision,
   brandReplayOpen,
+  ensureToolchainLoaded,
   errorOf,
   info,
   openError,
@@ -584,12 +585,29 @@ function LayoutPane(props: { active: boolean }) {
   );
 }
 
+const EMPTY_TOOLCHAIN: ToolchainStatusJs = {
+  active: null,
+  overridePath: null,
+  compilers: [],
+  installGuide: "",
+  installCommands: [],
+};
+
 function ToolchainPane() {
-  const status = signal<ToolchainStatusJs>(toolchainState() ?? refreshToolchain());
+  const status = signal<ToolchainStatusJs>(toolchainState() ?? EMPTY_TOOLCHAIN);
   const compilers = computed(() => dedupDetectedCompilers(status().compilers, status().active));
   const draft = signal(customOverrideInputValue(status().overridePath, compilers()));
   const redetected = createTransientFlag(1400);
   const overrideApplied = createTransientFlag(1500);
+
+  ensureToolchainLoaded();
+  effect(() => {
+    const next = toolchainState();
+    if (!next) return;
+    status.set(next);
+    const deduped = dedupDetectedCompilers(next.compilers, next.active);
+    draft.set(customOverrideInputValue(next.overridePath, deduped));
+  });
 
   const initPrefs = preview.loadPrefs();
   const savedLcMirror = signal(initPrefs.libraryCheckerMirrorUrl ?? "");

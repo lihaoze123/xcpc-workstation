@@ -142,7 +142,7 @@ interface RustPollPayload {
   cacheStats: PixelCacheStatsPayload;
 }
 
-const POLL_INTERVAL_MS = 200;
+const POLL_INTERVAL_MS = 500;
 const MAX_SERIES_POINTS = 12_000;
 const MAX_ANNOTATIONS = 200;
 const MAX_CAPTURED_TRACES = 80;

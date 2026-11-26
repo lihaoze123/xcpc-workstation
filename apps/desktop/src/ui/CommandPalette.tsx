@@ -76,6 +76,22 @@ function getCachedPluginCommands(rev: number, cmdContext: string): RegisteredPlu
   return parsed;
 }
 
+let cachedSnippetCatalogKey = "";
+let cachedSnippetCatalogValue: { snips: SnippetListPayload["snippets"]; trds: TrdSummaryItem[] } = {
+  snips: [],
+  trds: [],
+};
+
+function getCachedSnippetCatalog(snipRev: number, wsVer: number) {
+  const key = `${snipRev}:${wsVer}`;
+  if (key === cachedSnippetCatalogKey) return cachedSnippetCatalogValue;
+  const snips = parseJsonPayload<SnippetListPayload>(preview.listSnippetsJson())?.snippets ?? [];
+  const trds = parseJsonPayload<{ trds: TrdSummaryItem[] }>(preview.listTrdsJson())?.trds ?? [];
+  cachedSnippetCatalogKey = key;
+  cachedSnippetCatalogValue = { snips, trds };
+  return cachedSnippetCatalogValue;
+}
+
 type Action = { id: string; label: string; icon: IconName; keywords?: string[]; shortcut?: string; run: () => void; when?: () => boolean };
 
 function actions(): Action[] {
@@ -285,11 +301,7 @@ function PaletteBody() {
     if (!hasWorkspace() || !info().snippetsEnabled) {
       return { snips: [] as SnippetListPayload["snippets"], trds: [] as TrdSummaryItem[] };
     }
-    void snippetsRevision();
-    void workspaceVersion();
-    const snips = parseJsonPayload<SnippetListPayload>(preview.listSnippetsJson())?.snippets ?? [];
-    const trds = parseJsonPayload<{ trds: TrdSummaryItem[] }>(preview.listTrdsJson())?.trds ?? [];
-    return { snips, trds };
+    return getCachedSnippetCatalog(snippetsRevision(), workspaceVersion());
   });
 
   const snippetHits = computed(() => {
