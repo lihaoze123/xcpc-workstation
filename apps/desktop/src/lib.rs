@@ -91,6 +91,11 @@ impl Preview {
         xcpc_app::AppController::about_info().into()
     }
 
+    /// Reclaims idle pixel caches, Typst AST/comemo caches, and cold OS working-set pages.
+    pub fn reclaim_memory(&self, clear_pixels: bool) {
+        self.app.reclaim_memory(clear_pixels);
+    }
+
     /// Returns current offline performance trace status and Rust monotonic clock reading.
     pub fn trace_status() -> TraceStatusJs {
         xcpc_app::AppController::trace_status().into()
@@ -2615,6 +2620,22 @@ impl Preview {
         }
     }
 
+    /// Writes a PNG image (raw base64 or `data:image/png;base64,...`) to the native
+    /// clipboard as both `CF_DIB` and `"PNG"` on Windows; returns `unsupported_platform`
+    /// elsewhere so JS falls back to NSH's built-in `Clipboard.writeImage`.
+    pub async fn plugin_write_clipboard_image(png_src: String) -> ActionResult {
+        match blocking(move || xcpc_app::clipboard::write_clipboard_image_png(&png_src)).await {
+            Ok(Ok(true)) => ActionResult::ok(),
+            Ok(Ok(false)) => {
+                ActionResult::err("unsupported_platform", "native image clipboard not used")
+            }
+            Ok(Err(err)) => ActionResult::err("clipboard_failed", err),
+            Err(err) => {
+                ActionResult::err("clipboard_failed", format!("clipboard task failed: {err}"))
+            }
+        }
+    }
+
     /// Opens a native save dialog and atomically writes a UTF-8 text file (e.g. SVG / Markdown).
     pub async fn plugin_save_text_dialog(
         text: String,
@@ -3215,9 +3236,12 @@ async fn open_in_external_editor(path: PathBuf) -> Result<(), String> {
         }
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             std::process::Command::new("cmd")
                 .args(["/C", "start", ""])
                 .arg(&path)
+                .creation_flags(CREATE_NO_WINDOW)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

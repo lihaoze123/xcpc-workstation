@@ -2,7 +2,7 @@
 
 import { Application, currentWindow, isAvailable as desktopAvailable, Window, type WindowRef } from "nsh/desktop";
 import { t } from "../i18n";
-import { flushAllBeforeQuit } from "../store";
+import { flushAllBeforeQuit, preview } from "../store";
 import { DiagnosticsWindowContent } from "./DiagnosticsWindow";
 import {
   diagnosticsOpen,
@@ -32,13 +32,18 @@ export function openDiagnosticsWindow(): void {
         title: t("o11y.windowTitle"),
         titleBar: { style: "hidden", height: 44 },
         defaultSize: { width: 1120, height: 740 },
-        minSize: { width: 780, height: 520 },
+        minSize: { width: 920, height: 540 },
         restoreBounds: true,
       });
       diagWindowRef = ref;
       ref.on("close", () => {
         if (diagWindowRef === ref) diagWindowRef = null;
         stopLiveDiagnostics();
+        setTimeout(() => {
+          if (typeof preview.reclaimMemory === "function") {
+            preview.reclaimMemory(false);
+          }
+        }, 300);
       });
       o11yLog("info", "ui", "Diagnostics window opened");
     } catch (err) {

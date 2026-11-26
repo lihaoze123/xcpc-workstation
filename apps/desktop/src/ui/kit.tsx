@@ -405,20 +405,23 @@ export function Segmented<T extends string>(props: {
 }) {
   const w = props.itemWidth ?? 56;
   const index = () => Math.max(0, props.items.findIndex((i) => i.value === props.value));
-  const trackStyle: ViewStyle = props.underline
-    ? { flexDirection: "row", alignSelf: "stretch", alignItems: "stretch", opacity: props.disabled ? 0.5 : 1 }
-    : {
-        flexDirection: "row",
-        alignSelf: props.centered ? "center" : "flex-start",
-        height: CONTROL.md,
-        padding: SPACE[2],
-        borderRadius: RADIUS.md,
-        borderWidth: 1,
-        alignItems: "stretch",
-        opacity: props.disabled ? 0.5 : 1,
-      };
+  const trackStyle = (): ViewStyle =>
+    props.underline
+      ? { flexDirection: "row", alignSelf: "stretch", alignItems: "stretch", opacity: props.disabled ? 0.5 : 1 }
+      : {
+          flexDirection: "row",
+          width: props.items.length * w + SPACE[2] * 2 + 2,
+          flexShrink: 0,
+          ...(props.centered ? { alignSelf: "center" } : {}),
+          height: CONTROL.md,
+          padding: SPACE[2],
+          borderRadius: RADIUS.md,
+          borderWidth: 1,
+          alignItems: "stretch",
+          opacity: props.disabled ? 0.5 : 1,
+        };
   return (
-    <View style={trackStyle} class={props.underline ? undefined : "bg-muted border-border"}>
+    <View style={trackStyle()} class={props.underline ? undefined : "bg-muted border-border"}>
       <View
         style={{
           position: "absolute",

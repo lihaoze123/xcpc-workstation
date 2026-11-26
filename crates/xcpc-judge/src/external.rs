@@ -791,14 +791,15 @@ fn run_external_batch_for_problem(
                 return Err(JudgeError::Cancelled);
             }
             let out_tmp = tempfile::NamedTempFile::new()
-                .map_err(|e| io_err("create temp external output", e))?;
+                .map_err(|e| io_err("create temp external output", e))?
+                .into_temp_path();
 
             let cell = if let Some(ref inter_bin) = interactor_bin {
                 let inter_out = run_multi_run_interactive(
                     inter_bin,
                     &bin_path,
                     &pt.input_path,
-                    out_tmp.path(),
+                    &out_tmp,
                     runs,
                     limits,
                     cancel.as_ref(),
@@ -809,11 +810,11 @@ fn run_external_batch_for_problem(
                 if verdict == Verdict::AC
                     && let Some(ref chk_bin) = checker_bin
                 {
-                    let ans_p = pt.ans_path.as_deref().unwrap_or(out_tmp.path());
+                    let ans_p = pt.ans_path.as_deref().unwrap_or(&out_tmp);
                     let chk_res = run_checker_with_score(
                         chk_bin,
                         &pt.input_path,
-                        out_tmp.path(),
+                        &out_tmp,
                         ans_p,
                         cancel.as_ref(),
                     )?;
@@ -849,7 +850,7 @@ fn run_external_batch_for_problem(
                 let outcome = run_multi_run_process(
                     &bin_path,
                     &pt.input_path,
-                    out_tmp.path(),
+                    &out_tmp,
                     runs,
                     limits,
                     cancel.as_ref(),
@@ -858,7 +859,7 @@ fn run_external_batch_for_problem(
                     let chk_res = run_checker_with_score(
                         chk_bin,
                         &pt.input_path,
-                        out_tmp.path(),
+                        &out_tmp,
                         ans_p,
                         cancel.as_ref(),
                     )?;

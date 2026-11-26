@@ -905,12 +905,13 @@ pub fn build_package(
             main_output_preview,
         ) = if let Some(inter_cr) = interactor_bin {
             let tout_tmp = tempfile::NamedTempFile::new()
-                .map_err(|e| io_err("create temp interactor tout", e))?;
+                .map_err(|e| io_err("create temp interactor tout", e))?
+                .into_temp_path();
             let inter_out = run_multi_run_interactive(
                 &inter_cr.binary_path,
                 &main_cr.binary_path,
                 &mt.input_path,
-                tout_tmp.path(),
+                &tout_tmp,
                 runs,
                 limits,
                 cancel.as_ref(),
@@ -922,7 +923,7 @@ pub fn build_package(
             if verdict == Verdict::AC
                 && let Some(chk_cr) = checker_bin
             {
-                let tout_bytes = fs::read(tout_tmp.path()).unwrap_or_default();
+                let tout_bytes = fs::read(&tout_tmp).unwrap_or_default();
                 write_atomic(&out_path, &tout_bytes)?;
                 ans_paths[idx] = Some((out_path.clone(), xcpc_storage::content_hash(&tout_bytes)));
                 let chk_res = run_checker_with_score(
@@ -936,7 +937,7 @@ pub fn build_package(
                 ratio = ratio.min(chk_res.score_ratio);
                 msg = chk_res.message;
             }
-            let preview = read_bounded_output_preview(tout_tmp.path());
+            let preview = read_bounded_output_preview(&tout_tmp);
             (
                 verdict,
                 ratio,
@@ -1144,12 +1145,13 @@ pub fn build_package(
                 (hit, true)
             } else {
                 let tout_tmp = tempfile::NamedTempFile::new()
-                    .map_err(|e| io_err("create temp interactor tout", e))?;
+                    .map_err(|e| io_err("create temp interactor tout", e))?
+                    .into_temp_path();
                 let inter_out = run_multi_run_interactive(
                     &inter_cr.binary_path,
                     &sol_cr.binary_path,
                     &mt.input_path,
-                    tout_tmp.path(),
+                    &tout_tmp,
                     runs,
                     limits,
                     cancel.as_ref(),
@@ -1166,13 +1168,14 @@ pub fn build_package(
                         p.as_path()
                     } else {
                         fallback_ans = tempfile::NamedTempFile::new()
-                            .map_err(|e| io_err("create empty ans file", e))?;
-                        fallback_ans.path()
+                            .map_err(|e| io_err("create empty ans file", e))?
+                            .into_temp_path();
+                        fallback_ans.as_ref()
                     };
                     let chk_res = run_checker_with_score(
                         &chk_cr.binary_path,
                         &mt.input_path,
-                        tout_tmp.path(),
+                        &tout_tmp,
                         ans_p,
                         cancel.as_ref(),
                     )?;
@@ -1180,7 +1183,7 @@ pub fn build_package(
                     score_ratio = score_ratio.min(chk_res.score_ratio);
                     checker_msg = chk_res.message;
                 }
-                let output_preview = read_bounded_output_preview(tout_tmp.path());
+                let output_preview = read_bounded_output_preview(&tout_tmp);
                 let entry = CachedSolutionRun {
                     verdict: final_verdict,
                     score_ratio: Some(score_ratio),
@@ -1245,11 +1248,12 @@ pub fn build_package(
                 (hit, true)
             } else {
                 let tmp_out = tempfile::NamedTempFile::new()
-                    .map_err(|e| io_err("create temp solution output", e))?;
+                    .map_err(|e| io_err("create temp solution output", e))?
+                    .into_temp_path();
                 let outcome = run_multi_run_process(
                     &sol_cr.binary_path,
                     &mt.input_path,
-                    tmp_out.path(),
+                    &tmp_out,
                     runs,
                     limits,
                     cancel.as_ref(),
@@ -1258,7 +1262,7 @@ pub fn build_package(
                     let chk_res = run_checker_with_score(
                         &chk_cr.binary_path,
                         &mt.input_path,
-                        tmp_out.path(),
+                        &tmp_out,
                         ans_path,
                         cancel.as_ref(),
                     )?;
@@ -1266,7 +1270,7 @@ pub fn build_package(
                 } else {
                     (outcome.verdict, 0.0, String::new())
                 };
-                let output_preview = read_bounded_output_preview(tmp_out.path());
+                let output_preview = read_bounded_output_preview(&tmp_out);
                 let entry = CachedSolutionRun {
                     verdict: final_verdict,
                     score_ratio: Some(score_ratio),
@@ -1895,12 +1899,13 @@ fn materialize_test(
                     .map_err(|e| io_err(format!("read cache {}", cached_path.display()), e))?
             } else {
                 let tmp = tempfile::NamedTempFile::new()
-                    .map_err(|e| io_err("create temp gen output", e))?;
+                    .map_err(|e| io_err("create temp gen output", e))?
+                    .into_temp_path();
                 let outcome = run_process(
                     &gen_cr.binary_path,
                     args,
                     None,
-                    Some(tmp.path()),
+                    Some(&tmp),
                     RunLimits::tool_defaults(),
                     cancel,
                 )?;
@@ -1911,7 +1916,7 @@ fn materialize_test(
                         outcome.stderr.trim()
                     )));
                 }
-                let data = fs::read(tmp.path()).map_err(|e| io_err("read generated input", e))?;
+                let data = fs::read(&tmp).map_err(|e| io_err("read generated input", e))?;
                 let _ = cache.put_gen_input(&gen_key, &data);
                 data
             }
@@ -1951,16 +1956,12 @@ fn run_solution_cached_with_output(
         return Ok((outcome, true));
     }
 
-    let tmp = tempfile::NamedTempFile::new().map_err(|e| io_err("create temp std output", e))?;
-    let outcome = run_multi_run_process(
-        &sol_cr.binary_path,
-        input_path,
-        tmp.path(),
-        runs,
-        limits,
-        cancel,
-    )?;
-    let bytes = fs::read(tmp.path()).map_err(|e| io_err("read std output", e))?;
+    let tmp = tempfile::NamedTempFile::new()
+        .map_err(|e| io_err("create temp std output", e))?
+        .into_temp_path();
+    let outcome =
+        run_multi_run_process(&sol_cr.binary_path, input_path, &tmp, runs, limits, cancel)?;
+    let bytes = fs::read(&tmp).map_err(|e| io_err("read std output", e))?;
     write_atomic(dest_out_path, &bytes)?;
     let _ = write_atomic(&out_cache, &bytes);
     let _ = cache.put_run_json(&key, &outcome);
@@ -2323,7 +2324,7 @@ fn next_available_sample_number(prob_dir: &Path) -> u32 {
 
 pub(crate) fn gen_cache_key(gen_bin_hash: &str, args_raw: &str) -> String {
     let mut h = Sha256::new();
-    h.update(b"xcpc-gen-v1\0");
+    h.update(b"xcpc-gen-v2\0");
     h.update(gen_bin_hash.as_bytes());
     h.update(b"\0");
     h.update(args_raw.as_bytes());
@@ -2332,7 +2333,7 @@ pub(crate) fn gen_cache_key(gen_bin_hash: &str, args_raw: &str) -> String {
 
 fn std_cache_key(sol_bin_hash: &str, input_hash: &str, runs: u32, limits: RunLimits) -> String {
     let mut h = Sha256::new();
-    h.update(b"xcpc-std-v2\0");
+    h.update(b"xcpc-std-v3\0");
     h.update(sol_bin_hash.as_bytes());
     h.update(b"\0");
     h.update(input_hash.as_bytes());

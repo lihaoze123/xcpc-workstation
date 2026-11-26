@@ -144,23 +144,38 @@ impl SourceLanguage {
     }
 
     /// Returns fixed compiler flags for this language (`-O2`, `-std=...`).
+    ///
+    /// On Windows, also passes `-DFOR_LINUX` so `testlib.h` validators/checkers accept
+    /// canonical Unix LF (`\n`) line endings used across XCPC Workstation test data.
     pub fn compile_flags(self) -> Vec<String> {
         match self {
-            SourceLanguage::Cpp { std } => vec!["-O2".to_owned(), std.flag().to_owned()],
+            SourceLanguage::Cpp { std } => {
+                #[allow(unused_mut)]
+                let mut flags = vec!["-O2".to_owned(), std.flag().to_owned()];
+                #[cfg(windows)]
+                flags.push("-DFOR_LINUX".to_owned());
+                flags
+            }
         }
     }
 
     /// Returns ASan + UBSan instrumentation compiler flags for this language.
     pub fn sanitizer_compile_flags(self) -> Vec<String> {
         match self {
-            SourceLanguage::Cpp { std } => vec![
-                "-O1".to_owned(),
-                std.flag().to_owned(),
-                "-fsanitize=address,undefined".to_owned(),
-                "-fno-omit-frame-pointer".to_owned(),
-                "-g".to_owned(),
-                "-fno-sanitize-recover=undefined".to_owned(),
-            ],
+            SourceLanguage::Cpp { std } => {
+                #[allow(unused_mut)]
+                let mut flags = vec![
+                    "-O1".to_owned(),
+                    std.flag().to_owned(),
+                    "-fsanitize=address,undefined".to_owned(),
+                    "-fno-omit-frame-pointer".to_owned(),
+                    "-g".to_owned(),
+                    "-fno-sanitize-recover=undefined".to_owned(),
+                ];
+                #[cfg(windows)]
+                flags.push("-DFOR_LINUX".to_owned());
+                flags
+            }
         }
     }
 }
@@ -415,7 +430,10 @@ fn resolve_in_path(p: &Path) -> Option<PathBuf> {
 }
 
 fn probe_compiler(path: &Path) -> Option<DetectedCompiler> {
-    let output = Command::new(path).arg("--version").output().ok()?;
+    let mut cmd = Command::new(path);
+    cmd.arg("--version");
+    crate::runner::configure_no_window(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -473,6 +491,7 @@ pub fn probe_sanitizer_support(compiler: &DetectedCompiler) -> std::result::Resu
 
     let flags = SourceLanguage::Cpp { std: CppStd::Cpp20 }.sanitizer_compile_flags();
     let mut cmd = Command::new(&compiler.path);
+    crate::runner::configure_no_window(&mut cmd);
     for f in &flags {
         cmd.arg(f);
     }
@@ -487,7 +506,9 @@ pub fn probe_sanitizer_support(compiler: &DetectedCompiler) -> std::result::Resu
         return Err(format!("编译器不支持 ASan/UBSan：{first}"));
     }
 
-    let run = Command::new(&bin)
+    let mut run_cmd = Command::new(&bin);
+    crate::runner::configure_no_window(&mut run_cmd);
+    let run = run_cmd
         .env(
             "ASAN_OPTIONS",
             "detect_leaks=0:halt_on_error=1:abort_on_error=0",
@@ -566,6 +587,7 @@ pub fn compile_to_path(
     let out_arg = xcpc_storage::strip_verbatim_prefix(output_binary_path);
 
     let mut cmd = Command::new(&compiler.path);
+    crate::runner::configure_no_window(&mut cmd);
     for f in &flags {
         cmd.arg(f);
     }
@@ -746,6 +768,7 @@ fn compile_cached_inner(
     };
     let tmp_out = xcpc_storage::strip_verbatim_prefix(&bin_path.with_extension(tmp_ext));
     let mut cmd = Command::new(&compiler.path);
+    crate::runner::configure_no_window(&mut cmd);
     for f in flags {
         cmd.arg(f);
     }

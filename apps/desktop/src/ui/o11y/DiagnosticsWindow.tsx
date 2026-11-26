@@ -843,30 +843,30 @@ export function DiagnosticsWindowContent() {
       {/* Unified 44pt TitleBar with native window controls and live locale title */}
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-            <View
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: RADIUS.xs,
-                backgroundColor: diagnosticsPaused() ? "#eda100" : "#1baf7a",
-              }}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: RADIUS.xs,
+                  backgroundColor: diagnosticsPaused() ? "#eda100" : "#1baf7a",
+                }}
+              />
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                {t("o11y.windowTitle")}
+              </Text>
+            </View>
+            <Segmented
+              value={activeTab()}
+              onChange={(v) => activeTab.set(v as DiagTab)}
+              items={[
+                { value: "metrics", label: t("o11y.tab.metrics") },
+                { value: "traces", label: t("o11y.tab.traces") },
+                { value: "logs", label: t("o11y.tab.logs") },
+              ]}
             />
-            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-              {t("o11y.windowTitle")}
-            </Text>
           </View>
-        }
-        center={
-          <Segmented
-            value={activeTab()}
-            onChange={(v) => activeTab.set(v as DiagTab)}
-            items={[
-              { value: "metrics", label: t("o11y.tab.metrics") },
-              { value: "traces", label: t("o11y.tab.traces") },
-              { value: "logs", label: t("o11y.tab.logs") },
-            ]}
-          />
         }
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
@@ -874,7 +874,7 @@ export function DiagnosticsWindowContent() {
               value={String(diagnosticsWindowMs())}
               onChange={(v) => diagnosticsWindowMs.set(Number(v) as TimeWindowPreset)}
               items={WINDOW_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
-              itemWidth={42}
+              itemWidth={38}
             />
             <Btn
               testID="o11y-toggle-pause"
@@ -883,7 +883,7 @@ export function DiagnosticsWindowContent() {
               icon={diagnosticsPaused() ? "play" : "pause"}
               label={diagnosticsPaused() ? t("o11y.action.resume") : t("o11y.action.pause")}
               onPress={toggleDiagnosticsPaused}
-              style={{ minWidth: 68 }}
+              style={{ minWidth: 64 }}
             />
             <Btn
               testID="o11y-clear"
@@ -901,7 +901,7 @@ export function DiagnosticsWindowContent() {
               label={t("o11y.action.exportPerfetto")}
               disabled={exporting()}
               onPress={() => void handleExportPerfetto()}
-              style={{ minWidth: 138 }}
+              style={{ minWidth: 118 }}
             />
           </View>
         }

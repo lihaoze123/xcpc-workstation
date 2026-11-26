@@ -697,7 +697,16 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
         out
     };
     let start = std::time::Instant::now();
-    let result = engine.compile();
+    let mut result = engine.compile();
+    if let Ok(ref compiled) = result
+        && compiled
+            .warnings
+            .iter()
+            .any(|w| w.message.starts_with("unknown font family:"))
+        && engine.ensure_full_system_fonts()
+    {
+        result = engine.compile();
+    }
     let compile_ms = start.elapsed().as_millis() as u64;
     match result {
         Ok(compiled) => {

@@ -18,6 +18,7 @@ import { classifyPluginUiError, formatPluginError } from "./tools/pluginErrors";
 import {
   buildThemeCssVars,
   injectPluginHtml,
+  isTrustedPluginUrl,
   normalizeClipboardImageSrc,
   PLUGIN_WEBVIEW_CSP,
 } from "./tools/PluginWebView";
@@ -101,6 +102,17 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
     expect(injected).not.toContain("allow-same-origin");
     expect(injected).toContain("tok-fixed-1234");
     expect(injected).toContain("window.nsh.postMessage");
+    expect(injected).toContain("window.chrome.webview.postMessage");
+    expect(injected).toContain("margin:0;padding:0;");
+    expect(injected).not.toContain("SPACE[0]");
+    expect(isTrustedPluginUrl("")).toBe(true);
+    expect(isTrustedPluginUrl("about:blank")).toBe(true);
+    expect(isTrustedPluginUrl("about:blank#anchor")).toBe(true);
+    expect(isTrustedPluginUrl("about:srcdoc")).toBe(true);
+    expect(isTrustedPluginUrl("data:text/html;charset=utf-8;base64,PGh0bWw+")).toBe(true);
+    expect(isTrustedPluginUrl("data:image/png;base64,AAAA")).toBe(false);
+    expect(isTrustedPluginUrl("javascript:alert(1)")).toBe(false);
+    expect(isTrustedPluginUrl("https://evil.example")).toBe(false);
     // S4: clipboard.readText, clipboard.readImage, and openExternal are not exposed to untrusted plugins.
     expect(injected).toContain("clipboard.writeImage");
     expect(injected).toContain("oj.listAccounts");

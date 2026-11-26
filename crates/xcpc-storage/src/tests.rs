@@ -109,18 +109,27 @@ fn frozen_contests_render_from_their_snapshot_and_refuse_writes() {
 
 #[test]
 fn paths_stay_inside() {
-    let (dir, ws) = workspace();
+    let (_dir, ws) = workspace();
     for rel in ["../x", "/etc/passwd", "problems/../../x"] {
         assert_eq!(ws.resolve(rel).unwrap_err().code(), "path_escape", "{rel}");
     }
-    let outside = tempfile::tempdir().unwrap();
-    std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
-    assert_eq!(
-        ws.write("link/x.txt", b"x").unwrap_err().code(),
-        "path_escape"
-    );
-    assert!(!outside.path().join("x.txt").exists());
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), _dir.path().join("link")).unwrap();
+        assert_eq!(
+            ws.write("link/x.txt", b"x").unwrap_err().code(),
+            "path_escape"
+        );
+        assert!(!outside.path().join("x.txt").exists());
+    }
     assert!(ws.resolve("problems/new/deep/file").is_ok());
+    ws.write("problems/demo/validator.cpp", b"int main(){}\n")
+        .unwrap();
+    let resolved = ws.resolve("problems/demo/validator.cpp").unwrap();
+    let canon = crate::canonicalize_clean(&resolved).unwrap();
+    assert!(canon.starts_with(ws.root()));
+    assert!(!canon.to_string_lossy().starts_with(r"\\?\"));
 }
 
 #[test]
@@ -2390,6 +2399,7 @@ fn batch_delete_problems_reference_and_symlink_guards() {
         .unwrap();
     }
 
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut targets = vec![
         "p-free".into(),
         "p-active".into(),

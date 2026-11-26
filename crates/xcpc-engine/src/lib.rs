@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
@@ -159,13 +159,181 @@ const BUNDLED_FONT_BYTES: &[&[u8]] = &[
 ];
 
 #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
-fn bundled_fonts() -> impl Iterator<Item = (Font, typst::text::FontInfo)> {
+struct BundledFontSource {
+    data: &'static [u8],
+    index: u32,
+}
+
+#[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+impl typst_kit::fonts::FontSource for BundledFontSource {
+    fn load(&self) -> Option<Font> {
+        Font::new(Bytes::new(self.data), self.index)
+    }
+}
+
+#[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+fn bundled_fonts() -> impl Iterator<Item = (BundledFontSource, typst::text::FontInfo)> {
     BUNDLED_FONT_BYTES.iter().flat_map(|&data| {
-        Font::iter(Bytes::new(data)).map(|font| {
-            let info = font.info().clone();
-            (font, info)
-        })
+        typst::text::FontInfo::iter(data)
+            .enumerate()
+            .map(move |(index, info)| {
+                (
+                    BundledFontSource {
+                        data,
+                        index: index as u32,
+                    },
+                    info,
+                )
+            })
     })
+}
+
+/// Releases all globally memoized Typst AST, layout, and glyph-shaping caches.
+pub fn evict_typst_cache() {
+    comemo::evict(0);
+}
+
+/// Scans a single font file on disk into `store` without keeping its raw bytes in memory.
+#[cfg(windows)]
+fn push_font_file(store: &mut FontStore, path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let mut added = false;
+    for (index, info) in typst::text::FontInfo::iter(&bytes).enumerate() {
+        store.push((
+            typst_kit::fonts::FontPath {
+                path: path.to_path_buf(),
+                index: index as u32,
+            },
+            info,
+        ));
+        added = true;
+    }
+    added
+}
+
+/// Loads only the CJK fonts needed by `CJK_ROLES` from standard Windows font directories,
+/// avoiding a full 500+-file scan of `C:\Windows\Fonts` (~180–220 MB RAM & ~250ms startup).
+/// If a custom template later references another system font, [`Engine::ensure_full_system_fonts`]
+/// transparently falls back to scanning the full system font database.
+#[cfg(windows)]
+fn load_windows_cjk_fonts(store: &mut FontStore) {
+    let mut dirs = Vec::new();
+    if let Some(windir) = std::env::var_os("WINDIR") {
+        let sys_fonts = PathBuf::from(windir).join("Fonts");
+        if sys_fonts.is_dir() {
+            dirs.push(sys_fonts);
+        }
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let user_fonts = PathBuf::from(local_app_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Fonts");
+        if user_fonts.is_dir() {
+            dirs.push(user_fonts);
+        }
+    }
+    if dirs.is_empty() {
+        return;
+    }
+
+    let mut loaded_paths = std::collections::HashSet::new();
+
+    // 1. Prefer user-installed FounderType fonts if present.
+    for dir in &dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let lower = name.to_ascii_lowercase();
+            let is_font =
+                lower.ends_with(".ttf") || lower.ends_with(".otf") || lower.ends_with(".ttc");
+            if !is_font {
+                continue;
+            }
+            let is_foundertype = matches!(
+                lower.as_str(),
+                "fzssk.ttf" | "fzhtk.ttf" | "fzktk.ttf" | "fzfsk.ttf"
+            ) || lower.starts_with("fzshusong")
+                || lower.starts_with("fzhei")
+                || lower.starts_with("fzkai")
+                || lower.starts_with("fzfangsong");
+            if is_foundertype && loaded_paths.insert(path.clone()) {
+                push_font_file(store, &path);
+            }
+        }
+    }
+
+    // 2. For each CJK role still missing a primary/fallback family, load only the first
+    //    available built-in Windows CJK font file (~4 files instead of 500+).
+    let mut try_load = |store: &mut FontStore, filename: &str| -> bool {
+        for dir in &dirs {
+            let candidate = dir.join(filename);
+            if candidate.is_file()
+                && loaded_paths.insert(candidate.clone())
+                && push_font_file(store, &candidate)
+            {
+                return true;
+            }
+        }
+        false
+    };
+    const WINDOWS_ROLE_FILES: &[(&[&str], &[&str])] = &[
+        (
+            &[
+                "FZShuSong-Z01",
+                "Source Han Serif SC",
+                "Noto Serif CJK SC",
+                "SimSun",
+            ],
+            &["simsun.ttc", "NotoSerifSC-VF.ttf"],
+        ),
+        (
+            &[
+                "FZHei-B01",
+                "Source Han Sans SC",
+                "Noto Sans CJK SC",
+                "SimHei",
+                "Microsoft YaHei",
+            ],
+            &["simhei.ttf", "msyh.ttc", "NotoSansSC-VF.ttf"],
+        ),
+        (
+            &["FZKai-Z03", "KaiTi", "STKaiti"],
+            &["simkai.ttf", "STKAITI.TTF"],
+        ),
+        (
+            &["FZFangSong-Z02", "FangSong", "STFangsong"],
+            &["simfang.ttf", "STFANGSO.TTF"],
+        ),
+    ];
+
+    for &(families, filenames) in WINDOWS_ROLE_FILES {
+        let already_have = families.iter().any(|name| {
+            store
+                .book()
+                .select_family(&name.to_lowercase())
+                .next()
+                .is_some()
+        });
+        if already_have {
+            continue;
+        }
+        for &filename in filenames {
+            if try_load(store, filename) {
+                break;
+            }
+        }
+    }
 }
 
 /// Where fonts come from.
@@ -376,8 +544,10 @@ pub struct CompileError {
 
 /// A long-lived Typst world.
 pub struct Engine {
-    library: LazyHash<Library>,
-    fonts: FontStore,
+    library: Arc<LazyHash<Library>>,
+    fonts: Arc<FontStore>,
+    font_options: FontOptions,
+    full_system_fonts_loaded: bool,
     root: Option<PathBuf>,
     canonical_root: Option<PathBuf>,
     main: Source,
@@ -399,14 +569,27 @@ impl Engine {
         }
         #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
         store.extend(bundled_fonts());
-        if fonts.system {
-            store.extend(typst_kit::fonts::system());
-        }
+        let full_system_fonts_loaded = if fonts.system {
+            #[cfg(windows)]
+            {
+                load_windows_cjk_fonts(&mut store);
+                false
+            }
+            #[cfg(not(windows))]
+            {
+                store.extend(typst_kit::fonts::system());
+                true
+            }
+        } else {
+            true
+        };
         let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
         let canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
         Self {
-            library: LazyHash::new(Library::default()),
-            fonts: store,
+            library: Arc::new(LazyHash::new(Library::default())),
+            fonts: Arc::new(store),
+            font_options: fonts.clone(),
+            full_system_fonts_loaded,
             root,
             canonical_root,
             main: Source::new(main_id(), String::new()),
@@ -416,6 +599,60 @@ impl Engine {
             files: Mutex::new(HashMap::new()),
             sources: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Creates an independent engine that shares this engine's already-scanned font store
+    /// and standard library, avoiding duplicate system-font scans and memory usage.
+    pub fn share_fonts(&self, root: Option<PathBuf>) -> Self {
+        let canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
+        Self {
+            library: Arc::clone(&self.library),
+            fonts: Arc::clone(&self.fonts),
+            font_options: self.font_options.clone(),
+            full_system_fonts_loaded: self.full_system_fonts_loaded,
+            root,
+            canonical_root,
+            main: Source::new(main_id(), String::new()),
+            fonts_source: Source::new(project_id(FONTS_PATH), self.fonts_source.text().to_owned()),
+            fonts_used: AtomicBool::new(false),
+            font_fallback_warning: self.font_fallback_warning.clone(),
+            files: Mutex::new(HashMap::new()),
+            sources: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Loads the full OS system font database on demand when a custom template references
+    /// a system font outside the bundled + targeted CJK set. Returns `true` if new system
+    /// fonts were loaded and the caller should re-compile.
+    pub fn ensure_full_system_fonts(&mut self) -> bool {
+        if !self.font_options.system || self.full_system_fonts_loaded {
+            return false;
+        }
+        static FULL_SYSTEM_STORE: OnceLock<Arc<FontStore>> = OnceLock::new();
+        let store = if self.font_options.dirs.is_empty() {
+            Arc::clone(FULL_SYSTEM_STORE.get_or_init(|| {
+                let mut s = FontStore::new();
+                #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+                s.extend(bundled_fonts());
+                s.extend(typst_kit::fonts::system());
+                Arc::new(s)
+            }))
+        } else {
+            let mut s = FontStore::new();
+            for dir in &self.font_options.dirs {
+                s.extend(typst_kit::fonts::scan(dir));
+            }
+            #[cfg(any(not(debug_assertions), feature = "bundled-fonts"))]
+            s.extend(bundled_fonts());
+            s.extend(typst_kit::fonts::system());
+            Arc::new(s)
+        };
+        let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
+        self.fonts = store;
+        self.fonts_source = Source::new(project_id(FONTS_PATH), fonts_text);
+        self.font_fallback_warning = font_fallback_warning;
+        self.full_system_fonts_loaded = true;
+        true
     }
 
     /// Font families known to the engine, with the number of faces in each.
@@ -455,9 +692,10 @@ impl Engine {
         let warned = {
             let _typst = xcpc_trace::span("engine", "typst_compile");
             let out = typst::compile::<PagedDocument>(self);
-            // Evict stale comemo memo entries (older than 10 compiles) so long editing
-            // sessions never leak old ASTs, frames, and shaped glyphs indefinitely.
-            comemo::evict(10);
+            // Evict stale comemo memo entries older than 2 compiles so switching away from
+            // heavy CeTZ/WASM/contest documents immediately frees their AST & frame graphs
+            // while live editing of the active document keeps 100% incremental cache hits.
+            comemo::evict(2);
             out
         };
         let mut warnings = self.diagnostics(&warned.warnings);

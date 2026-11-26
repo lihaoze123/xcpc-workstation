@@ -5,6 +5,7 @@
 //! overrides, and pure-Rust DTOs. Zero dependency on `nsh-core`, `nsh-base`, GTK, or QuickJS.
 
 pub mod cache;
+pub mod clipboard;
 mod plugins;
 pub mod prefs;
 pub mod snapshot;
@@ -186,6 +187,11 @@ impl AppController {
     /// Clears buffered Rust trace events, always-on logs, and slow events.
     pub fn o11y_clear() {
         xcpc_trace::clear_all();
+    }
+
+    /// Reclaims idle pixel caches, Typst AST/comemo caches, and cold OS working-set pages.
+    pub fn reclaim_memory(&self, clear_pixels: bool) {
+        self.state.reclaim_memory(clear_pixels);
     }
 
     // ---- Workspace & settings ----------------------------------------------------------
@@ -1207,8 +1213,11 @@ impl AppController {
             }
             #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 std::process::Command::new("cmd")
                     .args(["/C", "start", "", trimmed])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())

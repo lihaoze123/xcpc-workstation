@@ -889,7 +889,8 @@ pub fn sanitize_package(
             }
             *run_counts.entry(sol_target.clone()).or_insert(0) += 1;
             let tmp_out = tempfile::NamedTempFile::new()
-                .map_err(|e| io_err("create temp sanitizer solution output", e))?;
+                .map_err(|e| io_err("create temp sanitizer solution output", e))?
+                .into_temp_path();
 
             let (verdict, cpu_ms) = if let Some(inter_cr) = interactor_bin {
                 *run_counts.entry("interactor".to_owned()).or_insert(0) += 1;
@@ -897,7 +898,7 @@ pub fn sanitize_package(
                     &inter_cr.binary_path,
                     &sol_cr.binary_path,
                     in_path,
-                    tmp_out.path(),
+                    &tmp_out,
                     runs,
                     san_limits,
                     cancel.as_ref(),
@@ -931,7 +932,7 @@ pub fn sanitize_package(
                 let outcome = run_multi_run_process(
                     &sol_cr.binary_path,
                     in_path,
-                    tmp_out.path(),
+                    &tmp_out,
                     runs,
                     san_limits,
                     cancel.as_ref(),
@@ -968,7 +969,7 @@ pub fn sanitize_package(
                     let chk_res = run_checker_with_score_and_limits(
                         &chk_cr.binary_path,
                         in_path,
-                        tmp_out.path(),
+                        &tmp_out,
                         ans_path,
                         san_tool_limits,
                         cancel.as_ref(),

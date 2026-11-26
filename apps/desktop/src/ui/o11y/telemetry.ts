@@ -27,6 +27,8 @@ import {
   exportTraceDialog,
   getClockOffsetUs,
   isTraceRecording,
+  pauseFrameWatch,
+  resumeFrameWatch,
   startTraceRecording,
   stopTraceRecording,
   updateClockOffsetUs,
@@ -175,10 +177,10 @@ export const capturedTraces = signal<CapturedTrace[]>([]);
 /** Newly arrived traces queued when the list already has entries so rows never shift under click. */
 export const pendingTraces = signal<CapturedTrace[]>([]);
 export const namedBaselines = signal<NamedBaseline[]>([]);
-export const cacheBudgetMb = signal(96);
+export const cacheBudgetMb = signal(48);
 export const latestCacheStats = signal<PixelCacheStatsPayload>({
   totalBytes: 0,
-  budgetBytes: 96 * 1024 * 1024,
+  budgetBytes: 48 * 1024 * 1024,
   entryCount: 0,
   hits: 0,
   misses: 0,
@@ -572,7 +574,7 @@ function pollOnce(): void {
     logStore.append(entries);
     lastRustLogSeq = Math.max(lastRustLogSeq, payload.delta.logSeq);
   }
-  if (payload?.delta) {
+  if (payload?.delta && slowEventCount() !== payload.delta.slowCount) {
     slowEventCount.set(payload.delta.slowCount);
   }
 
@@ -634,20 +636,43 @@ function pollOnce(): void {
     activeFramePeakSamples.length > 0
       ? Math.round(Math.max(...activeFramePeakSamples.map((s) => s.value)) * 10) / 10
       : null;
-  metricSummaries.set({
+  const nextSummaries: O11yMetricSummaries = {
     framePeakMs,
     buildDoc: summarizeSamples(buildDocSamples),
     rasterize: summarizeSamples(rasterizeSamples),
     ipc: summarizeSamples(ipcSamples),
     inp: summarizeSamples(inpSamples),
-  });
+  };
+  const prevSummaries = metricSummaries();
+  const statEq = (a: MetricStat, b: MetricStat) =>
+    a.last === b.last && a.p95 === b.p95 && a.count === b.count;
+  if (
+    prevSummaries.framePeakMs !== nextSummaries.framePeakMs ||
+    !statEq(prevSummaries.buildDoc, nextSummaries.buildDoc) ||
+    !statEq(prevSummaries.rasterize, nextSummaries.rasterize) ||
+    !statEq(prevSummaries.ipc, nextSummaries.ipc) ||
+    !statEq(prevSummaries.inp, nextSummaries.inp)
+  ) {
+    metricSummaries.set(nextSummaries);
+  }
 
   if (payload?.cacheStats) {
     const cs = payload.cacheStats;
-    latestCacheStats.set(cs);
+    const prevCs = latestCacheStats();
+    if (
+      prevCs.totalBytes !== cs.totalBytes ||
+      prevCs.budgetBytes !== cs.budgetBytes ||
+      prevCs.entryCount !== cs.entryCount ||
+      prevCs.hits !== cs.hits ||
+      prevCs.misses !== cs.misses
+    ) {
+      latestCacheStats.set(cs);
+    }
     const mb = Math.round((cs.totalBytes / (1024 * 1024)) * 100) / 100;
     const budgetMb = Math.max(1, Math.round(cs.budgetBytes / (1024 * 1024)));
-    cacheBudgetMb.set(budgetMb);
+    if (cacheBudgetMb() !== budgetMb) {
+      cacheBudgetMb.set(budgetMb);
+    }
     const totalLookups = cs.hits + cs.misses;
     const hitRate = totalLookups > 0 ? Math.round((cs.hits / totalLookups) * 1000) / 10 : NaN;
     if (metricsVisible) {
@@ -730,7 +755,13 @@ export function stopLiveDiagnostics(): void {
 }
 
 export function toggleDiagnosticsPaused(): void {
-  diagnosticsPaused.update((p) => !p);
+  const next = !diagnosticsPaused();
+  diagnosticsPaused.set(next);
+  if (next) {
+    pauseFrameWatch();
+  } else if (diagnosticsOpen()) {
+    resumeFrameWatch();
+  }
 }
 
 export function clearAllDiagnostics(): void {

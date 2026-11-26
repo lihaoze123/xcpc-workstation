@@ -54,6 +54,7 @@ import {
   preview,
   requestNewWorkspace,
   selectedContest,
+  selectedProblem,
   space,
   startPluginWatch,
   startWatch,
@@ -199,6 +200,26 @@ function App() {
   const studioMounted = computed<boolean>((prev) => Boolean(prev) || inStudio());
   const snippetStudioMounted = computed<boolean>((prev) => Boolean(prev) || inSnippetStudio());
   const trdStudioMounted = computed<boolean>((prev) => Boolean(prev) || inTrdStudio());
+
+  // After browsing settles outside Studio (6s idle), drop heavy Typst AST/comemo/WASM
+  // caches while keeping already-rasterized thumbnail pixels warm so visuals never flash.
+  let idleReclaimTimer: ReturnType<typeof setTimeout> | undefined;
+  effect(() => {
+    clearTimeout(idleReclaimTimer);
+    idleReclaimTimer = undefined;
+    const activeStudio = inAnyStudio();
+    void space();
+    void selectedProblem();
+    void selectedContest();
+    if (activeStudio) return;
+    idleReclaimTimer = setTimeout(() => {
+      idleReclaimTimer = undefined;
+      if (!inAnyStudio() && typeof preview.reclaimMemory === "function") {
+        preview.reclaimMemory(false);
+      }
+    }, 6000);
+  });
+  cleanup(() => clearTimeout(idleReclaimTimer));
 
   useWindowTitle(() => {
     const t = studio();

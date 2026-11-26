@@ -377,7 +377,7 @@ export function injectPluginHtml(
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">
-<style>html,body,iframe{margin: SPACE[0];padding: SPACE[0];width:100%;height:100%;border:0;display:block;overflow:hidden;background:transparent;}</style>
+<style>html,body,iframe{margin:${SPACE[0]};padding:${SPACE[0]};width:100%;height:100%;border:0;display:block;overflow:hidden;background:transparent;}</style>
 </head>
 <body>
 <iframe id="xcpc-plugin-frame" sandbox="allow-scripts"></iframe>
@@ -385,6 +385,23 @@ export function injectPluginHtml(
 (function(){
 var cfg=${outerBootstrap};
 var frame=document.getElementById("xcpc-plugin-frame");
+function sendToHost(payloadStr){
+  try{
+    if(window.nsh&&typeof window.nsh.postMessage==="function"){
+      window.nsh.postMessage(payloadStr);
+      return true;
+    }
+    if(window.chrome&&window.chrome.webview&&typeof window.chrome.webview.postMessage==="function"){
+      window.chrome.webview.postMessage(payloadStr);
+      return true;
+    }
+    if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.nsh&&typeof window.webkit.messageHandlers.nsh.postMessage==="function"){
+      window.webkit.messageHandlers.nsh.postMessage(payloadStr);
+      return true;
+    }
+  }catch(_e){}
+  return false;
+}
 if(frame){frame.srcdoc=cfg.srcdoc;}
 window.addEventListener("message",function(ev){
   if(frame&&ev.source===frame.contentWindow){
@@ -399,8 +416,8 @@ window.addEventListener("message",function(ev){
       method:data.method,
       params:data.params
     };
-    if(window.nsh&&typeof window.nsh.postMessage==="function"){
-      window.nsh.postMessage(JSON.stringify(wrapped));
+    if(!sendToHost(JSON.stringify(wrapped))&&data.__xcpc==="rpc"&&typeof data.id==="number"&&frame&&frame.contentWindow){
+      frame.contentWindow.postMessage({__xcpc:"res",id:data.id,ok:false,error:"XCPC host bridge unavailable"},"*");
     }
     return;
   }
@@ -417,6 +434,20 @@ window.addEventListener("message",function(ev){
 </script>
 </body>
 </html>`;
+}
+
+export function isTrustedPluginUrl(url?: string): boolean {
+  if (!url) return true;
+  const lower = url.trim().toLowerCase();
+  return (
+    lower === "" ||
+    lower === "about:blank" ||
+    lower.startsWith("about:blank#") ||
+    lower === "about:srcdoc" ||
+    // Windows WebView2 loads `<WebView html={...} />` via a `data:text/html` URL.
+    // Security is enforced by outer CSP + sandboxed iframe + per-mount 128-bit bridgeToken.
+    lower.startsWith("data:text/html")
+  );
 }
 
 interface BridgeRpcMessage {
@@ -439,12 +470,6 @@ export function PluginWebView(props: {
   let loadGen = 0;
   let activeBridgeToken = "";
   let navigatedAway = false;
-
-  const isTrustedPluginUrl = (url?: string): boolean => {
-    if (!url) return true;
-    const lower = url.trim().toLowerCase();
-    return lower === "" || lower === "about:blank" || lower === "about:srcdoc";
-  };
 
   const postToWebView = (payload: unknown) => {
     if (navigatedAway) return;
@@ -583,6 +608,15 @@ export function PluginWebView(props: {
 
       case "clipboard.writeImage": {
         const src = normalizeClipboardImageSrc(String(params.pngBase64 ?? ""));
+        if (typeof Preview.pluginWriteClipboardImage === "function") {
+          const nativeRes = await Preview.pluginWriteClipboardImage(src);
+          if (nativeRes.ok) {
+            return undefined;
+          }
+          if (nativeRes.code !== "unsupported_platform") {
+            throw new Error(nativeRes.error ?? "Failed to copy image to clipboard");
+          }
+        }
         await Clipboard.writeImage(src);
         return undefined;
       }

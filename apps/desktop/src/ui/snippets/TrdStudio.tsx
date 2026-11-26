@@ -77,6 +77,7 @@ export function TrdStudio(props: { active: boolean }) {
   const metaAuthor = signal("");
   const metaDate = signal("");
 
+  let catalogRoot = "";
   function loadAll(id: string) {
     if (!id) return;
     const trdRes = parseJsonPayload<TrdDetailPayload>(preview.loadTrdJson(id));
@@ -88,16 +89,21 @@ export function TrdStudio(props: { active: boolean }) {
     }
     const snipRes = parseJsonPayload<SnippetListPayload>(preview.listSnippetsJson());
     if (snipRes) allSnippets.set(snipRes.snippets ?? []);
-    try {
-      const cat = JSON.parse(preview.listTrdTemplatesJson()) as TrdTemplatesCatalog;
-      catalog.set(cat);
-    } catch {
-      // Keep default empty catalog.
+    const root = info().root;
+    if (catalog().templates.length === 0 || catalogRoot !== root) {
+      try {
+        const cat = JSON.parse(preview.listTrdTemplatesJson()) as TrdTemplatesCatalog;
+        catalog.set(cat);
+        catalogRoot = root;
+      } catch {
+        // Keep default empty catalog.
+      }
     }
   }
 
   let lastTrdId = "";
   effect(() => {
+    if (!props.active) return;
     const id = trdId();
     void revision();
     void snippetsRevision();
@@ -138,8 +144,6 @@ export function TrdStudio(props: { active: boolean }) {
       return;
     }
     bumpSnippetsRevision();
-    loadAll(id);
-    canvasCtrl?.compile();
   }
 
   function addChapter() {
@@ -217,8 +221,6 @@ export function TrdStudio(props: { active: boolean }) {
       return;
     }
     bumpSnippetsRevision();
-    loadAll(id);
-    canvasCtrl?.compile();
   }
 
   function changeTemplate(tplId: string) {
@@ -230,8 +232,6 @@ export function TrdStudio(props: { active: boolean }) {
       return;
     }
     bumpSnippetsRevision();
-    loadAll(id);
-    canvasCtrl?.compile();
   }
 
   function updateTemplateOption(tplId: string, key: string, value: unknown) {
@@ -246,8 +246,6 @@ export function TrdStudio(props: { active: boolean }) {
       return;
     }
     bumpSnippetsRevision();
-    loadAll(id);
-    canvasCtrl?.compile();
   }
 
   async function exportPdf() {
@@ -304,8 +302,6 @@ export function TrdStudio(props: { active: boolean }) {
     }
     reopenOpen.set(false);
     bumpSnippetsRevision();
-    loadAll(id);
-    canvasCtrl?.compile();
   }
 
   keymap.bind(

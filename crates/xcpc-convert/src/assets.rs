@@ -854,15 +854,18 @@ path = \"assets/ignored.png\"
 
         let assets_dir = dir.path().join("problems/p1/assets");
         std::fs::create_dir_all(&assets_dir).unwrap();
-        for name in [
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut names = vec![
             "a_unused.png",
-            "b:colon.png",
             "a..b.png",
             "c_unused.png",
             "md.png",
             "refstyle.png",
             "typst.png",
-        ] {
+        ];
+        #[cfg(unix)]
+        names.push("b:colon.png");
+        for name in names {
             std::fs::write(assets_dir.join(name), b"dummy").unwrap();
         }
 
@@ -878,6 +881,7 @@ path = \"assets/ignored.png\"
         assert_eq!(refs_of("typst.png"), 1);
         assert_eq!(refs_of("refstyle.png"), 1);
         assert_eq!(refs_of("md.png"), 1);
+        #[cfg(unix)]
         assert_eq!(refs_of("b:colon.png"), 0);
 
         // 2. Renaming typst.png is rejected before touching disk.
@@ -893,18 +897,22 @@ path = \"assets/ignored.png\"
         let stmt = ws.read_text("problems/p1/statement.md").unwrap();
         assert!(stmt.contains("[r]: assets/ref2.png"));
 
-        // 4. Externally placed `b:colon.png` can be renamed to a safe name.
-        rename_problem_asset(&ws, "problems/p1", "b:colon.png", "b_clean.png").unwrap();
-        assert!(assets_dir.join("b_clean.png").is_file());
-        assert!(!assets_dir.join("b:colon.png").exists());
+        // 4. Externally placed `b:colon.png` can be renamed to a safe name (Unix only; `:` is invalid on NTFS).
+        #[cfg(unix)]
+        {
+            rename_problem_asset(&ws, "problems/p1", "b:colon.png", "b_clean.png").unwrap();
+            assert!(assets_dir.join("b_clean.png").is_file());
+            assert!(!assets_dir.join("b:colon.png").exists());
 
-        // Put another colon-named unused file back to verify batch cleanup removes it too.
-        std::fs::write(assets_dir.join("b:colon2.png"), b"dummy").unwrap();
+            // Put another colon-named unused file back to verify batch cleanup removes it too.
+            std::fs::write(assets_dir.join("b:colon2.png"), b"dummy").unwrap();
+        }
 
         // 5. Batch cleanup removes all unused files (including `b:colon2.png` and `a..b.png`)
         //    and preserves `md.png`, `ref2.png`, and `typst.png`.
         let cleaned = clean_unused_problem_assets(&ws, "problems/p1").unwrap();
         assert!(cleaned.failed.is_empty());
+        #[cfg(unix)]
         assert_eq!(
             cleaned.removed,
             vec![
@@ -914,6 +922,11 @@ path = \"assets/ignored.png\"
                 "b_clean.png",
                 "c_unused.png"
             ]
+        );
+        #[cfg(not(unix))]
+        assert_eq!(
+            cleaned.removed,
+            vec!["a..b.png", "a_unused.png", "c_unused.png"]
         );
         assert!(assets_dir.join("md.png").is_file());
         assert!(assets_dir.join("ref2.png").is_file());

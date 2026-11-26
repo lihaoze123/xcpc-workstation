@@ -156,6 +156,22 @@ export function StudioView(props: { active: boolean }) {
   });
   cleanup(() => setToastBottomLift(false));
 
+  // Reclaim cached preview pixels & Typst ASTs shortly after leaving Studio so returning to
+  // Library/Contests drops RAM back down while quick back-and-forth within 4s stays instant.
+  let studioReclaimTimer: ReturnType<typeof setTimeout> | undefined;
+  effect(() => {
+    clearTimeout(studioReclaimTimer);
+    studioReclaimTimer = undefined;
+    if (props.active) return;
+    studioReclaimTimer = setTimeout(() => {
+      studioReclaimTimer = undefined;
+      if (typeof preview.reclaimMemory === "function") {
+        preview.reclaimMemory(true);
+      }
+    }, 4000);
+  });
+  cleanup(() => clearTimeout(studioReclaimTimer));
+
   // Soft visual transitions for focus mode & preview collapse/expand (GPU transform + opacity only;
   // never triggered by typing or scrolling, and never remounts MarkdownEditor).
   const outlineVisible = signal(true);

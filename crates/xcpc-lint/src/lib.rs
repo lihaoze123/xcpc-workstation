@@ -828,6 +828,7 @@ mod tests {
 
     #[test]
     fn missing_image_catches_symlink_escaping_problem_dir() {
+        #[cfg_attr(not(unix), allow(unused_variables))]
         let (dir, ws) = scratch_ws();
         write_problem(dir.path(), "other", "## Input\nx\n## Output\ny\n", None);
         fs::create_dir_all(dir.path().join("problems/other/assets")).unwrap();

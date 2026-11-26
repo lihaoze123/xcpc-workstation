@@ -149,9 +149,7 @@ impl WorkspaceWatcher {
         tracker: SelfWriteTracker,
     ) -> Result<(Self, mpsc::Receiver<WatchEvent>)> {
         let root_ref = root.as_ref();
-        let root = root_ref
-            .canonicalize()
-            .map_err(|e| io(root_ref.display(), e))?;
+        let root = crate::canonicalize_clean(root_ref).map_err(|e| io(root_ref.display(), e))?;
         let (raw_tx, raw_rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let (out_tx, out_rx) = mpsc::channel::<WatchEvent>();
 
@@ -281,7 +279,8 @@ fn collect_event(
                 return changed;
             }
             for path in ev.paths {
-                let Ok(rel_path) = path.strip_prefix(root) else {
+                let clean_path = crate::strip_verbatim_prefix(&path);
+                let Ok(rel_path) = clean_path.strip_prefix(root) else {
                     continue;
                 };
                 let rel = path_to_rel(rel_path);

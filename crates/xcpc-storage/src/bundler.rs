@@ -307,7 +307,7 @@ pub fn bundle_local_file(
     path: &Path,
     opts: &BundleOptions,
 ) -> Result<BundleResult> {
-    let canonical = path.canonicalize().map_err(|e| match e.kind() {
+    let canonical = crate::canonicalize_clean(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Error::NotFound(path.display().to_string()),
         _ => io(path.display(), e),
     })?;
@@ -362,7 +362,7 @@ fn bundle_internal(
             }
             SandboxMode::LocalUnrestricted => {
                 let p = PathBuf::from(trimmed);
-                let resolved = p.canonicalize().unwrap_or(p);
+                let resolved = crate::canonicalize_clean(&p).unwrap_or(p);
                 include_dirs.push(resolved);
             }
         }
@@ -388,7 +388,7 @@ fn bundle_internal(
 
     if let Some(p) = disk_path
         && p.is_file()
-        && let Ok(canon) = p.canonicalize()
+        && let Ok(canon) = crate::canonicalize_clean(p)
     {
         ctx.visiting.push(canon.clone());
         if let Some(slug) = snippet_slug_for_path(&ctx.snippets_dir, &canon)
@@ -551,7 +551,7 @@ impl<'a> BundlerCtx<'a> {
             if !cand.is_file() {
                 continue;
             }
-            let canon = cand.canonicalize().map_err(|e| io(cand.display(), e))?;
+            let canon = crate::canonicalize_clean(&cand).map_err(|e| io(cand.display(), e))?;
             if self.mode == SandboxMode::WorkspaceOnly && !canon.starts_with(self.ws.root()) {
                 return Err(Error::PathEscape(raw_inc.to_owned()));
             }

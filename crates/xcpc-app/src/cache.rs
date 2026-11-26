@@ -1,10 +1,10 @@
 //! Pixel-buffer LRU cache, lazy per-page fingerprinting, tile rasterization, and
 //! generation-based task cancellation shared with the desktop shell's `PageImage` view.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use xcpc_convert::{Document, publish};
 use xcpc_engine::Compiled;
@@ -36,8 +36,8 @@ pub const BASE_SCALE: f32 = 1.5;
 /// The side of a tile in pixels.
 pub const TILE: u32 = 512;
 
-/// Byte budget for the rasterized pixel cache (96 MiB).
-pub const PIXEL_CACHE_BUDGET: usize = 96 * 1024 * 1024;
+/// Byte budget for the rasterized pixel cache (48 MiB — ~10 full high-DPI A4 pages).
+pub const PIXEL_CACHE_BUDGET: usize = 48 * 1024 * 1024;
 
 /// Unique ID assigned to each `State` instance to isolate its cache keys.
 pub(crate) static NEXT_PREVIEW_ID: AtomicU64 = AtomicU64::new(1);
@@ -224,6 +224,22 @@ impl PixelCache {
         });
         self.total_bytes = self.total_bytes.saturating_sub(freed);
     }
+
+    /// Drops high-DPI zoomed tile layers for `owner` (keeping lightweight base whole-page
+    /// layers warm up to budget) so switching targets immediately reclaims multi-megabyte
+    /// zoom tiles from the previous document.
+    pub(crate) fn evict_tiles_for_owner(&mut self, owner: u64) {
+        let mut freed = 0usize;
+        self.entries.retain(|_, e| {
+            if e.owner == owner && e.kind == LayerKind::Tile {
+                freed = freed.saturating_add(e.bytes);
+                false
+            } else {
+                true
+            }
+        });
+        self.total_bytes = self.total_bytes.saturating_sub(freed);
+    }
 }
 
 /// The rasterized layers by key, for the desktop shell's `PageImage`, managed as a
@@ -269,7 +285,7 @@ pub(crate) struct CachedCompile {
     /// Shared with [`CachedSnapshot::matches_disk`] so `save()` can promote an unsaved
     /// compilation to disk-clean without locking `CompilerState`.
     pub(crate) matches_disk: Arc<AtomicBool>,
-    pub(crate) compiled: Compiled,
+    pub(crate) compiled: Arc<Compiled>,
     pub(crate) doc: Document,
     pub(crate) report: publish::Report,
     /// Lazily computed span-free fingerprints per page (computed only when a page enters `view`).
@@ -452,7 +468,7 @@ pub(crate) fn rasterize_cached(
         );
     }
 
-    let rendered = render(compiled, &jobs, cancel);
+    let rendered = render(&cached.compiled, jobs, cancel);
     let rendered_count = rendered.len() as u32;
     let cancelled = cancel.is_cancelled();
     let current_keys: HashSet<String> = if cancelled {
@@ -571,7 +587,7 @@ pub(crate) fn prewarm_cached(
         return 0;
     }
 
-    let rendered = render(compiled, &jobs, cancel);
+    let rendered = render(&cached.compiled, jobs, cancel);
     let count = rendered.len() as u32;
     if count > 0 {
         let mut protected = active.clone();
@@ -641,24 +657,151 @@ pub(crate) fn render_chunk(
     out
 }
 
-/// Rasterizes `jobs` in parallel into pixel buffers, by key, stopping early if `cancel` triggers.
-fn render(compiled: &Compiled, jobs: &[Job], cancel: CancelToken<'_>) -> Vec<RenderedLayer> {
-    if jobs.is_empty() || cancel.is_cancelled() {
-        return Vec::new();
+struct PoolTask {
+    compiled: Arc<Compiled>,
+    jobs: Vec<Job>,
+    cancelled: Arc<AtomicBool>,
+    batch: Arc<BatchState>,
+    slot: usize,
+}
+
+struct BatchState {
+    results: Mutex<Vec<Option<Vec<RenderedLayer>>>>,
+    remaining: Mutex<usize>,
+    done: Condvar,
+}
+
+/// Persistent worker pool for preview page/tile rasterization.
+///
+/// Reuses 1..=4 named worker threads across frames instead of spawning and joining
+/// fresh OS threads on every `rasterize_cached` call (which is costly on Windows).
+struct RasterPool {
+    workers: usize,
+    queue: Arc<(Mutex<VecDeque<PoolTask>>, Condvar)>,
+}
+
+impl RasterPool {
+    fn new() -> Self {
+        // Leave headroom for the UI/compositor thread so background tile rasterization
+        // never starves frame presentation during zoom/scroll.
+        let workers = std::thread::available_parallelism()
+            .map_or(2, |n| n.get().saturating_sub(1).clamp(1, 4));
+        let queue = Arc::new((Mutex::new(VecDeque::<PoolTask>::new()), Condvar::new()));
+        for idx in 0..workers {
+            let q = Arc::clone(&queue);
+            let _ = std::thread::Builder::new()
+                .name(format!("xcpc-raster-{idx}"))
+                .spawn(move || {
+                    loop {
+                        let task = {
+                            let (lock, cv) = &*q;
+                            let mut guard = lock.lock().unwrap();
+                            while guard.is_empty() {
+                                guard = cv.wait(guard).unwrap();
+                            }
+                            guard.pop_front().unwrap()
+                        };
+                        let mut out = Vec::with_capacity(task.jobs.len());
+                        for job in &task.jobs {
+                            if task.cancelled.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let Some(pixmap) = (match job.region {
+                                None => task.compiled.render(job.page, job.scale),
+                                Some(r) => task.compiled.render_region(job.page, job.scale, r),
+                            }) else {
+                                continue;
+                            };
+                            let (w, h) = (pixmap.width(), pixmap.height());
+                            let bytes = (w as usize).saturating_mul(h as usize).saturating_mul(4);
+                            out.push(RenderedLayer {
+                                key: job.key.clone(),
+                                src: RgbaPixels::new(w, h, pixmap.take()),
+                                bytes,
+                                kind: job.kind,
+                            });
+                        }
+                        {
+                            let mut slots = task.batch.results.lock().unwrap();
+                            slots[task.slot] = Some(out);
+                        }
+                        let mut rem = task.batch.remaining.lock().unwrap();
+                        *rem -= 1;
+                        if *rem == 0 {
+                            task.batch.done.notify_one();
+                        }
+                    }
+                });
+        }
+        Self { workers, queue }
     }
-    // Leave headroom for the UI/compositor thread so background tile rasterization
-    // never starves GTK4 frame presentation during zoom/scroll.
-    let threads = std::thread::available_parallelism()
-        .map_or(2, |n| n.get().saturating_sub(1).clamp(1, 4))
-        .min(jobs.len());
-    std::thread::scope(|s| {
-        let tasks: Vec<_> = jobs
-            .chunks(jobs.len().div_ceil(threads).max(1))
-            .map(|chunk| s.spawn(move || render_chunk(compiled, chunk, cancel, || {})))
-            .collect();
-        tasks
-            .into_iter()
-            .flat_map(|t| t.join().unwrap_or_default())
+
+    fn execute(
+        &self,
+        compiled: &Arc<Compiled>,
+        mut jobs: Vec<Job>,
+        cancel: CancelToken<'_>,
+    ) -> Vec<RenderedLayer> {
+        if jobs.is_empty() || cancel.is_cancelled() {
+            return Vec::new();
+        }
+        if jobs.len() == 1 || self.workers <= 1 {
+            return render_chunk(compiled, &jobs, cancel, || {});
+        }
+        let chunks_count = self.workers.min(jobs.len());
+        let chunk_size = jobs.len().div_ceil(chunks_count).max(1);
+        let mut chunks = Vec::with_capacity(chunks_count);
+        while !jobs.is_empty() {
+            let take = chunk_size.min(jobs.len());
+            chunks.push(jobs.drain(..take).collect::<Vec<_>>());
+        }
+        let n = chunks.len();
+        let cancelled = Arc::new(AtomicBool::new(cancel.is_cancelled()));
+        let batch = Arc::new(BatchState {
+            results: Mutex::new((0..n).map(|_| None).collect()),
+            remaining: Mutex::new(n),
+            done: Condvar::new(),
+        });
+        {
+            let (lock, cv) = &*self.queue;
+            let mut guard = lock.lock().unwrap();
+            for (slot, chunk) in chunks.into_iter().enumerate() {
+                guard.push_back(PoolTask {
+                    compiled: Arc::clone(compiled),
+                    jobs: chunk,
+                    cancelled: Arc::clone(&cancelled),
+                    batch: Arc::clone(&batch),
+                    slot,
+                });
+            }
+            cv.notify_all();
+        }
+        {
+            let mut rem = batch.remaining.lock().unwrap();
+            while *rem > 0 {
+                if cancel.is_cancelled() {
+                    cancelled.store(true, Ordering::Release);
+                }
+                let (next, _) = batch
+                    .done
+                    .wait_timeout(rem, Duration::from_millis(2))
+                    .unwrap();
+                rem = next;
+            }
+        }
+        let mut slots = batch.results.lock().unwrap();
+        slots
+            .iter_mut()
+            .filter_map(Option::take)
+            .flatten()
             .collect()
-    })
+    }
+}
+
+static RASTER_POOL: LazyLock<RasterPool> = LazyLock::new(RasterPool::new);
+
+/// Rasterizes `jobs` in parallel into pixel buffers using the persistent worker pool,
+/// stopping early if `cancel` triggers.
+fn render(compiled: &Arc<Compiled>, jobs: Vec<Job>, cancel: CancelToken<'_>) -> Vec<RenderedLayer> {
+    RASTER_POOL.execute(compiled, jobs, cancel)
 }

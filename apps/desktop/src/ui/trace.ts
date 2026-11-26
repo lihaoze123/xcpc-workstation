@@ -145,6 +145,18 @@ function stopFrameWatch(): void {
   lastFrameMs = 0;
 }
 
+/** Pauses the rAF frame watch (e.g. while live diagnostics is paused) without dropping trace state. */
+export function pauseFrameWatch(): void {
+  stopFrameWatch();
+}
+
+/** Resumes the rAF frame watch if trace recording is currently active. */
+export function resumeFrameWatch(): void {
+  if (recording && rafId === null) {
+    startFrameWatch();
+  }
+}
+
 function startFrameWatch(): void {
   stopFrameWatch();
   if (typeof requestAnimationFrame !== "function") return;

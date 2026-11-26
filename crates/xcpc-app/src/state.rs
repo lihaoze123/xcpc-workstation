@@ -44,7 +44,27 @@ use crate::types::{
     parse_namespaced_options_json, rating_tier_str, source_to_js,
 };
 
-/// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
+/// Compacts the process heap and, when `trim_ws` is true (genuine idle after leaving Studio),
+/// hints the OS memory manager to trim cold unmodified pages from the working set.
+#[cfg(windows)]
+fn trim_process_working_set(trim_ws: bool) {
+    use windows_sys::Win32::System::Memory::{GetProcessHeap, HeapCompact};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+    unsafe {
+        let heap = GetProcessHeap();
+        if !heap.is_null() {
+            let _ = HeapCompact(heap, 0);
+        }
+        if trim_ws {
+            let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn trim_process_working_set(_trim_ws: bool) {}
+
+/// Watch receiver shared with `Preview::next_change` outside `State`'s mutex.
 #[derive(Clone)]
 pub struct WatchSession {
     pub id: u64,
@@ -298,6 +318,8 @@ impl State {
             }),
         };
 
+        let primary_engine = Engine::new(&FontOptions::from_env(), None);
+        let math_engine = primary_engine.share_fonts(None);
         let state = Self {
             id: NEXT_PREVIEW_ID.fetch_add(1, Ordering::Relaxed),
             data_dir,
@@ -314,13 +336,13 @@ impl State {
             }),
             snapshot: Mutex::new(None),
             compiler: Mutex::new(CompilerState {
-                engine: Engine::new(&FontOptions::from_env(), None),
+                engine: primary_engine,
                 engine_root: None,
                 last_files_rev: 0,
                 cached: None,
                 active: HashSet::new(),
             }),
-            math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
+            math_engine: Mutex::new(math_engine),
             templates_cache: Mutex::new(None),
             trd_templates_cache: Mutex::new(None),
             local_template_cache: Mutex::new(HashMap::new()),
@@ -342,6 +364,31 @@ impl State {
 
     pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::Acquire)
+    }
+
+    /// Reclaims transient preview pixels, cached Typst AST/frames, and cold OS working-set
+    /// pages when leaving heavy views (Studio, Tools WebView2, or Diagnostics). Never blocks
+    /// an active compilation (`try_lock`).
+    pub fn reclaim_memory(&self, clear_pixels: bool) {
+        if let Ok(mut pixels) = PIXELS.lock() {
+            if clear_pixels {
+                pixels.remove_owner(self.id);
+            } else {
+                pixels.evict_tiles_for_owner(self.id);
+            }
+        }
+        if let Ok(mut compiler) = self.compiler.try_lock() {
+            compiler.cached = None;
+            if clear_pixels {
+                compiler.active.clear();
+            }
+            compiler.engine.reset_files();
+        }
+        if let Ok(mut math) = self.math_engine.try_lock() {
+            math.reset_files();
+        }
+        xcpc_engine::evict_typst_cache();
+        trim_process_working_set(clear_pixels);
     }
 
     pub fn ensure_plugin_watcher(
@@ -870,11 +917,26 @@ impl State {
                 anchors: Mutex::new(HashMap::new()),
             });
 
+            let switching_target = compiler.cached.as_ref().is_some_and(|prev| {
+                prev.request.target != request.target
+                    || prev.request.id != request.id
+                    || prev.request.book != request.book
+            });
+            if switching_target {
+                compiler.active.clear();
+                if let Ok(mut pixels) = PIXELS.lock() {
+                    pixels.evict_tiles_for_owner(self.id);
+                }
+                // Switching away from a heavy CeTZ/WASM/contest target immediately evicts
+                // its stale comemo entries while preserving the newly compiled target.
+                xcpc_engine::evict_typst_cache();
+            }
+
             compiler.cached = Some(CachedCompile {
                 request: request.clone(),
                 revision: rev,
                 matches_disk,
-                compiled,
+                compiled: Arc::new(compiled),
                 doc,
                 report,
                 fingerprints: vec![None; page_count],
@@ -1096,8 +1158,7 @@ impl State {
             }
             p
         };
-        let canonical = resolved
-            .canonicalize()
+        let canonical = xcpc_storage::canonicalize_clean(&resolved)
             .map_err(|e| ActionResult::err("io", format!("{path}: {e}")))?;
         if !canonical.starts_with(ws.root()) {
             return Err(ActionResult::err(
@@ -3099,7 +3160,7 @@ impl State {
         let Ok(compiler) = self.compiler.try_lock() else {
             return false;
         };
-        let compiled = compiler.cached.as_ref().map(|c| &c.compiled);
+        let compiled = compiler.cached.as_ref().map(|c| c.compiled.as_ref());
         snapshot::save_cold_start_snapshot(
             self.data_dir.as_deref(),
             ws.as_ref(),
@@ -3613,8 +3674,7 @@ impl State {
         let prob_dir = ws
             .resolve(&prob_dir_rel)
             .map_err(ActionResult::from_storage_err)?;
-        let canonical_prob = prob_dir
-            .canonicalize()
+        let canonical_prob = xcpc_storage::canonicalize_clean(&prob_dir)
             .map_err(|e| ActionResult::err("not_found", format!("{prob_dir_rel}: {e}")))?;
 
         let ws_rel = format!("{prob_dir_rel}/{cleaned}");
@@ -3627,8 +3687,7 @@ impl State {
                 format!("{cleaned} not found"),
             ));
         }
-        let canonical = resolved
-            .canonicalize()
+        let canonical = xcpc_storage::canonicalize_clean(&resolved)
             .map_err(|e| ActionResult::err("io", format!("{cleaned}: {e}")))?;
         if !canonical.starts_with(ws.root()) || !canonical.starts_with(&canonical_prob) {
             return Err(ActionResult::err(
@@ -4455,7 +4514,7 @@ impl State {
                 };
             }
         };
-        let canonical_prob = match prob_dir.canonicalize() {
+        let canonical_prob = match xcpc_storage::canonicalize_clean(&prob_dir) {
             Ok(p) => p,
             Err(e) => return err_res("not_found", format!("{prob_dir_rel}: {e}")),
         };
@@ -4475,7 +4534,7 @@ impl State {
         };
         // Reject symlink escape if target or its parent already exists.
         if target.exists() {
-            let Ok(canonical) = target.canonicalize() else {
+            let Ok(canonical) = xcpc_storage::canonicalize_clean(&target) else {
                 return err_res("io", format!("cannot resolve {cleaned}"));
             };
             if !canonical.starts_with(ws.root()) || !canonical.starts_with(&canonical_prob) {
@@ -4486,7 +4545,7 @@ impl State {
             }
         } else if let Some(parent) = target.parent()
             && parent.exists()
-            && let Ok(canon_parent) = parent.canonicalize()
+            && let Ok(canon_parent) = xcpc_storage::canonicalize_clean(parent)
             && (!canon_parent.starts_with(ws.root()) || !canon_parent.starts_with(&canonical_prob))
         {
             return err_res(

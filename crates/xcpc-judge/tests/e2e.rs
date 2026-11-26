@@ -1225,13 +1225,23 @@ int main() {
 "#,
     )
     .unwrap();
-    ws8.write(
-        "problems/a810/solutions/bad_alloc_mle.cpp",
-        br#"#include <new>
+    // On Unix/libstdc++, an uncaught `std::bad_alloc` prints `"std::bad_alloc"` to stderr (A-10);
+    // on Windows MSVC/UCRT, uncaught exceptions call failfast (`0xC0000409`) with empty stderr, so
+    // allocate past the default 256 MiB limit to exercise Windows Job Object / peak RSS MLE detection.
+    #[cfg(not(windows))]
+    let mle_src: &[u8] = br#"#include <new>
 int main() { throw std::bad_alloc(); }
-"#,
-    )
-    .unwrap();
+"#;
+    #[cfg(windows)]
+    let mle_src: &[u8] = br#"#include <vector>
+int main() {
+    volatile std::size_t n = 400ULL * 1024 * 1024;
+    std::vector<char> buf(n, 1);
+    return buf[0] == 2 ? 1 : 0;
+}
+"#;
+    ws8.write("problems/a810/solutions/bad_alloc_mle.cpp", mle_src)
+        .unwrap();
 
     let live_cells = Arc::new(std::sync::Mutex::new(Vec::new()));
     let lc_clone = Arc::clone(&live_cells);

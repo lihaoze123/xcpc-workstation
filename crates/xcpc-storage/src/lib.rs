@@ -577,6 +577,12 @@ pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Canonicalizes `path` and strips any Windows verbatim `\\?\` prefix so prefix checks against
+/// [`Workspace::root`] and invocations of external tools behave identically across platforms.
+pub fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
+    path.canonicalize().map(|p| strip_verbatim_prefix(&p))
+}
+
 /// An open workspace.
 #[derive(Debug, Clone)]
 pub struct Workspace {
@@ -1208,18 +1214,20 @@ impl Workspace {
                         match fs::symlink_metadata(&path) {
                             Ok(meta) => {
                                 if meta.file_type().is_symlink() {
-                                    match path.canonicalize() {
+                                    match canonicalize_clean(&path) {
                                         Ok(real) => {
                                             if !real.starts_with(&self.root) {
                                                 return Err(escape());
                                             }
                                         }
                                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                                            if let Ok(target) = fs::read_link(&path)
-                                                && target.is_absolute()
-                                                && !target.starts_with(&self.root)
-                                            {
-                                                return Err(escape());
+                                            if let Ok(target) = fs::read_link(&path) {
+                                                let clean_target = strip_verbatim_prefix(&target);
+                                                if clean_target.is_absolute()
+                                                    && !clean_target.starts_with(&self.root)
+                                                {
+                                                    return Err(escape());
+                                                }
                                             }
                                             checking = false;
                                         }

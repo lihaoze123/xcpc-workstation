@@ -2172,7 +2172,7 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
     }
 
     let manifest = PluginManifest::from_file(&dir.join("manifest.toml"))?;
-    let canonical_dir = std::fs::canonicalize(dir)?;
+    let canonical_dir = xcpc_storage::canonicalize_clean(dir)?;
 
     let mut rel_files: Vec<String> = Vec::new();
     let mut push_if_safe = |rel: &str| -> Result<()> {
@@ -2181,7 +2181,7 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
             return Ok(());
         }
         let candidate = canonical_dir.join(&normalized);
-        let canonical = std::fs::canonicalize(&candidate)?;
+        let canonical = xcpc_storage::canonicalize_clean(&candidate)?;
         if !canonical.starts_with(&canonical_dir) {
             return Err(PluginError::SymlinkEscape(format!(
                 "file '{normalized}' escapes plugin directory"

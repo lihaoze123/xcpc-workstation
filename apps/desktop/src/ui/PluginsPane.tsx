@@ -13,6 +13,7 @@ import { Section, SectionEmpty, SectionRow } from "./layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DialogHeader, Modal } from "./Modal";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
+import { PluginTrustModal } from "./PluginTrustModal";
 import {
   cachedPluginsOverview,
   globalLastSyncedAt,
@@ -958,99 +959,11 @@ export function PluginsPane() {
       </Section>
 
       {/* Third-party plugin trust confirmation modal (only for network domains / workspace read) */}
-      <Modal
-        open={pendingTrustPlugin() !== undefined}
-        onClose={cancelTrustPlugin}
-        width={460}
-        testID="plugin-trust-modal"
-      >
-        <If when={pendingTrustPlugin()}>
-          {(plugin) => (
-            <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
-              <DialogHeader
-                icon="triangleAlert"
-                tone="foreground"
-                title={zhEn(
-                  `信任并启用「${plugin().name}」？`,
-                  `Trust and enable "${plugin().name}"?`,
-                )}
-                description={zhEn(
-                  "第三方插件在启用前需要你的明确确认，请核对以下权限：",
-                  "Review the permissions requested by this third-party plugin before enabling it:",
-                )}
-              />
-
-              <View style={{ gap: SPACE[8] }}>
-                <If when={plugin().domains.length > 0}>
-                  <View
-                    testID="plugin-trust-domains"
-                    class="bg-muted/60 border border-border"
-                    style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}
-                  >
-                    <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
-                      {zhEn("请求访问的网络域名", "Requested network domains")}
-                    </Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
-                      <Each of={plugin().domains} key={(d) => d}>
-                        {(domain) => (
-                          <View
-                            class="bg-card border border-border"
-                            style={{ borderRadius: RADIUS.xs, paddingLeft: SPACE[8], paddingRight: SPACE[8], height: 22, justifyContent: "center" }} // token-exempt: compact status badge height
-                          >
-                            <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-foreground">
-                              {domain()}
-                            </Text>
-                          </View>
-                        )}
-                      </Each>
-                    </View>
-                  </View>
-                </If>
-
-                <If when={plugin().workspaceRead}>
-                  <View
-                    class="bg-muted/60 border border-border"
-                    style={{ borderRadius: RADIUS.md, padding: SPACE[12] }}
-                  >
-                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
-                      {zhEn("请求只读访问当前工作区文件。", "Requests read-only access to the current workspace.")}
-                    </Text>
-                  </View>
-                </If>
-
-                <If when={plugin().credentials.length > 0}>
-                  <View
-                    class="bg-muted/60 border border-border"
-                    style={{ borderRadius: RADIUS.md, padding: SPACE[12] }}
-                  >
-                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
-                      {zhEn(
-                        `请求读写凭据：${plugin().credentials.map((c) => c.label || c.name).join("、")}`,
-                        `Requests credential access: ${plugin().credentials.map((c) => c.label || c.name).join(", ")}`,
-                      )}
-                    </Text>
-                  </View>
-                </If>
-              </View>
-
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
-                <Btn
-                  testID="plugin-trust-cancel"
-                  label={zhEn("取消", "Cancel")}
-                  variant="outline"
-                  onPress={cancelTrustPlugin}
-                />
-                <Btn
-                  testID="plugin-trust-confirm"
-                  label={zhEn("信任并启用", "Trust & Enable")}
-                  variant="primary"
-                  onPress={confirmTrustPlugin}
-                />
-              </View>
-            </View>
-          )}
-        </If>
-      </Modal>
+      <PluginTrustModal
+        plugin={pendingTrustPlugin()}
+        onConfirm={confirmTrustPlugin}
+        onCancel={cancelTrustPlugin}
+      />
 
       {/* Uninstall confirmation modal for locally installed plugins */}
       <Modal

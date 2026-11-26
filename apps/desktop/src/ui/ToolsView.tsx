@@ -2,17 +2,19 @@
 // Dynamically lists enabled `tool` plugins and hosts either their pure-Web `ui.html`
 // interactive panel (via `<PluginWebView>`) or their headless `index.js` tool form + renderer.
 
-import { batch, computed, effect, Scroll, signal, Text, View } from "nsh";
-import type { RepoPluginEntryJs } from "xcpc-workstation/native";
+import { batch, cleanup, computed, effect, Scroll, signal, Text, View } from "nsh";
+import type { PluginSummaryJs, RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { Btn, FOCUS_RING, TruncText } from "./kit";
 import { EmptyState, GUTTER, PageLoading, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
+import { PluginTrustModal } from "./PluginTrustModal";
 import {
   activeToolId,
   activeToolMode,
   activeToolPayload,
   activeToolPluginId,
+  cachedPluginsOverview,
   goSettings,
   notifyPluginsChanged,
   pluginsRevision,
@@ -55,9 +57,41 @@ export function ToolsView(props: { active?: boolean }) {
     () => new Set(toolGroups().map((g) => g.plugin_id)),
   );
 
+  const pendingTrustMap = computed<Record<string, PluginSummaryJs>>(() => {
+    void pluginsRevision();
+    const overview = cachedPluginsOverview() ?? refreshPluginsOverview(false);
+    const map: Record<string, PluginSummaryJs> = {};
+    for (const p of overview.plugins ?? []) {
+      if (p.pendingTrust) map[p.id] = p;
+    }
+    return map;
+  });
+
+  const pendingTrustPlugin = signal<PluginSummaryJs | undefined>(undefined);
+
   const selectedPluginId = signal<string>("");
   // Keep user on the recommended grid while installing multiple official tools in a row (Awkward 5).
   const stayOnRecommended = signal<boolean>(false);
+  // Unmount idle WebView2 plugin surfaces 15s after leaving Tools to reclaim GPU/renderer RAM
+  // while keeping quick tab-switching back to Tools instant (plugin state persists in xcpc.storage).
+  const webviewAlive = signal<boolean>(props.active !== false);
+  let webviewUnloadTimer: ReturnType<typeof setTimeout> | undefined;
+  effect(() => {
+    clearTimeout(webviewUnloadTimer);
+    webviewUnloadTimer = undefined;
+    if (props.active !== false) {
+      webviewAlive.set(true);
+      return;
+    }
+    webviewUnloadTimer = setTimeout(() => {
+      webviewUnloadTimer = undefined;
+      webviewAlive.set(false);
+      if (typeof preview.reclaimMemory === "function") {
+        preview.reclaimMemory(false);
+      }
+    }, 15_000);
+  });
+  cleanup(() => clearTimeout(webviewUnloadTimer));
 
   // Sync external navigation requests (`openToolPlugin`) and keep selection valid when plugins change.
   effect(() => {
@@ -139,14 +173,16 @@ export function ToolsView(props: { active?: boolean }) {
       }
       loadingRecommended.set(true);
       try {
-        const installedIds = new Set((overview.plugins ?? []).map((p) => p.id));
+        const activeInstalledIds = new Set(
+          (overview.plugins ?? []).filter((p) => !p.pendingTrust).map((p) => p.id),
+        );
         const seen = new Set<string>();
         const found: RecommendedToolItem[] = [];
         for (const repo of repos) {
           const catalog = await preview.fetchPluginRepoCatalog(repo.url);
           if (!catalog?.ok) continue;
           for (const entry of catalog.plugins ?? []) {
-            if (seen.has(entry.id) || installedIds.has(entry.id)) continue;
+            if (seen.has(entry.id) || activeInstalledIds.has(entry.id)) continue;
             const caps = entry.capabilities ?? [];
             if (caps.length > 0 && !caps.includes("tool")) continue;
             seen.add(entry.id);
@@ -187,8 +223,15 @@ export function ToolsView(props: { active?: boolean }) {
     try {
       const res = await preview.installPluginFromRepo(item.repoUrl, id);
       if (res.ok) {
-        showToast({ tone: "success", text: t("tools.installedToast", { name: item.entry.name }) });
+        const nextOverview = res.overview ?? refreshPluginsOverview(true);
+        cachedPluginsOverview.set(nextOverview);
         notifyPluginsChanged([id]);
+        const installed = (nextOverview.plugins ?? []).find((p) => p.id === id);
+        if (installed?.pendingTrust) {
+          pendingTrustPlugin.set(installed);
+        } else {
+          showToast({ tone: "success", text: t("tools.installedToast", { name: item.entry.name }) });
+        }
       } else {
         showToast({ tone: "issues", text: formatPluginError(res.error, t("tools.uiLoadFailed")) });
       }
@@ -201,6 +244,31 @@ export function ToolsView(props: { active?: boolean }) {
       clearTimeout(stageTimer);
       setInstallStage(id, undefined);
     }
+  };
+
+  const confirmTrustPlugin = (plugin: PluginSummaryJs) => {
+    const res = preview.trustPlugin(plugin.id);
+    pendingTrustPlugin.set(undefined);
+    const next = refreshPluginsOverview(true);
+    cachedPluginsOverview.set(next);
+    notifyPluginsChanged([plugin.id]);
+    if (res.ok) {
+      showToast({
+        tone: "success",
+        text: zhEn(`已信任并启用「${plugin.name}」`, `Trusted and enabled "${plugin.name}"`),
+      });
+    } else if (res.error) {
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
+    }
+  };
+
+  const cancelTrustPlugin = () => {
+    if (!pendingTrustPlugin()) return;
+    pendingTrustPlugin.set(undefined);
+    showToast({
+      tone: "info",
+      text: zhEn("插件已安装，待确认信任后可用", "Plugin installed; awaiting trust confirmation"),
+    });
   };
 
   const requestInstall = (item: RecommendedToolItem) => {
@@ -346,6 +414,7 @@ export function ToolsView(props: { active?: boolean }) {
                         {(item) => {
                           const stage = () => installingStages()[item().entry.id];
                           const isInstalled = () => installedToolIds().has(item().entry.id);
+                          const pendingTrust = () => pendingTrustMap()[item().entry.id];
                           return (
                             <View
                               testID={`recommended-tool-${item().entry.id}`}
@@ -372,15 +441,31 @@ export function ToolsView(props: { active?: boolean }) {
                               <If
                                 when={isInstalled()}
                                 else={
-                                  <Btn
-                                    testID={`install-recommended-${item().entry.id}`}
-                                    variant="primary"
-                                    size="sm"
-                                    disabled={Boolean(stage())}
-                                    label={stage() ?? t("tools.install")}
-                                    onPress={() => requestInstall(item())}
-                                    style={{ width: 84, flexShrink: 0 }}
-                                  />
+                                  <If
+                                    when={pendingTrust()}
+                                    else={
+                                      <Btn
+                                        testID={`install-recommended-${item().entry.id}`}
+                                        variant="primary"
+                                        size="sm"
+                                        disabled={Boolean(stage())}
+                                        label={stage() ?? t("tools.install")}
+                                        onPress={() => requestInstall(item())}
+                                        style={{ width: 84, flexShrink: 0 }}
+                                      />
+                                    }
+                                  >
+                                    {(pt) => (
+                                      <Btn
+                                        testID={`trust-recommended-${item().entry.id}`}
+                                        variant="outline"
+                                        size="sm"
+                                        label={zhEn("待确认信任", "Trust")}
+                                        onPress={() => pendingTrustPlugin.set(pt())}
+                                        style={{ minWidth: 84, flexShrink: 0 }}
+                                      />
+                                    )}
+                                  </If>
                                 }
                               >
                                 <Btn
@@ -432,14 +517,16 @@ export function ToolsView(props: { active?: boolean }) {
                     </Each>
                   }
                 >
-                  <Each of={[group()]} key={(g) => g.plugin_id}>
-                    {(g) => (
-                      <PluginWebView
-                        pluginId={g().plugin_id}
-                        getInitialPayload={consumeInitialPayload}
-                      />
-                    )}
-                  </Each>
+                  <If when={webviewAlive()}>
+                    <Each of={[group()]} key={(g) => g.plugin_id}>
+                      {(g) => (
+                        <PluginWebView
+                          pluginId={g().plugin_id}
+                          getInitialPayload={consumeInitialPayload}
+                        />
+                      )}
+                    </Each>
+                  </If>
                 </If>
               </View>
             </View>
@@ -452,9 +539,23 @@ export function ToolsView(props: { active?: boolean }) {
         onClose={() => repoBrowserOpen.set(false)}
         filterCapability="tool"
         onInstalled={(id) => {
+          const next = refreshPluginsOverview(true);
+          cachedPluginsOverview.set(next);
+          const installed = (next.plugins ?? []).find((p) => p.id === id);
+          if (installed?.pendingTrust) {
+            repoBrowserOpen.set(false);
+            pendingTrustPlugin.set(installed);
+            return;
+          }
           stayOnRecommended.set(false);
           selectedPluginId.set(id);
         }}
+      />
+
+      <PluginTrustModal
+        plugin={pendingTrustPlugin()}
+        onConfirm={confirmTrustPlugin}
+        onCancel={cancelTrustPlugin}
       />
     </View>
   );

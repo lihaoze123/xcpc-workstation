@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -91,10 +91,19 @@ impl RunLimits {
         };
         // Wall-clock watchdog: at least 2x time_limit + 2000ms so sleeping/deadlocked
         // programs are killed cleanly without cutting off legitimate CPU-bound runs early.
-        let wall_limit_ms = time_limit_ms
-            .saturating_mul(2)
-            .saturating_add(2000)
-            .max(3000);
+        // On Windows, freshly compiled unsigned binaries can incur brief AV cold-start
+        // scanning latency, so add extra wall-clock headroom while keeping CPU limits strict.
+        let wall_limit_ms = if cfg!(windows) {
+            time_limit_ms
+                .saturating_mul(2)
+                .saturating_add(4000)
+                .max(6000)
+        } else {
+            time_limit_ms
+                .saturating_mul(2)
+                .saturating_add(2000)
+                .max(3000)
+        };
         Ok(Self {
             time_limit_ms,
             memory_limit_kib,
@@ -229,6 +238,62 @@ pub struct RunOutcome {
     pub stderr: String,
 }
 
+/// Suppresses spawning visible console / Windows Terminal windows when invoking
+/// CLI tools (`g++`, validators, generators, solutions, checkers) from a Windows GUI host.
+pub(crate) fn configure_no_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
+/// Normalizes a filesystem path before passing it as a CLI argument on Windows
+/// (strips `\\?\` verbatim prefixes and converts forward slashes to backslashes).
+fn normalize_cli_path(path: &Path) -> PathBuf {
+    let stripped = xcpc_storage::strip_verbatim_prefix(path);
+    #[cfg(windows)]
+    {
+        if let Some(s) = stripped.to_str()
+            && s.contains('/')
+        {
+            return PathBuf::from(s.replace('/', "\\"));
+        }
+    }
+    stripped
+}
+
+/// Normalizes Windows CRT text-mode CRLF (`\r\n`) output files to canonical Unix LF (`\n`).
+///
+/// On Windows, C++ solutions/generators that write to redirected `stdout` without calling
+/// `_setmode(_O_BINARY)` emit `\r\n`, which mismatches canonical LF test data and `-DFOR_LINUX`
+/// `testlib.h` validators/checkers. No-op if the file does not contain `\r`.
+#[cfg(windows)]
+fn normalize_windows_crlf_file(path: &Path) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    if !bytes.contains(&b'\r') {
+        return;
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            i += 1;
+            continue;
+        }
+        normalized.push(bytes[i]);
+        i += 1;
+    }
+    let _ = std::fs::write(path, normalized);
+}
+
 /// Runs an executable with optional stdin/stdout files and resource limits.
 pub fn run_process(
     binary: &Path,
@@ -359,9 +424,15 @@ pub fn run_checker_with_score_and_limits(
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<CheckerOutcome> {
     let args = vec![
-        input_path.to_string_lossy().into_owned(),
-        output_path.to_string_lossy().into_owned(),
-        answer_path.to_string_lossy().into_owned(),
+        normalize_cli_path(input_path)
+            .to_string_lossy()
+            .into_owned(),
+        normalize_cli_path(output_path)
+            .to_string_lossy()
+            .into_owned(),
+        normalize_cli_path(answer_path)
+            .to_string_lossy()
+            .into_owned(),
     ];
     let outcome = run_process(checker_bin, &args, None, None, limits, cancel)?;
     Ok(parse_testlib_verdict(outcome.exit_code, &outcome.stderr))
@@ -726,6 +797,9 @@ fn run_process_unix(
     let mut child = cmd
         .spawn()
         .map_err(|e| io_err(format!("spawn {}", binary.display()), e))?;
+    // Drop `cmd` immediately so parent stdin/stdout `File` handles close on Windows
+    // before the child finishes and before post-run CRLF normalization or checkers read it.
+    drop(cmd);
     let pid = child.id() as libc::pid_t;
 
     // Drain stderr on a helper thread so the child never blocks on a full stderr pipe.
@@ -879,6 +953,44 @@ fn run_process_unix(
 }
 
 #[cfg(windows)]
+fn query_windows_peak_memory_kib(
+    process_handle: windows_sys::Win32::Foundation::HANDLE,
+    job_handle: windows_sys::Win32::Foundation::HANDLE,
+) -> u64 {
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        QueryInformationJobObject,
+    };
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+
+    let mut peak_bytes: u64 = 0;
+    unsafe {
+        let mut pmc: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        pmc.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        if K32GetProcessMemoryInfo(process_handle, &raw mut pmc, pmc.cb) != 0 {
+            peak_bytes = peak_bytes.max(pmc.PeakWorkingSetSize as u64);
+        }
+        if !job_handle.is_null() {
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            let mut returned: u32 = 0;
+            if QueryInformationJobObject(
+                job_handle,
+                JobObjectExtendedLimitInformation,
+                (&raw mut info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                &raw mut returned,
+            ) != 0
+            {
+                peak_bytes = peak_bytes.max(info.PeakProcessMemoryUsed as u64);
+            }
+        }
+    }
+    peak_bytes / 1024
+}
+
+#[cfg(windows)]
 fn run_process_windows(
     binary: &Path,
     args: &[String],
@@ -897,8 +1009,9 @@ fn run_process_windows(
     };
     use windows_sys::Win32::System::Threading::GetProcessTimes;
 
-    let binary_arg = xcpc_storage::strip_verbatim_prefix(binary);
+    let binary_arg = normalize_cli_path(binary);
     let mut cmd = Command::new(&binary_arg);
+    configure_no_window(&mut cmd);
     for arg in args {
         cmd.arg(xcpc_storage::strip_verbatim_prefix(Path::new(arg)));
     }
@@ -935,6 +1048,9 @@ fn run_process_windows(
     let mut child = cmd
         .spawn()
         .map_err(|e| io_err(format!("spawn {}", binary.display()), e))?;
+    // Drop `cmd` immediately so parent stdin/stdout `File` handles close on Windows
+    // before the child finishes and before post-run CRLF normalization or checkers read it.
+    drop(cmd);
 
     // Attach to a Job Object to enforce process-tree cleanup and memory limit.
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -942,8 +1058,12 @@ fn run_process_windows(
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if limits.memory_limit_kib > 0 {
+            let mem_bytes = (limits.memory_limit_kib as usize).saturating_mul(1024);
+            let hard_cap = mem_bytes
+                .saturating_mul(2)
+                .max(mem_bytes.saturating_add(256 * 1024 * 1024));
             info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
-            info.ProcessMemoryLimit = (limits.memory_limit_kib as usize).saturating_mul(1024);
+            info.ProcessMemoryLimit = hard_cap;
         }
         unsafe {
             SetInformationJobObject(
@@ -1013,6 +1133,8 @@ fn run_process_windows(
         }
     };
 
+    let peak_memory_kib = query_windows_peak_memory_kib(child.as_raw_handle() as _, job);
+
     if !job.is_null() {
         unsafe {
             CloseHandle(job);
@@ -1027,9 +1149,20 @@ fn run_process_windows(
         return Err(JudgeError::Cancelled);
     }
 
+    if let Some(out_path) = stdout_path {
+        normalize_windows_crlf_file(out_path);
+    }
+
     let exit_code = status.code();
+    let is_bad_alloc = stderr.contains("std::bad_alloc") || stderr.contains("bad_alloc");
+    // Windows NTSTATUS STATUS_NO_MEMORY (0xC0000017) when Job Object denies allocation.
+    let is_win_oom = exit_code == Some(0xC000_0017_u32 as i32);
     let verdict = if killed_by_wall || cpu_time_ms > limits.time_limit_ms {
         Verdict::TLE
+    } else if (limits.memory_limit_kib > 0 && peak_memory_kib > limits.memory_limit_kib)
+        || (exit_code != Some(0) && (is_bad_alloc || is_win_oom))
+    {
+        Verdict::MLE
     } else if exit_code != Some(0) {
         Verdict::RE
     } else {
@@ -1042,7 +1175,7 @@ fn run_process_windows(
         signal: None,
         cpu_time_ms,
         wall_time_ms,
-        peak_memory_kib: 0,
+        peak_memory_kib,
         stderr,
     })
 }
@@ -1687,13 +1820,19 @@ fn run_interactive_windows(
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<InteractiveOutcome> {
     use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
     use windows_sys::Win32::System::Threading::GetProcessTimes;
 
-    let interactor_arg = xcpc_storage::strip_verbatim_prefix(interactor_bin);
-    let input_arg = xcpc_storage::strip_verbatim_prefix(input_path);
-    let tout_arg = xcpc_storage::strip_verbatim_prefix(tout_path);
+    let interactor_arg = normalize_cli_path(interactor_bin);
+    let input_arg = normalize_cli_path(input_path);
+    let tout_arg = normalize_cli_path(tout_path);
     let mut inter_cmd = Command::new(&interactor_arg);
+    configure_no_window(&mut inter_cmd);
     inter_cmd
         .arg(&input_arg)
         .arg(&tout_arg)
@@ -1701,8 +1840,9 @@ fn run_interactive_windows(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let solution_arg = xcpc_storage::strip_verbatim_prefix(solution_bin);
+    let solution_arg = normalize_cli_path(solution_bin);
     let mut sol_cmd = Command::new(&solution_arg);
+    configure_no_window(&mut sol_cmd);
     sol_cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1723,6 +1863,29 @@ fn run_interactive_windows(
     let mut sol_child = sol_cmd
         .spawn()
         .map_err(|e| io_err(format!("spawn solution {}", solution_bin.display()), e))?;
+
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if !job.is_null() {
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if limits.memory_limit_kib > 0 {
+            let mem_bytes = (limits.memory_limit_kib as usize).saturating_mul(1024);
+            let hard_cap = mem_bytes
+                .saturating_mul(2)
+                .max(mem_bytes.saturating_add(256 * 1024 * 1024));
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.ProcessMemoryLimit = hard_cap;
+        }
+        unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            AssignProcessToJobObject(job, sol_child.as_raw_handle() as _);
+        }
+    }
 
     let inter_stdin = inter_child.stdin.take().unwrap();
     let inter_stdout = inter_child.stdout.take().unwrap();
@@ -1845,6 +2008,13 @@ fn run_interactive_windows(
         }
     };
 
+    let peak_memory_kib = query_windows_peak_memory_kib(sol_child.as_raw_handle() as _, job);
+    if !job.is_null() {
+        unsafe {
+            CloseHandle(job);
+        }
+    }
+
     let _ = i2s_handle.join();
     let _ = s2i_handle.join();
     let sol_stderr = sol_stderr_handle.join().unwrap_or_default();
@@ -1854,9 +2024,17 @@ fn run_interactive_windows(
         return Err(JudgeError::Cancelled);
     }
 
+    normalize_windows_crlf_file(tout_path);
+
     let inter_outcome = parse_testlib_verdict(inter_status.code(), &inter_stderr);
+    let is_bad_alloc = sol_stderr.contains("std::bad_alloc") || sol_stderr.contains("bad_alloc");
+    let is_win_oom = sol_status.code() == Some(0xC000_0017_u32 as i32);
     let (verdict, score_ratio, checker_message) = if cpu_time_ms > limits.time_limit_ms {
         (Verdict::TLE, 0.0, "超过时限".to_owned())
+    } else if (limits.memory_limit_kib > 0 && peak_memory_kib > limits.memory_limit_kib)
+        || (sol_status.code() != Some(0) && (is_bad_alloc || is_win_oom))
+    {
+        (Verdict::MLE, 0.0, "超出空间限制".to_owned())
     } else if killed_by_timeout {
         (
             Verdict::ILE,
@@ -1884,7 +2062,7 @@ fn run_interactive_windows(
         score_ratio,
         cpu_time_ms,
         wall_time_ms,
-        peak_memory_kib: 0,
+        peak_memory_kib,
         checker_message,
         stderr: sol_stderr,
         transcript,

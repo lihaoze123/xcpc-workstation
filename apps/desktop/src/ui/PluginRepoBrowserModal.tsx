@@ -7,7 +7,9 @@ import type { PluginRepoConfigJs, PluginSummaryJs, RepoPluginEntryJs } from "xcp
 import { Icon } from "./Icon";
 import { Btn, TruncText } from "./kit";
 import { DialogHeader, Modal } from "./Modal";
+import { PluginTrustModal } from "./PluginTrustModal";
 import {
+  cachedPluginsOverview,
   notifyPluginsChanged,
   preview,
   refreshPluginsOverview,
@@ -77,6 +79,7 @@ export function PluginRepoBrowserModal(props: {
   const newRepoUrl = signal("");
   const showRepoMgr = signal(false);
   const pendingRemoveRepo = signal<PluginRepoConfigJs | undefined>(undefined);
+  const pendingTrustPlugin = signal<PluginSummaryJs | undefined>(undefined);
 
   const hasOfficialRepo = computed(() => repos().some(isOfficialRepo));
   const resolvedRepoName = (repo: PluginRepoConfigJs): string | undefined => {
@@ -224,6 +227,7 @@ export function PluginRepoBrowserModal(props: {
       void loadAll();
     } else {
       pendingRemoveRepo.set(undefined);
+      pendingTrustPlugin.set(undefined);
     }
   });
 
@@ -239,15 +243,21 @@ export function PluginRepoBrowserModal(props: {
     try {
       const res = await preview.installPluginFromRepo(item.repoUrl, id);
       if (res.ok) {
-        showToast({
-          tone: "success",
-          text: zhEn(`已安装「${item.entry.name}」`, `Installed "${item.entry.name}"`),
-        });
-        notifyPluginsChanged([id]);
-        const overview = refreshPluginsOverview(false);
+        const overview = res.overview ?? refreshPluginsOverview(true);
+        cachedPluginsOverview.set(overview);
         const map: Record<string, PluginSummaryJs> = {};
         for (const p of overview.plugins ?? []) map[p.id] = p;
         installedMap.set(map);
+        notifyPluginsChanged([id]);
+        const installed = map[id];
+        if (installed?.pendingTrust) {
+          pendingTrustPlugin.set(installed);
+        } else {
+          showToast({
+            tone: "success",
+            text: zhEn(`已安装「${item.entry.name}」`, `Installed "${item.entry.name}"`),
+          });
+        }
         // Do not switch the background tool while the modal is still open (avoids jarring background jumps).
       } else {
         showToast({
@@ -264,6 +274,34 @@ export function PluginRepoBrowserModal(props: {
       clearTimeout(stageTimer);
       setBusyStage(id, undefined);
     }
+  };
+
+  const confirmTrustPlugin = (plugin: PluginSummaryJs) => {
+    const res = preview.trustPlugin(plugin.id);
+    pendingTrustPlugin.set(undefined);
+    const overview = refreshPluginsOverview(true);
+    cachedPluginsOverview.set(overview);
+    const map: Record<string, PluginSummaryJs> = {};
+    for (const p of overview.plugins ?? []) map[p.id] = p;
+    installedMap.set(map);
+    notifyPluginsChanged([plugin.id]);
+    if (res.ok) {
+      showToast({
+        tone: "success",
+        text: zhEn(`已信任并启用「${plugin.name}」`, `Trusted and enabled "${plugin.name}"`),
+      });
+    } else if (res.error) {
+      showToast({ tone: "issues", text: formatPluginError(res.error) });
+    }
+  };
+
+  const cancelTrustPlugin = () => {
+    if (!pendingTrustPlugin()) return;
+    pendingTrustPlugin.set(undefined);
+    showToast({
+      tone: "info",
+      text: zhEn("插件已安装，待确认信任后可用", "Plugin installed; awaiting trust confirmation"),
+    });
   };
 
   const handleAddRepo = async () => {
@@ -305,7 +343,7 @@ export function PluginRepoBrowserModal(props: {
   return (
     <>
       <Modal
-        open={props.open}
+        open={props.open && !pendingTrustPlugin() && !pendingRemoveRepo()}
         onClose={props.onClose}
         width={560}
         testID="plugin-repo-browser-modal"
@@ -608,11 +646,28 @@ export function PluginRepoBrowserModal(props: {
                             />
                           }
                         >
-                          <View style={{ width: 84, alignItems: "center", flexShrink: 0 }}>
-                            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
-                              {zhEn("已安装", "Installed")}
-                            </Text>
-                          </View>
+                          <If
+                            when={Boolean(installed()?.pendingTrust)}
+                            else={
+                              <View style={{ width: 84, alignItems: "center", flexShrink: 0 }}>
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                                  {zhEn("已安装", "Installed")}
+                                </Text>
+                              </View>
+                            }
+                          >
+                            <Btn
+                              testID={`repo-trust-${item().entry.id}`}
+                              variant="outline"
+                              size="sm"
+                              label={zhEn("待确认信任", "Trust")}
+                              onPress={() => {
+                                const inst = installed();
+                                if (inst) pendingTrustPlugin.set(inst);
+                              }}
+                              style={{ minWidth: 84, flexShrink: 0 }}
+                            />
+                          </If>
                         </If>
                       }
                     >
@@ -695,6 +750,11 @@ export function PluginRepoBrowserModal(props: {
           )}
         </If>
       </Modal>
+      <PluginTrustModal
+        plugin={pendingTrustPlugin()}
+        onConfirm={confirmTrustPlugin}
+        onCancel={cancelTrustPlugin}
+      />
     </>
   );
 }
