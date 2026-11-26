@@ -12,7 +12,6 @@ import { DetailHeader } from "../layout";
 import { errorCopy } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
-import { MONO } from "../theme";
 import {
   batchTask,
   cancelBatchTask,
@@ -370,7 +369,7 @@ export function BatchInspector(props: {
                             <Text
                               style={{
                                 fontSize: FONT_SIZE.micro,
-                                fontFamily: MONO,
+                                fontVariant: ["tabular-nums"],
                                 maxWidth: 96,
                                 flexShrink: 2,
                                 minWidth: 0,

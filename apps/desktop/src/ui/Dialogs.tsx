@@ -53,7 +53,7 @@ function Field(props: {
   value: string;
   placeholder?: string;
   autoFocus?: boolean;
-  mono?: boolean;
+  tabular?: boolean;
   inputRef?: (ref: InputRef) => void;
   onChange: (v: string) => void;
   onSubmit: () => void;
@@ -71,7 +71,7 @@ function Field(props: {
       <Input
         ref={props.inputRef}
         class={`${INPUT_BASE} ${props.error ? "border-destructive" : "border-border"}`}
-        style={props.mono ? { fontFamily: MONO } : undefined}
+        style={props.tabular ? { fontVariant: ["tabular-nums"] } : undefined}
         value={props.value}
         placeholder={props.placeholder}
         autoFocus={props.autoFocus}
@@ -294,7 +294,7 @@ function NewProblem(props: { addTo?: string }) {
         error={message(error())}
         value={id()}
         placeholder="two-sum"
-        mono
+        tabular
         inputRef={(r) => {
           idInput = r;
         }}
@@ -372,7 +372,7 @@ function DuplicateProblem(props: { open: boolean; problemId: string }) {
         error={message(error())}
         value={id()}
         placeholder="problem-copy"
-        mono
+        tabular
         inputRef={(r) => {
           idInput = r;
         }}
@@ -449,7 +449,7 @@ function NewContest(props: { withProblem?: string }) {
         error={message(error())}
         value={id()}
         placeholder="spring-2026"
-        mono
+        tabular
         inputRef={(r) => {
           idInput = r;
         }}
@@ -1059,7 +1059,7 @@ function BatchRating(props: { open: boolean; problemIds: readonly string[] }) {
           error={errText()}
           value={raw()}
           placeholder={t("dialogs.batchRating.placeholder")}
-          mono
+          tabular
           autoFocus
           onChange={(v) =>
             batch(() => {

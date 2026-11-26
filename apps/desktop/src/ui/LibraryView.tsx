@@ -1583,7 +1583,7 @@ function ProblemInspector(props: {
                       <Text
                         style={{
                           fontSize: FONT_SIZE.caption,
-                          fontFamily: MONO,
+                          fontVariant: ["tabular-nums"],
                           flexShrink: 1,
                           minWidth: 0,
                           numberOfLines: 1,

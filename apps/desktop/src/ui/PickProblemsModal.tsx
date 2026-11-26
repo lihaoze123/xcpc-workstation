@@ -25,7 +25,7 @@ import { EmptyState, Spacer } from "./layout";
 import { TIER_RANGES, togglePickProblem, type TierName } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { DialogHeader } from "./Modal";
-import { EASE_STANDARD, MONO, ms } from "./theme";
+import { EASE_STANDARD, ms } from "./theme";
 import { dialog, errorOf, info, preview, refresh, revision, type UiError } from "./store";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
@@ -467,9 +467,9 @@ export function PickProblemsBody(props: { contestId: string }) {
                           <Icon name="check" size="sm" tone={checked() ? "primary-foreground" : "muted-foreground"} />
                         </If>
                       </View>
-                      {/* Monospace ID */}
+                      {/* Problem ID */}
                       <Text
-                        style={{ width: 108, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 0 }}
+                        style={{ width: 108, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 0 }}
                         class="text-muted-foreground"
                       >
                         {p().id}

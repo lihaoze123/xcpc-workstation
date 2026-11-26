@@ -162,7 +162,7 @@ function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }
                 </Text>
                 <Input
                   class={INPUT_CLASS}
-                  style={{ flex: 1, fontFamily: MONO }}
+                  style={{ flex: 1 }}
                   masked={cred().secret}
                   value={val()}
                   placeholder={
@@ -400,7 +400,7 @@ function OjAccountRow(props: {
             <Input
               testID={`oj-handle-${p().id}`}
               class="bg-transparent placeholder:text-muted-foreground"
-              style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.caption, fontFamily: MONO }}
+              style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.caption }}
               value={handleDraft()}
               placeholder={t("settings.plugins.handlePlaceholder")}
               autoCapitalize="none"

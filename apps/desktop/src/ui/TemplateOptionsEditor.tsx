@@ -624,7 +624,6 @@ function TextOptionField(props: {
           }
           style={{
             fontVariant: ["tabular-nums"],
-            ...(isColor() || props.field.type === "length" ? { fontFamily: MONO } : undefined),
           }}
         />
       </View>
@@ -643,7 +642,7 @@ function TextOptionField(props: {
                   style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", ...colorTransition(100) }}
                 >
                   <Text
-                    style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                    style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }}
                     class={active() ? "text-foreground" : "text-secondary-foreground"}
                   >
                     {preset()}
@@ -950,7 +949,6 @@ export function ForkTemplateModal(props: {
                 ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] focus:border-destructive transition-colors"
                 : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
             }
-            style={{ fontFamily: MONO }}
           />
           <Text
             style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
@@ -1091,7 +1089,7 @@ export function InstallPresetModal(props: {
                     <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                       {resolveLocalized(preset().name) || preset().id}
                     </Text>
-                    <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                       {preset().id}
                     </Text>
                   </View>
@@ -1125,7 +1123,6 @@ export function InstallPresetModal(props: {
                 ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] focus:border-destructive transition-colors"
                 : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
             }
-            style={{ fontFamily: MONO }}
           />
           <Text
             style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}

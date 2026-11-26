@@ -26,7 +26,6 @@ import {
   snippetsRevision,
 } from "../store";
 import type { TemplateOptionMap } from "../templates";
-import { MONO } from "../theme";
 import {
   collectMissingDeps,
   encodeStringPatch,
@@ -494,7 +493,7 @@ export function TrdStudio(props: { active: boolean }) {
                   {t("snippets.trd.missingDepsBanner", { count: missingDeps().length })}
                 </Text>
               </View>
-              <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {missingDeps().join("  ")}
               </Text>
               <Btn
@@ -982,7 +981,7 @@ export function TrdStudio(props: { active: boolean }) {
                 <Each of={reopenDiff()?.diffs ?? []} key={(d) => d.slug}>
                   {(d) => (
                     <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                      <Text style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {d().slug}
                       </Text>
                       <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">

@@ -134,7 +134,7 @@ export function NewSnippetModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body, fontFamily: MONO }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
             />
             <Text
               style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
@@ -278,7 +278,7 @@ export function NewTrdModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body, fontFamily: MONO }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
             />
             <Text
               style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}

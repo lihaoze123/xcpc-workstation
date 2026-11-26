@@ -125,7 +125,7 @@ function FieldEditor(props: {
                   <Text
                     style={{
                       fontSize: FONT_SIZE.caption,
-                      fontFamily: MONO,
+                      fontVariant: ["tabular-nums"],
                     }}
                     class={active() ? "text-foreground" : "text-secondary-foreground"}
                   >
@@ -162,7 +162,8 @@ function FieldEditor(props: {
           paddingBottom: multiline ? SPACE[8] : SPACE[4],
           minHeight: multiline ? 100 : 32,
           fontSize: FONT_SIZE.caption,
-          fontFamily: kind === "number" || multiline ? MONO : undefined,
+          fontFamily: multiline ? MONO : undefined,
+          fontVariant: kind === "number" ? ["tabular-nums"] : undefined,
         }}
       />
     </View>

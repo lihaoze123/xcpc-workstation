@@ -13,7 +13,6 @@ import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
 import { info, openStudio } from "../store";
 import { PreviewCanvas } from "../studio/PreviewCanvas";
-import { MONO } from "../theme";
 import { isEn, zhEn } from "./locale";
 import {
   DEFAULT_EDITORIAL_FILTER,
@@ -398,7 +397,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                             <Text
                               style={{
                                 fontSize: FONT_SIZE.caption,
-                                fontFamily: MONO,
+                                fontVariant: ["tabular-nums"],
                                 flex: 1,
                                 minWidth: 0,
                                 numberOfLines: 1,
@@ -498,7 +497,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                                     <Text
                                       style={{
                                         fontSize: FONT_SIZE.caption,
-                                        fontFamily: MONO,
+                                        fontVariant: ["tabular-nums"],
                                         flexShrink: 1,
                                         minWidth: 0,
                                         numberOfLines: 1,

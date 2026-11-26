@@ -7,7 +7,7 @@ import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Btn } from "../kit";
 import { openToolPlugin } from "../store";
-import { cardShadow, MONO, token } from "../theme";
+import { cardShadow, MONO, SANS, token } from "../theme";
 import { showToast } from "../Toast";
 import type { GraphEdge, GraphNode, ToolOutputBlock } from "./types";
 
@@ -345,7 +345,6 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                 {(cell, cIdx) => {
                   const i = cIdx();
                   const val = cell();
-                  const useMono = isMonoTableCell(val);
                   if (wide) {
                     return (
                       <Text
@@ -356,7 +355,6 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                                 flexShrink: 0,
                                 fontSize: FONT_SIZE.caption,
                                 lineHeight: LINE_HEIGHT.caption,
-                                fontFamily: useMono ? MONO : undefined,
                                 fontVariant: ["tabular-nums"],
                                 textAlign: "left",
                                 numberOfLines: 1,
@@ -367,7 +365,6 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                                 minWidth: 32,
                                 fontSize: FONT_SIZE.caption,
                                 lineHeight: LINE_HEIGHT.caption,
-                                fontFamily: useMono ? MONO : undefined,
                                 fontVariant: ["tabular-nums"],
                                 textAlign: "center",
                                 numberOfLines: 1,
@@ -389,7 +386,6 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                         paddingRight: spec.extraRightPad || undefined,
                         fontSize: FONT_SIZE.caption,
                         lineHeight: LINE_HEIGHT.caption,
-                        fontFamily: useMono ? MONO : undefined,
                         fontVariant: ["tabular-nums"],
                         textAlign: spec.align,
                       }}
@@ -612,7 +608,7 @@ function GraphBlockView(props: {
 
             cx.strokeStyle = strokeCol;
             cx.lineWidth = 1.8;
-            cx.font = `11px ${MONO}`;
+            cx.font = `11px ${SANS}`;
             cx.textAlign = "center";
             cx.textBaseline = "middle";
 
@@ -684,7 +680,7 @@ function GraphBlockView(props: {
               return lum < 140 ? "#FAFAFA" : "#09090B";
             };
 
-            cx.font = `600 12px ${MONO}`;
+            cx.font = `600 12px ${SANS}`;
             for (const nd of placed) {
               cx.beginPath();
               cx.arc(nd.x, nd.y, nodeR, 0, Math.PI * 2);

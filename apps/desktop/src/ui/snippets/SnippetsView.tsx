@@ -30,7 +30,7 @@ import {
   snippetsRevision,
   snippetsSubTab,
 } from "../store";
-import { cardShadow, EASE_STANDARD, MONO, ms } from "../theme";
+import { cardShadow, EASE_STANDARD, ms } from "../theme";
 import {
   filterSnippets,
   parseJsonPayload,
@@ -379,7 +379,7 @@ export function SnippetsView(props: { active: boolean }) {
                               {s().title}
                             </Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                              <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                 {s().slug}
                               </Text>
                               <If when={s().has_code}>
@@ -876,12 +876,12 @@ function SnippetDetailPane(props: {
                         tone={isUnavail() ? "chart-4" : "destructive"}
                       />
                       <Text
-                        style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
+                        style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }}
                         class={isUnavail() ? "text-foreground" : "text-destructive"}
                       >
                         {isUnavail() ? t("snippets.verify.unavailable") : c().verdict}
                       </Text>
-                      <Text style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, flex: 1 }} class="text-secondary-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body, flex: 1 }} class="text-secondary-foreground">
                         {c().target}
                       </Text>
                       <If when={isUnavail()}>

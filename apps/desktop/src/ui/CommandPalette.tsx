@@ -13,7 +13,7 @@ import { TITLE_BAR } from "./TitleBar";
 import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
 import { openDiagnosticsWindow } from "./o11y/windowManager";
 import { shortcutsOpen } from "./ShortcutsModal";
-import { modalBackdrop, modalShadow, MONO, ms } from "./theme";
+import { modalBackdrop, modalShadow, ms } from "./theme";
 import { showToast } from "./Toast";
 import { parseJsonPayload } from "./snippets/snippetLogic";
 import type { SnippetListPayload, TrdSummaryItem } from "./snippets/types";
@@ -569,7 +569,7 @@ function PaletteBody() {
             {entry.label}
           </Text>
           {meta(entry.id) && (
-            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.strong, fontFamily: MONO }} class="text-muted-foreground">
+            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.strong, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
               {meta(entry.id)!}
             </Text>
           )}

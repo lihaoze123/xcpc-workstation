@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, tip } from "../kit";
 import { goSettings, info, notifyPluginsChanged, preview } from "../store";
-import { cardShadow, MONO } from "../theme";
+import { cardShadow } from "../theme";
 import { zhEn } from "./locale";
 import { platformDisplayName } from "./types";
 
@@ -111,7 +111,7 @@ function HandleInputRow(props: {
           <Input
             testID={`training-onboarding-input-${props.source.id}`}
             class="bg-transparent placeholder:text-muted-foreground"
-            style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body, fontFamily: MONO }}
+            style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body }}
             value={draft()}
             placeholder={zhEn("输入用户名，回车验证", "Enter handle, press Enter")}
             autoCapitalize="none"

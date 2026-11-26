@@ -11,7 +11,7 @@ import { Btn, IconBtn, RatingBadge, Segmented } from "../kit";
 import { DialogHeader, Modal } from "../Modal";
 import { colorTransition } from "../motion";
 import { preview, refresh } from "../store";
-import { MONO, popoverShadow } from "../theme";
+import { popoverShadow } from "../theme";
 import type { ManualLogStatus } from "./types";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
@@ -247,7 +247,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                   }}
                 >
                   <Icon name="link" size="sm" tone="muted-foreground" />
-                  <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                     {pid()}
                   </Text>
                   <IconBtn
@@ -358,7 +358,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                           >
                             {prob().title || prob().id}
                           </Text>
-                          <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, flexShrink: 0 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                             {prob().id}
                           </Text>
                           <If when={prob().rating != null}>
@@ -424,7 +424,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                 <Input
                   testID="manual-log-date-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
                   value={dateInput()}
                   placeholder="YYYY-MM-DD"
                   onChange={(e) => dateInput.set(e.value)}
@@ -467,7 +467,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                 <Input
                   testID="manual-log-url-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontFamily: MONO }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
                   value={urlInput()}
                   placeholder={t("training.manualLog.urlPlaceholder")}
                   autoCapitalize="none"

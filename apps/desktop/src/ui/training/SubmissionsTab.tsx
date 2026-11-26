@@ -12,7 +12,7 @@ import { Btn, IconBtn, RatingBadge, Segmented, tip } from "../kit";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
 import { info, openStudio, preview, refresh } from "../store";
-import { cardShadow, MONO } from "../theme";
+import { cardShadow } from "../theme";
 import { showToast } from "../Toast";
 import { isEn, zhEn } from "./locale";
 import {
@@ -555,7 +555,7 @@ export function SubmissionsTab(props: {
                       <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0 }}>
                           <Text
-                            style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, fontWeight: FONT_WEIGHT.semibold, flexShrink: 0 }}
+                            style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                             class="text-secondary-foreground"
                           >
                             {row().problem_key}

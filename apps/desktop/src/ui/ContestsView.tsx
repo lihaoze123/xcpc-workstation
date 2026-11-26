@@ -14,7 +14,7 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { ContestStats, createFreeze, freezeBlockedCopy } from "./Contest";
 import { DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "./layout";
 import { labels, moveItem, partitionContests } from "./logic";
-import { EASE_STANDARD, MONO, ms, popoverShadow } from "./theme";
+import { EASE_STANDARD, ms, popoverShadow } from "./theme";
 import {
   activeRevision,
   archivedExpanded,
@@ -727,7 +727,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
                         <Icon name="gripVertical" size="sm" tone="muted-foreground" />
                       </View>
                       <Text
-                        style={{ width: 28, ...TYPE.strong, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                        style={{ width: 28, ...TYPE.strong, fontVariant: ["tabular-nums"] }}
                         class="text-foreground"
                       >
                         {x().label}

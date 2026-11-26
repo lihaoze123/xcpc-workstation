@@ -123,7 +123,6 @@ export function CreateSourceModal(props: {
                 ? "h-8 px-2.5 rounded-md border border-destructive bg-card text-[13px] placeholder:text-muted-foreground focus:border-destructive focus:ring-1 focus:ring-inset focus:ring-destructive"
                 : "h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
             }
-            style={{ fontFamily: MONO }}
           />
           {/* Fixed single-slot constraint / error line — turns red in-place with zero dialog height jump */}
           <Text
@@ -540,7 +539,7 @@ export function SubtaskModal(props: {
               }}
               onSubmit={submit}
               class="h-8 px-2.5 rounded-md border border-border bg-card text-[13px] placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ fontFamily: MONO, opacity: props.editing ? 0.65 : 1 }}
+              style={{ fontVariant: ["tabular-nums"], opacity: props.editing ? 0.65 : 1 }}
             />
           </View>
           <View style={{ width: 112, gap: SPACE[4] }}>

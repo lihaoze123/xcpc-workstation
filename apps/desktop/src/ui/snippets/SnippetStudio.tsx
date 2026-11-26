@@ -517,7 +517,7 @@ export function SnippetStudio(props: { active: boolean }) {
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                                   <Chip label={verifyKindLabel(row().spec.kind as VerifyKindOption)} />
                                   <Text
-                                    style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                    style={{ fontSize: FONT_SIZE.body, fontFamily: row().spec.kind === "self" ? MONO : undefined, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                                     class="text-foreground"
                                   >
                                     {row().adapter ? `${row().target} (${row().adapter})` : row().target}
@@ -530,7 +530,7 @@ export function SnippetStudio(props: { active: boolean }) {
                                         tone={r()!.passed ? "chart-2" : isUnavail() ? "chart-4" : "destructive"}
                                       />
                                       <Text
-                                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
+                                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                                         class={r()!.passed ? "text-foreground" : isUnavail() ? "text-secondary-foreground" : "text-destructive"}
                                       >
                                         {isUnavail() ? t("snippets.verify.unavailable") : r()!.verdict}
@@ -660,7 +660,7 @@ export function SnippetStudio(props: { active: boolean }) {
                     onBlur={() => saveSnippetMeta()}
                     onSubmit={() => saveSnippetMeta()}
                     class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption }}
                   />
                 </View>
                 <View style={{ flex: 1, gap: SPACE[4] }}>
@@ -675,7 +675,7 @@ export function SnippetStudio(props: { active: boolean }) {
                     onBlur={() => saveSnippetMeta()}
                     onSubmit={() => saveSnippetMeta()}
                     class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption }}
                   />
                 </View>
               </View>
@@ -719,7 +719,7 @@ export function SnippetStudio(props: { active: boolean }) {
                       >
                         <Chip label={verifyKindLabel(spec().kind as VerifyKindOption)} />
                         <Text
-                          style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+                          style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: spec().kind === "self" ? MONO : undefined, numberOfLines: 1, textOverflow: "ellipsis" }}
                           class="text-foreground"
                         >
                           {spec().kind === "self"
@@ -779,7 +779,7 @@ export function SnippetStudio(props: { active: boolean }) {
                         onChange={(e) => newVerifyTarget.set(e.value)}
                         onSubmit={addVerifySpec}
                         class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                        style={{ height: CONTROL.md, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
+                        style={{ height: CONTROL.md, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: newVerifyKind() === "self" ? MONO : undefined }}
                       />
                       <If when={newVerifyKind() !== "self"}>
                         <Input

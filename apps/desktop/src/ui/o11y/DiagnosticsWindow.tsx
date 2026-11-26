@@ -210,7 +210,7 @@ function MetricsTab() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
               <If when={metricSummaries().framePeakMs !== null}>
                 <Text
-                  style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                  style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }}
                   class="text-destructive"
                 >
                   {`↑ ${t("o11y.metrics.peak")} ${metricSummaries().framePeakMs?.toFixed(1)} ms`}
@@ -248,10 +248,10 @@ function MetricsTab() {
               {t("o11y.chart.pipeline")}
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("compile", metricSummaries().buildDoc)}
               </Text>
-              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("raster", metricSummaries().rasterize)}
               </Text>
             </View>
@@ -281,10 +281,10 @@ function MetricsTab() {
               {t("o11y.chart.latency")}
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("IPC", metricSummaries().ipc)}
               </Text>
-              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("INP", metricSummaries().inp)}
               </Text>
             </View>
@@ -472,7 +472,7 @@ function TracesTab(props: {
                         {tr().name}
                       </Text>
                       <Text
-                        style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                        style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }}
                         class={tr().durationMs >= 50 ? "text-destructive" : "text-muted-foreground"}
                       >
                         {tr().durationMs.toFixed(1)} ms
@@ -483,7 +483,7 @@ function TracesTab(props: {
                         {formatSpanCount(tr().spans.length)}
                       </Text>
                       <If when={tr().inpMs !== undefined}>
-                        <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-primary">
+                        <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-primary">
                           INP {tr().inpMs?.toFixed(1)} ms
                         </Text>
                       </If>
@@ -645,10 +645,10 @@ function TracesTab(props: {
                   <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {selectedSpan()!.name}
                   </Text>
-                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-primary">
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-primary">
                     {selectedSpan()!.service}
                   </Text>
-                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                     {selectedSpan()!.duration.toFixed(2)} ms
                   </Text>
                 </View>
