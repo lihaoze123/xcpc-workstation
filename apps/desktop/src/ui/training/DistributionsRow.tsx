@@ -204,7 +204,7 @@ export function DistributionsRow(props: {
                 {zhEn("标签", "Tag")}
               </Text>
               <View style={{ flex: 1 }} />
-              <Text style={{ width: 32, textAlign: "right", fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
+              <Text style={{ width: 44, textAlign: "right", fontSize: FONT_SIZE.micro, numberOfLines: 1 }} class="text-muted-foreground">
                 {zhEn("过题", "Solved")}
               </Text>
               <Text style={{ width: 42, textAlign: "right", fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
@@ -251,7 +251,7 @@ export function DistributionsRow(props: {
                       />
                     </View>
                     <Text
-                      style={{ width: 32, textAlign: "right", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
+                      style={{ width: 44, textAlign: "right", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1 }}
                       class="text-secondary-foreground"
                     >
                       {String(item().ac_count)}
