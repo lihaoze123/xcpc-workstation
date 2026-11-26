@@ -281,20 +281,53 @@
 
 ## 8. 动效与流畅感（Fluidity）
 
-整体手感基调为 **温润物理弹簧**（融合精密工具的干脆与原生弹簧的轻柔呼吸感）：结构性变化采用 NSH 原生平台线程 **`Animated.spring` / `Motion` / `spring(...)`**（阻尼比收敛至 `ζ = 0.86–0.90`，过冲 `≤ 1%`，温润不弹跳，随时可打断且保留速度；NSH `spring(...)` 自计时，不额外设置截断物理尾段的硬 `transitionDuration`），高频打字、滚轮与捏合保持零滞后跟手。
+总原则：**动效只用来说明东西从哪来、到哪去、和什么相连，不做装饰。** 同级切换（空间之间、主从布局切换选中项、设置子页之间、Tab 内容）保持 1 帧内瞬间完成。
+
+整体手感基调为 **温润物理弹簧**（融合精密工具的干脆与原生弹簧的轻柔呼吸感）：结构性与空间变化采用 NSH 原生平台线程 **`Animated.spring` / `ViewRef.animateLayout` / `spring(...)`**（阻尼比收敛至 `ζ = 0.86–0.90`，过冲 `≤ 1%`，温润不弹跳，随时可打断且保留速度；NSH `spring(...)` 自计时，不额外设置截断物理尾段的硬 `transitionDuration`），高频打字、滚轮与捏合保持零滞后跟手。
+
+### 动效 Token（`apps/desktop/src/ui/tokens/motion.ts`）
+
+业务代码只能通过 `tokens/motion.ts` 中的 Token 与过渡构造函数使用动效，不得手写 `transitionDuration: ms(<数字>)`、`spring(...)` 或直接调用 `reduceMotion()`（由静态守卫测试强制检查）。时长档统一使用 `EASE_STANDARD`。
+
+| Token | 取值 | ζ | 用途 |
+| :--- | :--- | :--- | :--- |
+| `SPRING.quick` | `500 / 39` | `0.872` | 主按钮按压 `scale(0.97)` |
+| `SPRING.standard` | `400 / 35` | `0.875` | 浮层打开、指示条、结构变化、拖拽归位与让位 |
+| `SPRING.smooth` | `300 / 31` | `0.895` | 侧面板、抽屉、工作室进出 |
+| `DURATION.fast` | `100ms` | — | 浮层关闭纯淡出 |
+| `DURATION.base` | `120ms` | — | 悬停 / 按压底色、图标淡入淡出、删除行淡出、NavRail 跨组淡出、减少动态效果下的淡入淡出 |
+
+**有出处的例外**（留在各自原文件，不纳入全局 Token）：预览画布交叉溶变 `90ms`（`studio/PreviewCanvas.tsx`）、`Ctrl+滚轮` 缩放指数阻尼约 `120ms`（`studio/PreviewCanvas.tsx`）、品牌页开场动效（`EXPO` 曲线，见 §8.5，`NoWorkspaceView.tsx` / `BrandIcon.tsx`）。
+
+### 场景规范
 
 | 场景 | 节奏 | 曲线 | 约束 |
 | :--- | :--- | :--- | :--- |
-| 按钮 Hover / 聚焦 / 按压 | `120–160ms` / 弹簧自计时 | 纯色主按钮 `SPRING_PRESS`（`ζ ≈ 0.87`）；其余指数缓动 | 按压 `scale(0.97)` **仅限纯色主按钮（`primary`）**；描边/幽灵按钮、图标按钮、导航项、菜单与列表行仅做底色过渡、不做缩放 |
-| Tab 指示条 / 左栏选中滑块 | 弹簧自计时 / `120ms` | NSH 原生 `spring`（`ζ ≈ 0.87`） | 绝对定位滑块平滑滑移，随时可打断；NavRail 仅在同组相邻项（题库 ↔ 比赛）之间滑移，切到或离开「设置」时改为 `120ms` 原地淡出 + 目标处淡入 |
-| 页面 / 设置子页 / 进出工作室 | 弹簧自计时 | NSH 原生 `spring`（`ζ ≈ 0.90`） | 空间连续性纯 GPU 位移（空间切换 `translateY(6→0)`、进入工作室 `translateX(14→0)` + `opacity`，规避 GTK4 全屏 `scale` FBO 重采样，零闪白） |
-| 定稿锁图标出现 / 消失 | `140–160ms` | 柔和缓动 | 淡入淡出，与全局线性图标同形 |
-| 面板收折 / 出版开关抽屉 | 弹簧自计时 | NSH 原生 `spring`（`ζ ≈ 0.90`） | 优先 `transform` / `opacity`，不挤压编辑器重排 |
-| `Cmd+K` / 弹窗 / 菜单 / 补全浮层 | 弹簧自计时 | NSH 原生 `spring`（`ζ ≈ 0.88`） | `scale(0.94→1) + translateY + opacity` 温润浮出 |
-| 拖拽排序（组卷 / 样例） | 实时跟手 | 目标位置显示细蓝线 | 松手后 `180ms` 归位 |
-| `Ctrl+滚轮` 缩放插值 | `~120ms` | 指数阻尼（`1 - exp(-dt/32)`） | 光标锚点像素锁定，随时可被捏合/滚动打断 |
+| 按钮 Hover / 聚焦 / 按压 | `DURATION.base` / 弹簧自计时 | 纯色主按钮 `SPRING.quick`（`ζ = 0.872`）；其余 `EASE_STANDARD` | 按压 `scale(0.97)` **仅限纯色主按钮（`primary`）**；描边/幽灵按钮、图标按钮、导航项、菜单与列表行仅做底色过渡、不做缩放 |
+| Tab 指示条 / 左栏选中滑块 | 弹簧自计时 / `DURATION.base` | `SPRING.standard`（`ζ = 0.875`） | 绝对定位滑块平滑滑移，随时可打断；NavRail 仅在同组相邻项之间滑移，切到或离开「设置」时改为 `DURATION.base` 原地淡出 + 目标处淡入 |
+| 层级进出（空间 ↔ 工作室） | 弹簧自计时 | `SPRING.smooth`（`ζ = 0.895`） | 严格对称：进入 `translateX(14→0)` + 淡入，退出 `translateX(0→14)` + 淡出，中途可打断并从当前位置折返；下层空间保持静止无视差；返回按钮、`Esc`、快捷键走同一路径 |
+| 同级切换（空间 / 主从项 / 设置子页 / Tab 内容） | `0ms` | — | 1 帧内瞬间完成，不加位移或淡入过渡 |
+| 侧面板 / 属性抽屉 | 弹簧自计时 | `SPRING.smooth`（`ζ = 0.895`） | 优先 `transform` / `opacity`，不挤压编辑器重排 |
+| 有锚点浮层（菜单、斜杠补全、分体按钮下拉、导出菜单） | 打开弹簧 / 关闭 `DURATION.fast` | 打开 `SPRING.standard`，关闭 `EASE_STANDARD` | 打开将 `transformOrigin` 设在靠近触发元素的角（向下左对齐 → 左上角；向上翻转 → 左下角），`scale(0.96→1)` + 淡入，无 `translateY`；关闭纯淡出、不缩放 |
+| 居中浮层（弹窗、`Cmd+K`） | 打开弹簧 / 关闭 `DURATION.fast` | 打开 `SPRING.standard`，关闭 `EASE_STANDARD` | 打开从中心 `scale(0.96→1)` + 淡入，无 `translateY`；关闭纯淡出、不缩放 |
+| Toast | 打开弹簧 / 关闭 `DURATION.fast` | 打开 `SPRING.standard`，关闭 `EASE_STANDARD` | 右下角上滑 `6px` + 淡入；关闭纯淡出 |
+| 结构变化（折叠区块、非虚拟列表增删） | 弹簧自计时 / `DURATION.base` | `ViewRef.animateLayout(SPRING.standard)` | 仅作用于该视图与被推动兄弟节点（不用 `LayoutAnimation.configureNext`）；删除行先 `DURATION.base` 淡出再移除；新增行透明插入、容器让位后再淡入；虚拟列表（题库、命令面板）保持瞬间变化 |
+| 拖拽排序（大纲、样例、比赛题目顺序） | 实时跟手 / 弹簧自计时 | `SPRING.standard`（`ζ = 0.875`） | 松手瞬间以相对新槽位偏移停在原处，随后以 `SPRING.standard` 续接松手前约 `50ms` 指针初速度弹回 `0`；其余行让位同走 `SPRING.standard`；全程只动 `transform` |
+| 定稿锁 / 状态图标显隐 | `DURATION.base`（`120ms`） | `EASE_STANDARD` | 淡入淡出，与全局线性图标同形 |
+| 预览画布交叉溶变（例外） | `90ms` | `EASE_STANDARD` | 同页更新原生 `transition_opacity` 交叉溶变，旧层托底防闪白 |
+| `Ctrl+滚轮` 缩放插值（例外） | `~120ms` | 指数阻尼（`1 - exp(-dt/32)`） | 光标锚点像素锁定，随时可被捏合/滚动打断 |
 
-全局遵守系统的 `prefers-reduced-motion` 设置：开启时降级为瞬间切换或纯淡入淡出。本章中**唯一允许突破上限的长动效例外**是无工作区品牌页的开场动效（约 `1.53s`，见 §8.5）。
+### 减少动态效果（`prefers-reduced-motion`）
+
+在 `tokens/motion.ts` 中按作用分三类集中降级，业务代码不自行判断 `reduceMotion()`：
+
+| 类别 | 降级行为 |
+| :--- | :--- |
+| 空间位移（工作室进出、浮层缩放、指示条滑动、拖拽归位） | 取消位移；工作室与浮层改为 `DURATION.base` 纯淡入淡出；指示条、拖拽直接就位 |
+| 结构变化（展开收起、行增删） | 瞬间变化，删除行不先淡出 |
+| 颜色反馈（悬停、按压底色、图标淡入淡出） | 保留 |
+
+本章中**唯一允许突破上限的长动效例外**是无工作区品牌页的开场动效（约 `1.53s`，见 §8.5；开启「减少动态效果」时直接显示终态）。
 
 ### 8.1 流畅感工程铁律（Compositor-First & Zero-Jitter）
 
@@ -324,12 +357,12 @@
    - **零重排悬停与错误占位**：行内操作放绝对定位浮层或预留固定槽位；表单报错就地替换字段说明行（同一行、同一高度），不在底部预留空槽。
    - **下拉框即时收起**：`Select` 触发重操作时用 `set_timeout(0)` 延后执行，让下拉菜单在当前帧立即收起。
    - **键盘与指针零冲突（搜索 / 列表）**：搜索框保持焦点同时用 `When::Always` 监听上下键移动高亮行，仅越出视口时最小 `reveal()`；指针高亮仅监听 `on_mouse_move`（不用 `mouse_enter`），避免键盘滚动时静止光标反抢焦点；高亮行相邻分割线自动隐藏。
-   - **零重排拖拽排序（组卷 / 样例）**：`4px` 拖动阈值防误触；起拖时一次性 `measure()` 缓存槽位网格；仅浮起替身订阅高频指针信号（列表行不重绘）；槽位交换走 `180ms EaseOut`；松手保留乐观顺序（`pending` 标记）直到异步落盘完成，防止回弹闪跳。
+   - **零重排拖拽排序（大纲 / 样例 / 比赛题目）**：`4px` 拖动阈值防误触；起拖时一次性 `measure()` 缓存槽位网格；仅浮起替身订阅高频指针信号（列表行不重绘）；槽位让位走 `SPRING.standard`；松手瞬间将被拖行的 `translateY` 设为其相对新槽位的偏移（零跳动），再以 `SPRING.standard` 续接松手前约 `50ms` 的指针初速度弹回 `0`；松手保留乐观顺序（`pending` 标记）直到异步落盘完成，防止回弹闪跳。
 2. **NSH 0.6 Linux（GTK4 / GSK）原生能力与避坑**：
    - **优先原生帧时钟动效**：`Animated`、`transition_opacity` / `transition_transform` / `transition_colors` 与 `scrollTo({ animated: true })` 直接跑在 GTK `GdkFrameClock` 上（零 JS 往返、天然可打断、自动遵守 `reduce_motion`）。
    - **桌面分栏**：可拖拽多栏使用 `<ResizablePanelGroup>`，**不用 `<SplitView>`**（iPadOS 固定分栏）。
    - **Linux 缩放约束**：`<Scroll zoomTo / maximumZoomScale>` 在 Linux 是空操作，继续使用两阶段 GPU `transform` 缩放。
-   - **禁止重面板动画改宽**：不要对编辑器或预览区等重面板使用 `LayoutAnimation` / `animateLayout` 动画改宽（每帧 `queue_allocate` 会导致正文反复折行卡顿）；抽屉走 `transform: translateX()` 浮层滑入，固定侧栏 0ms 单帧切宽 + 内部内容 `120ms` 淡入微移；`animateLayout` 只用于小槽位交换。
+   - **局部 `animateLayout` 与禁止重面板改宽**：不要使用作用于整次提交的 `LayoutAnimation.configureNext`，也不要对编辑器或预览区等重面板动画改宽（每帧 `queue_allocate` 会导致正文反复折行卡顿）；抽屉走 `transform: translateX()` 浮层滑入，固定侧栏 0ms 单帧切宽。`ViewRef.animateLayout(SPRING.standard)` 仅用于折叠区块展开/收起与非虚拟列表行增删，只作用于目标容器及被推动兄弟节点，不波及编辑器与预览。
    - **`<Scroll>` 内图片溢出保护**：`<Scroll>` 内的 `<Image>` 必须设置 `overflow: hidden`，防止原图像素尺寸被计入滚动范围。
    - **长列表与热刷新**：`Cmd+K` 与题库长列表基于 `<Command filterable={false}>`（接 Rust 内存模糊 + Frecency 排序）与 `<DataTable>`（行列虚拟化）；`notify` 热刷新时通过 `EditorRef` 原地更新并保留光标与滚动位置，禁止重建 `<Editor>`。
 
