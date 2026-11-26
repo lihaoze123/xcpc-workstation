@@ -86,6 +86,28 @@ impl Preview {
         xcpc_app::AppController::ui_fonts()
     }
 
+    /// Returns cached `@font-face` CSS rules embedding the host's bundled Inter and
+    /// JetBrains Mono WOFF2 fonts as `data:font/woff2;base64,...` URIs so sandboxed
+    /// WebView2/WebKitGTK plugins share the exact same typography as the native shell.
+    pub fn webview_font_css() -> String {
+        use base64::Engine as _;
+        use std::sync::OnceLock;
+        static FONT_CSS: OnceLock<String> = OnceLock::new();
+        FONT_CSS
+            .get_or_init(|| {
+                let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+                let inter = b64(include_bytes!("ui/fonts/InterVariable.woff2"));
+                let mono_reg = b64(include_bytes!("ui/fonts/JetBrainsMono-Regular.woff2"));
+                let mono_sb = b64(include_bytes!("ui/fonts/JetBrainsMono-SemiBold.woff2"));
+                format!(
+                    "@font-face{{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('data:font/woff2;base64,{inter}') format('woff2');}}\n\
+                     @font-face{{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('data:font/woff2;base64,{mono_reg}') format('woff2');}}\n\
+                     @font-face{{font-family:'JetBrains Mono';font-style:normal;font-weight:600;font-display:swap;src:url('data:font/woff2;base64,{mono_sb}') format('woff2');}}"
+                )
+            })
+            .clone()
+    }
+
     /// Returns build and runtime diagnostic info for the About view.
     pub fn about_info() -> AboutInfoJs {
         xcpc_app::AppController::about_info().into()

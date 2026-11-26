@@ -104,6 +104,8 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
     expect(injected).toContain("window.nsh.postMessage");
     expect(injected).toContain("window.chrome.webview.postMessage");
     expect(injected).toContain("margin:0;padding:0;");
+    expect(injected).toContain(":where(select)");
+    expect(injected).toContain("::-webkit-scrollbar");
     expect(injected).not.toContain("SPACE[0]");
     expect(isTrustedPluginUrl("")).toBe(true);
     expect(isTrustedPluginUrl("about:blank")).toBe(true);

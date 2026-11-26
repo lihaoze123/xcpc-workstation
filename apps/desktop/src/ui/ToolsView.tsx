@@ -5,7 +5,7 @@
 import { batch, cleanup, computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { PluginSummaryJs, RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
-import { Btn, FOCUS_RING, TruncText } from "./kit";
+import { Btn, FOCUS_RING, IconBtn, tip, TruncText } from "./kit";
 import { EmptyState, GUTTER, PageLoading, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import { PluginTrustModal } from "./PluginTrustModal";
@@ -72,6 +72,8 @@ export function ToolsView(props: { active?: boolean }) {
   const selectedPluginId = signal<string>("");
   // Keep user on the recommended grid while installing multiple official tools in a row (Awkward 5).
   const stayOnRecommended = signal<boolean>(false);
+  // Collapsible tools sidebar gives full horizontal room to WebView2 plugins on HiDPI displays.
+  const sidebarCollapsed = signal<boolean>(false);
   // Unmount idle WebView2 plugin surfaces 15s after leaving Tools to reclaim GPU/renderer RAM
   // while keeping quick tab-switching back to Tools instant (plugin state persists in xcpc.storage).
   const webviewAlive = signal<boolean>(props.active !== false);
@@ -277,86 +279,131 @@ export function ToolsView(props: { active?: boolean }) {
 
   return (
     <View testID="tools-view" style={{ flex: 1, flexDirection: "row", minHeight: 0 }} class="bg-card">
-      {/* Dynamic left plugin list */}
-      <View
-        style={{ width: 204, flexShrink: 0, borderRightWidth: 1, flexDirection: "column" }}
-        class="border-border bg-card"
+      {/* Dynamic left plugin list (collapsible to give WebView canvases maximum horizontal room) */}
+      <If
+        when={!sidebarCollapsed()}
+        else={
+          <View
+            testID="tools-sidebar-collapsed"
+            style={{
+              width: 36,
+              flexShrink: 0,
+              borderRightWidth: 1,
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingTop: SPACE[8],
+              paddingBottom: SPACE[8],
+            }}
+            class="border-border bg-card"
+          >
+            <IconBtn
+              testID="tools-sidebar-expand"
+              icon="panelLeft"
+              tooltip={tip(zhEn("展开工具列表", "Show tools list"))}
+              onPress={() => sidebarCollapsed.set(false)}
+            />
+            <IconBtn
+              testID="tools-browse-more"
+              icon="plus"
+              tooltip={tip(zhEn("获取更多工具", "Get more tools"))}
+              onPress={() => repoBrowserOpen.set(true)}
+            />
+          </View>
+        }
       >
-        <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[4] }}>
-          <Each of={toolGroups()} key={(g) => g.plugin_id}>
-            {(group) => {
-              const isSelected = () =>
-                !stayOnRecommended() && selectedPluginId() === group().plugin_id;
-              return (
-                <View
-                  testID={`tool-item-${group().plugin_id}`}
-                  onPress={() => selectPlugin(group())}
-                  class={
-                    isSelected()
-                      ? `bg-accent ${FOCUS_RING}`
-                      : `hover:bg-muted/70 active:bg-accent/60 ${FOCUS_RING}`
-                  }
-                  style={{
-                    paddingLeft: SPACE[12],
-                    paddingRight: SPACE[12],
-                    paddingTop: SPACE[8],
-                    paddingBottom: SPACE[8],
-                    borderRadius: RADIUS.sm,
-                    gap: SPACE[2],
-                  }}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-                    <TruncText
-                      style={{
-                        fontSize: FONT_SIZE.body,
-                        fontWeight: FONT_WEIGHT.semibold,
-                        numberOfLines: 1,
-                        textOverflow: "ellipsis",
-                        flexShrink: 1,
-                      }}
-                      class={isSelected() ? "text-foreground" : "text-secondary-foreground"}
-                    >
-                      {group().plugin_name}
-                    </TruncText>
-                    <If when={Boolean(group().is_linked)}>
-                      <View
-                        class="bg-muted border border-border"
-                        style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], borderRadius: RADIUS.xs, flexShrink: 0 }}
+        <View
+          style={{ width: 188, flexShrink: 0, borderRightWidth: 1, flexDirection: "column" }}
+          class="border-border bg-card"
+        >
+          <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[4] }}>
+            <Each of={toolGroups()} key={(g) => g.plugin_id}>
+              {(group) => {
+                const isSelected = () =>
+                  !stayOnRecommended() && selectedPluginId() === group().plugin_id;
+                return (
+                  <View
+                    testID={`tool-item-${group().plugin_id}`}
+                    onPress={() => selectPlugin(group())}
+                    class={
+                      isSelected()
+                        ? `bg-accent ${FOCUS_RING}`
+                        : `hover:bg-muted/70 active:bg-accent/60 ${FOCUS_RING}`
+                    }
+                    style={{
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      paddingTop: SPACE[8],
+                      paddingBottom: SPACE[8],
+                      borderRadius: RADIUS.sm,
+                      gap: SPACE[2],
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                      <TruncText
+                        style={{
+                          fontSize: FONT_SIZE.body,
+                          fontWeight: FONT_WEIGHT.semibold,
+                          numberOfLines: 1,
+                          textOverflow: "ellipsis",
+                          flexShrink: 1,
+                        }}
+                        class={isSelected() ? "text-foreground" : "text-secondary-foreground"}
                       >
-                        <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
-                          {t("tools.devLink")}
-                        </Text>
-                      </View>
+                        {group().plugin_name}
+                      </TruncText>
+                      <If when={Boolean(group().is_linked)}>
+                        <View
+                          class="bg-muted border border-border"
+                          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], borderRadius: RADIUS.xs, flexShrink: 0 }}
+                        >
+                          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
+                            {t("tools.devLink")}
+                          </Text>
+                        </View>
+                      </If>
+                    </View>
+                    <If when={Boolean(group().plugin_description)}>
+                      <TruncText
+                        style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
+                        class="text-muted-foreground"
+                      >
+                        {group().plugin_description}
+                      </TruncText>
                     </If>
                   </View>
-                  <If when={Boolean(group().plugin_description)}>
-                    <TruncText
-                      style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
-                      class="text-muted-foreground"
-                    >
-                      {group().plugin_description}
-                    </TruncText>
-                  </If>
-                </View>
-              );
+                );
+              }}
+            </Each>
+          </Scroll>
+          <View
+            class="border-t border-border"
+            style={{
+              padding: SPACE[8],
+              flexShrink: 0,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: SPACE[4],
             }}
-          </Each>
-        </Scroll>
-        <View
-          class="border-t border-border"
-          style={{ padding: SPACE[8], flexShrink: 0 }}
-        >
-          <Btn
-            testID="tools-browse-more"
-            variant="ghost"
-            size="sm"
-            icon="plus"
-            label={zhEn("获取更多工具", "Get more tools")}
-            onPress={() => repoBrowserOpen.set(true)}
-            style={{ width: "100%", justifyContent: "flex-start" }}
-          />
+          >
+            <Btn
+              testID="tools-browse-more"
+              variant="ghost"
+              size="sm"
+              icon="plus"
+              label={zhEn("获取更多工具", "Get more tools")}
+              onPress={() => repoBrowserOpen.set(true)}
+              style={{ flex: 1, minWidth: 0, justifyContent: "flex-start" }}
+            />
+            <IconBtn
+              testID="tools-sidebar-collapse"
+              icon="panelLeft"
+              tooltip={tip(zhEn("收起工具列表", "Hide tools list"))}
+              onPress={() => sidebarCollapsed.set(true)}
+            />
+          </View>
         </View>
-      </View>
+      </If>
 
       {/* Main plugin container */}
       <View style={{ flex: 1, minWidth: 0, minHeight: 0, flexDirection: "column" }}>
@@ -490,15 +537,19 @@ export function ToolsView(props: { active?: boolean }) {
         >
           {(group) => (
             <View style={{ flex: 1, minHeight: 0, flexDirection: "column" }}>
-              {/* Standard 52pt Toolbar header */}
-              <Toolbar style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
-                <TruncText
-                  style={{ ...TYPE.strong, numberOfLines: 1, textOverflow: "ellipsis" }}
-                  class="text-foreground"
-                >
-                  {group().plugin_name}
-                </TruncText>
-              </Toolbar>
+              {/* Headless (`index.js`) tools get the standard 52pt Toolbar header; pure-Web
+                  (`ui.html`) plugins render their own top toolbar directly below the window
+                  chrome so there is no redundant title bar or double divider. */}
+              <If when={!group().has_ui}>
+                <Toolbar style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
+                  <TruncText
+                    style={{ ...TYPE.strong, numberOfLines: 1, textOverflow: "ellipsis" }}
+                    class="text-foreground"
+                  >
+                    {group().plugin_name}
+                  </TruncText>
+                </Toolbar>
+              </If>
 
               {/* Render interactive UI (`ui.html`) if available, otherwise headless (`index.js`) runner */}
               <View style={{ flex: 1, minHeight: 0 }}>

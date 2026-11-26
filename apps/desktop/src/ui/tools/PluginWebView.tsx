@@ -23,8 +23,21 @@ import { MONO, SANS, token } from "../theme";
 import { showToast, type ToastTone } from "../Toast";
 import { zhEn } from "../training/locale";
 import { classifyPluginUiError, formatPluginError, type PluginUiErrorInfo } from "./pluginErrors";
+import { HOST_WEBVIEW_BASE_CSS } from "./pluginHostCss";
 
 import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
+
+let cachedWebviewFontCss: string | null = null;
+function getHostWebviewFontCss(): string {
+  if (cachedWebviewFontCss !== null) return cachedWebviewFontCss;
+  try {
+    cachedWebviewFontCss =
+      typeof Preview.webviewFontCss === "function" ? Preview.webviewFontCss() : "";
+  } catch {
+    cachedWebviewFontCss = "";
+  }
+  return cachedWebviewFontCss;
+}
 export const PLUGIN_WEBVIEW_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';";
 
@@ -351,13 +364,19 @@ export function injectPluginHtml(
     cssVars: Record<string, string>;
     initialPayload?: unknown;
     bridgeToken?: string;
+    hostFontCss?: string;
   },
 ): string {
   const token = opts.bridgeToken ?? generateBridgeToken();
+  const hostCssParts = [
+    opts.hostFontCss ?? "",
+    `:root{${formatCssVarsBlock(opts.cssVars)}}`,
+    HOST_WEBVIEW_BASE_CSS,
+  ].filter(Boolean);
   const innerPrefix = [
     `<meta charset="UTF-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">`,
-    `<style id="xcpc-host-theme">:root{${formatCssVarsBlock(opts.cssVars)}}</style>`,
+    `<style id="xcpc-host-theme">\n${hostCssParts.join("\n")}\n</style>`,
     `<script>${buildIframeBridgeScript(opts)}</script>`,
   ].join("\n");
 
@@ -515,6 +534,7 @@ export function PluginWebView(props: {
           cssVars: buildThemeCssVars(scheme),
           initialPayload: props.getInitialPayload?.(),
           bridgeToken: activeBridgeToken,
+          hostFontCss: getHostWebviewFontCss(),
         });
         errorInfo.set(null);
         htmlDoc.set(injected);
