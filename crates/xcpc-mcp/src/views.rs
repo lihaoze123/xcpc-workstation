@@ -304,6 +304,7 @@ pub fn audit_contest_with_lint(
         language: Some(contest.meta.language),
         check_editorial: true,
         unsaved: None,
+        skip_package_freshness: true,
     };
 
     let mut lint_by_problem: BTreeMap<String, ProblemLintSummary> = BTreeMap::new();
