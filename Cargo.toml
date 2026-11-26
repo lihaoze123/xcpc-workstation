@@ -20,8 +20,8 @@ xcpc-packages = { path = "crates/xcpc-packages" }
 xcpc-plugin = { path = "crates/xcpc-plugin" }
 xcpc-sync = { path = "crates/xcpc-sync" }
 
-nsh-core = "0.6.0"
-nsh-base = { version = "0.6.0", default-features = false }
+nsh-core = "0.7.1"
+nsh-base = { version = "0.7.1", default-features = false }
 
 typst = "0.15.1"
 typst-layout = "0.15.1"

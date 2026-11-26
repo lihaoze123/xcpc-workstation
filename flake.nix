@@ -61,30 +61,29 @@
                 wrapGAppsHook4
                 gtk4
                 webkitgtk_6_0
-                gst_all_1
                 gsettings-desktop-schemas
                 stdenvNoCC
                 ;
-              version = "0.6.0";
+              version = "0.7.1";
               releases = {
                 x86_64-linux = {
                   archive = "nsh-linux-x86_64.tar.gz";
-                  hash = "19d360eb8dd1ba8847a3b3ad06082f6f3705eb04ae8178357a8cdad31880f0d9";
+                  hash = "sha256-BEV606U8kbZu/O5TeWjFr3yQ3yXPYcGNURNezAUeIrM=";
                 };
                 aarch64-linux = {
                   archive = "nsh-linux-arm64.tar.gz";
-                  hash = "dc6426c152ea600337451afc1e8e81531823309951be35cde3d91928eeaa7379";
+                  hash = "sha256-ARCZMpNCvJYckIneLHwczdYMAXe3fYEoR1aGbCCH67s=";
                 };
                 aarch64-darwin = {
                   archive = "nsh-macos-arm64.tar.gz";
-                  hash = "b2a8370c8b44ca6059d2d8665b48b08472a4fee3956813b99223f4e3ce5491d9";
+                  hash = "sha256-KONJtZwLRulkAQyPhYp4r1200mAS0hPAPRXOKN3/BlA=";
                 };
               };
               release = releases.${stdenv.hostPlatform.system};
               releaseUrl = "https://github.com/longbridge/nsh/releases/download/v${version}";
               webRuntime = fetchurl {
                 url = "${releaseUrl}/nsh-web.tar.gz";
-                sha256 = "a1a972cf20c0d2a2d9cc54fab2d7fd6075041b26929886bfb8d78e2992c3b324";
+                hash = "sha256-qC8xAid1y4gmf6V1SGZcjafbpLYvBEpJRcFzl/8LmdY=";
               };
             in
             stdenvNoCC.mkDerivation {
@@ -92,7 +91,7 @@
               inherit version;
               src = fetchurl {
                 url = "${releaseUrl}/${release.archive}";
-                sha256 = release.hash;
+                inherit (release) hash;
               };
 
               nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [
@@ -102,10 +101,6 @@
               buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
                 gtk4
                 webkitgtk_6_0
-                gst_all_1.gstreamer
-                gst_all_1.gst-plugins-base
-                gst_all_1.gst-plugins-good
-                gst_all_1.gst-libav
                 gsettings-desktop-schemas
                 stdenv.cc.cc.lib
               ];
@@ -155,8 +150,6 @@
           linuxLibraries = with pkgs; [
             gtk4
             webkitgtk_6_0
-            gst_all_1.gstreamer
-            gst_all_1.gst-plugins-base
           ];
         in
         {
@@ -193,14 +186,6 @@
             XCPC_OLYMP_REFERENCE = "${olymp-reference}";
 
             shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-              # Also expose dynamically loaded media plugins to Rust-built apps.
-              export GST_PLUGIN_SYSTEM_PATH_1_0="${
-                pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
-                  pkgs.gst_all_1.gst-plugins-base
-                  pkgs.gst_all_1.gst-plugins-good
-                  pkgs.gst_all_1.gst-libav
-                ]
-              }''${GST_PLUGIN_SYSTEM_PATH_1_0:+:$GST_PLUGIN_SYSTEM_PATH_1_0}"
               export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
               # Use lld for much faster Linux incremental linking while keeping Nix's
               # wrapped `cc` so all Nix library rpaths (GTK4, OpenSSL, etc.) are preserved.

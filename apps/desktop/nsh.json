@@ -13,7 +13,10 @@
     "application": true,
     "windows": true,
     "openUrl": {
-      "schemes": ["https", "http"]
+      "schemes": [
+        "https",
+        "http"
+      ]
     }
   },
   "updater": {
@@ -34,5 +37,10 @@
       "height": 640
     },
     "restoreBounds": true
+  },
+  "dependencies": {
+    "nsh-icon": "^0.2.2",
+    "nsh-icon-lucide": "^0.2.2",
+    "nsh-o11y": "^0.1.0"
   }
 }

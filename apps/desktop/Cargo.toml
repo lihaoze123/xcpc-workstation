@@ -6,6 +6,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+nsh-o11y = "0.1.0"
+nsh-icon-lucide = "0.2.2"
+nsh-icon = "0.2.2"
 nsh-core.workspace = true
 nsh-base.workspace = true
 xcpc-engine.workspace = true

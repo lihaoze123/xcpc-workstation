@@ -16,7 +16,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  NSH_VERSION: "0.6.0"
+  NSH_VERSION: "0.7.1"
 
 jobs:
   prepare:
@@ -62,8 +62,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev \
             libwebkitgtk-6.0-dev \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
             libssl-dev \
             pkg-config \
             dpkg-dev \

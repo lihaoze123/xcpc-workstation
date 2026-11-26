@@ -79,7 +79,7 @@ Section: devel
 Priority: optional
 Architecture: amd64
 Installed-Size: ${installed_size}
-Depends: libgtk-4-1, libwebkitgtk-6.0-4, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, libc6
+Depends: libgtk-4-1, libwebkitgtk-6.0-4, libc6
 Maintainer: lihaoze123 <https://github.com/lihaoze123/xcpc-workstation>
 Homepage: https://github.com/lihaoze123/xcpc-workstation
 Description: Local-first personal XCPC workstation
