@@ -1,22 +1,33 @@
 // Platform Rating trajectory chart on NSH <Canvas>:
-// Subtle rating tier background tint, clean round Y-axis ticks covering 3000+,
-// intermediate X-axis date ticks, and clean polyline with dot shown only on hover/pin.
+// 3pt vertical tier color strip along the Y-axis (§7), clean round Y-axis ticks covering 3000+,
+// intermediate X-axis date ticks, and tier-segmented polyline with dot shown only on hover/pin.
 
-import { Canvas, colorScheme, computed, effect, signal, Text, View } from "nsh";
+import { Canvas, computed, effect, signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { Segmented } from "../kit";
 import { ratingTier } from "../logic";
-import { cardShadow, tierColor, token } from "../theme";
+import { cardShadow, tierColor, token, type Tier } from "../theme";
 import {
   niceRatingTicks,
   niceXTickIndices,
   platformDisplayName,
-  RATING_BANDS,
   type PlatformRatingSeries,
   type RatingPoint,
 } from "./types";
 
 import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
+
+const TIER_STRIP_RANGES: readonly { min: number; max: number; tier: Tier }[] = [
+  { min: 0, max: 1200, tier: "newbie" },
+  { min: 1200, max: 1400, tier: "pupil" },
+  { min: 1400, max: 1600, tier: "specialist" },
+  { min: 1600, max: 1900, tier: "expert" },
+  { min: 1900, max: 2100, tier: "candidate_master" },
+  { min: 2100, max: 2400, tier: "master" },
+  { min: 2400, max: 5000, tier: "grandmaster" },
+];
+
+const TIER_THRESHOLDS = [1200, 1400, 1600, 1900, 2100, 2400] as const;
 function formatUnixDateShort(sec: number): string {
   const d = new Date(sec * 1000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -175,28 +186,15 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
             if (idx !== undefined) pinnedIdx.set(pinnedIdx() === idx ? undefined : idx);
           }}
           draw={(cx, size) => {
-            const dark = colorScheme() === "dark";
             const pts = points();
             const { minY, maxY } = bounds();
             const plotW = Math.max(1, size.width - PAD_L - PAD_R);
             const plotH = CHART_H - PAD_T - PAD_B;
             const borderCol = token("border");
             const mutedText = token("muted-foreground");
-            const lineCol = token("primary");
             const cardBg = token("card");
 
             cx.clearRect(0, 0, size.width, size.height);
-
-            // Subtle rating tier background tint
-            for (const band of RATING_BANDS) {
-              const bLo = Math.max(minY, band.min);
-              const bHi = Math.min(maxY, band.max);
-              if (bHi <= bLo) continue;
-              const yTop = yOfRating(bHi, minY, maxY);
-              const yBot = yOfRating(bLo, minY, maxY);
-              cx.fillStyle = dark ? band.darkFill : band.lightFill;
-              cx.fillRect(PAD_L, yTop, plotW, Math.max(0, yBot - yTop));
-            }
 
             // Clean round horizontal gridlines (including 3000+)
             cx.strokeStyle = borderCol;
@@ -212,22 +210,55 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
               cx.moveTo(PAD_L, y);
               cx.lineTo(PAD_L + plotW, y);
               cx.stroke();
-              cx.fillText(String(v), PAD_L - 6, y);
+              cx.fillText(String(v), PAD_L - 8, y);
             }
 
-            // Polyline (clean, no per-point dot clutter)
+            // 3pt vertical tier color strip along the left edge of the Y-axis (§7)
+            for (const band of TIER_STRIP_RANGES) {
+              const bLo = Math.max(minY, band.min);
+              const bHi = Math.min(maxY, band.max);
+              if (bHi <= bLo) continue;
+              const yTop = yOfRating(bHi, minY, maxY);
+              const yBot = yOfRating(bLo, minY, maxY);
+              cx.fillStyle = tierColor(band.tier);
+              cx.fillRect(PAD_L - 3, yTop, 3, Math.max(0, yBot - yTop));
+            }
+
+            // Tier-colored segmented polyline (§7: rating color lives on the curve, not background bands)
             if (pts.length > 0) {
-              cx.strokeStyle = lineCol;
               cx.lineWidth = 2;
               cx.lineJoin = "round";
-              cx.beginPath();
-              pts.forEach((p, i) => {
-                const x = xOfIndex(i, pts.length, size.width);
-                const y = yOfRating(p.rating_after, minY, maxY);
-                if (i === 0) cx.moveTo(x, y);
-                else cx.lineTo(x, y);
-              });
-              cx.stroke();
+              cx.lineCap = "round";
+              for (let i = 0; i < pts.length - 1; i++) {
+                const r0 = pts[i].rating_after;
+                const r1 = pts[i + 1].rating_after;
+                const x0 = xOfIndex(i, pts.length, size.width);
+                const x1 = xOfIndex(i + 1, pts.length, size.width);
+                const loR = Math.min(r0, r1);
+                const hiR = Math.max(r0, r1);
+                const splits: number[] = [0];
+                if (r1 !== r0) {
+                  for (const th of TIER_THRESHOLDS) {
+                    if (th > loR && th < hiR) {
+                      splits.push((th - r0) / (r1 - r0));
+                    }
+                  }
+                  splits.sort((a, b) => a - b);
+                }
+                splits.push(1);
+                for (let k = 0; k < splits.length - 1; k++) {
+                  const tA = splits[k];
+                  const tB = splits[k + 1];
+                  const rA = r0 + (r1 - r0) * tA;
+                  const rB = r0 + (r1 - r0) * tB;
+                  const rMid = (rA + rB) / 2;
+                  cx.strokeStyle = tierColor(ratingTier(rMid));
+                  cx.beginPath();
+                  cx.moveTo(x0 + (x1 - x0) * tA, yOfRating(rA, minY, maxY));
+                  cx.lineTo(x0 + (x1 - x0) * tB, yOfRating(rB, minY, maxY));
+                  cx.stroke();
+                }
+              }
 
               // Dot ONLY on hover/pin (or single-point chart)
               const sel = inspectedIndex() ?? (pts.length === 1 ? 0 : undefined);

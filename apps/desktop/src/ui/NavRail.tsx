@@ -106,8 +106,8 @@ export function NavRail(props: {
   );
   return (
     <View
-      style={{ width: RAIL_WIDTH, paddingTop: SPACE[8], paddingBottom: SPACE[8], alignItems: "center", borderRightWidth: 1 }}
-      class="border-border bg-background"
+      style={{ width: RAIL_WIDTH, paddingTop: SPACE[8], paddingBottom: SPACE[8], alignItems: "center" }}
+      class="bg-background"
     >
       <View style={{ flex: 1, width: ITEM_SIZE, gap: ITEM_GAP }}>
         <View

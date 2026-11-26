@@ -175,8 +175,8 @@ export function SnippetsView(props: { active: boolean }) {
     snippetsSubTab() === "library" ? snippetList().length === 0 : trdList().length === 0;
 
   return (
-    <View style={{ flex: 1, flexDirection: "column" }} class="bg-background">
-      {/* Unified 52pt top bar: vertically centered Segmented, Bundler trigger, fixed-width New button */}
+    <View style={{ flex: 1, flexDirection: "column" }} class="bg-card">
+      {/* Unified 52pt top bar: navigation-level underline tabs, Bundler trigger, fixed-width New button */}
       <Toolbar>
         <Segmented
           items={[
@@ -186,7 +186,7 @@ export function SnippetsView(props: { active: boolean }) {
           value={snippetsSubTab()}
           onChange={(v) => snippetsSubTab.set(v)}
           itemWidth={92}
-          centered
+          underline
         />
         <Spacer />
         <Btn
@@ -1077,12 +1077,16 @@ function TrdDetailPane(props: {
         />
       </View>
 
-      <Scroll style={{ flex: 1 }} contentStyle={{ padding: GUTTER, gap: SPACE[12] }}>
+      <Scroll style={{ flex: 1 }} contentStyle={{ padding: GUTTER, gap: SPACE[16] }}>
         <Each of={chapters()} key={(c) => c.title}>
-          {(ch) => (
+          {(ch, idx) => (
             <View
-              style={{ borderRadius: RADIUS.lg, borderWidth: 1, padding: SPACE[12], gap: SPACE[8], boxShadow: cardShadow() }}
-              class="border-border bg-card"
+              style={{
+                paddingTop: idx() === 0 ? SPACE[0] : SPACE[12],
+                borderTopWidth: idx() === 0 ? 0 : 1,
+                gap: SPACE[8],
+              }}
+              class="border-border"
             >
               <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {ch().title}

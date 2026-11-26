@@ -29,7 +29,11 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
     void rev();
     return preview.contestStats(props.id);
   });
-  const total = () => Math.max(1, stats().problemCount);
+  const ratedBuckets = computed(() =>
+    stats().ratingDistribution.filter((b) => b.tier !== "unrated" && b.count > 0),
+  );
+  const hasRatedProblems = () => ratedBuckets().length > 0;
+  const ratedTotal = () => Math.max(1, ratedBuckets().reduce((sum, b) => sum + b.count, 0));
   const label = (text: string) => (
     <Text style={{ width: 56, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
       {text}
@@ -38,12 +42,12 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
   const bar = (
     <View style={props.compact ? { gap: SPACE[8], minWidth: 0 } : { gap: SPACE[8], flex: 1, minWidth: 0 }}>
       <View style={{ height: 8, flexDirection: "row", borderRadius: RADIUS.xs, overflow: "hidden", gap: SPACE[2] }} class="bg-muted">
-        <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
-          {(b) => <View style={{ flexGrow: b().count / total(), flexBasis: 0, backgroundColor: tierColor(b().tier as Tier) }} />}
+        <Each of={ratedBuckets()} key={(b) => b.tier}>
+          {(b) => <View style={{ flexGrow: b().count / ratedTotal(), flexBasis: 0, backgroundColor: tierColor(b().tier as Tier) }} />}
         </Each>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: SPACE[12], rowGap: SPACE[4] }}>
-        <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
+        <Each of={ratedBuckets()} key={(b) => b.tier}>
           {(b) => (
             <View
               tooltip={props.compact ? tip(tierLabel(b().tier)) : undefined}
@@ -80,25 +84,31 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
   );
   if (props.compact) {
     return (
-      <View style={{ gap: SPACE[8] }}>
-        {bar}
-        <If when={stats().tagCounts.length > 0}>{tags}</If>
-      </View>
+      <If when={hasRatedProblems() || stats().tagCounts.length > 0}>
+        <View style={{ gap: SPACE[8] }}>
+          <If when={hasRatedProblems()}>{bar}</If>
+          <If when={stats().tagCounts.length > 0}>{tags}</If>
+        </View>
+      </If>
     );
   }
   return (
-    <View style={{ gap: SPACE[12] }}>
-      <View style={{ flexDirection: "row", gap: SPACE[12] }}>
-        {label(t("contests.stats.difficulty"))}
-        {bar}
+    <If when={hasRatedProblems() || stats().tagCounts.length > 0}>
+      <View style={{ gap: SPACE[12] }}>
+        <If when={hasRatedProblems()}>
+          <View style={{ flexDirection: "row", gap: SPACE[12] }}>
+            {label(t("contests.stats.difficulty"))}
+            {bar}
+          </View>
+        </If>
+        <If when={stats().tagCounts.length > 0}>
+          <View style={{ flexDirection: "row", gap: SPACE[12] }}>
+            {label(t("contests.stats.tags"))}
+            {tags}
+          </View>
+        </If>
       </View>
-      <If when={stats().tagCounts.length > 0}>
-        <View style={{ flexDirection: "row", gap: SPACE[12] }}>
-          {label(t("contests.stats.tags"))}
-          {tags}
-        </View>
-      </If>
-    </View>
+    </If>
   );
 }
 

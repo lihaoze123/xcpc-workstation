@@ -212,6 +212,18 @@ export function rim(): string {
   return colorScheme() === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0)";
 }
 
+/** The dark appearance's subtle inner highlight rim for the inset workspace sheet (§3); none in light. */
+export function sheetRim(): string {
+  return colorScheme() === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0)";
+}
+
+/** Ambient shadow (light) + `sheet-rim` inner highlight (dark) for the inset workspace panel (§3). */
+export function panelShadow(): string {
+  return colorScheme() === "dark"
+    ? `0 1px 2px rgba(0,0,0,0.28), inset 0 0 0 1px ${sheetRim()}`
+    : "0 1px 2px rgba(0,0,0,0.035)";
+}
+
 /** Modal backdrop scrim color: deeper in dark mode for clear layer separation. */
 export function modalBackdrop(): string {
   return colorScheme() === "dark" ? "rgba(0,0,0,0.48)" : "rgba(9,9,11,0.12)";

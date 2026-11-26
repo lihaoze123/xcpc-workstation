@@ -7,6 +7,7 @@ import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { Btn } from "./kit";
+import { GUTTER, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
   activeToolId,
@@ -26,7 +27,7 @@ import { PluginWebView } from "./tools/PluginWebView";
 import { parseJsonReport, type PluginToolGroup } from "./tools/types";
 import { zhEn } from "./training/locale";
 
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE, TYPE } from "./tokens";
 interface RecommendedToolItem {
   repoUrl: string;
   repoName: string;
@@ -208,11 +209,11 @@ export function ToolsView(props: { active?: boolean }) {
   };
 
   return (
-    <View testID="tools-view" style={{ flex: 1, flexDirection: "row", minHeight: 0 }} class="bg-background">
+    <View testID="tools-view" style={{ flex: 1, flexDirection: "row", minHeight: 0 }} class="bg-card">
       {/* Dynamic left plugin list */}
       <View
         style={{ width: 204, flexShrink: 0, borderRightWidth: 1, flexDirection: "column" }}
-        class="border-border bg-background"
+        class="border-border bg-card"
       >
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[4] }}>
           <Each of={toolGroups()} key={(g) => g.plugin_id}>
@@ -317,16 +318,12 @@ export function ToolsView(props: { active?: boolean }) {
                   </View>
                 }
               >
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[32], gap: SPACE[16], maxWidth: 720, alignSelf: "center", width: "100%" }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
-                    <View style={{ gap: SPACE[2] }}>
-                      <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                        {t("tools.recommendedTitle")}
-                      </Text>
-                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                        {t("tools.recommendedDesc")}
-                      </Text>
-                    </View>
+                <View style={{ flex: 1, minHeight: 0, flexDirection: "column" }}>
+                  <Toolbar style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
+                    <Text style={TYPE.strong} class="text-foreground">
+                      {t("tools.recommendedTitle")}
+                    </Text>
+                    <Spacer />
                     <Btn
                       variant="outline"
                       size="sm"
@@ -334,90 +331,85 @@ export function ToolsView(props: { active?: boolean }) {
                       label={t("tools.managePlugins")}
                       onPress={() => goSettings("plugins")}
                     />
-                  </View>
+                  </Toolbar>
+                  <Scroll style={{ flex: 1 }} contentStyle={{ padding: GUTTER, gap: SPACE[16], maxWidth: 1120, alignSelf: "center", width: "100%" }}>
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
+                      {t("tools.recommendedDesc")}
+                    </Text>
 
-                  <View style={{ gap: SPACE[8] }}>
-                    <Each of={recommended()} key={(item) => item.entry.id}>
-                      {(item) => {
-                        const stage = () => installingStages()[item().entry.id];
-                        const isInstalled = () => installedToolIds().has(item().entry.id);
-                        return (
-                          <View
-                            testID={`recommended-tool-${item().entry.id}`}
-                            class="bg-card border border-border"
-                            style={{
-                              borderRadius: RADIUS.lg,
-                              padding: SPACE[12],
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: SPACE[12],
-                            }}
-                          >
-                            <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>
-                              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                                {item().entry.name}
-                              </Text>
-                              <If when={Boolean(item().entry.description)}>
-                                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
-                                  {item().entry.description}
+                    <View style={{ gap: SPACE[8] }}>
+                      <Each of={recommended()} key={(item) => item.entry.id}>
+                        {(item) => {
+                          const stage = () => installingStages()[item().entry.id];
+                          const isInstalled = () => installedToolIds().has(item().entry.id);
+                          return (
+                            <View
+                              testID={`recommended-tool-${item().entry.id}`}
+                              class="bg-card border border-border"
+                              style={{
+                                borderRadius: RADIUS.lg,
+                                padding: SPACE[12],
+                                flexDirection: "row",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: SPACE[12],
+                              }}
+                            >
+                              <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>
+                                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                                  {item().entry.name}
                                 </Text>
-                              </If>
-                            </View>
-                            <If
-                              when={isInstalled()}
-                              else={
+                                <If when={Boolean(item().entry.description)}>
+                                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
+                                    {item().entry.description}
+                                  </Text>
+                                </If>
+                              </View>
+                              <If
+                                when={isInstalled()}
+                                else={
+                                  <Btn
+                                    testID={`install-recommended-${item().entry.id}`}
+                                    variant="primary"
+                                    size="sm"
+                                    disabled={Boolean(stage())}
+                                    label={stage() ?? t("tools.install")}
+                                    onPress={() => requestInstall(item())}
+                                    style={{ width: 84, flexShrink: 0 }}
+                                  />
+                                }
+                              >
                                 <Btn
-                                  testID={`install-recommended-${item().entry.id}`}
-                                  variant="primary"
+                                  testID={`open-recommended-${item().entry.id}`}
+                                  variant="outline"
                                   size="sm"
-                                  disabled={Boolean(stage())}
-                                  label={stage() ?? t("tools.install")}
-                                  onPress={() => requestInstall(item())}
+                                  label={zhEn("打开", "Open")}
+                                  onPress={() => openRecommendedTool(item().entry.id)}
                                   style={{ width: 84, flexShrink: 0 }}
                                 />
-                              }
-                            >
-                              <Btn
-                                testID={`open-recommended-${item().entry.id}`}
-                                variant="outline"
-                                size="sm"
-                                label={zhEn("打开", "Open")}
-                                onPress={() => openRecommendedTool(item().entry.id)}
-                                style={{ width: 84, flexShrink: 0 }}
-                              />
-                            </If>
-                          </View>
-                        );
-                      }}
-                    </Each>
-                  </View>
-                </Scroll>
+                              </If>
+                            </View>
+                          );
+                        }}
+                      </Each>
+                    </View>
+                  </Scroll>
+                </View>
               </If>
             </View>
           }
         >
           {(group) => (
             <View style={{ flex: 1, minHeight: 0, flexDirection: "column" }}>
-              {/* Compact plugin header bar: name only, no duplicate description or mode switcher */}
-              <View
-                class="border-b border-border bg-background"
-                style={{
-                  height: 44,
-                  paddingLeft: SPACE[16],
-                  paddingRight: SPACE[16],
-                  flexDirection: "row",
-                  alignItems: "center",
-                  flexShrink: 0,
-                }}
-              >
+              {/* Standard 52pt Toolbar header */}
+              <Toolbar style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
                 <Text
-                  style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
+                  style={{ ...TYPE.strong, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-foreground"
                 >
                   {group().plugin_name}
                 </Text>
-              </View>
+              </Toolbar>
 
               {/* Render interactive UI (`ui.html`) if available, otherwise headless (`index.js`) runner */}
               <View style={{ flex: 1, minHeight: 0 }}>

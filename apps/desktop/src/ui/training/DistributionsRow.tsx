@@ -261,7 +261,7 @@ export function DistributionsRow(props: {
                       }}
                       class={item().avg_rating != null ? undefined : "text-muted-foreground"}
                     >
-                      {item().avg_rating != null ? String(item().avg_rating) : "—"}
+                      {item().avg_rating != null ? String(item().avg_rating) : ""}
                     </Text>
                   </View>
                 );

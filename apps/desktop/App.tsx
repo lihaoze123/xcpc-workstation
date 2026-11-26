@@ -7,6 +7,7 @@ import { ContestsView } from "./src/ui/ContestsView";
 import { Dialogs } from "./src/ui/Dialogs";
 import { ErrorDisplay } from "./src/ui/ErrorDisplay";
 import { Btn, Chevron, Kbd, tip } from "./src/ui/kit";
+import { InsetPanel } from "./src/ui/layout";
 import { Icon } from "./src/ui/Icon";
 import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
@@ -269,6 +270,7 @@ function App() {
       }}
     >
       <TitleBar
+        borderless
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0, maxWidth: 224 }}>
             <AppMenu
@@ -357,7 +359,7 @@ function App() {
           </View>
         }
       />
-      <View style={{ flex: 1, flexDirection: "row" }}>
+      <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
         <NavRail
           space={space()}
           snippetsEnabled={info().snippetsEnabled}
@@ -365,28 +367,30 @@ function App() {
           hasWorkspace
           onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
         />
-        <SpaceStage visible={space() === "problems"} variant="space">
-          <LibraryView active={!inAnyStudio() && space() === "problems"} />
-        </SpaceStage>
-        <SpaceStage visible={space() === "contests"} variant="space">
-          <ContestsView active={!inAnyStudio() && space() === "contests"} />
-        </SpaceStage>
-        <SpaceStage visible={info().snippetsEnabled && space() === "snippets"} variant="space">
-          <If when={info().snippetsEnabled}>
-            <SnippetsView active={!inAnyStudio() && space() === "snippets"} />
-          </If>
-        </SpaceStage>
-        <SpaceStage visible={info().trainingEnabled && space() === "training"} variant="space">
-          <If when={info().trainingEnabled}>
-            <TrainingView active={!inAnyStudio() && space() === "training"} />
-          </If>
-        </SpaceStage>
-        <SpaceStage visible={space() === "tools"} variant="space">
-          <ToolsView active={!inAnyStudio() && space() === "tools"} />
-        </SpaceStage>
-        <SpaceStage visible={space() === "settings"} variant="space">
-          <SettingsView active={!inAnyStudio() && space() === "settings"} />
-        </SpaceStage>
+        <InsetPanel flushLeft testID="shell-inset-panel">
+          <SpaceStage visible={space() === "problems"} variant="space">
+            <LibraryView active={!inAnyStudio() && space() === "problems"} />
+          </SpaceStage>
+          <SpaceStage visible={space() === "contests"} variant="space">
+            <ContestsView active={!inAnyStudio() && space() === "contests"} />
+          </SpaceStage>
+          <SpaceStage visible={info().snippetsEnabled && space() === "snippets"} variant="space">
+            <If when={info().snippetsEnabled}>
+              <SnippetsView active={!inAnyStudio() && space() === "snippets"} />
+            </If>
+          </SpaceStage>
+          <SpaceStage visible={info().trainingEnabled && space() === "training"} variant="space">
+            <If when={info().trainingEnabled}>
+              <TrainingView active={!inAnyStudio() && space() === "training"} />
+            </If>
+          </SpaceStage>
+          <SpaceStage visible={space() === "tools"} variant="space">
+            <ToolsView active={!inAnyStudio() && space() === "tools"} />
+          </SpaceStage>
+          <SpaceStage visible={space() === "settings"} variant="space">
+            <SettingsView active={!inAnyStudio() && space() === "settings"} />
+          </SpaceStage>
+        </InsetPanel>
       </View>
     </View>
   );
@@ -403,6 +407,7 @@ function App() {
     >
       <View style={{ flex: 1, flexDirection: "column" }}>
         <TitleBar
+          borderless
           leading={
             <Btn
               testID="no-workspace-back"
@@ -422,7 +427,7 @@ function App() {
             />
           }
         />
-        <View style={{ flex: 1, flexDirection: "row" }}>
+        <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
           <NavRail
             space={space()}
             hasWorkspace={false}
@@ -430,12 +435,14 @@ function App() {
             trainingEnabled={false}
             onChange={(next) => traceInteraction("nav.space", () => goSpace(next), { space: next })}
           />
-          <SpaceStage visible={space() === "tools"} variant="space">
-            <ToolsView active={space() === "tools"} />
-          </SpaceStage>
-          <SpaceStage visible={space() === "settings"} variant="space">
-            <SettingsView active={space() === "settings"} />
-          </SpaceStage>
+          <InsetPanel flushLeft>
+            <SpaceStage visible={space() === "tools"} variant="space">
+              <ToolsView active={space() === "tools"} />
+            </SpaceStage>
+            <SpaceStage visible={space() === "settings"} variant="space">
+              <SettingsView active={space() === "settings"} />
+            </SpaceStage>
+          </InsetPanel>
         </View>
       </View>
     </If>

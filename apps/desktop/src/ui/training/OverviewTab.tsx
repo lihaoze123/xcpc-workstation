@@ -27,7 +27,6 @@ function KpiCard(props: {
   windowBadge?: string;
   value: string;
   sub?: string;
-  valueColor?: string;
   testID?: string;
 }) {
   return (
@@ -67,9 +66,8 @@ function KpiCard(props: {
           lineHeight: LINE_HEIGHT.display,
           fontWeight: FONT_WEIGHT.semibold,
           fontVariant: ["tabular-nums"],
-          color: props.valueColor,
         }}
-        class={props.valueColor ? undefined : "text-foreground"}
+        class="text-foreground"
       >
         {props.value}
       </Text>
@@ -198,35 +196,46 @@ export function OverviewTab(props: {
                       <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
                         {platformDisplayName(acc().platform)}
                       </Text>
-                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                        {acc().handle || "—"}
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
-                      <Text
-                        style={{
-                          fontSize: FONT_SIZE.display,
-                          lineHeight: LINE_HEIGHT.display,
-                          fontWeight: FONT_WEIGHT.semibold,
-                          fontVariant: ["tabular-nums"],
-                          color: curRating() != null ? tierColor(ratingTier(curRating())) : undefined,
-                        }}
-                        class={curRating() != null ? undefined : "text-muted-foreground"}
-                      >
-                        {curRating() != null ? String(curRating()) : "—"}
-                      </Text>
-                      <If when={maxRating() != null}>
-                        <Text
-                          style={{
-                            fontSize: FONT_SIZE.caption,
-                            fontVariant: ["tabular-nums"],
-                            color: tierColor(ratingTier(maxRating())),
-                          }}
-                        >
-                          {t("training.kpi.maxRating", { rating: maxRating()! })}
+                      <If when={acc().handle}>
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
+                          {acc().handle}
                         </Text>
                       </If>
                     </View>
+                    <If when={curRating() != null}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                        <Text
+                          style={{
+                            fontSize: FONT_SIZE.display,
+                            lineHeight: LINE_HEIGHT.display,
+                            fontWeight: FONT_WEIGHT.semibold,
+                            fontVariant: ["tabular-nums"],
+                          }}
+                          class="text-foreground"
+                        >
+                          {String(curRating())}
+                        </Text>
+                        <View
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: RADIUS.full,
+                            backgroundColor: tierColor(ratingTier(curRating())),
+                          }}
+                        />
+                        <If when={maxRating() != null}>
+                          <Text
+                            style={{
+                              fontSize: FONT_SIZE.caption,
+                              fontVariant: ["tabular-nums"],
+                            }}
+                            class="text-muted-foreground"
+                          >
+                            {t("training.kpi.maxRating", { rating: maxRating()! })}
+                          </Text>
+                        </If>
+                      </View>
+                    </If>
                     <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                       {t("training.kpi.accountStats", {
                         ac: acc().solved_count,

@@ -131,6 +131,8 @@ export function LibraryView(props: { active: boolean }) {
   const outerWidth = signal(1280);
   const narrowSidebarOverride = signal<boolean | undefined>(undefined);
   const width = signal(0); // table container width
+  const hoveredCell = signal<{ row: number; col: string } | undefined>(undefined);
+  const headerSelectHovered = signal(false);
   let table: DataTableRef | undefined;
   let search: InputRef | undefined;
   let searchTimer: number | undefined;
@@ -281,7 +283,80 @@ export function LibraryView(props: { active: boolean }) {
     return out;
   });
 
-  const colLayout = computed(() => computeLibraryColumns(width()));
+  // Workspace-wide column presence (§6.2): evaluated across ALL problems in the workspace
+  // (never the current filtered subset) so toggling filters never causes columns to pop in/out.
+  const allWorkspaceProblems = computed(() => {
+    void rev();
+    return preview.searchProblems({
+      text: null,
+      tags: [],
+      ratingMin: null,
+      ratingMax: null,
+      platform: null,
+      group: null,
+      ungroupedOnly: false,
+    });
+  });
+
+  const workspaceColPresence = computed(() => {
+    const all = allWorkspaceProblems();
+    const trEnabled = trainingEnabled();
+    let hasRating = false;
+    let hasStatus = false;
+    let hasTags = false;
+    let hasSource = false;
+    for (const p of all) {
+      if (!hasRating && p.rating != null) hasRating = true;
+      if (
+        !hasStatus &&
+        (p.packageStatus != null ||
+          (trEnabled && !!p.trainingStatus && p.trainingStatus !== "none") ||
+          p.hasEditorial ||
+          p.hasSolutions)
+      ) {
+        hasStatus = true;
+      }
+      if (!hasTags && p.tags.length > 0) hasTags = true;
+      if (!hasSource && p.sources.length > 0) hasSource = true;
+      if (hasRating && hasStatus && hasTags && hasSource) break;
+    }
+    return { hasRating, hasStatus, hasTags, hasSource };
+  });
+
+  const colLayout = computed(() => {
+    const base = computeLibraryColumns(width());
+    const pres = workspaceColPresence();
+    let reclaimed = 0;
+    const filteredCols = base.columns.filter((c) => {
+      if (c.key === "ratingText" && !pres.hasRating) {
+        reclaimed += c.width;
+        return false;
+      }
+      if (c.key === "status" && !pres.hasStatus) {
+        reclaimed += c.width;
+        return false;
+      }
+      if (c.key === "tagsText" && !pres.hasTags) {
+        reclaimed += c.width;
+        return false;
+      }
+      if (c.key === "source" && !pres.hasSource) {
+        reclaimed += c.width;
+        return false;
+      }
+      return true;
+    });
+    if (reclaimed === 0) return base;
+    const titleWidth = base.titleWidth + reclaimed;
+    const columns = filteredCols.map((c) => (c.key === "title" ? { ...c, width: titleWidth } : c));
+    return {
+      columns,
+      titleWidth,
+      tagsWidth: pres.hasTags ? base.tagsWidth : 0,
+      showInlineId: titleWidth >= 220,
+      maxTags: base.maxTags,
+    };
+  });
   const columns = computed(() => colLayout().columns);
 
   const filtered = () =>
@@ -717,7 +792,7 @@ export function LibraryView(props: { active: boolean }) {
   return (
     <View
       style={{ flex: 1, flexDirection: "row" }}
-      class="bg-background"
+      class="bg-card"
       onLayout={(e) => {
         const w = Math.round(e.bounds.size.width);
         if (w > 0 && Math.abs(w - outerWidth()) >= 2) outerWidth.set(w);
@@ -924,6 +999,7 @@ export function LibraryView(props: { active: boolean }) {
 
               <View
                 style={{ flex: 1, minHeight: 0 }}
+                onMouseLeave={() => hoveredCell.set(undefined)}
                 captureKeys={["up", "down", "enter"]}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown") move(1);
@@ -1001,6 +1077,11 @@ export function LibraryView(props: { active: boolean }) {
                         const pad = cellPadding(c.key);
                         return (
                           <View
+                            onMouseEnter={() => hoveredCell.set({ row: c.row, col: c.key })}
+                            onMouseLeave={() => {
+                              const cur = hoveredCell();
+                              if (cur && cur.row === c.row && cur.col === c.key) hoveredCell.set(undefined);
+                            }}
                             style={{
                               flex: 1,
                               minWidth: 0,
@@ -1014,6 +1095,10 @@ export function LibraryView(props: { active: boolean }) {
                           >
                             {renderLibraryCellContent(c.key, r, {
                               selected: r ? selection().selectedIds.has(r.id) : false,
+                              showCheckbox: () =>
+                                (r ? selection().selectedIds.has(r.id) : false) ||
+                                selection().selectedIds.size > 0 ||
+                                hoveredCell()?.row === c.row,
                               showInlineId: colLayout().showInlineId,
                               maxTags: colLayout().maxTags,
                               tagsWidth: colLayout().tagsWidth,
@@ -1023,20 +1108,38 @@ export function LibraryView(props: { active: boolean }) {
                         );
                       }}
                       renderHeaderCell={(h) =>
-                        renderLibraryHeaderContent({
-                          key: h.key,
-                          title: h.title ?? "",
-                          sortDir: h.sort,
-                          triState: headerTriState,
-                          onToggleAll: () => applySel({ kind: "toggleAll" }),
-                          nativeSortIndicator: true,
-                        })
+                        h.key === "select" ? (
+                          <View
+                            style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "stretch" }}
+                            onMouseEnter={() => headerSelectHovered.set(true)}
+                            onMouseLeave={() => headerSelectHovered.set(false)}
+                          >
+                            {renderLibraryHeaderContent({
+                              key: h.key,
+                              title: h.title ?? "",
+                              sortDir: h.sort,
+                              triState: headerTriState,
+                              showCheckbox: () => headerSelectHovered() || selection().selectedIds.size > 0,
+                              onToggleAll: () => applySel({ kind: "toggleAll" }),
+                              nativeSortIndicator: true,
+                            })}
+                          </View>
+                        ) : (
+                          renderLibraryHeaderContent({
+                            key: h.key,
+                            title: h.title ?? "",
+                            sortDir: h.sort,
+                            triState: headerTriState,
+                            onToggleAll: () => applySel({ kind: "toggleAll" }),
+                            nativeSortIndicator: true,
+                          })
+                        )
                       }
                       classes={{
-                        root: "bg-background",
-                        header: "bg-background border-b border-border",
-                        row: "bg-background",
-                        rowOdd: "bg-background",
+                        root: "bg-card",
+                        header: "bg-card border-b border-border",
+                        row: "bg-card",
+                        rowOdd: "bg-card",
                         rowHover: "bg-muted",
                         rowSelected: "bg-accent",
                       }}

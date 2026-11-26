@@ -5,6 +5,7 @@
 import { computed, effect, signal, Text, untracked, View } from "nsh";
 import { t } from "./i18n";
 import { Btn, Segmented } from "./kit";
+import { GUTTER, Spacer, Toolbar } from "./layout";
 import {
   globalLastSyncedAt,
   info,
@@ -437,32 +438,18 @@ export function TrainingView(props: TrainingViewProps) {
     <View
       testID="training-view"
       style={{ flex: 1, height: "100%", minHeight: 0, overflow: "hidden", flexDirection: "column" }}
-      class="bg-background"
+      class="bg-card"
     >
-      {/* Top toolbar: left 4-view Segmented, right manual log + conditional OJ sync controls */}
-      <View
-        testID="training-topbar"
-        class="border-b border-border bg-background"
-        style={{
-          minHeight: 50,
-          paddingTop: SPACE[12],
-          paddingBottom: SPACE[12],
-          paddingLeft: SPACE[20],
-          paddingRight: SPACE[20],
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: SPACE[12],
-          flexShrink: 0,
-        }}
-      >
+      {/* Standard 52pt Toolbar: left navigation-level underline tabs, right page-level controls */}
+      <Toolbar testID="training-topbar" style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
         <Segmented
           items={tabItems()}
           value={tab()}
           onChange={(next) => tab.set(next)}
           itemWidth={80}
+          underline
         />
-
+        <Spacer />
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <If when={hasConfiguredAccounts()}>
             <Text
@@ -498,58 +485,64 @@ export function TrainingView(props: TrainingViewProps) {
             />
           </If>
         </View>
-      </View>
+      </Toolbar>
 
-      {/* Active tab body: constrained flex container so child <Scroll> scrolls cleanly */}
+      {/* Active tab body: single-page tabs centered at maxWidth 1120; Editorials split view uses full width */}
       <View
         testID="training-body"
         style={{ flex: 1, minHeight: 0, overflow: "hidden", flexDirection: "column" }}
       >
         <If when={tab() === "overview"}>
-          <OverviewTab
-            data={dashboard()}
-            ojSources={ojSources()}
-            hasConfiguredAccounts={hasConfiguredAccounts()}
-            window={windowVal()}
-            tagMinRating={tagMinRating()}
-            onWindowChange={(w) => windowVal.set(w)}
-            onYearChange={(y) => heatmapYear.set(y)}
-            onTagMinRatingChange={(m) => tagMinRating.set(m)}
-            onDrilldownBucket={handleDrilldownBucket}
-            onDrilldownTag={handleDrilldownTag}
-            onOpenManualLog={() => manualLogOpen.set(true)}
-            onAccountConfigured={() => {
-              loadOjSources();
-              reloadTick.set(reloadTick() + 1);
-              void runSync();
-            }}
-          />
+          <View style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 1120, alignSelf: "center", overflow: "hidden" }}>
+            <OverviewTab
+              data={dashboard()}
+              ojSources={ojSources()}
+              hasConfiguredAccounts={hasConfiguredAccounts()}
+              window={windowVal()}
+              tagMinRating={tagMinRating()}
+              onWindowChange={(w) => windowVal.set(w)}
+              onYearChange={(y) => heatmapYear.set(y)}
+              onTagMinRatingChange={(m) => tagMinRating.set(m)}
+              onDrilldownBucket={handleDrilldownBucket}
+              onDrilldownTag={handleDrilldownTag}
+              onOpenManualLog={() => manualLogOpen.set(true)}
+              onAccountConfigured={() => {
+                loadOjSources();
+                reloadTick.set(reloadTick() + 1);
+                void runSync();
+              }}
+            />
+          </View>
         </If>
 
         <If when={tab() === "contests"}>
-          <ContestsTab
-            contests={contests()}
-            platforms={knownContestPlatforms()}
-            platformFilter={contestsPlatform()}
-            includeFinished={includeFinished()}
-            onPlatformChange={(p) => contestsPlatform.set(p)}
-            onIncludeFinishedChange={(v) => includeFinished.set(v)}
-          />
+          <View style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 1120, alignSelf: "center", overflow: "hidden" }}>
+            <ContestsTab
+              contests={contests()}
+              platforms={knownContestPlatforms()}
+              platformFilter={contestsPlatform()}
+              includeFinished={includeFinished()}
+              onPlatformChange={(p) => contestsPlatform.set(p)}
+              onIncludeFinishedChange={(v) => includeFinished.set(v)}
+            />
+          </View>
         </If>
 
         <If when={tab() === "submissions"}>
-          <SubmissionsTab
-            page={submissions()}
-            platforms={knownSubmissionPlatforms()}
-            filter={subFilter()}
-            onFilterChange={(next) => {
-              subFilter.set(next);
-              subOffset.set(0);
-            }}
-            onPageChange={(nextOffset) => subOffset.set(nextOffset)}
-            onReload={() => reloadTick.set(reloadTick() + 1)}
-            onOpenProblem={props.onOpenProblem}
-          />
+          <View style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 1120, alignSelf: "center", overflow: "hidden" }}>
+            <SubmissionsTab
+              page={submissions()}
+              platforms={knownSubmissionPlatforms()}
+              filter={subFilter()}
+              onFilterChange={(next) => {
+                subFilter.set(next);
+                subOffset.set(0);
+              }}
+              onPageChange={(nextOffset) => subOffset.set(nextOffset)}
+              onReload={() => reloadTick.set(reloadTick() + 1)}
+              onOpenProblem={props.onOpenProblem}
+            />
+          </View>
         </If>
 
         <If when={tab() === "editorials"}>

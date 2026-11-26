@@ -9,6 +9,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
 import { Btn, createTransientFlag, DelayedSpinner, IconBtn, Lock, Segmented, tip } from "../kit";
+import { InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
@@ -355,6 +356,7 @@ export function TrdStudio(props: { active: boolean }) {
   return (
     <View style={{ flex: 1, flexDirection: "column" }} class="bg-background">
       <TitleBar
+        borderless
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], minWidth: 0 }}>
             <Btn
@@ -472,9 +474,9 @@ export function TrdStudio(props: { active: boolean }) {
         }
       />
 
-      <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
+      <InsetPanel direction="row">
         {/* Left chapter outline */}
-        <View style={{ width: 272, borderRightWidth: 1, flexDirection: "column" }} class="border-border bg-background">
+        <View style={{ width: 272, borderRightWidth: 1, flexDirection: "column" }} class="border-border bg-card">
           <If when={missingDeps().length > 0 && !locked()}>
             <View
               style={{
@@ -727,7 +729,7 @@ export function TrdStudio(props: { active: boolean }) {
 
         {/* Right collapsible Properties drawer (320pt per §9.1.12) */}
         <If when={propsOpen()}>
-          <View style={{ width: 320, borderLeftWidth: 1, flexDirection: "column" }} class="border-border bg-background">
+          <View style={{ width: 320, borderLeftWidth: 1, flexDirection: "column" }} class="border-border bg-card">
             <View
               style={{
                 height: ROW.table,
@@ -847,7 +849,7 @@ export function TrdStudio(props: { active: boolean }) {
             </Scroll>
           </View>
         </If>
-      </View>
+      </InsetPanel>
 
       {/* Delete Chapter confirmation modal (per review 0.5 & §9.1.4) */}
       <Modal

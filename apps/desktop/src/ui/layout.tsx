@@ -5,15 +5,46 @@
 
 import { Text, View, type JSX, type StyleProp, type ViewStyle } from "nsh";
 import { Icon, type IconName } from "./Icon";
-import { cardShadow } from "./theme";
+import { cardShadow, panelShadow } from "./theme";
 import { CONTROL, GUTTER, RADIUS, SPACE, TOOLBAR, TYPE } from "./tokens";
 
 export { GUTTER, TOOLBAR };
 
-/** The list column's toolbar: search and filters on the left, 新建 at the right end. */
-export function Toolbar(props: { children?: JSX.Element; style?: StyleProp<ViewStyle> }) {
+/** Floating `--bg-surface` inset panel on `--bg-canvas` (Phase 6D §3). */
+export function InsetPanel(props: {
+  flushLeft?: boolean;
+  direction?: "row" | "column";
+  testID?: string;
+  children?: JSX.Element;
+}) {
   return (
     <View
+      testID={props.testID}
+      class="bg-card border border-border"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        flexDirection: props.direction ?? "column",
+        marginTop: SPACE[8],
+        marginRight: SPACE[8],
+        marginBottom: SPACE[8],
+        marginLeft: props.flushLeft ? SPACE[0] : SPACE[8],
+        borderRadius: RADIUS.lg,
+        overflow: "hidden",
+        boxShadow: panelShadow(),
+      }}
+    >
+      {props.children}
+    </View>
+  );
+}
+
+/** The list column's toolbar: search and filters on the left, 新建 at the right end. */
+export function Toolbar(props: { children?: JSX.Element; style?: StyleProp<ViewStyle>; testID?: string }) {
+  return (
+    <View
+      testID={props.testID}
       style={[
         {
           height: TOOLBAR,
@@ -23,6 +54,7 @@ export function Toolbar(props: { children?: JSX.Element; style?: StyleProp<ViewS
           paddingLeft: SPACE[16],
           paddingRight: SPACE[12],
           borderBottomWidth: 1,
+          flexShrink: 0,
         },
         props.style,
       ]}
@@ -43,11 +75,19 @@ export function Spacer() {
  * stays `TOOLBAR` (52pt) tall and vertically centered so its bottom edge aligns with
  * the left toolbar without a blank metadata row. When `second` is present, tags/facts
  * wrap cleanly rather than being sliced mid-chip. */
-export function DetailHeader(props: { title: string; badge?: JSX.Element; second?: JSX.Element; actions?: JSX.Element; size?: "md" | "lg" }) {
+export function DetailHeader(props: {
+  title: string;
+  badge?: JSX.Element;
+  second?: JSX.Element;
+  actions?: JSX.Element;
+  size?: "md" | "lg";
+  bordered?: boolean;
+}) {
   const hasSecond = () => props.second !== undefined && props.second !== null && props.second !== false;
   return (
     <View
-      style={
+      class={props.bordered ? "border-border" : undefined}
+      style={[
         hasSecond()
           ? {
               paddingTop: (TOOLBAR - CONTROL.md) / 2,
@@ -56,8 +96,9 @@ export function DetailHeader(props: { title: string; badge?: JSX.Element; second
               paddingRight: GUTTER,
               gap: SPACE[8],
             }
-          : { height: TOOLBAR, justifyContent: "center", paddingLeft: GUTTER, paddingRight: GUTTER }
-      }
+          : { height: TOOLBAR, justifyContent: "center", paddingLeft: GUTTER, paddingRight: GUTTER },
+        props.bordered ? { borderBottomWidth: 1, flexShrink: 0 } : { flexShrink: 0 },
+      ]}
     >
       <View style={{ height: CONTROL.md, flexDirection: "row", alignItems: "center", gap: SPACE[8], overflow: "hidden" }}>
         <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, ...TYPE.title }} class="text-foreground">

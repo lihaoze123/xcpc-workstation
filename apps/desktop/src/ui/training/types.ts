@@ -442,8 +442,9 @@ export function buildYearHeatmapGrid(year: number, cells: readonly HeatmapCell[]
   return { year, weeks, days, monthStarts };
 }
 
-const COUNT_PALETTE_LIGHT = ["#EFEFF1", "#BBE6D0", "#6ED2A0", "#22A96B", "#147A4B"];
-const COUNT_PALETTE_DARK = ["#1C1C20", "#113A28", "#16623F", "#22965E", "#4ADE80"];
+// Brand Deep Petrol / Teal-Blue (H:195°) 5-step heatmap scale (§7); green is reserved for AC / pass.
+const COUNT_PALETTE_LIGHT = ["#EFEFF1", "#CBE5EE", "#7DC0D6", "#2B92B3", "#0B6989"];
+const COUNT_PALETTE_DARK = ["#1C1C20", "#0D3442", "#0F5973", "#0E7FA6", "#38B2D8"];
 
 const RATING_HEAT_LIGHT: Record<TierName, string> = {
   newbie: "#9CA3AF",

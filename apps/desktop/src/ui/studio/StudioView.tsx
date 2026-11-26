@@ -24,7 +24,7 @@ import { createFreeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { locale, t, type MessageKey } from "../i18n";
 import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
-import { EmptyState } from "../layout";
+import { EmptyState, InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { adaptiveCompileDelayMs, minimalEdit, ratioOf, type Book } from "../logic";
 import { setToastBottomLift, showToast } from "../Toast";
@@ -1284,6 +1284,7 @@ export function StudioView(props: { active: boolean }) {
   return (
     <View style={{ flex: 1 }} class="bg-background">
       <TitleBar
+        borderless
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
             <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
@@ -1420,7 +1421,7 @@ export function StudioView(props: { active: boolean }) {
           </View>
         }
       />
-      <View style={{ flex: 1, flexDirection: "row" }}>
+      <InsetPanel direction="row">
         <If when={target()?.target === "contest" && contest()}>
           <View
             style={{
@@ -1869,7 +1870,7 @@ export function StudioView(props: { active: boolean }) {
             onConfirm={confirmInitPackageScaffold}
           />
         </View>
-      </View>
+      </InsetPanel>
     </View>
   );
 }

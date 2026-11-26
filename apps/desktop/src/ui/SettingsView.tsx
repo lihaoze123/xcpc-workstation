@@ -24,8 +24,8 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "./kit";
-import { Section, SectionRow } from "./layout";
-import { abbreviateHome, pathBase } from "./logic";
+import { DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
+import { abbreviateHome, pathBase, spaceName } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
 import { ShortcutsList } from "./ShortcutsModal";
 import { PluginsPane } from "./PluginsPane";
@@ -82,7 +82,7 @@ import {
   normalizeCxxOverrideInput,
 } from "./studio/buildLogic";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "./tokens";
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE, TYPE } from "./tokens";
 const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: IconName }[] = [
   { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
   { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
@@ -1322,114 +1322,123 @@ export function SettingsView(props: { active?: boolean } = {}) {
     running = undefined;
   });
 
+  const activeNavItem = () => NAV_ITEMS[activeIndex()] ?? NAV_ITEMS[0];
+
   return (
-    <View style={{ flex: 1, flexDirection: "row" }} class="bg-background">
-      {/* Left section rail */}
+    <View style={{ flex: 1, flexDirection: "row" }} class="bg-card">
+      {/* Left section rail (list-detail archetype: left category nav is the list) */}
       <View
         style={{
           width: 196,
           borderRightWidth: 1,
-          paddingTop: SPACE[20],
-          paddingBottom: SPACE[20],
-          paddingLeft: SPACE[12],
-          paddingRight: SPACE[12],
+          flexDirection: "column",
           flexShrink: 0,
         }}
-        class="border-border bg-background"
+        class="border-border bg-card"
       >
-        <View style={{ gap: NAV_ITEM_GAP }}>
-          <View
-            class="bg-accent"
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: 0,
-              height: NAV_ITEM_HEIGHT,
-              borderRadius: RADIUS.sm,
-              transform: `translateY(${activeIndex() * (NAV_ITEM_HEIGHT + NAV_ITEM_GAP)}px)`,
-              ...indicatorTransition(),
-            }}
-          />
-          <Each of={NAV_ITEMS} key={(it) => it.id}>
-            {(item) => {
-              const selected = () => active() === item().id;
-              return (
-                <View
-                  testID={`settings-nav-${item().id}`}
-                  onPress={() => settingsSection.set(item().id)}
-                  class={selected() ? "" : "hover:bg-muted active:bg-accent"}
-                  style={{
-                    height: NAV_ITEM_HEIGHT,
-                    paddingLeft: SPACE[12],
-                    paddingRight: SPACE[12],
-                    borderRadius: RADIUS.sm,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: SPACE[8],
-                    ...colorTransition(120),
-                  }}
-                >
-                  <Icon
-                    name={item().icon}
-                    size="md"
-                    tone={selected() ? "foreground" : "muted-foreground"}
-                  />
-                  <Text
+        <Toolbar>
+          <Text style={TYPE.strong} class="text-foreground">
+            {spaceName("settings")}
+          </Text>
+        </Toolbar>
+        <View style={{ flex: 1, padding: SPACE[8] }}>
+          <View style={{ gap: NAV_ITEM_GAP }}>
+            <View
+              class="bg-accent"
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                height: NAV_ITEM_HEIGHT,
+                borderRadius: RADIUS.sm,
+                transform: `translateY(${activeIndex() * (NAV_ITEM_HEIGHT + NAV_ITEM_GAP)}px)`,
+                ...indicatorTransition(),
+              }}
+            />
+            <Each of={NAV_ITEMS} key={(it) => it.id}>
+              {(item) => {
+                const selected = () => active() === item().id;
+                return (
+                  <View
+                    testID={`settings-nav-${item().id}`}
+                    onPress={() => settingsSection.set(item().id)}
+                    class={selected() ? "" : "hover:bg-muted active:bg-accent"}
                     style={{
-                      fontSize: FONT_SIZE.body,
-                      lineHeight: LINE_HEIGHT.body,
-                      fontWeight: selected() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular,
+                      height: NAV_ITEM_HEIGHT,
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      borderRadius: RADIUS.sm,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: SPACE[8],
+                      ...colorTransition(120),
                     }}
-                    class={selected() ? "text-foreground" : "text-secondary-foreground"}
                   >
-                    {t(item().labelKey)}
-                  </Text>
-                </View>
-              );
-            }}
-          </Each>
+                    <Icon
+                      name={item().icon}
+                      size="md"
+                      tone={selected() ? "foreground" : "muted-foreground"}
+                    />
+                    <Text
+                      style={{
+                        fontSize: FONT_SIZE.body,
+                        lineHeight: LINE_HEIGHT.body,
+                        fontWeight: selected() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular,
+                      }}
+                      class={selected() ? "text-foreground" : "text-secondary-foreground"}
+                    >
+                      {t(item().labelKey)}
+                    </Text>
+                  </View>
+                );
+              }}
+            </Each>
+          </View>
         </View>
       </View>
 
       {/* Right detail pane */}
-      <Scroll smoothWheel style={{ flex: 1 }} class="bg-background">
-        <View
-          style={{
-            width: 640,
-            maxWidth: "100%",
-            alignSelf: "center",
-            paddingTop: SPACE[32],
-            paddingBottom: SPACE[32],
-            paddingLeft: SPACE[32],
-            paddingRight: SPACE[32],
-            opacity: paneOpacity,
-            transform: [{ translateY: paneY }],
-          }}
-        >
-          <If when={active() === "workspace"}>
-            <WorkspacePane active={isActive()} />
-          </If>
-          <If when={active() === "layout"}>
-            <LayoutPane active={isActive()} />
-          </If>
-          <If when={active() === "toolchain"}>
-            <ToolchainPane />
-          </If>
-          <If when={active() === "plugins"}>
-            <PluginsPane />
-          </If>
-          <If when={active() === "appearance"}>
-            <AppearancePane />
-          </If>
-          <If when={active() === "shortcuts"}>
-            <ShortcutsList />
-          </If>
-          <If when={active() === "about"}>
-            <AboutPane />
-          </If>
-        </View>
-      </Scroll>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "column" }} class="bg-card">
+        <DetailHeader bordered title={t(activeNavItem().labelKey)} />
+        <Scroll smoothWheel style={{ flex: 1 }}>
+          <View
+            style={{
+              width: 640,
+              maxWidth: "100%",
+              alignSelf: "center",
+              paddingTop: SPACE[24],
+              paddingBottom: SPACE[32],
+              paddingLeft: GUTTER,
+              paddingRight: GUTTER,
+              opacity: paneOpacity,
+              transform: [{ translateY: paneY }],
+            }}
+          >
+            <If when={active() === "workspace"}>
+              <WorkspacePane active={isActive()} />
+            </If>
+            <If when={active() === "layout"}>
+              <LayoutPane active={isActive()} />
+            </If>
+            <If when={active() === "toolchain"}>
+              <ToolchainPane />
+            </If>
+            <If when={active() === "plugins"}>
+              <PluginsPane />
+            </If>
+            <If when={active() === "appearance"}>
+              <AppearancePane />
+            </If>
+            <If when={active() === "shortcuts"}>
+              <ShortcutsList />
+            </If>
+            <If when={active() === "about"}>
+              <AboutPane />
+            </If>
+          </View>
+        </Scroll>
+      </View>
     </View>
   );
 }

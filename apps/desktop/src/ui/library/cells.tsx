@@ -25,10 +25,12 @@ export const ROW_LINE = 20;
 /** Compact 16x16 tri-state checkbox matching the design system's 4px radius & primary fill. */
 export function TriCheckbox(props: {
   state: CheckboxTriState;
+  visible?: boolean | (() => boolean);
   onPress?: () => void;
   testID?: string;
 }) {
   const checked = () => props.state !== "none";
+  const shown = () => (typeof props.visible === "function" ? props.visible() : (props.visible ?? true));
   return (
     <View
       testID={props.testID}
@@ -45,6 +47,7 @@ export function TriCheckbox(props: {
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
+        opacity: shown() ? 1 : 0,
         ...colorTransition(120),
       }}
     >
@@ -54,7 +57,7 @@ export function TriCheckbox(props: {
   );
 }
 
-/** Fixed status icon slot (renders a whisper-quiet dot when empty to keep visual rhythm). */
+/** Fixed status icon slot (draws nothing when empty, §6.1). */
 function StatusSlot(props: { children?: JSX.Element; tooltipText?: string; compact?: boolean }) {
   const size = props.compact ? 16 : 18;
   return (
@@ -68,7 +71,7 @@ function StatusSlot(props: { children?: JSX.Element; tooltipText?: string; compa
         flexShrink: 0,
       }}
     >
-      {props.children ?? <View style={{ width: 3.5, height: 3.5, borderRadius: 2 }} class="bg-border" />} // token-exempt: 3.5px empty dot placeholder
+      {props.children}
     </View>
   );
 }
@@ -112,6 +115,7 @@ export function renderLibraryCellContent(
   row: LibraryRow | undefined,
   opts: {
     selected: boolean;
+    showCheckbox?: boolean | (() => boolean);
     showInlineId: boolean;
     maxTags: number;
     tagsWidth?: number;
@@ -125,6 +129,7 @@ export function renderLibraryCellContent(
     return (
       <TriCheckbox
         state={opts.selected ? "all" : "none"}
+        visible={opts.showCheckbox}
         onPress={opts.onToggleSelect}
       />
     );
@@ -287,6 +292,7 @@ export function renderLibraryHeaderContent(props: {
   title: string;
   sortDir?: "ascending" | "descending" | null;
   triState: () => CheckboxTriState;
+  showCheckbox?: boolean | (() => boolean);
   onToggleAll: () => void;
   nativeSortIndicator?: boolean;
 }) {
@@ -305,7 +311,12 @@ export function renderLibraryHeaderContent(props: {
           justifyContent: "center",
         }}
       >
-        <TriCheckbox state={props.triState()} onPress={props.onToggleAll} testID="library-select-all" />
+        <TriCheckbox
+          state={props.triState()}
+          visible={props.showCheckbox}
+          onPress={props.onToggleAll}
+          testID="library-select-all"
+        />
       </View>
     );
   }

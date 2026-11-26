@@ -8,6 +8,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
 import { Btn, Chip, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
 import { TitleBar } from "../TitleBar";
@@ -328,6 +329,7 @@ export function SnippetStudio(props: { active: boolean }) {
   return (
     <View style={{ flex: 1, flexDirection: "column" }} class="bg-background">
       <TitleBar
+        borderless
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], minWidth: 0 }}>
             <Btn
@@ -393,7 +395,7 @@ export function SnippetStudio(props: { active: boolean }) {
         }
       />
 
-      <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
+      <InsetPanel direction="row">
         <ResizablePanelGroup style={{ flex: 1, minWidth: 0 }}>
           <ResizablePanel size={500} minSize={300}>
             <View style={{ flex: 1, flexDirection: "column", borderRightWidth: 1 }} class="border-border bg-card">
@@ -596,7 +598,7 @@ export function SnippetStudio(props: { active: boolean }) {
           <View
             testID="snippet-info-drawer"
             style={{ width: 320, borderLeftWidth: 1, flexDirection: "column" }}
-            class="border-border bg-background"
+            class="border-border bg-card"
           >
             <View
               style={{
@@ -806,7 +808,7 @@ export function SnippetStudio(props: { active: boolean }) {
             </Scroll>
           </View>
         </If>
-      </View>
+      </InsetPanel>
     </View>
   );
 }

@@ -34,11 +34,13 @@ function GroupedRow(props: {
   tagsWidth: number;
   trainingEnabled?: boolean;
   selected: boolean;
+  anySelected: boolean;
   focused: boolean;
   onRowClick: (id: string, opts: { shift: boolean; mod: boolean; checkbox: boolean }) => void;
   onRowDoubleClick: (id: string) => void;
   onRowContextMenu: (row: LibraryRow, x: number, y: number) => void;
 }) {
+  const hovered = signal(false);
   const colWidth = (key: string) => props.columns.find((c) => c.key === key)?.width;
   const renderCol = (key: "select" | "title" | "ratingText" | "status" | "tagsText" | "source") => {
     const w = colWidth(key);
@@ -60,6 +62,7 @@ function GroupedRow(props: {
       >
         {renderLibraryCellContent(key, props.row, {
           selected: props.selected,
+          showCheckbox: () => hovered() || props.selected || props.anySelected,
           showInlineId: props.showInlineId,
           maxTags: props.maxTags,
           tagsWidth: props.tagsWidth,
@@ -71,6 +74,8 @@ function GroupedRow(props: {
 
   return (
     <View
+      onMouseEnter={() => hovered.set(true)}
+      onMouseLeave={() => hovered.set(false)}
       onPress={(e) => {
         const mod = e.modifiers.control || e.modifiers.platform;
         const shift = e.modifiers.shift;
@@ -82,7 +87,7 @@ function GroupedRow(props: {
         props.onRowClick(props.row.id, { shift, mod, checkbox: isCheckboxCol });
       }}
       onContextMenu={(e) => props.onRowContextMenu(props.row, e.pagePosition.x, e.pagePosition.y)}
-      class={props.selected || props.focused ? "bg-accent" : "bg-background hover:bg-muted"}
+      class={props.selected || props.focused ? "bg-accent" : "bg-card hover:bg-muted"}
       style={{
         height: ROW_H,
         flexDirection: "row",
@@ -121,6 +126,7 @@ export function GroupedProblemList(props: {
   empty: JSX.Element;
 }) {
   const collapsed = signal<ReadonlySet<string>>(new Set());
+  const headerHovered = signal(false);
 
   const toggleCollapse = (key: string) => {
     const next = new Set(collapsed());
@@ -138,9 +144,11 @@ export function GroupedProblemList(props: {
   };
 
   return (
-    <View style={{ flex: 1, minWidth: 0 }} class="bg-background">
+    <View style={{ flex: 1, minWidth: 0 }} class="bg-card">
       {/* Shared sticky header matching <DataTable> */}
       <View
+        onMouseEnter={() => headerHovered.set(true)}
+        onMouseLeave={() => headerHovered.set(false)}
         style={{
           height: HEADER_H,
           flexDirection: "row",
@@ -148,7 +156,7 @@ export function GroupedProblemList(props: {
           borderBottomWidth: 1,
           flexShrink: 0,
         }}
-        class="bg-background border-border"
+        class="bg-card border-border"
       >
         <Each of={props.columns} key={(c) => c.key}>
           {(col) => {
@@ -163,6 +171,7 @@ export function GroupedProblemList(props: {
                   title: col().title,
                   sortDir: sortDir(),
                   triState: () => props.headerTriState,
+                  showCheckbox: () => headerHovered() || props.selectedIds.size > 0,
                   onToggleAll: props.onToggleAll,
                 })}
               </View>
@@ -180,9 +189,12 @@ export function GroupedProblemList(props: {
                 const isCollapsed = () => collapsed().has(sec().key);
                 const rowIds = () => sec().rows.map((r) => r.id);
                 const groupTri = () => headerCheckboxState(props.selectedIds, rowIds());
+                const groupHovered = signal(false);
                 return (
                   <View style={{ flexShrink: 0 }}>
                     <View
+                      onMouseEnter={() => groupHovered.set(true)}
+                      onMouseLeave={() => groupHovered.set(false)}
                       style={{
                         height: GROUP_H,
                         flexDirection: "row",
@@ -195,7 +207,10 @@ export function GroupedProblemList(props: {
                         style={{ width: 36, height: GROUP_H, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                         onPress={() => props.onToggleGroupSelect(rowIds())}
                       >
-                        <TriCheckbox state={groupTri()} />
+                        <TriCheckbox
+                          state={groupTri()}
+                          visible={() => groupHovered() || groupTri() !== "none" || props.selectedIds.size > 0}
+                        />
                       </View>
                       <View
                         onPress={() => toggleCollapse(sec().key)}
@@ -261,6 +276,7 @@ export function GroupedProblemList(props: {
                               tagsWidth={props.tagsWidth}
                               trainingEnabled={props.trainingEnabled}
                               selected={props.selectedIds.has(row().id)}
+                              anySelected={props.selectedIds.size > 0}
                               focused={props.focusedId === row().id && props.selectedIds.size === 0}
                               onRowClick={props.onRowClick}
                               onRowDoubleClick={props.onRowDoubleClick}
