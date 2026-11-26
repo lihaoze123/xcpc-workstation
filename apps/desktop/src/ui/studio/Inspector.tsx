@@ -15,7 +15,7 @@ import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
 import { Modal } from "../Modal";
 import { colorTransition, panelTransition } from "../motion";
-import { errorOf, goSettings, info, preview, refresh, revision, unfreezeFor, type UiError } from "../store";
+import { activeRevision, errorOf, goSettings, info, preview, refresh, unfreezeFor, type UiError } from "../store";
 import {
   encodeSingleOptionPatch,
   loadTemplatesCatalog,
@@ -32,6 +32,7 @@ export const INSPECTOR_WIDTH = 332;
 type InspectorTab = "info" | "layout";
 
 export function Inspector(props: {
+  active?: boolean;
   open: boolean;
   topOffset?: number;
   target: "problem" | "contest";
@@ -66,10 +67,13 @@ export function Inspector(props: {
     untracked(() => error.set(undefined));
   });
 
+  const isActive = () => (props.active ?? true) && props.open;
+  const rev = activeRevision(isActive);
+
   const showAssets = () => props.target === "problem" || (props.target === "contest" && !!props.item);
 
   const catalog = computed<TemplatesCatalog>(() => {
-    void revision();
+    void rev();
     if (!everOpened()) {
       return { default: "olymp-classic", workspaceOptions: {}, templates: [], presets: [], fonts: [] };
     }
@@ -81,7 +85,8 @@ export function Inspector(props: {
       assetCount.set(0);
       return;
     }
-    void revision();
+    if (!isActive()) return;
+    void rev();
     void props.assetsRefreshSeq;
     const target = props.target;
     const id = props.id;
@@ -262,7 +267,7 @@ export function Inspector(props: {
                   </If>
                 </Section>
               </If>
-              <ProblemInfoTab id={props.id} done={done} hasFollowingSection={showAssets()} />
+              <ProblemInfoTab id={props.id} rev={rev} done={done} hasFollowingSection={showAssets()} />
             </If>
             <If when={showAssets()}>
               <View style={{ padding: 14 }}>
@@ -303,7 +308,7 @@ export function Inspector(props: {
               />
             </If>
             <If when={props.target === "problem"}>
-              <ProblemLayoutTab id={props.id} catalog={catalog()} done={done} />
+              <ProblemLayoutTab id={props.id} rev={rev} catalog={catalog()} done={done} />
             </If>
           </If>
 
@@ -488,11 +493,12 @@ const nul = (v: string) => (v === "" ? null : v);
 
 function ProblemInfoTab(props: {
   id: string;
+  rev: () => number;
   done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
   hasFollowingSection?: boolean;
 }) {
   const d = computed(() => {
-    void revision();
+    void props.rev();
     return preview.problemDetail(props.id);
   });
   const wsReadOnly = () => info().readOnly;
@@ -1041,11 +1047,12 @@ function ContestLayoutTab(props: {
 
 function ProblemLayoutTab(props: {
   id: string;
+  rev: () => number;
   catalog: TemplatesCatalog;
   done: (res: { ok: boolean; code?: string | null; error?: string | null }) => void;
 }) {
   const d = computed(() => {
-    void revision();
+    void props.rev();
     return preview.problemDetail(props.id);
   });
   const wsReadOnly = () => info().readOnly;

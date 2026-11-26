@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use xcpc_domain::{
-    EditorialSummary, Problem, ProblemSource, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
+    EditorialSummary, ProblemMeta, ProblemSource, TrainingLogEntry, TrainingLogStatus,
+    TrainingStatus,
 };
 use xcpc_storage::Workspace;
 
@@ -1472,23 +1473,24 @@ fn aggregate_submissions_by_problem(
 #[allow(clippy::type_complexity)]
 fn load_workspace_problem_maps(
     workspace: &Workspace,
-) -> Result<(HashMap<String, Problem>, HashMap<(String, String), String>)> {
+) -> Result<(
+    HashMap<String, ProblemMeta>,
+    HashMap<(String, String), String>,
+)> {
     let mut problems_by_id = HashMap::new();
     let mut source_map = HashMap::new();
     for id in workspace.list_problems()? {
-        let Ok(problem) = workspace.load_problem(&id) else {
+        let Ok(meta) = workspace.load_problem_meta(&id) else {
             continue;
         };
-        for src in &problem.meta.sources {
+        for src in &meta.sources {
             let p = src.platform.trim().to_ascii_lowercase();
             let k = src.id.trim().to_ascii_lowercase();
             if !p.is_empty() && !k.is_empty() {
-                source_map
-                    .entry((p, k))
-                    .or_insert_with(|| problem.id.clone());
+                source_map.entry((p, k)).or_insert_with(|| id.clone());
             }
         }
-        problems_by_id.insert(problem.id.clone(), problem);
+        problems_by_id.insert(id, meta);
     }
     Ok((problems_by_id, source_map))
 }
@@ -1534,7 +1536,7 @@ struct ResolvedManualProblem {
 
 fn resolve_manual_entry_context(
     entry: &TrainingLogEntry,
-    problems_by_id: &HashMap<String, Problem>,
+    problems_by_id: &HashMap<String, ProblemMeta>,
     source_map: &HashMap<(String, String), String>,
     oj_known_keys: &HashSet<(String, String)>,
     oj_url_to_key: &HashMap<String, (String, String)>,
@@ -1549,21 +1551,22 @@ fn resolve_manual_entry_context(
         .as_ref()
         .filter(|s| !s.platform.trim().is_empty() && !s.id.trim().is_empty());
 
-    let ws_prob: Option<&Problem> =
-        entry_pid
-            .and_then(|pid| problems_by_id.get(pid))
-            .or_else(|| {
-                entry_src.and_then(|src| {
-                    let key = (
-                        src.platform.trim().to_ascii_lowercase(),
-                        src.id.trim().to_ascii_lowercase(),
-                    );
-                    source_map.get(&key).and_then(|pid| problems_by_id.get(pid))
-                })
-            });
+    let ws_prob: Option<(&String, &ProblemMeta)> = entry_pid
+        .and_then(|pid| problems_by_id.get_key_value(pid))
+        .or_else(|| {
+            entry_src.and_then(|src| {
+                let key = (
+                    src.platform.trim().to_ascii_lowercase(),
+                    src.id.trim().to_ascii_lowercase(),
+                );
+                source_map
+                    .get(&key)
+                    .and_then(|pid| problems_by_id.get_key_value(pid))
+            })
+        });
 
     let linked_pid = ws_prob
-        .map(|p| p.id.clone())
+        .map(|(id, _)| id.clone())
         .or_else(|| entry_pid.map(str::to_owned));
 
     // Determine external (platform, id) if linked to an external OJ problem.
@@ -1573,9 +1576,8 @@ fn resolve_manual_entry_context(
             src.id.trim().to_string(),
             src.url.clone(),
         ))
-    } else if let Some(prob) = ws_prob {
-        let best_src = prob
-            .meta
+    } else if let Some((_, meta)) = ws_prob {
+        let best_src = meta
             .sources
             .iter()
             .find(|s| {
@@ -1587,8 +1589,7 @@ fn resolve_manual_entry_context(
                     ))
             })
             .or_else(|| {
-                prob.meta
-                    .sources
+                meta.sources
                     .iter()
                     .find(|s| !s.platform.trim().is_empty() && !s.id.trim().is_empty())
             });
@@ -1614,7 +1615,7 @@ fn resolve_manual_entry_context(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
-        .or_else(|| ws_prob.map(|p| p.meta.title.clone()));
+        .or_else(|| ws_prob.map(|(_, m)| m.title.clone()));
 
     let url = entry
         .url
@@ -1627,12 +1628,12 @@ fn resolve_manual_entry_context(
     let rating = entry
         .rating
         .map(i64::from)
-        .or_else(|| ws_prob.and_then(|p| p.meta.rating).map(i64::from));
+        .or_else(|| ws_prob.and_then(|(_, m)| m.rating).map(i64::from));
 
     let tags = if !entry.tags.is_empty() {
         entry.tags.clone()
-    } else if let Some(prob) = ws_prob {
-        prob.meta.tags.clone()
+    } else if let Some((_, meta)) = ws_prob {
+        meta.tags.clone()
     } else {
         Vec::new()
     };
@@ -1686,7 +1687,7 @@ fn resolve_manual_entry_context(
 
 fn resolve_manual_log_problems(
     logs: &[TrainingLogEntry],
-    problems_by_id: &HashMap<String, Problem>,
+    problems_by_id: &HashMap<String, ProblemMeta>,
     source_map: &HashMap<(String, String), String>,
     oj_known_keys: &HashSet<(String, String)>,
     oj_url_to_key: &HashMap<String, (String, String)>,
@@ -1776,7 +1777,7 @@ fn lookup_library_problem_id(
 #[derive(Default)]
 struct WorkspaceTrainingInfo {
     source_map: HashMap<(String, String), String>,
-    problems_by_id: HashMap<String, Problem>,
+    problems_by_id: HashMap<String, ProblemMeta>,
     logs: Vec<TrainingLogEntry>,
     backlog: Vec<WorkspaceBacklogItem>,
     todo_count: u64,
@@ -1788,38 +1789,36 @@ fn collect_workspace_training_info(
     workspace: &Workspace,
 ) -> Result<WorkspaceTrainingInfo> {
     let ids = workspace.list_problems()?;
-    let mut problems = Vec::with_capacity(ids.len());
+    let mut problems: Vec<(String, ProblemMeta)> = Vec::with_capacity(ids.len());
     let mut source_map: HashMap<(String, String), String> = HashMap::new();
 
     for id in ids {
-        let Ok(problem) = workspace.load_problem(&id) else {
+        let Ok(meta) = workspace.load_problem_meta(&id) else {
             continue;
         };
-        for src in &problem.meta.sources {
+        for src in &meta.sources {
             let p = src.platform.trim().to_ascii_lowercase();
             let k = src.id.trim().to_ascii_lowercase();
             if !p.is_empty() && !k.is_empty() {
-                source_map
-                    .entry((p, k))
-                    .or_insert_with(|| problem.id.clone());
+                source_map.entry((p, k)).or_insert_with(|| id.clone());
             }
         }
-        problems.push(problem);
+        problems.push((id, meta));
     }
 
     let lookup_items: Vec<(&str, &[ProblemSource])> = problems
         .iter()
-        .map(|p| (p.id.as_str(), p.meta.sources.as_slice()))
+        .map(|(id, meta)| (id.as_str(), meta.sources.as_slice()))
         .collect();
     let synced_map = db.get_problems_sync_statuses(&lookup_items)?;
     let logs = workspace.read_training_logs()?;
     let derived = Workspace::derive_problem_training_statuses(
         &logs,
-        problems.iter().map(|p| {
+        problems.iter().map(|(id, meta)| {
             (
-                p.id.as_str(),
-                p.meta.sources.as_slice(),
-                synced_map.get(&p.id).copied().unwrap_or_default(),
+                id.as_str(),
+                meta.sources.as_slice(),
+                synced_map.get(id).copied().unwrap_or_default(),
             )
         }),
     );
@@ -1828,35 +1827,35 @@ fn collect_workspace_training_info(
     let mut todo_count = 0u64;
     let mut attempted_count = 0u64;
 
-    let mut problems_by_id: HashMap<String, Problem> = HashMap::with_capacity(problems.len());
-    for problem in problems {
-        let status = derived.get(&problem.id).copied().unwrap_or_default();
+    let mut problems_by_id: HashMap<String, ProblemMeta> = HashMap::with_capacity(problems.len());
+    for (id, meta) in problems {
+        let status = derived.get(&id).copied().unwrap_or_default();
         match status {
             TrainingStatus::Todo => {
                 todo_count += 1;
                 backlog.push(WorkspaceBacklogItem {
-                    problem_id: problem.id.clone(),
-                    title: problem.meta.title.clone(),
+                    problem_id: id.clone(),
+                    title: meta.title.clone(),
                     status,
-                    rating: problem.meta.rating,
-                    tags: problem.meta.tags.clone(),
-                    sources: problem.meta.sources.clone(),
+                    rating: meta.rating,
+                    tags: meta.tags.clone(),
+                    sources: meta.sources.clone(),
                 });
             }
             TrainingStatus::Attempted => {
                 attempted_count += 1;
                 backlog.push(WorkspaceBacklogItem {
-                    problem_id: problem.id.clone(),
-                    title: problem.meta.title.clone(),
+                    problem_id: id.clone(),
+                    title: meta.title.clone(),
                     status,
-                    rating: problem.meta.rating,
-                    tags: problem.meta.tags.clone(),
-                    sources: problem.meta.sources.clone(),
+                    rating: meta.rating,
+                    tags: meta.tags.clone(),
+                    sources: meta.sources.clone(),
                 });
             }
             TrainingStatus::None | TrainingStatus::Ac | TrainingStatus::Upsolved => {}
         }
-        problems_by_id.insert(problem.id.clone(), problem);
+        problems_by_id.insert(id, meta);
     }
 
     backlog.sort_by(|a, b| {

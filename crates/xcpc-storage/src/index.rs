@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use xcpc_domain::{
-    ContestMeta, ContestStats, FuzzyHit, FuzzyMatchKind, GroupFilter, GroupSummary, ProblemSummary,
-    RatingTier, SearchQuery, check_id, normalize_group_name,
+    ContestMeta, ContestStats, FuzzyHit, FuzzyMatchKind, GroupFilter, GroupSummary, Language,
+    ProblemSummary, RatingTier, SearchQuery, check_id, normalize_group_name,
 };
 
 use crate::{Error, Result, Workspace};
@@ -17,9 +17,21 @@ use crate::{Error, Result, Workspace};
 /// Half-life for Frecency decay (7 days in seconds).
 const FRECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 3600.0;
 
+/// Cached immutable item metadata for a frozen contest snapshot.
+#[derive(Debug, Clone)]
+pub struct IndexedFrozenItem {
+    pub id: String,
+    pub label: String,
+    pub title: String,
+    pub statement: String,
+    pub editorial: String,
+}
+
 #[derive(Debug, Clone)]
 struct IndexedProblem {
     summary: ProblemSummary,
+    statements: Vec<(Option<Language>, String)>,
+    has_package: bool,
     normalized_id: String,
     normalized_title: String,
     /// Normalized searchable corpus: id, title, author, tags, sources, statements, editorial.
@@ -30,6 +42,7 @@ struct IndexedProblem {
 struct IndexedContest {
     id: String,
     meta: ContestMeta,
+    frozen_items: Vec<IndexedFrozenItem>,
     normalized_id: String,
     normalized_name: String,
 }
@@ -46,6 +59,8 @@ pub struct WorkspaceIndex {
     problems: BTreeMap<String, IndexedProblem>,
     contests: BTreeMap<String, IndexedContest>,
     declared_groups: Vec<String>,
+    training_enabled: bool,
+    snippets_enabled: bool,
     frecency: HashMap<(FuzzyMatchKind, String), FrecencyEntry>,
 }
 
@@ -57,6 +72,8 @@ impl WorkspaceIndex {
     pub fn scan(ws: &Workspace) -> Result<Self> {
         let mut index = Self {
             declared_groups: ws.workspace_groups(),
+            training_enabled: ws.training_enabled(),
+            snippets_enabled: ws.snippets_enabled(),
             ..Self::default()
         };
         for id in ws.list_problems()? {
@@ -72,9 +89,11 @@ impl WorkspaceIndex {
         Ok(index)
     }
 
-    /// Refreshes workspace-level metadata (such as declared groups from `workspace.toml`).
+    /// Refreshes workspace-level metadata (such as declared groups and feature flags from `workspace.toml`).
     pub fn refresh_workspace_meta(&mut self, ws: &Workspace) {
         self.declared_groups = ws.workspace_groups();
+        self.training_enabled = ws.training_enabled();
+        self.snippets_enabled = ws.snippets_enabled();
     }
 
     /// Incrementally refreshes one problem from disk (or removes it if deleted).
@@ -119,7 +138,7 @@ impl WorkspaceIndex {
         let mut parts = trimmed.split('/');
         match (parts.next(), parts.next()) {
             (Some("workspace.toml"), None) => {
-                self.declared_groups = ws.workspace_groups();
+                self.refresh_workspace_meta(ws);
                 Ok(())
             }
             (Some("problems"), Some(id)) if check_id(id).is_ok() => {
@@ -146,6 +165,47 @@ impl WorkspaceIndex {
     /// Looks up one indexed problem summary by ID.
     pub fn problem(&self, id: &str) -> Option<&ProblemSummary> {
         self.problems.get(id).map(|p| &p.summary)
+    }
+
+    /// Resolves the statement file path for `id` in `language` from the in-memory index,
+    /// matching [`xcpc_domain::Problem::statement`] fallback order with zero disk I/O.
+    pub fn statement_path_for(&self, id: &str, language: Language) -> String {
+        if let Some(entry) = self.problems.get(id) {
+            if let Some((_, path)) = entry
+                .statements
+                .iter()
+                .find(|(lang, _)| *lang == Some(language))
+            {
+                return path.clone();
+            }
+            if let Some((_, path)) = entry.statements.iter().find(|(lang, _)| lang.is_none()) {
+                return path.clone();
+            }
+            if let Some((_, path)) = entry.statements.first() {
+                return path.clone();
+            }
+        }
+        format!("problems/{id}/statement.md")
+    }
+
+    /// Whether `id` has a local Polygon package (`validator.cpp`, `[[test]]`, etc.).
+    pub fn problem_has_package(&self, id: &str) -> Option<bool> {
+        self.problems.get(id).map(|p| p.has_package)
+    }
+
+    /// Cached immutable item entries for a frozen contest snapshot.
+    pub fn contest_frozen_items(&self, id: &str) -> Option<&[IndexedFrozenItem]> {
+        self.contests.get(id).map(|c| c.frozen_items.as_slice())
+    }
+
+    /// Cached `workspace.toml` `[training].enabled` flag.
+    pub fn training_enabled(&self) -> bool {
+        self.training_enabled
+    }
+
+    /// Cached `workspace.toml` `[snippets].enabled` flag.
+    pub fn snippets_enabled(&self) -> bool {
+        self.snippets_enabled
     }
 
     /// All indexed contests as `(id, &ContestMeta)`, sorted by ID.
@@ -488,6 +548,16 @@ fn load_indexed_problem(ws: &Workspace, id: &str) -> Result<IndexedProblem> {
         push_part(&ed.text);
     }
 
+    let statements: Vec<(Option<Language>, String)> = problem
+        .statements
+        .iter()
+        .map(|s| (s.language, s.file.path.clone()))
+        .collect();
+    let has_package = ws
+        .resolve(&problem.dir)
+        .ok()
+        .is_some_and(|dir| problem.meta.has_package_in_dir(&dir));
+
     let summary = ProblemSummary {
         id: problem.id.clone(),
         title: problem.meta.title.clone(),
@@ -504,17 +574,41 @@ fn load_indexed_problem(ws: &Workspace, id: &str) -> Result<IndexedProblem> {
         normalized_id: normalize_text(&summary.id),
         normalized_title: normalize_text(&summary.title),
         normalized_text: normalize_text(&corpus),
+        statements,
+        has_package,
         summary,
     })
 }
 
 fn load_indexed_contest(ws: &Workspace, id: &str) -> Result<IndexedContest> {
     let contest = ws.load_contest(id)?;
+    let frozen_items = if contest.meta.frozen {
+        ws.contest_problems(&contest)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(item, p)| {
+                let statement = p
+                    .statement(contest.meta.language)
+                    .map(|s| s.file.path.clone())
+                    .unwrap_or_else(|| format!("{}/statement.md", p.dir));
+                IndexedFrozenItem {
+                    title: item.apply(&p.meta).title,
+                    statement,
+                    editorial: format!("{}/editorial.md", p.dir),
+                    label: item.label,
+                    id: item.id,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(IndexedContest {
         normalized_id: normalize_text(&contest.id),
         normalized_name: normalize_text(&contest.meta.name),
         id: contest.id,
         meta: contest.meta,
+        frozen_items,
     })
 }
 

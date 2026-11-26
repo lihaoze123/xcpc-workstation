@@ -22,9 +22,9 @@ use crate::cache::JudgeCache;
 use crate::error::{JudgeError, Result, io_err};
 use crate::package::{
     CheckerSpec, ExpandedTest, PackageFreshness, TestSource, build_dir_for, check_dirty_inputs,
-    check_package_freshness_in, compute_package_hash_in, contest_limits_key, discover_solutions,
-    expand_tests, find_generator_source, find_interactor_source, find_validator_source,
-    has_explicit_checker, load_latest_report, resolve_checker_spec,
+    compute_package_hash_in, contest_limits_key, discover_solutions, expand_tests,
+    find_generator_source, find_interactor_source, find_validator_source, has_explicit_checker,
+    load_latest_report, resolve_checker_spec,
 };
 use crate::report::{
     BuildReport, DirtyInputIssue, GateResult, InteractionTranscript, SubtaskSummary,
@@ -285,28 +285,34 @@ pub fn inspect_package_in(
     slug: &str,
     contest: Option<&str>,
 ) -> Result<PackageInspection> {
-    let problem = ws.load_problem(slug)?;
-    let prob_dir = ws.resolve(&problem.dir)?;
-    let has_pkg = problem.meta.has_package_in_dir(&prob_dir);
+    let meta = ws.load_problem_meta(slug)?;
+    let prob_dir = ws.resolve(&format!("problems/{slug}"))?;
+    let has_pkg = meta.has_package_in_dir(&prob_dir);
     let limits_key = contest_limits_key(ws, slug, contest)?;
     let package_hash = compute_package_hash_in(ws, slug, limits_key.as_deref())?;
-    let freshness = check_package_freshness_in(ws, slug, contest)?;
+    let freshness = crate::package::evaluate_package_freshness(
+        ws,
+        slug,
+        limits_key.as_deref(),
+        has_pkg,
+        package_hash.clone(),
+    );
     let is_interactive = find_interactor_source(&prob_dir).is_some();
-    let runs = problem.meta.run_count();
-    let use_checker = !is_interactive || has_explicit_checker(&prob_dir, &problem.meta);
-    let checker_spec = resolve_checker_spec(&prob_dir, &problem.meta)?;
+    let runs = meta.run_count();
+    let use_checker = !is_interactive || has_explicit_checker(&prob_dir, &meta);
+    let checker_spec = resolve_checker_spec(&prob_dir, &meta)?;
     let checker_display = if use_checker {
         checker_spec.display_name().to_owned()
     } else {
         "interactor".to_owned()
     };
-    let expanded_tests = expand_tests(&prob_dir, &problem.meta)?;
-    let subtask_val = validate_subtask_config(&problem.meta.subtask, &expanded_tests);
-    let has_subtasks = !problem.meta.subtask.is_empty();
+    let expanded_tests = expand_tests(&prob_dir, &meta)?;
+    let subtask_val = validate_subtask_config(&meta.subtask, &expanded_tests);
+    let has_subtasks = !meta.subtask.is_empty();
     let dirty_inputs = check_dirty_inputs(&prob_dir);
 
     let files = collect_package_files(&prob_dir, &checker_spec);
-    let solutions = match discover_solutions(&prob_dir, &problem.meta) {
+    let solutions = match discover_solutions(&prob_dir, &meta) {
         Ok(list) => list
             .into_iter()
             .map(|s| PackageSolutionInfo {
@@ -321,8 +327,7 @@ pub fn inspect_package_in(
             .collect(),
         Err(_) => {
             // Fall back to declared solutions from `problem.toml` if a declared file is missing on disk.
-            let mut list: Vec<PackageSolutionInfo> = problem
-                .meta
+            let mut list: Vec<PackageSolutionInfo> = meta
                 .solutions
                 .iter()
                 .map(|(name, spec)| PackageSolutionInfo {

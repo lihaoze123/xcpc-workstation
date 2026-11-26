@@ -1595,6 +1595,12 @@ fn ui_methods_do_not_block_while_compiler_lock_is_held() {
     let _compiler_guard = preview.state.compiler.lock().unwrap();
 
     // Fast UI queries & mutations must all complete immediately without touching `compiler`.
+    let ws_info = preview.workspace();
+    assert_eq!(ws_info.problems.len(), 1);
+    assert_eq!(ws_info.contests.len(), 1);
+    let tpl_json: serde_json::Value = serde_json::from_str(&preview.list_templates_json()).unwrap();
+    assert!(tpl_json["templates"].is_array());
+    assert!(!preview.has_package("p1".into()));
     assert!(
         preview
             .read("problems/p1/statement.md".into())
@@ -1638,6 +1644,19 @@ fn ui_methods_do_not_block_while_compiler_lock_is_held() {
     );
     assert!(saved2.ok);
     assert_eq!(preview.state.revision(), rev_before + 1);
+
+    // Metadata mutation also succeeds without blocking on `compiler`.
+    assert!(
+        preview
+            .update_problem_meta(
+                "p1".into(),
+                ProblemMetaPatchJs {
+                    title: Some("Smooth Updated".into()),
+                    ..Default::default()
+                },
+            )
+            .ok
+    );
 }
 
 #[test]
@@ -3859,5 +3878,136 @@ context = "global"
             .unwrap()
             .iter()
             .any(|g| g["plugin_id"] == "demo-web-ui")
+    );
+}
+
+#[test]
+fn state_info_reads_only_in_memory_index_without_disk_io() {
+    let (dir, preview) = init_temp_preview("state-info-in-memory");
+    assert!(preview.create_problem("p1".into(), "Alpha".into()).ok);
+    assert!(preview.create_contest("c1".into(), "Round 1".into()).ok);
+    assert!(preview.compose_contest("c1".into(), vec!["p1".into()]).ok);
+
+    let before = preview.workspace();
+    assert_eq!(before.problems.len(), 1);
+    assert_eq!(before.problems[0].title, "Alpha");
+    assert_eq!(before.contests.len(), 1);
+    assert_eq!(before.contests[0].items.len(), 1);
+    assert_eq!(before.contests[0].items[0].title, "Alpha");
+
+    // Delete on-disk manifests behind State's back (bypassing index refresh).
+    // `State::info` (`preview.workspace()`) must still return the exact same snapshot
+    // strictly from the in-memory `core.index` without touching the filesystem.
+    std::fs::remove_file(dir.0.join("problems/p1/problem.toml")).unwrap();
+    std::fs::remove_file(dir.0.join("contests/c1/contest.toml")).unwrap();
+    let _ = std::fs::remove_file(dir.0.join("workspace.toml"));
+
+    let after = preview.workspace();
+    assert_eq!(after.problems.len(), 1);
+    assert_eq!(after.problems[0].id, "p1");
+    assert_eq!(after.problems[0].title, "Alpha");
+    assert_eq!(after.contests.len(), 1);
+    assert_eq!(after.contests[0].id, "c1");
+    assert_eq!(after.contests[0].items.len(), 1);
+    assert_eq!(after.contests[0].items[0].id, "p1");
+    assert_eq!(after.contests[0].items[0].title, "Alpha");
+}
+
+#[test]
+fn list_templates_json_hits_cache_on_problem_edits_and_invalidates_on_template_change() {
+    let (dir, preview) = init_temp_preview("templates-cache-hit");
+    assert!(preview.create_problem("p1".into(), "Cache Test".into()).ok);
+
+    // Warm the template schema cache.
+    let initial: serde_json::Value = serde_json::from_str(&preview.list_templates_json()).unwrap();
+    assert!(initial["templates"].is_array());
+
+    // Hold `math_engine` lock while editing problem files and querying `list_templates_json`.
+    // If `list_templates_json` attempted to re-evaluate templates via `math_engine`, it would
+    // deadlock here.
+    {
+        let _math_guard = preview.state.math_engine.lock().unwrap();
+        assert!(
+            preview
+                .save(
+                    "problems/p1/statement.md".into(),
+                    "## 题目描述\n\nEdited.\n".into(),
+                    None,
+                )
+                .ok
+        );
+        assert!(
+            preview
+                .update_problem_meta(
+                    "p1".into(),
+                    ProblemMetaPatchJs {
+                        title: Some("Cache Test Edited".into()),
+                        ..Default::default()
+                    },
+                )
+                .ok
+        );
+        let hit: serde_json::Value = serde_json::from_str(&preview.list_templates_json()).unwrap();
+        assert_eq!(hit["templates"], initial["templates"]);
+    }
+
+    // Adding a new template file under `templates/` must invalidate the fingerprint cache
+    // and expose the new template in `list_templates_json`.
+    let templates_dir = dir.0.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    std::fs::write(
+        templates_dir.join("custom-perf.typ"),
+        "#let xcpc-template = (name: (zh: \"自定义\", en: \"Custom\"), options: ())\n#let render(data) = [ok]\n",
+    )
+    .unwrap();
+
+    let refreshed: serde_json::Value =
+        serde_json::from_str(&preview.list_templates_json()).unwrap();
+    let ids: Vec<&str> = refreshed["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["id"].as_str())
+        .collect();
+    assert!(
+        ids.contains(&"custom-perf"),
+        "expected custom-perf template after cache invalidation, got {ids:?}"
+    );
+}
+
+#[test]
+fn static_ui_ipc_ban_no_sync_heavy_calls() {
+    let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+    let banned = ["preview.inspectPackage(", "preview.exportStatus("];
+    let mut violations = Vec::new();
+    let mut stack = vec![ui_dir];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if (!name.ends_with(".ts") && !name.ends_with(".tsx"))
+                || name.ends_with(".test.ts")
+                || name.ends_with(".test.tsx")
+                || name == "store.ts"
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            for needle in banned {
+                if text.contains(needle) {
+                    violations.push(format!("{}: {needle}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "banned synchronous heavy IPC calls found in UI code: {violations:#?}"
     );
 }

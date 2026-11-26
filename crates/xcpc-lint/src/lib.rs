@@ -90,6 +90,10 @@ pub struct LintOptions<'a> {
     pub check_editorial: bool,
     /// Optional unsaved editor buffer `(workspace_relative_path, text)` overlaying disk.
     pub unsaved: Option<(&'a str, &'a str)>,
+    /// Skip static package freshness hashing (`tests/`, `samples/`, etc.).
+    /// Used by interactive desktop preview (whose HUD filters out `package_*` findings);
+    /// `xcpc check` and `freeze_contest` always keep this `false`.
+    pub skip_package_freshness: bool,
 }
 
 /// Validates and normalizes an image URL referenced inside `problem_dir` into a
@@ -148,15 +152,17 @@ pub fn lint_problem(
     id: &str,
     opts: &LintOptions<'_>,
 ) -> Result<Vec<Finding>, Error> {
-    let problem = ws.load_problem(id)?;
+    let meta = ws.load_problem_meta(id)?;
+    let dir = format!("problems/{id}");
     let mut findings = Vec::new();
     lint_problem_dir(
         ws,
         None,
-        &problem.id,
+        id,
         None,
-        &problem.dir,
+        &dir,
         false,
+        !meta.subtask.is_empty(),
         opts,
         &mut findings,
     )?;
@@ -205,21 +211,24 @@ pub fn lint_contest(
                     Some(&item.label),
                     &snap_dir,
                     true,
+                    false,
                     opts,
                     &mut findings,
                 )?;
             }
         } else {
-            match ws.load_problem(&item.id) {
-                Ok(problem) => {
-                    if seen_dirs.insert(problem.dir.clone()) {
+            match ws.load_problem_meta(&item.id) {
+                Ok(meta) => {
+                    let dir = format!("problems/{}", item.id);
+                    if seen_dirs.insert(dir.clone()) {
                         lint_problem_dir(
                             ws,
                             Some(&contest.id),
-                            &problem.id,
+                            &item.id,
                             Some(&item.label),
-                            &problem.dir,
+                            &dir,
                             false,
+                            !meta.subtask.is_empty(),
                             opts,
                             &mut findings,
                         )?;
@@ -254,6 +263,7 @@ fn lint_problem_dir(
     label: Option<&str>,
     dir: &str,
     is_snapshot: bool,
+    has_subtasks: bool,
     opts: &LintOptions<'_>,
     findings: &mut Vec<Finding>,
 ) -> Result<(), Error> {
@@ -267,11 +277,7 @@ fn lint_problem_dir(
             .resolve(dir)
             .ok()
             .is_some_and(|p| xcpc_judge::find_interactor_source(&p).is_some());
-    let has_subtasks = !is_snapshot
-        && ws
-            .load_problem(problem_id)
-            .ok()
-            .is_some_and(|p| !p.meta.subtask.is_empty());
+    let has_subtasks = !is_snapshot && has_subtasks;
 
     // 2. Statements (`statement.md`, `statement.zh.md`, `statement.en.md`):
     //    check images (`missing_image`), I/O sections (`missing_io_section`),
@@ -329,7 +335,7 @@ fn lint_problem_dir(
 
     // 4. Static package freshness check (never compiles or executes anything).
     //    Frozen contest snapshots exclude package files and are already frozen.
-    if !is_snapshot {
+    if !is_snapshot && !opts.skip_package_freshness {
         lint_package_freshness(ws, contest_id, problem_id, label, dir, findings);
     }
 
@@ -404,6 +410,12 @@ fn read_with_unsaved(
     rel: &str,
     unsaved: Option<(&str, &str)>,
 ) -> Result<Option<String>, Error> {
+    if let Some((u_path, u_text)) = unsaved
+        && u_path == rel
+        && !u_text.is_empty()
+    {
+        return Ok(Some(u_text.to_owned()));
+    }
     let on_disk = match ws.read_text(rel) {
         Ok(text) => Some(text),
         Err(Error::NotFound(_)) => None,
@@ -412,7 +424,7 @@ fn read_with_unsaved(
     if let Some((u_path, u_text)) = unsaved
         && u_path == rel
     {
-        if on_disk.is_some() || !u_text.is_empty() {
+        if on_disk.is_some() {
             return Ok(Some(u_text.to_owned()));
         }
         return Ok(None);
@@ -1279,6 +1291,34 @@ mod tests {
         assert!(
             !f4.iter().any(|f| f.code == code::MISSING_SUBTASKS_SECTION),
             "{f4:#?}"
+        );
+    }
+
+    #[test]
+    fn lint_problem_skip_package_freshness_skips_package_checks() {
+        let (dir, ws) = scratch_ws();
+        write_problem(dir.path(), "pkg", "## Input\nx\n## Output\ny\n", None);
+        fs::create_dir_all(dir.path().join("problems/pkg/solutions")).unwrap();
+        fs::write(
+            dir.path().join("problems/pkg/solutions/std.cpp"),
+            "int main() { return 0; }\n",
+        )
+        .unwrap();
+
+        let with_pkg = lint_problem(&ws, "pkg", &LintOptions::default()).unwrap();
+        assert!(
+            with_pkg.iter().any(|f| f.code == code::PACKAGE_UNVERIFIED),
+            "{with_pkg:#?}"
+        );
+
+        let opts = LintOptions {
+            skip_package_freshness: true,
+            ..LintOptions::default()
+        };
+        let without_pkg = lint_problem(&ws, "pkg", &opts).unwrap();
+        assert!(
+            without_pkg.is_empty(),
+            "skip_package_freshness should omit package_* findings: {without_pkg:#?}"
         );
     }
 }

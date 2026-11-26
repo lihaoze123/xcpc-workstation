@@ -1564,18 +1564,20 @@ impl State {
 
         let payload = match method.trim() {
             "listProblems" | "list_problems" => {
-                let ids = ws.list_problems().unwrap_or_default();
-                let mut items = Vec::with_capacity(ids.len());
-                for id in ids {
-                    if let Ok(p) = ws.load_problem(&id) {
-                        items.push(serde_json::json!({
+                let core = self.core.lock().unwrap();
+                let items: Vec<serde_json::Value> = core
+                    .index
+                    .problems()
+                    .into_iter()
+                    .map(|p| {
+                        serde_json::json!({
                             "id": p.id,
-                            "title": p.meta.title,
-                            "tags": p.meta.tags,
-                            "rating": p.meta.rating,
-                        }));
-                    }
-                }
+                            "title": p.title,
+                            "tags": p.tags,
+                            "rating": p.rating,
+                        })
+                    })
+                    .collect();
                 serde_json::Value::Array(items)
             }
             "getProblem" | "get_problem" => {
@@ -1614,12 +1616,13 @@ impl State {
                 }
             }
             "listContests" | "list_contests" => {
-                let ids = ws.list_contests().unwrap_or_default();
-                let mut items = Vec::with_capacity(ids.len());
-                for id in ids {
-                    if let Ok(c) = ws.load_contest(&id) {
-                        let problems: Vec<_> = c
-                            .meta
+                let core = self.core.lock().unwrap();
+                let items: Vec<serde_json::Value> = core
+                    .index
+                    .contests()
+                    .into_iter()
+                    .map(|(cid, meta)| {
+                        let problems: Vec<_> = meta
                             .problems
                             .iter()
                             .map(|item| {
@@ -1627,7 +1630,7 @@ impl State {
                                     .title
                                     .clone()
                                     .or_else(|| {
-                                        ws.load_problem(&item.id).ok().map(|p| p.meta.title)
+                                        core.index.problem(&item.id).map(|p| p.title.clone())
                                     })
                                     .unwrap_or_else(|| item.id.clone());
                                 serde_json::json!({
@@ -1637,18 +1640,18 @@ impl State {
                                 })
                             })
                             .collect();
-                        items.push(serde_json::json!({
-                            "id": c.id,
-                            "name": c.meta.name,
-                            "date": c.meta.date,
-                            "location": c.meta.location,
-                            "frozen": c.meta.frozen,
-                            "archived": c.meta.archived,
+                        serde_json::json!({
+                            "id": cid,
+                            "name": meta.name,
+                            "date": meta.date,
+                            "location": meta.location,
+                            "frozen": meta.frozen,
+                            "archived": meta.archived,
                             "problemCount": problems.len(),
                             "items": problems,
-                        }));
-                    }
-                }
+                        })
+                    })
+                    .collect();
                 serde_json::Value::Array(items)
             }
             "getContest" | "get_contest" => {
@@ -1865,9 +1868,13 @@ impl State {
 
         match apply_import_draft(&ws, &draft) {
             Ok(report) => {
-                {
+                if let Ok(rebuilt) = xcpc_storage::WorkspaceIndex::scan(&ws) {
                     let mut core = self.core.lock().unwrap();
-                    if let Ok(rebuilt) = xcpc_storage::WorkspaceIndex::scan(&ws) {
+                    if core
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|cur| cur.root() == ws.root())
+                    {
                         core.index = rebuilt;
                     }
                 }

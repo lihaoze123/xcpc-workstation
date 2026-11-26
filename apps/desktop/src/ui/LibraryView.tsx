@@ -34,6 +34,7 @@ import {
 import { EASE_STANDARD, MONO, monoFont, ms } from "./theme";
 import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
+  activeRevision,
   batchTask,
   dialog,
   importPolygon,
@@ -47,7 +48,6 @@ import {
   pluginsRevision,
   preview,
   refresh,
-  revision,
   selectedProblem,
   setLibraryGroupBy,
   setLibrarySidebarOpen,
@@ -201,8 +201,10 @@ export function LibraryView(props: { active: boolean }) {
     }
   });
 
+  const rev = activeRevision(() => props.active);
+
   const facets = computed(() => {
-    void revision();
+    void rev();
     return preview.workspaceFacets();
   });
 
@@ -215,7 +217,7 @@ export function LibraryView(props: { active: boolean }) {
   });
 
   const rows = computed<LibraryRow[]>(() => {
-    void revision();
+    void rev();
     const range = TIER_RANGES.find((r) => r.tier === tier());
     const sg = sidebarGroup();
     const found = preview.searchProblems({
@@ -510,7 +512,7 @@ export function LibraryView(props: { active: boolean }) {
         { label: t("library.menu.duplicate"), disabled: ro, onSelect: () => dialog.set({ kind: "duplicateProblem", problemId: row.id }) },
         {
           label: t("library.menu.createPackage"),
-          disabled: ro || preview.inspectPackage(row.id, null).hasPackage,
+          disabled: ro || row.packageStatus != null,
           onSelect: () => {
             const res = preview.initPackage(row.id);
             if (res.ok) {
@@ -635,6 +637,54 @@ export function LibraryView(props: { active: boolean }) {
 
   const showBatchInspector = () => selection().selectedIds.size >= 2 || batchTask() !== undefined;
   const rightPanelVisible = () => showBatchInspector() || visibleSelected() !== undefined;
+
+  const pluginImporters = computed<RegisteredImporter[]>(() => {
+    void pluginsRevision();
+    return parseJsonReport<RegisteredImporter[]>(
+      typeof preview.pluginListImporters === "function" ? preview.pluginListImporters() : undefined,
+      [],
+    );
+  });
+
+  const pluginImporterEntries = computed<MenuEntry[]>(() =>
+    pluginImporters().map((imp) => ({
+      id: `${imp.plugin_id}:${imp.importer.id}`,
+      label: imp.importer.name,
+      note: imp.plugin_name,
+      icon: "sparkles",
+      disabled: readOnly(),
+    })),
+  );
+
+  const onSelectImporter = (key: string) => {
+    const idx = key.indexOf(":");
+    if (idx < 0) return;
+    const pid = key.slice(0, idx);
+    const iid = key.slice(idx + 1);
+    void preview
+      .pluginRunImporter(pid, iid, {
+        title: t("tools.importDialogTitle"),
+        buttonLabel: t("tools.importAction"),
+      })
+      .then((res) => {
+        if (!res.ok) {
+          if (res.code !== "cancelled") {
+            showToast({ tone: "issues", text: res.error ?? t("tools.importFailed") });
+          }
+          return;
+        }
+        const report = parseJsonReport<ImportAppliedReport>(res, {
+          kind: "problem",
+          created_ids: [],
+          skipped_ids: [],
+        });
+        refresh();
+        showToast({
+          tone: "success",
+          text: t("tools.importSuccess", { count: report.created_ids.length }),
+        });
+      });
+  };
 
   const emptyElement = () =>
     filtered() ? (
@@ -843,68 +893,24 @@ export function LibraryView(props: { active: boolean }) {
                   onPress={() => void importPolygon()}
                   style={{ flexShrink: 0 }}
                 />
-                {(() => {
-                  void pluginsRevision();
-                  const importers = parseJsonReport<RegisteredImporter[]>(
-                    typeof preview.pluginListImporters === "function" ? preview.pluginListImporters() : undefined,
-                    [],
-                  );
-                  if (importers.length === 0) return null;
-                  const entries: MenuEntry[] = importers.map((imp) => ({
-                    id: `${imp.plugin_id}:${imp.importer.id}`,
-                    label: imp.importer.name,
-                    note: imp.plugin_name,
-                    icon: "sparkles",
-                    disabled: readOnly(),
-                  }));
-                  const onSelectImporter = (key: string) => {
-                    const idx = key.indexOf(":");
-                    if (idx < 0) return;
-                    const pid = key.slice(0, idx);
-                    const iid = key.slice(idx + 1);
-                    void preview
-                      .pluginRunImporter(pid, iid, {
-                        title: t("tools.importDialogTitle"),
-                        buttonLabel: t("tools.importAction"),
-                      })
-                      .then((res) => {
-                        if (!res.ok) {
-                          if (res.code !== "cancelled") {
-                            showToast({ tone: "issues", text: res.error ?? t("tools.importFailed") });
-                          }
-                          return;
-                        }
-                        const report = parseJsonReport<ImportAppliedReport>(res, {
-                          kind: "problem",
-                          created_ids: [],
-                          skipped_ids: [],
-                        });
-                        refresh();
-                        showToast({
-                          tone: "success",
-                          text: t("tools.importSuccess", { count: report.created_ids.length }),
-                        });
-                      });
-                  };
-                  return (
-                    <AppMenu
-                      entries={entries}
-                      onSelect={onSelectImporter}
-                      align="end"
-                      minWidth={210}
-                      trigger={
-                        <Btn
-                          testID="library-plugin-importers"
-                          icon="sparkles"
-                          variant="outline"
-                          disabled={readOnly()}
-                          tooltip={tip(t("tools.pluginImporters"))}
-                          style={{ flexShrink: 0 }}
-                        />
-                      }
-                    />
-                  );
-                })()}
+                <If when={pluginImporters().length > 0}>
+                  <AppMenu
+                    entries={pluginImporterEntries()}
+                    onSelect={onSelectImporter}
+                    align="end"
+                    minWidth={210}
+                    trigger={
+                      <Btn
+                        testID="library-plugin-importers"
+                        icon="sparkles"
+                        variant="outline"
+                        disabled={readOnly()}
+                        tooltip={tip(t("tools.pluginImporters"))}
+                        style={{ flexShrink: 0 }}
+                      />
+                    }
+                  />
+                </If>
                 <Btn
                   label={width() >= 700 ? t("library.newProblem") : undefined}
                   icon="plus"
@@ -1120,8 +1126,10 @@ function ProblemInspector(props: {
   const solution = signal<string | undefined>(undefined);
   let canvas: CanvasController | undefined;
 
+  const rev = activeRevision(() => props.active);
+
   const detail = computed(() => {
-    void revision();
+    void rev();
     return preview.problemDetail(props.id);
   });
 
@@ -1141,11 +1149,11 @@ function ProblemInspector(props: {
   });
 
   // Recompile when workspace revision bumps while this inspector is visible.
-  let lastRev = revision();
+  let lastRev = rev();
   effect(() => {
-    const rev = revision();
-    if (props.active && rev !== lastRev) {
-      lastRev = rev;
+    const cur = rev();
+    if (props.active && cur !== lastRev) {
+      lastRev = cur;
       if (tab() !== "code") canvas?.compile();
     }
   });
@@ -1216,7 +1224,7 @@ function ProblemInspector(props: {
     ];
     return [
       { id: "copyMd", label: t("library.menu.copyMarkdownWithSamples"), icon: "fileText" },
-      ...(ro || preview.inspectPackage(props.id, null).hasPackage
+      ...(ro || preview.hasPackage(props.id)
         ? []
         : [{ id: "createPackage", label: t("library.menu.createPackage"), icon: "code" as const }]),
       { id: "duplicate", label: t("library.menu.duplicate"), icon: "copy", disabled: ro },

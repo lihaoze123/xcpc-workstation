@@ -1,10 +1,10 @@
-import { traceSpan } from "./trace";
+import { isTraceRecording, traceIpcCall } from "./trace";
 // The app's state shared by the shell and the views: the native bridge, the workspace,
 // the preferences, where the user is (a space, or the studio on an object), the watch
 // loop on external changes, and the studio's actions for the command palette.
 
 import process from "process";
-import { batch, signal, Storage, type Signal } from "nsh";
+import { batch, computed, signal, Storage, untracked, type Signal } from "nsh";
 import {
   Preview,
   type ActionResult,
@@ -47,7 +47,21 @@ import {
   type AppearancePrefs,
 } from "./theme";
 
-export const preview = new Preview(process.dataDir);
+/** Wraps a native bridge object so every sync/async method call auto-records `cat: "ipc"` spans when tracing is enabled (zero overhead when off). */
+export function createTracedPreview<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const value = Reflect.get(obj, prop, receiver);
+      if (typeof value !== "function" || typeof prop !== "string") return value;
+      return (...args: unknown[]) => {
+        if (!isTraceRecording()) return value.apply(obj, args);
+        return traceIpcCall(prop, () => value.apply(obj, args));
+      };
+    },
+  });
+}
+
+export const preview: Preview = createTracedPreview(new Preview(process.dataDir));
 
 // ── The C++ compiler, detected once and on 重新检测 (authoring-ui-refactor §6.1) ──────
 // Status slots say 「没有找到 C++ 编译器」 before any check is started.
@@ -115,6 +129,17 @@ export function reloadThemeOverrides() {
 reloadThemeOverrides();
 /** Bumped whenever the workspace's content may have changed (ours or another's). */
 export const revision = signal(0);
+/**
+ * Returns a reactive revision getter that latches `revision()` while `active()` is false
+ * and advances immediately when `active()` becomes true. Hidden mounted views subscribe to
+ * this instead of `revision()` directly so background spaces do zero work during Studio edits.
+ */
+export function activeRevision(active: () => boolean): () => number {
+  return computed<number>((prev) => {
+    if (!active()) return prev ?? untracked(revision);
+    return revision();
+  });
+}
 /** Bumped whenever the open workspace switches to a different root, so views clear stale filters/errors. */
 export const workspaceVersion = signal(0);
 /** Why the last attempt to open a workspace failed, for the views that opened it. */
@@ -130,7 +155,7 @@ export function hasWorkspace(): boolean {
 
 /** Reads the workspace again after a change and tells the views. */
 export function refresh() {
-  const next = traceSpan("ipc", "workspace", () => preview.workspace());
+  const next = preview.workspace();
   batch(() => {
     info.set(next);
     if (!next.trainingEnabled && space() === "training") {

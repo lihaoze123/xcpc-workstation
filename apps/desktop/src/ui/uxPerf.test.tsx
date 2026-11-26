@@ -9,6 +9,7 @@ import { describe, expect, test } from "nsh/test";
 import { Preview } from "xcpc-workstation/native";
 import { afterNextPaint } from "./frame";
 import { adaptiveCompileDelayMs, neighborPagesToPrewarm } from "./logic";
+import { activeRevision, createTracedPreview, preview, revision } from "./store";
 import { matrixCellKey, type MatrixCellData } from "./studio/buildLogic";
 import { createMatrixCellStore, stepMatrixSelection } from "./studio/matrixStore";
 import {
@@ -289,5 +290,65 @@ describe("UI/UX quantitative gates (Phase 1)", () => {
         (ti, sol) => !(ti === 2 && sol === "std"),
       ),
     ).toEqual({ testIndex: 5, solution: "std" });
+  });
+
+  test("activeRevision latches while inactive (0 recomputes) and advances immediately on activation", () => {
+    const active = signal(false);
+    const rev = activeRevision(() => active());
+    let runs = 0;
+    const derived = computed(() => {
+      runs += 1;
+      return rev();
+    });
+
+    const initial = derived();
+    expect(runs).toBe(1);
+
+    // Bump global revision 5 times while view is hidden.
+    for (let i = 0; i < 5; i += 1) {
+      revision.set(revision() + 1);
+      expect(derived()).toBe(initial);
+    }
+    expect(runs).toBe(1);
+
+    // Activating catches up immediately in one recompute.
+    active.set(true);
+    expect(derived()).toBe(revision());
+    expect(runs).toBe(2);
+
+    // Deactivating does not trigger a recompute.
+    active.set(false);
+    expect(derived()).toBe(revision());
+    expect(runs).toBe(2);
+  });
+
+  test("auto-traced preview Proxy records 0 events when disabled and captures sync + async ipc spans when enabled", async () => {
+    const fake = createTracedPreview({
+      syncOp(x: number) {
+        return x * 2;
+      },
+      async asyncOp(x: number) {
+        await new Promise<void>((r) => setTimeout(r, 5));
+        return x + 1;
+      },
+    });
+
+    stopTraceRecording();
+    const before = getJsTraceEvents().length;
+    expect(fake.syncOp(21)).toBe(42);
+    expect(await fake.asyncOp(41)).toBe(42);
+    preview.workspace();
+    expect(getJsTraceEvents().length).toBe(before);
+
+    startTraceRecording();
+    expect(fake.syncOp(10)).toBe(20);
+    expect(await fake.asyncOp(10)).toBe(11);
+    preview.workspace();
+    stopTraceRecording();
+
+    const events = getJsTraceEvents();
+    expect(events.some((e) => e.cat === "ipc" && e.name === "syncOp")).toBe(true);
+    expect(events.some((e) => e.cat === "ipc" && e.name === "asyncOp")).toBe(true);
+    expect(events.some((e) => e.cat === "ipc" && e.name === "workspace")).toBe(true);
   });
 });

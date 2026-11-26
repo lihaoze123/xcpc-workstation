@@ -13,6 +13,7 @@ import type {
   ActionResult,
   CleanUnusedAssetsResultJs,
   ExportBookStatusJs,
+  PackageInspectionResultJs,
   PreviewDiagnostic,
   PreviewRequest,
   PreviewStart,
@@ -33,6 +34,7 @@ import {
   type RegisteredExporter,
 } from "../tools/types";
 import {
+  activeRevision,
   book as storeBook,
   closeStudio,
   dialog,
@@ -45,7 +47,6 @@ import {
   pluginsRevision,
   preview,
   refresh,
-  revision,
   savePrefs,
   splitRatioSignal,
   studio,
@@ -230,10 +231,12 @@ export function StudioView(props: { active: boolean }) {
   let editorActions: MarkdownEditorActions | undefined;
   const buildConsole = signal<BuildConsoleController | undefined>(undefined);
 
+  const rev = activeRevision(() => props.active);
+
   const contest = computed(() => {
-    void revision();
+    void rev();
     const t = target();
-    return t?.target === "contest" ? traceSpan("ipc", "contest_detail", () => preview.contestDetail(t.id)) : undefined;
+    return t?.target === "contest" ? preview.contestDetail(t.id) : undefined;
   });
   const label = computed(() => {
     const c = contest();
@@ -243,15 +246,53 @@ export function StudioView(props: { active: boolean }) {
   });
   const item = computed(() => contest()?.items.find((i) => i.label === label()));
   const problemId = computed(() => (target()?.target === "problem" ? target()!.id : item()?.id));
-  const packageInspection = computed(() => {
-    void revision();
+  const packageInspectionState = signal<
+    { slug: string; contestId: string | null; res: PackageInspectionResultJs } | undefined
+  >(undefined);
+  let packageInspectSeq = 0;
+  cleanup(() => {
+    packageInspectSeq++;
+  });
+  effect(() => {
+    if (!props.active) return;
+    void rev();
     void packageRefreshSeq();
     const t = target();
-    if (t?.target === "problem") return traceSpan("ipc", "inspect_package", () => preview.inspectPackage(t.id, null));
     const it = item();
-    return t?.target === "contest" && it && !it.missing ? traceSpan("ipc", "inspect_package", () => preview.inspectPackage(it.id, t.id)) : undefined;
+    const slug = t?.target === "problem" ? t.id : t?.target === "contest" && it && !it.missing ? it.id : undefined;
+    const contestId = t?.target === "contest" ? t.id : null;
+    const seq = ++packageInspectSeq;
+    if (!slug) {
+      untracked(() => packageInspectionState.set(undefined));
+      return;
+    }
+    void preview
+      .inspectPackageAsync(slug, contestId)
+      .then((res) => {
+        if (seq === packageInspectSeq) packageInspectionState.set({ slug, contestId, res });
+      })
+      .catch(() => {
+        if (seq === packageInspectSeq) packageInspectionState.set(undefined);
+      });
   });
-  const hasPackage = computed(() => !!packageInspection()?.hasPackage);
+  const packageInspection = computed<PackageInspectionResultJs | undefined>(() => {
+    const state = packageInspectionState();
+    if (!state) return undefined;
+    const t = target();
+    const it = item();
+    const slug = t?.target === "problem" ? t.id : t?.target === "contest" && it && !it.missing ? it.id : undefined;
+    const contestId = t?.target === "contest" ? t.id : null;
+    if (!slug || state.slug !== slug || state.contestId !== contestId) return undefined;
+    return state.res;
+  });
+  const hasPackage = computed(() => {
+    const insp = packageInspection();
+    if (insp) return !!insp.hasPackage;
+    void rev();
+    void packageRefreshSeq();
+    const pid = problemId();
+    return pid ? preview.hasPackage(pid) : false;
+  });
   const frozen = computed(() => !!contest()?.frozen);
   const archived = computed(() => !!contest()?.archived);
   const paths = computed(() => {
@@ -282,6 +323,8 @@ export function StudioView(props: { active: boolean }) {
       if (owner !== lastFreezeOwner) {
         lastFreezeOwner = owner;
         freeze.reset();
+        statusSeq++;
+        status.set(undefined);
       }
       if (t?.target !== "contest") coverActive.set(false);
     });
@@ -584,16 +627,30 @@ export function StudioView(props: { active: boolean }) {
   }
 
   let statusTimer: number | undefined;
+  let statusSeq = 0;
   function scheduleStatus(now = false) {
     clearTimeout(statusTimer);
     const run = () => {
       const req = untracked(request);
-      status.set(req ? preview.exportStatus(req) : undefined);
+      const seq = ++statusSeq;
+      if (!req) {
+        status.set(undefined);
+        return;
+      }
+      void preview
+        .exportStatusAsync(req)
+        .then((res) => {
+          if (seq === statusSeq) status.set(res);
+        })
+        .catch(() => {
+          if (seq === statusSeq) status.set(undefined);
+        });
     };
     if (now) run();
     else statusTimer = setTimeout(run, 300);
   }
   cleanup(() => {
+    statusSeq++;
     clearTimeout(statusTimer);
     clearTimeout(compileTimer);
     save();
@@ -1764,6 +1821,7 @@ export function StudioView(props: { active: boolean }) {
           <If when={target()}>
             {(t) => (
               <Inspector
+                active={props.active}
                 open={inspectorOpen()}
                 topOffset={isAuthoring() ? 38 : 0}
                 target={t().target}

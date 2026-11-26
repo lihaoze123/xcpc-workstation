@@ -736,6 +736,20 @@ impl Preview {
         self.state.export_status(&request)
     }
 
+    /// Off-UI-thread async variant of [`Self::export_status`] for Studio's status bar.
+    pub async fn export_status_async(
+        this: Instance<Self>,
+        request: PreviewRequest,
+    ) -> ExportBookStatusJs {
+        if this.is_disposed() {
+            return ExportBookStatusJs::default();
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.export_status(&request))
+            .await
+            .unwrap_or_default()
+    }
+
     /// Reveals a file or directory (absolute or workspace-relative path) inside the open
     /// workspace in the system file manager. Rejects paths outside the workspace or missing
     /// targets.
@@ -1411,6 +1425,11 @@ impl Preview {
         self.state.set_cxx_override(path)
     }
 
+    /// Fast O(1) check for whether `slug` has a local Polygon package.
+    pub fn has_package(&self, slug: String) -> bool {
+        self.state.has_package(&slug)
+    }
+
     /// Pure read-only inspection of a problem package (`hasPackage`, freshness, files,
     /// expanded tests, latest report, gates, and next steps).
     /// With `contest_id`, freshness follows that contest's overridden limits.
@@ -1420,6 +1439,30 @@ impl Preview {
         contest_id: Option<String>,
     ) -> PackageInspectionResultJs {
         self.state.inspect_package_in(&slug, contest_id.as_deref())
+    }
+
+    /// Off-UI-thread async variant of [`Self::inspect_package`] so Studio never blocks the
+    /// UI thread while hashing package files.
+    pub async fn inspect_package_async(
+        this: Instance<Self>,
+        slug: String,
+        contest_id: Option<String>,
+    ) -> PackageInspectionResultJs {
+        if this.is_disposed() {
+            return PackageInspectionResultJs {
+                ok: false,
+                error: Some("preview disposed".into()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.state.clone());
+        blocking(move || state.inspect_package_in(&slug, contest_id.as_deref()))
+            .await
+            .unwrap_or_else(|e| PackageInspectionResultJs {
+                ok: false,
+                error: Some(format!("inspect_package task failed: {e}")),
+                ..Default::default()
+            })
     }
 
     /// Scaffolds a problem package with `testlib.h` templates without overwriting existing

@@ -54,6 +54,7 @@ import {
   studioActions,
   toggleLibrarySidebar,
   unfreezeFor,
+  workspaceVersion,
 } from "./store";
 
 type Action = { id: string; label: string; icon: IconName; keywords?: string[]; shortcut?: string; run: () => void; when?: () => boolean };
@@ -263,12 +264,21 @@ function PaletteBody() {
     return preview.fuzzyJump(query().trim(), activeContest());
   });
 
-  const snippetHits = computed(() => {
-    if (!hasWorkspace() || !info().snippetsEnabled || actionMode()) return [];
+  const snippetCatalog = computed(() => {
+    if (!hasWorkspace() || !info().snippetsEnabled) {
+      return { snips: [] as SnippetListPayload["snippets"], trds: [] as TrdSummaryItem[] };
+    }
     void snippetsRevision();
-    const q = query().trim().toLowerCase();
+    void workspaceVersion();
     const snips = parseJsonPayload<SnippetListPayload>(preview.listSnippetsJson())?.snippets ?? [];
     const trds = parseJsonPayload<{ trds: TrdSummaryItem[] }>(preview.listTrdsJson())?.trds ?? [];
+    return { snips, trds };
+  });
+
+  const snippetHits = computed(() => {
+    if (!hasWorkspace() || !info().snippetsEnabled || actionMode()) return [];
+    const { snips, trds } = snippetCatalog();
+    const q = query().trim().toLowerCase();
     const out: { id: string; kind: "snippet" | "trd"; slug: string; label: string; group: string; hasCode?: boolean }[] = [];
     for (const s of snips) {
       const hay = `${s.title} ${s.slug} ${(s.tags ?? []).join(" ")}`.toLowerCase();
@@ -298,8 +308,13 @@ function PaletteBody() {
     return out.slice(0, q ? 12 : space() === "snippets" ? 8 : 0);
   });
 
+  const allActions = computed(() => actions());
+  const actionById = computed(() => new Map(allActions().map((a) => [a.id, a])));
+  const jumpById = computed(() => new Map(jumps().map((h) => [`j:${h.visitKey}`, h])));
+  const snipHitById = computed(() => new Map(snippetHits().map((h) => [h.id, h])));
+
   const built = computed(() =>
-    buildPaletteItems(query(), jumps(), actions(), activeContest(), {
+    buildPaletteItems(query(), jumps(), allActions(), activeContest(), {
       prioritizeActions: !studio() && (space() === "tools" || space() === "snippets"),
     }),
   );
@@ -333,11 +348,11 @@ function PaletteBody() {
       return;
     }
     if (id.startsWith("a:")) {
-      const a = actions().find((x) => x.id === id);
+      const a = actionById().get(id);
       setTimeout(() => a?.run(), 0);
       return;
     }
-    const hit = jumps().find((h) => `j:${h.visitKey}` === id);
+    const hit = jumpById().get(id);
     if (!hit) return;
     if (hit.kind === "problem") openStudio({ target: "problem", id: hit.id });
     else if (hit.kind === "contest") {
@@ -347,8 +362,8 @@ function PaletteBody() {
     } else if (hit.contestId) openStudio({ target: "contest", id: hit.contestId, label: hit.label ?? undefined });
   }
 
-  const hitOf = (id: string) => jumps().find((h) => `j:${h.visitKey}` === id);
-  const snipHitOf = (id: string) => snippetHits().find((h) => h.id === id);
+  const hitOf = (id: string) => jumpById().get(id);
+  const snipHitOf = (id: string) => snipHitById().get(id);
   const meta = (id: string) => {
     const sh = snipHitOf(id);
     if (sh) return sh.slug;
@@ -360,7 +375,7 @@ function PaletteBody() {
     if (sh) {
       return <Icon name={sh.kind === "trd" ? "bookOpen" : sh.hasCode === false ? "sigma" : "code"} size={16} />;
     }
-    if (id.startsWith("a:")) return <Icon name={actions().find((x) => x.id === id)?.icon ?? "arrowRight"} size={16} />;
+    if (id.startsWith("a:")) return <Icon name={actionById().get(id)?.icon ?? "arrowRight"} size={16} />;
     const hit = hitOf(id);
     if (hit?.kind === "contest_item")
       return (

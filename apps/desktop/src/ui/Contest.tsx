@@ -10,7 +10,7 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
 import { diffKind, TIER_RANGES } from "./logic";
 import { MONO, tierColor, type Tier } from "./theme";
-import { errorOf, info, preview, refresh, revision, unfreezeFor, type UiError } from "./store";
+import { activeRevision, errorOf, info, preview, refresh, unfreezeFor, type UiError } from "./store";
 
 const TIER_RANGE_LABEL: Record<string, string> = Object.fromEntries(
   TIER_RANGES.map((r) => [r.tier, r.label]),
@@ -22,9 +22,10 @@ function tierLabel(tier: string): string {
 }
 
 /** The 8-tier distribution as one bar with its legend, and the tags by count. */
-export function ContestStats(props: { id: string; compact?: boolean }) {
+export function ContestStats(props: { id: string; compact?: boolean; active?: boolean }) {
+  const rev = activeRevision(() => props.active ?? true);
   const stats = computed(() => {
-    void revision();
+    void rev();
     return preview.contestStats(props.id);
   });
   const total = () => Math.max(1, stats().problemCount);

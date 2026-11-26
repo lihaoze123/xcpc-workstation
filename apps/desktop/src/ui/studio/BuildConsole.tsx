@@ -988,26 +988,29 @@ export function BuildConsole(props: {
   }
 
   // Fix A-1: Immediately select the newly created hand test (directly editable via InlineFileEditor!)
-  function handleAddHandTest() {
+  async function handleAddHandTest() {
     if (props.readOnly) return;
-    const res = preview.addHandTest(props.problemId, null, "hand", "");
+    const pid = props.problemId;
+    const cid = props.contestId ?? null;
+    const res = preview.addHandTest(pid, null, "hand", "");
     if (!res.ok) {
       notice.set({ code: res.code, error: res.error, context: t("ctx.updatePackage") });
       return;
     }
     finishedReport.set(undefined);
     props.onRefreshPackage();
-    const freshRaw = preview.inspectPackage(props.problemId, props.contestId ?? null).inspectionJson;
     let targetIndex: number | undefined;
-    if (freshRaw) {
-      try {
+    try {
+      const freshRaw = (await preview.inspectPackageAsync(pid, cid)).inspectionJson;
+      if (freshRaw) {
         const fresh = JSON.parse(freshRaw) as PackageInspectionData;
         const found = fresh.expanded_tests.find((et) => et.rule_index === res.ruleIndex);
         if (found) targetIndex = found.index;
-      } catch {
-        // fallback below
       }
+    } catch {
+      // fallback below
     }
+    if (props.problemId !== pid) return;
     if (targetIndex == null) targetIndex = testRows().length + 1;
     testPaneTab.set("input");
     selection.set({ kind: "testGroup", groupId: `rule:${res.ruleIndex}`, testIndex: targetIndex });
@@ -1562,7 +1565,7 @@ export function BuildConsole(props: {
                         ] as MenuEntry[]
                       }
                       onSelect={(id) => {
-                        if (id === "hand") handleAddHandTest();
+                        if (id === "hand") void handleAddHandTest();
                         else if (id === "gen") {
                           addGenInitial.set(undefined);
                           addGenModalOpen.set(true);

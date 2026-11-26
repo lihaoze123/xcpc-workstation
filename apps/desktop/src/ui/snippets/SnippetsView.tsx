@@ -14,6 +14,7 @@ import { Modal } from "../Modal";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
 import { showToast } from "../Toast";
 import {
+  activeRevision,
   bundlerModalOpen,
   bumpSnippetsRevision,
   goSettings,
@@ -24,7 +25,6 @@ import {
   openSnippetStudio,
   openTrdStudio,
   preview,
-  revision,
   selectedSnippetSlug,
   selectedTrdId,
   snippetsRevision,
@@ -83,9 +83,13 @@ export function SnippetsView(props: { active: boolean }) {
     }
   }
 
+  const rev = activeRevision(() => props.active);
+  const workspaceRoot = computed(() => info().root);
+
   effect(() => {
-    void info();
-    void revision();
+    if (!props.active) return;
+    void workspaceRoot();
+    void rev();
     void snippetsRevision();
     loadLists();
   });
@@ -509,6 +513,7 @@ export function SnippetsView(props: { active: boolean }) {
                 <TrdDetailPane
                   id={selectedTrdId()!}
                   allSnippets={snippetList()}
+                  active={props.active && snippetsSubTab() === "trds"}
                   onRequestDelete={(item) => deleteTrdTarget.set(item)}
                 />
               </If>
@@ -612,10 +617,12 @@ function SnippetDetailPane(props: {
     previewTemplate.set(resolveSnippetPreviewTemplate(s, trdDetails, "trd-compact"));
   }
 
+  const rev = activeRevision(() => props.active);
   let lastLoadedSlug = "";
   effect(() => {
+    if (!props.active) return;
     const s = props.slug;
-    void revision();
+    void rev();
     void snippetsRevision();
     const changed = s !== lastLoadedSlug;
     lastLoadedSlug = s;
@@ -957,12 +964,15 @@ function TrdRow(props: {
 function TrdDetailPane(props: {
   id: string;
   allSnippets: readonly SnippetSummaryItem[];
+  active: boolean;
   onRequestDelete: (item: TrdSummaryItem) => void;
 }) {
   const payload = signal<TrdDetailPayload | undefined>(undefined);
+  const rev = activeRevision(() => props.active);
 
   effect(() => {
-    void revision();
+    if (!props.active) return;
+    void rev();
     void snippetsRevision();
     payload.set(parseJsonPayload<TrdDetailPayload>(preview.loadTrdJson(props.id)));
   });

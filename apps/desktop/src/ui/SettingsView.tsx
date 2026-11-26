@@ -45,6 +45,7 @@ import {
   traceRecording,
 } from "./trace";
 import {
+  activeRevision,
   brandReplayOpen,
   errorOf,
   info,
@@ -56,7 +57,6 @@ import {
   refreshToolchain,
   requestNewWorkspace,
   resetEditorTypography,
-  revision,
   settingsSection,
   toolchainAdvancedOpen,
   toolchainState,
@@ -310,19 +310,22 @@ function Stepper(props: {
   );
 }
 
-function WorkspacePane() {
+function WorkspacePane(props: { active: boolean }) {
   const copied = signal(false);
   const showJson = signal(false);
   const revealError = signal<UiError | undefined>(undefined);
+  const rev = activeRevision(() => props.active);
+  const root = computed(() => info().root);
 
-  const snippet = () => {
-    void revision();
-    return info().root ? preview.mcpConfigSnippet() : "";
-  };
-  const recent = () => {
-    void info();
-    return preview.recentWorkspaces().filter((p) => p !== info().root).slice(0, 5);
-  };
+  const snippet = computed(() => {
+    void rev();
+    return root() ? preview.mcpConfigSnippet() : "";
+  });
+  const recent = computed(() => {
+    void workspaceVersion();
+    const cur = root();
+    return preview.recentWorkspaces().filter((p) => p !== cur).slice(0, 5);
+  });
 
   let copyTimer: number | undefined;
   cleanup(() => clearTimeout(copyTimer));
@@ -468,13 +471,14 @@ function WorkspacePane() {
   );
 }
 
-function LayoutPane() {
+function LayoutPane(props: { active: boolean }) {
   const err = signal<UiError | undefined>(undefined);
   const forkOpen = signal(false);
   const presetOpen = signal(false);
+  const rev = activeRevision(() => props.active);
 
   const catalog = computed(() => {
-    void revision();
+    void rev();
     void workspaceVersion();
     return loadTemplatesCatalog();
   });
@@ -1593,7 +1597,8 @@ export function AboutPane() {
   );
 }
 
-export function SettingsView() {
+export function SettingsView(props: { active?: boolean } = {}) {
+  const isActive = () => props.active ?? true;
   const active = () => settingsSection();
   const activeIndex = () => Math.max(0, NAV_ITEMS.findIndex((it) => it.id === active()));
 
@@ -1718,10 +1723,10 @@ export function SettingsView() {
           }}
         >
           <If when={active() === "workspace"}>
-            <WorkspacePane />
+            <WorkspacePane active={isActive()} />
           </If>
           <If when={active() === "layout"}>
-            <LayoutPane />
+            <LayoutPane active={isActive()} />
           </If>
           <If when={active() === "toolchain"}>
             <ToolchainPane />

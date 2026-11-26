@@ -30,6 +30,28 @@ def percentile(values: list[float], p: float) -> float:
     return s[idx]
 
 
+def union_overlap_ms(window_start: float, window_end: float, intervals: list[tuple[float, float]]) -> float:
+    clipped: list[tuple[float, float]] = []
+    for s, e in intervals:
+        if e <= window_start or s >= window_end:
+            continue
+        clipped.append((max(s, window_start), min(e, window_end)))
+    if not clipped:
+        return 0.0
+    clipped.sort()
+    total = 0.0
+    cur_s, cur_e = clipped[0]
+    for s, e in clipped[1:]:
+        if s <= cur_e:
+            if e > cur_e:
+                cur_e = e
+        else:
+            total += cur_e - cur_s
+            cur_s, cur_e = s, e
+    total += cur_e - cur_s
+    return total
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze XCPC Workstation Chrome Trace JSON")
     parser.add_argument("trace_file", help="Path to exported Chrome Trace JSON")
@@ -46,6 +68,9 @@ def main() -> int:
     by_key: dict[str, list[float]] = defaultdict(list)
     inp_by_name: dict[str, list[float]] = defaultdict(list)
     missed: list[float] = []
+    long_frames: list[tuple[float, float]] = []
+    work_intervals: list[tuple[float, float]] = []
+    ipc_spans: list[tuple[float, str]] = []
     summary: dict = {}
 
     for ev in events:
@@ -56,13 +81,20 @@ def main() -> int:
             continue
         if ev.get("ph") != "X":
             continue
+        ts_ms = float(ev.get("ts", 0.0)) / 1000.0
         dur_ms = float(ev.get("dur", 0.0)) / 1000.0
         if cat == "frame":
             missed.append(dur_ms)
+            if name == "ui.long_frame" and dur_ms > 16.6:
+                long_frames.append((ts_ms, ts_ms + dur_ms))
         elif cat == "ux.inp":
             inp_by_name[name.removeprefix("ux.inp.")].append(dur_ms)
         else:
             by_key[f"{cat}.{name}"].append(dur_ms)
+            if cat != "ux.content" and dur_ms > 0.0:
+                work_intervals.append((ts_ms, ts_ms + dur_ms))
+            if cat == "ipc":
+                ipc_spans.append((dur_ms, name))
 
     failed = False
     meta = data.get("metadata", {})
@@ -118,6 +150,35 @@ def main() -> int:
             if args.gate and key == "engine.compile" and p95 > args.max_compile_p95:
                 print(f"  FAIL: {key} p95 {p95:.2f}ms > {args.max_compile_p95:.2f}ms")
                 failed = True
+
+    if long_frames:
+        total_long_ms = 0.0
+        total_attributed_ms = 0.0
+        unattributed_per_frame: list[tuple[float, float]] = []
+        for s, e in long_frames:
+            dur = e - s
+            attr = union_overlap_ms(s, e, work_intervals)
+            unattr = max(0.0, dur - attr)
+            total_long_ms += dur
+            total_attributed_ms += attr
+            unattributed_per_frame.append((unattr, dur))
+        total_unattributed_ms = max(0.0, total_long_ms - total_attributed_ms)
+        unattr_pct = (total_unattributed_ms * 100.0 / total_long_ms) if total_long_ms > 0 else 0.0
+        print("\n[Unattributed Stall Time (ui.long_frame > 16.6ms)]")
+        print(
+            f"  long_frames={len(long_frames)}  total={total_long_ms:.1f}ms  "
+            f"attributed={total_attributed_ms:.1f}ms  unattributed={total_unattributed_ms:.1f}ms ({unattr_pct:.1f}%)"
+        )
+        worst_unattr = sorted(unattributed_per_frame, key=lambda x: -x[0])[:5]
+        print(
+            "  worst unattributed frames: "
+            + ", ".join(f"{u:.1f}ms/{d:.1f}ms" for u, d in worst_unattr)
+        )
+
+    if ipc_spans:
+        print("\n[Top-5 Slowest IPC Spans]")
+        for rank, (dur_ms, name) in enumerate(sorted(ipc_spans, key=lambda x: -x[0])[:5], start=1):
+            print(f"  {rank}. ipc.{name:<26s}  {dur_ms:7.2f}ms")
 
     return 1 if failed else 0
 

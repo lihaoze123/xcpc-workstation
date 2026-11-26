@@ -426,9 +426,10 @@ impl State {
             ws.preflight_trd(id, &statuses).unwrap_or_default()
         };
         let local_template = if detail.has_local_template {
-            let mut engine = self.math_engine.lock().unwrap();
-            engine.set_root(Some(ws.root().to_path_buf()));
-            publish::inspect_trd_template(&ws, &engine, id)
+            let rel = format!("trds/{id}/template.typ");
+            self.inspect_local_template_cached(&ws, &rel, |engine| {
+                publish::inspect_trd_template(&ws, engine, id)
+            })
         } else {
             None
         };
@@ -642,18 +643,41 @@ impl State {
             }))
             .unwrap_or_else(|_| "{}".into());
         };
-        let (templates, fonts) = {
-            let mut engine = self.math_engine.lock().unwrap();
-            engine.set_root(Some(ws.root().to_path_buf()));
-            let templates = publish::list_templates_by_kind(&ws, &engine, TemplateKind::Trd);
-            let mut fonts: Vec<String> = engine
-                .font_families()
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
-            fonts.sort();
-            fonts.dedup();
-            (templates, fonts)
+        let root = ws.root().to_path_buf();
+        let fingerprint = crate::state::template_files_fingerprint(&root);
+        let cached = {
+            let guard = self.trd_templates_cache.lock().unwrap();
+            guard
+                .as_ref()
+                .filter(|c| c.root == root && c.fingerprint == fingerprint)
+                .map(|c| (c.templates.clone(), c.fonts.clone()))
+        };
+        let (templates, fonts) = match cached {
+            Some(hit) => hit,
+            None => {
+                let (templates, fonts) = {
+                    let mut engine = self.math_engine.lock().unwrap();
+                    engine.set_root(Some(root.clone()));
+                    engine.reset_files();
+                    let templates =
+                        publish::list_templates_by_kind(&ws, &engine, TemplateKind::Trd);
+                    let mut fonts: Vec<String> = engine
+                        .font_families()
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                    fonts.sort();
+                    fonts.dedup();
+                    (templates, fonts)
+                };
+                *self.trd_templates_cache.lock().unwrap() = Some(crate::state::TemplatesCache {
+                    root,
+                    fingerprint,
+                    templates: templates.clone(),
+                    fonts: fonts.clone(),
+                });
+                (templates, fonts)
+            }
         };
         serde_json::to_string(&serde_json::json!({
             "default": "trd-compact",

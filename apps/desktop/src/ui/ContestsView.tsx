@@ -16,6 +16,7 @@ import { DetailHeader, EmptyState, GUTTER, Section, Spacer, Toolbar } from "./la
 import { partitionContests } from "./logic";
 import { EASE_STANDARD, ms } from "./theme";
 import {
+  activeRevision,
   archivedExpanded,
   dialog,
   errorOf,
@@ -25,7 +26,6 @@ import {
   openStudio,
   preview,
   refresh,
-  revision,
   selectedContest,
   unfreezeFor,
   workspaceVersion,
@@ -367,16 +367,17 @@ export function ContestsView(props: { active: boolean }) {
             />
           }
         >
-          <ContestPanel id={selectedContest()!} />
+          <ContestPanel id={selectedContest()!} active={props.active} />
         </If>
       </If>
     </View>
   );
 }
 
-function ContestPanel(props: { id: string }) {
+function ContestPanel(props: { id: string; active: boolean }) {
+  const rev = activeRevision(() => props.active);
   const detail = computed(() => {
-    void revision();
+    void rev();
     return preview.contestDetail(props.id);
   });
   const f = createFreeze();
@@ -671,7 +672,7 @@ function ContestPanel(props: { id: string }) {
             </Section>
             <Section title={t("contests.section.overview")}>
               <View style={{ padding: 14 }}>
-                <ContestStats id={props.id} />
+                <ContestStats id={props.id} active={props.active} />
               </View>
             </Section>
           </View>

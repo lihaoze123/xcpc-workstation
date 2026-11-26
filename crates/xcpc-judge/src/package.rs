@@ -1,9 +1,12 @@
 //! Package discovery, content hashing, static freshness checking, test expansion,
 //! and dirty-input inspection.
 
-use std::collections::BTreeMap;
-use std::fs;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -184,12 +187,12 @@ pub fn effective_run_limits(
     slug: &str,
     contest: Option<&str>,
 ) -> Result<RunLimits> {
-    let problem = ws.load_problem(slug)?;
-    let mut limits = problem.meta.limits.clone();
+    let meta = ws.load_problem_meta(slug)?;
+    let mut limits = meta.limits.clone();
     if let Some(cid) = contest {
         let contest = ws.load_contest(cid)?;
         if let Some(item) = contest.meta.problems.iter().find(|i| i.id == slug) {
-            limits = item.apply(&problem.meta).limits;
+            limits = item.apply(&meta).limits;
         }
     }
     RunLimits::from_problem_limits(limits.time.as_deref(), limits.memory.as_deref())
@@ -233,12 +236,52 @@ pub fn compute_package_hash_in(ws: &Workspace, slug: &str, key: Option<&str>) ->
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+const STREAM_CHUNK_BYTES: usize = 64 * 1024;
+const STAT_CACHE_MAX_ENTRIES: usize = 4096;
+
+type StatKey = (PathBuf, u64, Option<SystemTime>);
+
+fn file_sha256_cached(abs: &Path) -> Result<(u64, [u8; 32])> {
+    static CACHE: OnceLock<Mutex<HashMap<StatKey, [u8; 32]>>> = OnceLock::new();
+    let meta = fs::metadata(abs).map_err(|e| io_err(format!("stat {}", abs.display()), e))?;
+    let len = meta.len();
+    let key = (abs.to_path_buf(), len, meta.modified().ok());
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(&digest) = guard.get(&key)
+    {
+        return Ok((len, digest));
+    }
+
+    let mut file = File::open(abs).map_err(|e| io_err(format!("read {}", abs.display()), e))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; STREAM_CHUNK_BYTES];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| io_err(format!("read {}", abs.display()), e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+
+    if let Ok(mut guard) = cache.lock() {
+        if guard.len() >= STAT_CACHE_MAX_ENTRIES {
+            guard.clear();
+        }
+        guard.insert(key, digest);
+    }
+    Ok((len, digest))
+}
+
 /// Computes a deterministic SHA-256 content hash over all package-relevant files of `slug`:
 /// `problem.toml`, `validator.cpp`, `checker.cpp`, `generators/*`, `solutions/*`,
 /// `samples/*`, `tests/**/*`, and user `testlib.h` (problem dir or workspace root) if present.
 pub fn compute_package_hash(ws: &Workspace, slug: &str) -> Result<String> {
-    let problem = ws.load_problem(slug)?;
-    let prob_dir = ws.resolve(&problem.dir)?;
+    let _meta = ws.load_problem_meta(slug)?;
+    let prob_dir = ws.resolve(&format!("problems/{slug}"))?;
 
     let mut entries: Vec<(String, PathBuf)> = Vec::new();
 
@@ -290,13 +333,13 @@ pub fn compute_package_hash(ws: &Workspace, slug: &str) -> Result<String> {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut hasher = Sha256::new();
-    hasher.update(b"xcpc-package-hash-v1\0");
+    hasher.update(b"xcpc-package-hash-v2\0");
     for (rel, abs) in entries {
-        let bytes = fs::read(&abs).map_err(|e| io_err(format!("read {}", abs.display()), e))?;
+        let (len, digest) = file_sha256_cached(&abs)?;
         hasher.update(rel.as_bytes());
         hasher.update(b"\0");
-        hasher.update((bytes.len() as u64).to_le_bytes());
-        hasher.update(&bytes);
+        hasher.update(len.to_le_bytes());
+        hasher.update(digest);
         hasher.update(b"\0");
     }
 
@@ -316,55 +359,76 @@ pub fn check_package_freshness_in(
     slug: &str,
     contest: Option<&str>,
 ) -> Result<PackageFreshness> {
-    let problem = ws.load_problem(slug)?;
-    let prob_dir = ws.resolve(&problem.dir)?;
+    let meta = ws.load_problem_meta(slug)?;
+    let prob_dir = ws.resolve(&format!("problems/{slug}"))?;
 
-    if !problem.meta.has_package_in_dir(&prob_dir) {
+    if !meta.has_package_in_dir(&prob_dir) {
         return Ok(PackageFreshness::NotAPackage);
     }
 
     let key = contest_limits_key(ws, slug, contest)?;
     let key = key.as_deref();
     let current_hash = compute_package_hash_in(ws, slug, key)?;
+    Ok(evaluate_package_freshness(
+        ws,
+        slug,
+        key,
+        true,
+        current_hash,
+    ))
+}
+
+/// Evaluates [`PackageFreshness`] from an already-computed `current_hash`, avoiding a
+/// second full-directory SHA-256 pass when the caller already computed the package hash.
+pub(crate) fn evaluate_package_freshness(
+    ws: &Workspace,
+    slug: &str,
+    key: Option<&str>,
+    has_package: bool,
+    current_hash: String,
+) -> PackageFreshness {
+    if !has_package {
+        return PackageFreshness::NotAPackage;
+    }
 
     if let Some(verified) = load_verified_report_in(ws, slug, key)
         && verified.verified
     {
         if verified.package_hash == current_hash {
-            return Ok(PackageFreshness::VerifiedFresh {
+            return PackageFreshness::VerifiedFresh {
                 package_hash: current_hash,
                 built_at_epoch_secs: verified.built_at_epoch_secs,
-            });
+            };
         }
         // Check if the latest report for the *current* hash failed.
         if let Some(latest) = load_latest_report(ws, slug)
             && latest.package_hash == current_hash
             && !latest.ok
         {
-            return Ok(PackageFreshness::Failed {
+            return PackageFreshness::Failed {
                 package_hash: current_hash,
                 summary: summarize_failure(&latest),
-            });
+            };
         }
-        return Ok(PackageFreshness::Stale {
+        return PackageFreshness::Stale {
             current_hash,
             verified_hash: verified.package_hash,
-        });
+        };
     }
 
     if let Some(latest) = load_latest_report(ws, slug)
         && latest.package_hash == current_hash
         && !latest.ok
     {
-        return Ok(PackageFreshness::Failed {
+        return PackageFreshness::Failed {
             package_hash: current_hash,
             summary: summarize_failure(&latest),
-        });
+        };
     }
 
-    Ok(PackageFreshness::Unverified {
+    PackageFreshness::Unverified {
         package_hash: current_hash,
-    })
+    }
 }
 
 fn summarize_failure(report: &BuildReport) -> String {
@@ -760,18 +824,75 @@ pub fn expand_tests(prob_dir: &Path, meta: &ProblemMeta) -> Result<Vec<ExpandedT
     Ok(tests)
 }
 
+type DirtyFlags = (bool, bool, bool);
+
+fn inspect_dirty_input_cached(path: &Path) -> Option<DirtyFlags> {
+    static CACHE: OnceLock<Mutex<HashMap<StatKey, DirtyFlags>>> = OnceLock::new();
+    let meta = fs::metadata(path).ok()?;
+    let len = meta.len();
+    let key = (path.to_path_buf(), len, meta.modified().ok());
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(&flags) = guard.get(&key)
+    {
+        return Some(flags);
+    }
+
+    let flags = if len == 0 {
+        (false, false, false)
+    } else {
+        let mut file = File::open(path).ok()?;
+        let mut buf = [0u8; STREAM_CHUNK_BYTES];
+        let mut head = [0u8; 3];
+        let mut head_len = 0usize;
+        let mut prev_was_cr = false;
+        let mut has_crlf = false;
+        let mut last_byte: Option<u8> = None;
+
+        loop {
+            let n = file.read(&mut buf).ok()?;
+            if n == 0 {
+                break;
+            }
+            let chunk = &buf[..n];
+            if head_len < 3 {
+                let take = (3 - head_len).min(n);
+                head[head_len..head_len + take].copy_from_slice(&chunk[..take]);
+                head_len += take;
+            }
+            if !has_crlf
+                && ((prev_was_cr && chunk[0] == b'\n') || chunk.windows(2).any(|w| w == b"\r\n"))
+            {
+                has_crlf = true;
+            }
+            prev_was_cr = chunk[n - 1] == b'\r';
+            last_byte = Some(chunk[n - 1]);
+        }
+
+        let has_bom = head_len == 3 && head == [0xEF, 0xBB, 0xBF];
+        let missing_trailing_newline = last_byte.is_some_and(|b| b != b'\n');
+        (has_crlf, has_bom, missing_trailing_newline)
+    };
+
+    if let Ok(mut guard) = cache.lock() {
+        if guard.len() >= STAT_CACHE_MAX_ENTRIES {
+            guard.clear();
+        }
+        guard.insert(key, flags);
+    }
+    Some(flags)
+}
+
 /// Checks hand-written inputs in `samples/*.in` and `tests/*.in` for CRLF, UTF-8 BOM,
 /// or missing trailing newline.
 pub fn check_dirty_inputs(prob_dir: &Path) -> Vec<DirtyInputIssue> {
     let mut issues = Vec::new();
 
     let mut check_file = |rel: String, path: &Path| {
-        let Ok(bytes) = fs::read(path) else {
+        let Some((has_crlf, has_bom, missing_trailing_newline)) = inspect_dirty_input_cached(path)
+        else {
             return;
         };
-        let has_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
-        let has_crlf = bytes.windows(2).any(|w| w == b"\r\n");
-        let missing_trailing_newline = !bytes.is_empty() && !bytes.ends_with(b"\n");
         if has_bom || has_crlf || missing_trailing_newline {
             issues.push(DirtyInputIssue {
                 path: rel,

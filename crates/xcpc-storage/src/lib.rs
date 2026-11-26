@@ -11,7 +11,7 @@
 //!
 //! Errors carry a stable [`Error::code`] for `--json` and MCP.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::Write;
@@ -59,7 +59,7 @@ pub use example::{
     init_example_workspace, init_example_workspace_with_options,
     init_example_workspace_with_template,
 };
-pub use index::WorkspaceIndex;
+pub use index::{IndexedFrozenItem, WorkspaceIndex};
 pub use snippets::DEFAULT_HASH_INTERVAL;
 pub use watcher::{SelfWriteTracker, WatchEvent, WorkspaceWatcher};
 
@@ -747,12 +747,49 @@ impl Workspace {
         entries: &[TrainingLogEntry],
         problems: impl IntoIterator<Item = (&'a str, &'a [ProblemSource], SyncedProblemStatus)>,
     ) -> BTreeMap<String, TrainingStatus> {
+        let mut by_problem_id: HashMap<&str, (usize, Option<TrainingStatus>)> = HashMap::new();
+        let mut by_source: HashMap<(String, String), (usize, Option<TrainingStatus>)> =
+            HashMap::new();
+
+        for (idx, entry) in entries.iter().enumerate() {
+            let status = entry.status.to_training_status();
+            if let Some(pid) = entry.problem_id.as_deref()
+                && !pid.is_empty()
+            {
+                by_problem_id.insert(pid, (idx, status));
+            }
+            if let Some(src) = entry.source.as_ref() {
+                let platform = src.platform.trim().to_ascii_lowercase();
+                let source_id = src.id.trim().to_ascii_lowercase();
+                if !platform.is_empty() && !source_id.is_empty() {
+                    by_source.insert((platform, source_id), (idx, status));
+                }
+            }
+        }
+
         problems
             .into_iter()
             .map(|(problem_id, sources, synced)| {
-                let status = Self::derive_problem_training_status_from_logs(
-                    entries, problem_id, sources, synced,
-                );
+                let mut latest: Option<(usize, Option<TrainingStatus>)> = None;
+                if !problem_id.is_empty()
+                    && let Some(&hit) = by_problem_id.get(problem_id)
+                {
+                    latest = Some(hit);
+                }
+                for src in sources {
+                    let platform = src.platform.trim().to_ascii_lowercase();
+                    let source_id = src.id.trim().to_ascii_lowercase();
+                    if platform.is_empty() || source_id.is_empty() {
+                        continue;
+                    }
+                    if let Some(&hit) = by_source.get(&(platform, source_id))
+                        && latest.is_none_or(|(best_idx, _)| hit.0 >= best_idx)
+                    {
+                        latest = Some(hit);
+                    }
+                }
+                let manual = latest.and_then(|(_, s)| s);
+                let status = derive_training_status(synced, manual);
                 (problem_id.to_owned(), status)
             })
             .collect()
@@ -1138,20 +1175,50 @@ impl Workspace {
     pub fn resolve(&self, rel: &str) -> Result<PathBuf> {
         let escape = || Error::PathEscape(rel.to_owned());
         let mut path = self.root.clone();
+        let mut checking = true;
         for c in Path::new(rel).components() {
             match c {
-                Component::Normal(part) => path.push(part),
+                Component::Normal(part) => {
+                    path.push(part);
+                    if checking {
+                        match fs::symlink_metadata(&path) {
+                            Ok(meta) => {
+                                if meta.file_type().is_symlink() {
+                                    match path.canonicalize() {
+                                        Ok(real) => {
+                                            if !real.starts_with(&self.root) {
+                                                return Err(escape());
+                                            }
+                                        }
+                                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                            if let Ok(target) = fs::read_link(&path)
+                                                && target.is_absolute()
+                                                && !target.starts_with(&self.root)
+                                            {
+                                                return Err(escape());
+                                            }
+                                            checking = false;
+                                        }
+                                        Err(e) => return Err(io(path.display(), e)),
+                                    }
+                                }
+                            }
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::NotFound
+                                        | std::io::ErrorKind::NotADirectory
+                                ) =>
+                            {
+                                checking = false;
+                            }
+                            Err(e) => return Err(io(path.display(), e)),
+                        }
+                    }
+                }
                 Component::CurDir => {}
                 _ => return Err(escape()),
             }
-        }
-        // The nearest part that exists, with its links followed, must be inside.
-        let existing = path.ancestors().find(|p| p.exists()).unwrap_or(&self.root);
-        let real = existing
-            .canonicalize()
-            .map_err(|e| io(existing.display(), e))?;
-        if !real.starts_with(&self.root) {
-            return Err(escape());
         }
         Ok(path)
     }
@@ -1299,6 +1366,17 @@ impl Workspace {
     /// The IDs of the problems (directories of `problems/` with a `problem.toml`), sorted.
     pub fn list_problems(&self) -> Result<Vec<String>> {
         self.list_dirs("problems", "problem.toml")
+    }
+
+    /// Loads only `problems/<id>/problem.toml` without reading statements, editorial, or samples.
+    pub fn load_problem_meta(&self, id: &str) -> Result<ProblemMeta> {
+        check_id(id)?;
+        let meta_path = format!("problems/{id}/problem.toml");
+        let raw = self.read_text(&meta_path).map_err(|e| match e {
+            Error::NotFound(_) => Error::NotFound(format!("problem {id:?}")),
+            other => other,
+        })?;
+        parse_toml(&meta_path, &raw)
     }
 
     pub fn load_problem(&self, id: &str) -> Result<Problem> {

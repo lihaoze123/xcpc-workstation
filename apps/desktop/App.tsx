@@ -53,6 +53,7 @@ import {
   startPluginWatch,
   startWatch,
   studio,
+  workspaceVersion,
 } from "./src/ui/store";
 
 // The shell: the title bar, the 3 spaces behind the nav rail, and the studio that
@@ -233,8 +234,10 @@ function App() {
   startWatch();
   startPluginWatch();
 
+  const workspaceRoot = computed(() => info().root);
   const workspaceEntries = computed<MenuEntry[]>(() => {
-    const cur = info().root;
+    void workspaceVersion();
+    const cur = workspaceRoot();
     const recents = preview.recentWorkspaces().filter((p) => p !== cur).slice(0, 5);
     return [
       ...recents.map((p): MenuEntry => ({ id: `recent:${p}`, label: pathBase(p), icon: "folder" })),
@@ -378,7 +381,7 @@ function App() {
           <ToolsView active={!inAnyStudio() && space() === "tools"} />
         </SpaceStage>
         <SpaceStage visible={space() === "settings"} variant="space">
-          <SettingsView />
+          <SettingsView active={!inAnyStudio() && space() === "settings"} />
         </SpaceStage>
       </View>
     </View>
@@ -427,7 +430,7 @@ function App() {
             <ToolsView active={space() === "tools"} />
           </SpaceStage>
           <SpaceStage visible={space() === "settings"} variant="space">
-            <SettingsView />
+            <SettingsView active={space() === "settings"} />
           </SpaceStage>
         </View>
       </View>

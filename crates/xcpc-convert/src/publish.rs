@@ -761,9 +761,34 @@ pub fn check(
         language,
         unsaved,
         kind == Kind::Editorial,
+        false,
     )
 }
 
+/// Interactive preview variant of [`check`] that skips static package freshness hashing
+/// (`tests/`, `samples/`, etc.), since the preview HUD filters out `package_*` diagnostics
+/// and package freshness is tracked independently by the authoring status slot.
+pub fn check_preview(
+    ws: &Workspace,
+    engine: &mut Engine,
+    target: &Target,
+    kind: Kind,
+    language: Option<Language>,
+    unsaved: Option<(&str, &str)>,
+) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
+    check_inner(
+        ws,
+        engine,
+        target,
+        kind,
+        language,
+        unsaved,
+        kind == Kind::Editorial,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn check_inner(
     ws: &Workspace,
     engine: &mut Engine,
@@ -772,15 +797,24 @@ fn check_inner(
     language: Option<Language>,
     unsaved: Option<(&str, &str)>,
     check_editorial: bool,
+    skip_package_freshness: bool,
 ) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
     let lint_opts = xcpc_lint::LintOptions {
         language,
         check_editorial,
         unsaved,
+        skip_package_freshness,
     };
-    let lint_findings = match target {
-        Target::Problem(id) => xcpc_lint::lint_problem(ws, id, &lint_opts)?,
-        Target::Contest(id) => xcpc_lint::lint_contest(ws, id, &lint_opts)?,
+    let lint_findings = {
+        let _lint_span = xcpc_trace::span_with(
+            "convert",
+            "lint",
+            || serde_json::json!({ "skipPackageFreshness": skip_package_freshness }),
+        );
+        match target {
+            Target::Problem(id) => xcpc_lint::lint_problem(ws, id, &lint_opts)?,
+            Target::Contest(id) => xcpc_lint::lint_contest(ws, id, &lint_opts)?,
+        }
     };
 
     let has_missing_problem = lint_findings
@@ -867,8 +901,16 @@ pub fn freeze_contest(
     }
 
     let target = Target::Contest(contest_id.to_owned());
-    let (compiled_stmts, _doc_stmts, mut report) =
-        check_inner(ws, engine, &target, Kind::Statements, None, None, true)?;
+    let (compiled_stmts, _doc_stmts, mut report) = check_inner(
+        ws,
+        engine,
+        &target,
+        Kind::Statements,
+        None,
+        None,
+        true,
+        false,
+    )?;
 
     let Some(compiled_stmts) = compiled_stmts.filter(|_| report.ok) else {
         report.ok = false;
@@ -1387,7 +1429,7 @@ pub fn default_output_for_title(target: &Target, kind: Kind, title: Option<&str>
 pub fn default_output(ws: &Workspace, target: &Target, kind: Kind) -> String {
     let title = match target {
         Target::Contest(id) => ws.load_contest(id).ok().map(|c| c.meta.name),
-        Target::Problem(id) => ws.load_problem(id).ok().map(|p| p.meta.title),
+        Target::Problem(id) => ws.load_problem_meta(id).ok().map(|m| m.title),
     };
     default_output_for_title(target, kind, title.as_deref())
 }

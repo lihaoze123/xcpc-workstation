@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS oj_submissions (
 CREATE INDEX IF NOT EXISTS idx_oj_submissions_problem
     ON oj_submissions (platform, problem_key);
 
+CREATE INDEX IF NOT EXISTS idx_oj_submissions_lower_pk
+    ON oj_submissions (LOWER(platform), LOWER(problem_key));
+
 CREATE INDEX IF NOT EXISTS idx_oj_submissions_submitted_at
     ON oj_submissions (submitted_at);
 
@@ -77,6 +80,9 @@ CREATE TABLE IF NOT EXISTS oj_problem_meta (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (platform, problem_key)
 );
+
+CREATE INDEX IF NOT EXISTS idx_oj_problem_meta_lower_pk
+    ON oj_problem_meta (LOWER(platform), LOWER(problem_key));
 
 CREATE TABLE IF NOT EXISTS oj_summaries (
     platform TEXT PRIMARY KEY,

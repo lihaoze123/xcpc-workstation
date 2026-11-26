@@ -2,7 +2,7 @@
 // Supports free title, pasted OJ URL, or live workspace problem autocomplete, plus optional
 // rating, tags, URL, date, and note, with "Save" or "Save & Write Editorial".
 
-import { computed, effect, Scroll, signal, Text, View } from "nsh";
+import { cleanup, computed, effect, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
@@ -61,6 +61,7 @@ function formatDateToRfc3339(dateStr: string): string | null {
 
 export function ManualLogModal(props: ManualLogModalProps) {
   const problemInput = signal("");
+  const debouncedProblemInput = signal("");
   const linkedProblemId = signal<string | undefined>(undefined);
   const status = signal<ManualLogStatus>("ac");
   const ratingInput = signal("");
@@ -71,11 +72,29 @@ export function ManualLogModal(props: ManualLogModalProps) {
   const showSuggestions = signal(false);
   const errorMsg = signal("");
   const saving = signal(false);
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  cleanup(() => clearTimeout(searchTimer));
+
+  const setProblemQuery = (val: string, immediate = false) => {
+    problemInput.set(val);
+    clearTimeout(searchTimer);
+    if (immediate || val === "") {
+      debouncedProblemInput.set(val);
+      return;
+    }
+    searchTimer = setTimeout(() => {
+      searchTimer = undefined;
+      debouncedProblemInput.set(val);
+    }, 120);
+  };
 
   // Reset form each time the modal opens.
   effect(() => {
     if (props.open) {
+      clearTimeout(searchTimer);
       problemInput.set("");
+      debouncedProblemInput.set("");
       linkedProblemId.set(undefined);
       status.set("ac");
       ratingInput.set("");
@@ -91,7 +110,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
 
   const suggestions = computed<ProblemSummaryJs[]>(() => {
     if (!props.open || !showSuggestions() || linkedProblemId()) return [];
-    const q = problemInput().trim();
+    const q = debouncedProblemInput().trim();
     if (looksLikeUrl(q)) return [];
     try {
       const list = preview.searchProblems({
@@ -111,7 +130,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
 
   const pickWorkspaceProblem = (p: ProblemSummaryJs) => {
     linkedProblemId.set(p.id);
-    problemInput.set(p.title || p.id);
+    setProblemQuery(p.title || p.id, true);
     if (p.rating != null) ratingInput.set(String(p.rating));
     if (p.tags.length > 0) tagsInput.set(p.tags.join(", "));
     const firstUrl = p.sources.find((s) => s.url)?.url;
@@ -269,7 +288,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                 }}
                 onChange={(e) => {
                   const val = e.value;
-                  problemInput.set(val);
+                  setProblemQuery(val);
                   errorMsg.set("");
                   if (linkedProblemId()) {
                     linkedProblemId.set(undefined);
@@ -287,7 +306,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                   iconSize={11}
                   tone="muted-foreground"
                   onPress={() => {
-                    problemInput.set("");
+                    setProblemQuery("", true);
                     linkedProblemId.set(undefined);
                     showSuggestions.set(true);
                   }}

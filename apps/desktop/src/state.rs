@@ -132,7 +132,7 @@ impl CompilerState {
                 .map_err(|e| e.to_string())?;
                 Ok((compiled, Some(doc), report))
             }
-            _ => publish::check(
+            _ => publish::check_preview(
                 ws,
                 &mut self.engine,
                 &request.target(),
@@ -193,6 +193,23 @@ impl Default for BatchTaskSlot {
     }
 }
 
+/// Cached declarative schemas and font list for `list_templates_json` / `list_trd_templates_json`,
+/// invalidated only when the workspace root or `templates/*.typ` `(name, len, mtime)` fingerprint changes.
+pub(crate) struct TemplatesCache {
+    pub(crate) root: PathBuf,
+    pub(crate) fingerprint: Vec<(String, u64, Option<SystemTime>)>,
+    pub(crate) templates: Vec<xcpc_domain::TemplateInfo>,
+    pub(crate) fonts: Vec<String>,
+}
+
+/// Cached local template schema for `contests/<id>/template.typ` or `trds/<id>/template.typ`,
+/// invalidated when the file's `(len, mtime)` changes.
+pub(crate) struct LocalTemplateCacheEntry {
+    len: u64,
+    mtime: Option<SystemTime>,
+    info: Option<xcpc_domain::TemplateInfo>,
+}
+
 pub(crate) struct State {
     pub(crate) id: u64,
     /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
@@ -205,6 +222,12 @@ pub(crate) struct State {
     pub(crate) compiler: Mutex<CompilerState>,
     /// Dedicated lightweight Typst engine for inline floating math previews (never contends with `compiler`).
     pub(crate) math_engine: Mutex<Engine>,
+    /// Cached evaluated statement template schemas + engine font families.
+    templates_cache: Mutex<Option<TemplatesCache>>,
+    /// Cached evaluated TRD template schemas + engine font families.
+    pub(crate) trd_templates_cache: Mutex<Option<TemplatesCache>>,
+    /// Cached evaluated contest/TRD local template schemas keyed by `(workspace_root, rel_path)`.
+    local_template_cache: Mutex<HashMap<(PathBuf, String), LocalTemplateCacheEntry>>,
     /// Background local Polygon package build slot.
     pub(crate) package_build: Arc<Mutex<PackageBuildSlot>>,
     /// Background snippet verification runner slot.
@@ -297,6 +320,9 @@ impl State {
                 active: HashSet::new(),
             }),
             math_engine: Mutex::new(Engine::new(&FontOptions::from_env(), None)),
+            templates_cache: Mutex::new(None),
+            trd_templates_cache: Mutex::new(None),
+            local_template_cache: Mutex::new(HashMap::new()),
             package_build: Arc::new(Mutex::new(PackageBuildSlot::default())),
             snippet_verify: Arc::new(Mutex::new(crate::snippets::SnippetVerifySlot::default())),
             batch_task: Arc::new(Mutex::new(BatchTaskSlot::default())),
@@ -455,43 +481,79 @@ impl State {
     /// [`WorkspaceIndex`] incrementally (or rescans on overflow) and invalidates the
     /// compiled cache. Never blocks on `compiler`.
     pub(crate) fn apply_watch_event(&self, session_id: u64, event: WatchEvent) -> WatchEventJs {
-        let out = {
-            let mut core = self.core.lock().unwrap();
-            if !core
-                .watch_session
-                .as_ref()
-                .is_some_and(|s| s.id == session_id)
-            {
-                return WatchEventJs {
-                    kind: "closed".into(),
-                    paths: Vec::new(),
-                };
-            }
-            let Some(ws) = core.workspace.clone() else {
-                return WatchEventJs {
-                    kind: "closed".into(),
-                    paths: Vec::new(),
-                };
-            };
-
-            match event {
-                WatchEvent::Changed(paths) => {
-                    for p in &paths {
-                        let _ = core.index.refresh_path(&ws, p);
-                    }
-                    WatchEventJs {
-                        kind: "changed".into(),
-                        paths,
-                    }
+        let out = match event {
+            WatchEvent::Changed(paths) => {
+                let mut core = self.core.lock().unwrap();
+                if !core
+                    .watch_session
+                    .as_ref()
+                    .is_some_and(|s| s.id == session_id)
+                {
+                    return WatchEventJs {
+                        kind: "closed".into(),
+                        paths: Vec::new(),
+                    };
                 }
-                WatchEvent::Rescan => {
-                    if let Ok(idx) = WorkspaceIndex::scan(&ws) {
+                let Some(ws) = core.workspace.clone() else {
+                    return WatchEventJs {
+                        kind: "closed".into(),
+                        paths: Vec::new(),
+                    };
+                };
+                for p in &paths {
+                    let _ = core.index.refresh_path(&ws, p);
+                }
+                WatchEventJs {
+                    kind: "changed".into(),
+                    paths,
+                }
+            }
+            WatchEvent::Rescan => {
+                let ws = {
+                    let core = self.core.lock().unwrap();
+                    if !core
+                        .watch_session
+                        .as_ref()
+                        .is_some_and(|s| s.id == session_id)
+                    {
+                        return WatchEventJs {
+                            kind: "closed".into(),
+                            paths: Vec::new(),
+                        };
+                    }
+                    let Some(ws) = core.workspace.clone() else {
+                        return WatchEventJs {
+                            kind: "closed".into(),
+                            paths: Vec::new(),
+                        };
+                    };
+                    ws
+                };
+                let scanned = WorkspaceIndex::scan(&ws).ok();
+                {
+                    let mut core = self.core.lock().unwrap();
+                    if !core
+                        .watch_session
+                        .as_ref()
+                        .is_some_and(|s| s.id == session_id)
+                    {
+                        return WatchEventJs {
+                            kind: "closed".into(),
+                            paths: Vec::new(),
+                        };
+                    }
+                    if let Some(idx) = scanned
+                        && core
+                            .workspace
+                            .as_ref()
+                            .is_some_and(|cur| cur.root() == ws.root())
+                    {
                         core.index = idx;
                     }
-                    WatchEventJs {
-                        kind: "rescan".into(),
-                        paths: Vec::new(),
-                    }
+                }
+                WatchEventJs {
+                    kind: "rescan".into(),
+                    paths: Vec::new(),
                 }
             }
         };
@@ -502,96 +564,75 @@ impl State {
     // ---- Workspace info & file I/O -----------------------------------------------------
 
     pub(crate) fn info(&self) -> WorkspaceInfo {
-        let (ws, last_workspace_missing) = {
-            let core = self.core.lock().unwrap();
-            (core.workspace.clone(), core.last_workspace_missing)
-        };
-        let Some(ws) = ws else {
+        let _span = xcpc_trace::span("desktop", "state_info");
+        let core = self.core.lock().unwrap();
+        let Some(ws) = core.workspace.as_ref() else {
             return WorkspaceInfo {
-                last_workspace_missing,
+                last_workspace_missing: core.last_workspace_missing,
                 ..Default::default()
             };
         };
         let mut info = WorkspaceInfo {
             root: ws.root().display().to_string(),
             read_only: ws.is_read_only(),
-            training_enabled: ws.training_enabled(),
-            snippets_enabled: ws.snippets_enabled(),
+            training_enabled: core.index.training_enabled(),
+            snippets_enabled: core.index.snippets_enabled(),
             last_workspace_missing: false,
             ..Default::default()
         };
-        let mut errors = Vec::new();
-        for id in ws.list_problems().unwrap_or_default() {
-            match ws.load_problem(&id) {
-                Ok(p) => info.problems.push(WorkspaceProblem {
-                    statement: statement_path(&p, p.default_language()),
-                    editorial: format!("{}/editorial.md", p.dir),
-                    id,
-                    title: p.meta.title,
-                }),
-                Err(e) => errors.push(e.to_string()),
-            }
+        for p in core.index.problems() {
+            info.problems.push(WorkspaceProblem {
+                statement: p
+                    .statement_path
+                    .clone()
+                    .unwrap_or_else(|| format!("problems/{}/statement.md", p.id)),
+                editorial: format!("problems/{}/editorial.md", p.id),
+                id: p.id.clone(),
+                title: p.title.clone(),
+            });
         }
-        for id in ws.list_contests().unwrap_or_default() {
-            let contest = match ws.load_contest(&id) {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    continue;
-                }
-            };
-            let items = if contest.meta.frozen {
-                match ws.contest_problems(&contest) {
-                    Ok(list) => list
-                        .into_iter()
-                        .map(|(item, p)| WorkspaceItem {
-                            title: item.apply(&p.meta).title,
-                            statement: statement_path(&p, contest.meta.language),
-                            editorial: format!("{}/editorial.md", p.dir),
-                            label: item.label,
-                            id: item.id,
-                        })
-                        .collect(),
-                    Err(e) => {
-                        errors.push(e.to_string());
-                        Vec::new()
-                    }
-                }
-            } else {
-                contest
-                    .meta
-                    .problems
+        for (id, meta) in core.index.contests() {
+            let items = if meta.frozen {
+                core.index
+                    .contest_frozen_items(id)
+                    .unwrap_or(&[])
                     .iter()
-                    .map(|item| match ws.load_problem(&item.id) {
-                        Ok(p) => WorkspaceItem {
-                            title: item.apply(&p.meta).title,
-                            statement: statement_path(&p, contest.meta.language),
-                            editorial: format!("{}/editorial.md", p.dir),
+                    .map(|it| WorkspaceItem {
+                        title: it.title.clone(),
+                        statement: it.statement.clone(),
+                        editorial: it.editorial.clone(),
+                        label: it.label.clone(),
+                        id: it.id.clone(),
+                    })
+                    .collect()
+            } else {
+                meta.problems
+                    .iter()
+                    .map(|item| {
+                        let title = item.title.clone().unwrap_or_else(|| {
+                            core.index
+                                .problem(&item.id)
+                                .map(|p| p.title.clone())
+                                .unwrap_or_else(|| item.id.clone())
+                        });
+                        WorkspaceItem {
+                            title,
+                            statement: core.index.statement_path_for(&item.id, meta.language),
+                            editorial: format!("problems/{}/editorial.md", item.id),
                             label: item.label.clone(),
                             id: item.id.clone(),
-                        },
-                        Err(e) => {
-                            errors.push(e.to_string());
-                            WorkspaceItem {
-                                title: item.title.clone().unwrap_or_else(|| item.id.clone()),
-                                statement: format!("problems/{}/statement.md", item.id),
-                                editorial: format!("problems/{}/editorial.md", item.id),
-                                label: item.label.clone(),
-                                id: item.id.clone(),
-                            }
                         }
                     })
                     .collect()
             };
             info.contests.push(WorkspaceContest {
-                id,
-                name: contest.meta.name,
-                frozen: contest.meta.frozen,
-                archived: contest.meta.archived,
+                id: id.to_owned(),
+                name: meta.name.clone(),
+                frozen: meta.frozen,
+                archived: meta.archived,
                 items,
             });
         }
-        info.error = errors.into_iter().next();
         info
     }
 
@@ -1055,6 +1096,12 @@ impl State {
     /// of `request`'s target (in-session content fingerprint with restart `mtime` fallback).
     /// Never blocks on `compiler`.
     pub(crate) fn export_status(&self, request: &PreviewRequest) -> ExportBookStatusJs {
+        let _span = xcpc_trace::span_with("desktop", "export_status", || {
+            serde_json::json!({
+                "target": request.target,
+                "id": request.id,
+            })
+        });
         let target = request.target();
         let (ws, stmt_rec, ed_rec) = {
             let core = self.core.lock().unwrap();
@@ -1096,6 +1143,7 @@ impl State {
     // ---- Problem library & editing -----------------------------------------------------
 
     pub(crate) fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
+        let _span = xcpc_trace::span("desktop", "search_problems");
         let group = if query.ungrouped_only {
             Some(GroupFilter::Ungrouped)
         } else {
@@ -1116,11 +1164,19 @@ impl State {
             platform: query.platform,
             group,
         };
-        let core = self.core.lock().unwrap();
-        let ws = core.workspace.as_ref();
-        let contest_map = core.index.problem_contest_map();
-        let matched = core.index.search_problems(&core_query);
+        let (ws, contest_map, matched, has_pkg_flags) = {
+            let core = self.core.lock().unwrap();
+            let ws = core.workspace.clone();
+            let contest_map = core.index.problem_contest_map();
+            let matched = core.index.search_problems(&core_query);
+            let has_pkg_flags: Vec<bool> = matched
+                .iter()
+                .map(|p| core.index.problem_has_package(&p.id).unwrap_or(false))
+                .collect();
+            (ws, contest_map, matched, has_pkg_flags)
+        };
         let training_statuses = ws
+            .as_ref()
             .map(|w| {
                 let pairs: Vec<(&str, &[xcpc_domain::ProblemSource])> = matched
                     .iter()
@@ -1135,8 +1191,11 @@ impl State {
             .unwrap_or_default();
         matched
             .into_iter()
-            .map(|p| {
-                let package_status = ws.and_then(|w| package_status_opt(w, &p.id));
+            .zip(has_pkg_flags)
+            .map(|(p, has_package)| {
+                let package_status = ws
+                    .as_ref()
+                    .and_then(|w| package_status_fast(w, &p.id, has_package));
                 let contest_ids = contest_map.get(&p.id).cloned().unwrap_or_default();
                 let training_status = training_statuses
                     .get(&p.id)
@@ -1197,6 +1256,11 @@ impl State {
     }
 
     pub(crate) fn problem_detail(&self, id: &str) -> ProblemDetailJs {
+        let _span = xcpc_trace::span_with(
+            "desktop",
+            "problem_detail",
+            || serde_json::json!({ "id": id }),
+        );
         let (ws, referencing_contests) = {
             let core = self.core.lock().unwrap();
             let refs = core
@@ -1485,6 +1549,11 @@ impl State {
     }
 
     pub(crate) fn update_problem_meta(&self, id: &str, patch: ProblemMetaPatchJs) -> ActionResult {
+        let _span = xcpc_trace::span_with(
+            "desktop",
+            "update_problem_meta",
+            || serde_json::json!({ "id": id }),
+        );
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1746,6 +1815,11 @@ impl State {
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
     pub(crate) fn contest_detail(&self, id: &str) -> ContestDetailJs {
+        let _span = xcpc_trace::span_with(
+            "desktop",
+            "contest_detail",
+            || serde_json::json!({ "id": id }),
+        );
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ContestDetailJs {
@@ -1782,10 +1856,11 @@ impl State {
         };
         let has_contest_template = ws.has_contest_template(id);
         let contest_template_json = if has_contest_template {
-            let mut engine = self.math_engine.lock().unwrap();
-            engine.set_root(Some(ws.root().to_path_buf()));
-            publish::inspect_contest_template(&ws, &engine, id)
-                .and_then(|info| serde_json::to_string(&info).ok())
+            let rel = format!("contests/{id}/template.typ");
+            self.inspect_local_template_cached(&ws, &rel, |engine| {
+                publish::inspect_contest_template(&ws, engine, id)
+            })
+            .and_then(|info| serde_json::to_string(&info).ok())
         } else {
             None
         };
@@ -1833,9 +1908,22 @@ impl State {
                 }
             }
         } else {
+            let indexed_items: Vec<(String, Option<bool>)> = {
+                let core = self.core.lock().unwrap();
+                meta.problems
+                    .iter()
+                    .map(|item| {
+                        (
+                            core.index.statement_path_for(&item.id, meta.language),
+                            core.index.problem_has_package(&item.id),
+                        )
+                    })
+                    .collect()
+            };
             meta.problems
                 .iter()
-                .map(|item| {
+                .zip(indexed_items)
+                .map(|(item, (stmt_path, indexed_has_pkg))| {
                     let overridden_title = item.title.is_some();
                     let overridden_time = item.limits.as_ref().is_some_and(|l| l.time.is_some());
                     let overridden_memory =
@@ -1848,22 +1936,27 @@ impl State {
                     let override_options_json =
                         serde_json::to_string(&item.options).unwrap_or_else(|_| "{}".into());
 
-                    match ws.load_problem(&item.id) {
-                        Ok(p) => {
-                            let effective = item.apply(&p.meta);
+                    match ws.load_problem_meta(&item.id) {
+                        Ok(p_meta) => {
+                            let effective = item.apply(&p_meta);
                             let options_json = serde_json::to_string(&effective.template_options)
                                 .unwrap_or_else(|_| "{}".into());
                             let original_options_json =
-                                serde_json::to_string(&p.meta.template_options)
+                                serde_json::to_string(&p_meta.template_options)
                                     .unwrap_or_else(|_| "{}".into());
+                            let has_package = indexed_has_pkg.unwrap_or_else(|| {
+                                ws.resolve(&format!("problems/{}", item.id))
+                                    .ok()
+                                    .is_some_and(|dir| p_meta.has_package_in_dir(&dir))
+                            });
                             ContestItemDetailJs {
                                 label: item.label.clone(),
                                 id: item.id.clone(),
                                 missing: false,
                                 title: effective.title,
-                                original_title: p.meta.title.clone(),
+                                original_title: p_meta.title.clone(),
                                 limits: limits_to_js(&effective.limits),
-                                original_limits: limits_to_js(&p.meta.limits),
+                                original_limits: limits_to_js(&p_meta.limits),
                                 show_metadata,
                                 default_show_metadata: default_show,
                                 overridden_title,
@@ -1872,14 +1965,14 @@ impl State {
                                 overridden_input,
                                 overridden_output,
                                 overridden_show_metadata,
-                                statement: statement_path(&p, meta.language),
-                                editorial: format!("{}/editorial.md", p.dir),
-                                rating: p.meta.rating,
-                                tags: p.meta.tags,
+                                statement: stmt_path,
+                                editorial: format!("problems/{}/editorial.md", item.id),
+                                rating: p_meta.rating,
+                                tags: p_meta.tags,
                                 options_json,
                                 original_options_json,
                                 override_options_json,
-                                package_status: package_status_opt(&ws, &item.id),
+                                package_status: package_status_fast(&ws, &item.id, has_package),
                             }
                         }
                         Err(_) => {
@@ -2200,10 +2293,56 @@ impl State {
 
     // ---- Templates & declarative schemas -----------------------------------------------
 
+    pub(crate) fn inspect_local_template_cached(
+        &self,
+        ws: &Workspace,
+        rel_path: &str,
+        inspect: impl FnOnce(&Engine) -> Option<xcpc_domain::TemplateInfo>,
+    ) -> Option<xcpc_domain::TemplateInfo> {
+        let root = ws.root().to_path_buf();
+        let abs = root.join(rel_path);
+        let Ok(meta) = std::fs::metadata(&abs) else {
+            self.local_template_cache
+                .lock()
+                .unwrap()
+                .remove(&(root, rel_path.to_owned()));
+            return None;
+        };
+        let len = meta.len();
+        let mtime = meta.modified().ok();
+        let key = (root.clone(), rel_path.to_owned());
+        if let Some(entry) = self.local_template_cache.lock().unwrap().get(&key)
+            && entry.len == len
+            && entry.mtime == mtime
+        {
+            return entry.info.clone();
+        }
+        let info = {
+            let mut engine = self.math_engine.lock().unwrap();
+            engine.set_root(Some(root));
+            engine.reset_files();
+            inspect(&engine)
+        };
+        self.local_template_cache.lock().unwrap().insert(
+            key,
+            LocalTemplateCacheEntry {
+                len,
+                mtime,
+                info: info.clone(),
+            },
+        );
+        info
+    }
+
     pub(crate) fn list_templates_json(&self) -> String {
         let presets = xcpc_engine::list_presets_by_kind(xcpc_domain::TemplateKind::Statement);
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
+            let _span = xcpc_trace::span_with(
+                "desktop",
+                "list_templates_json",
+                || serde_json::json!({ "cacheHit": false }),
+            );
             return serde_json::to_string(&serde_json::json!({
                 "default": "olymp-classic",
                 "workspaceOptions": {},
@@ -2213,19 +2352,50 @@ impl State {
             }))
             .unwrap_or_else(|_| "{}".into());
         };
-        let (templates, fonts) = {
-            let mut engine = self.math_engine.lock().unwrap();
-            engine.set_root(Some(ws.root().to_path_buf()));
-            let templates =
-                publish::list_templates_by_kind(&ws, &engine, xcpc_domain::TemplateKind::Statement);
-            let mut fonts: Vec<String> = engine
-                .font_families()
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
-            fonts.sort();
-            fonts.dedup();
-            (templates, fonts)
+        let root = ws.root().to_path_buf();
+        let fingerprint = template_files_fingerprint(&root);
+        let cached = {
+            let guard = self.templates_cache.lock().unwrap();
+            guard
+                .as_ref()
+                .filter(|c| c.root == root && c.fingerprint == fingerprint)
+                .map(|c| (c.templates.clone(), c.fonts.clone()))
+        };
+        let cache_hit = cached.is_some();
+        let _span = xcpc_trace::span_with(
+            "desktop",
+            "list_templates_json",
+            || serde_json::json!({ "cacheHit": cache_hit }),
+        );
+        let (templates, fonts) = match cached {
+            Some(hit) => hit,
+            None => {
+                let (templates, fonts) = {
+                    let mut engine = self.math_engine.lock().unwrap();
+                    engine.set_root(Some(root.clone()));
+                    engine.reset_files();
+                    let templates = publish::list_templates_by_kind(
+                        &ws,
+                        &engine,
+                        xcpc_domain::TemplateKind::Statement,
+                    );
+                    let mut fonts: Vec<String> = engine
+                        .font_families()
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                    fonts.sort();
+                    fonts.dedup();
+                    (templates, fonts)
+                };
+                *self.templates_cache.lock().unwrap() = Some(TemplatesCache {
+                    root,
+                    fingerprint,
+                    templates: templates.clone(),
+                    fonts: fonts.clone(),
+                });
+                (templates, fonts)
+            }
         };
         let default_tpl = ws
             .default_template()
@@ -2983,6 +3153,26 @@ impl State {
         xcpc_judge::detect_toolchain(override_path.as_deref().map(Path::new)).into()
     }
 
+    /// Fast O(1) check for whether `slug` has a local Polygon package, using the in-memory index.
+    pub(crate) fn has_package(&self, slug: &str) -> bool {
+        let ws = {
+            let core = self.core.lock().unwrap();
+            if let Some(has) = core.index.problem_has_package(slug) {
+                return has;
+            }
+            core.workspace.clone()
+        };
+        let Some(ws) = ws else {
+            return false;
+        };
+        let Ok(meta) = ws.load_problem_meta(slug) else {
+            return false;
+        };
+        ws.resolve(&format!("problems/{slug}"))
+            .ok()
+            .is_some_and(|dir| meta.has_package_in_dir(&dir))
+    }
+
     #[cfg(test)]
     pub(crate) fn inspect_package(&self, slug: &str) -> PackageInspectionResultJs {
         self.inspect_package_in(slug, None)
@@ -2993,6 +3183,12 @@ impl State {
         slug: &str,
         contest: Option<&str>,
     ) -> PackageInspectionResultJs {
+        let _span = xcpc_trace::span_with("desktop", "inspect_package_in", || {
+            serde_json::json!({
+                "slug": slug,
+                "contest": contest,
+            })
+        });
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return PackageInspectionResultJs {
@@ -3507,6 +3703,10 @@ impl State {
         }
         match xcpc_judge::set_package_checker(&ws, slug, checker) {
             Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -3530,6 +3730,10 @@ impl State {
         }
         match xcpc_judge::set_solution_config(&ws, slug, name, is_main, expect, tags) {
             Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -3580,6 +3784,10 @@ impl State {
         };
         match xcpc_judge::create_package_source(&ws, slug, parsed_kind, name) {
             Ok(rel_path) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 PackageCreateResultJs {
                     ok: true,
@@ -3622,6 +3830,10 @@ impl State {
         }
         match xcpc_judge::add_hand_test(&ws, slug, name, tag, content) {
             Ok(info) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 AddedTestResultJs {
                     ok: true,
@@ -3669,6 +3881,10 @@ impl State {
         }
         match xcpc_judge::add_generator_test(&ws, slug, generator, args, repeat, tag, name) {
             Ok(info) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 AddedTestResultJs {
                     ok: true,
@@ -3716,6 +3932,10 @@ impl State {
             name,
         ) {
             Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -3732,6 +3952,10 @@ impl State {
         }
         match xcpc_judge::remove_test_rule(&ws, slug, rule_index as usize) {
             Ok(()) => {
+                {
+                    let mut core = self.core.lock().unwrap();
+                    let _ = core.index.refresh_problem(&ws, slug);
+                }
                 self.invalidate_cache();
                 ActionResult::ok()
             }
@@ -4757,12 +4981,17 @@ impl State {
                     )
                 };
 
-                // Refresh index before emitting the terminal event so UI reads are fresh.
+                // Refresh index outside `core.lock()` before emitting the terminal event so UI reads are fresh.
                 if let Some(state) = weak_state.upgrade() {
-                    if let Ok(mut core) = state.core.lock() {
-                        for id in &unique_ids {
-                            let _ = core.index.refresh_problem(&ws, id);
-                        }
+                    let scanned = WorkspaceIndex::scan(&ws).ok();
+                    if let Some(idx) = scanned
+                        && let Ok(mut core) = state.core.lock()
+                        && core
+                            .workspace
+                            .as_ref()
+                            .is_some_and(|cur| cur.root() == ws.root())
+                    {
+                        core.index = idx;
                     }
                     state.invalidate_cache();
                 } else {
@@ -5443,28 +5672,53 @@ fn batch_export_item_to_js(item: xcpc_packages::BatchExportItemResult) -> BatchT
     }
 }
 
-fn package_status_opt(ws: &Workspace, slug: &str) -> Option<String> {
-    let freshness = xcpc_judge::check_package_freshness(ws, slug).ok()?;
-    match freshness {
-        xcpc_judge::PackageFreshness::NotAPackage => None,
-        xcpc_judge::PackageFreshness::VerifiedFresh { .. } => Some("verified_fresh".to_owned()),
-        xcpc_judge::PackageFreshness::Failed { .. } => Some("failed".to_owned()),
-        other => {
-            // P1-5: Keep Library `package_status` consistent with Authoring's status pill
-            // whenever the latest report has failed gates or compile failures.
-            if let Some(report) = xcpc_judge::load_latest_report(ws, slug)
-                && (!report.ok
-                    || !report.compile_failures.is_empty()
-                    || report
-                        .gates
-                        .iter()
-                        .any(|g| g.status == xcpc_judge::GateStatus::Fail))
-            {
-                return Some("failed".to_owned());
-            }
-            Some(freshness_status_str(&other).to_owned())
-        }
+/// Fast package status lookup for list views (`search_problems`, `contest_detail`).
+///
+/// Avoids recursive `tests/` SHA-256 hashing on every search keystroke or contest list open:
+/// relies on `has_package` from `core.index`, reads only `verified.json` / `latest.json`
+/// report JSONs, and compares `verified.built_at_epoch_secs` against O(1) mtimes of
+/// `problem.toml` and `tests/` to surface stale packages.
+fn package_status_fast(ws: &Workspace, slug: &str, has_package: bool) -> Option<String> {
+    if !has_package {
+        return None;
     }
+    let report_failed = |r: &xcpc_judge::BuildReport| {
+        !r.ok
+            || !r.compile_failures.is_empty()
+            || r.gates
+                .iter()
+                .any(|g| g.status == xcpc_judge::GateStatus::Fail)
+    };
+    let latest = xcpc_judge::load_latest_report(ws, slug);
+    if let Some(verified) = xcpc_judge::load_verified_report(ws, slug)
+        && verified.verified
+    {
+        if let Some(ref lat) = latest
+            && lat.built_at_epoch_secs >= verified.built_at_epoch_secs
+            && report_failed(lat)
+        {
+            return Some("failed".to_owned());
+        }
+        if let Ok(prob_dir) = ws.resolve(&format!("problems/{slug}")) {
+            let is_newer = |rel: &str| {
+                std::fs::metadata(prob_dir.join(rel))
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .is_some_and(|d| d.as_secs() > verified.built_at_epoch_secs)
+            };
+            if is_newer("problem.toml") || is_newer("tests") {
+                return Some("stale".to_owned());
+            }
+        }
+        return Some("verified_fresh".to_owned());
+    }
+    if let Some(ref lat) = latest
+        && report_failed(lat)
+    {
+        return Some("failed".to_owned());
+    }
+    Some("unverified".to_owned())
 }
 
 fn freshness_status_str(f: &xcpc_judge::PackageFreshness) -> &'static str {
@@ -5963,6 +6217,31 @@ impl State {
             Err(e) => JsonReportResultJs::err(e.code(), e.human_message()),
         }
     }
+}
+
+/// Lightweight `(filename, len, mtime)` fingerprint of `templates/*.typ` for caching
+/// evaluated template schemas without re-running Typst compilation on unrelated edits.
+pub(crate) fn template_files_fingerprint(root: &Path) -> Vec<(String, u64, Option<SystemTime>)> {
+    let dir = root.join("templates");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !name.ends_with(".typ") || name == "preamble.typ" {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && meta.is_file()
+        {
+            out.push((name, meta.len(), meta.modified().ok()));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 /// The statement file set in `language` (`statement.md` for a problem that has none yet).

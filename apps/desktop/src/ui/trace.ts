@@ -67,6 +67,11 @@ function median(values: number[]): number {
 
 export const traceRecording = signal(false);
 
+/** Fast non-reactive check for whether offline trace recording is currently active. */
+export function isTraceRecording(): boolean {
+  return recording;
+}
+
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
@@ -286,6 +291,51 @@ export async function traceAsyncSpan<T>(
       args,
     });
   }
+}
+
+/** Records a sync or async IPC call span; zero-cost when recording is off. */
+export function traceIpcCall<T>(name: string, fn: () => T): T {
+  if (!recording) return fn();
+  const start = nowMs();
+  let result: T;
+  try {
+    result = fn();
+  } catch (err) {
+    pushJsEvent({
+      name,
+      cat: "ipc",
+      ph: "X",
+      tsMs: start,
+      durMs: Math.max(0, nowMs() - start),
+      tid: TID_IPC,
+    });
+    throw err;
+  }
+  if (
+    result !== null &&
+    (typeof result === "object" || typeof result === "function") &&
+    typeof (result as unknown as PromiseLike<unknown>).then === "function"
+  ) {
+    return (result as unknown as Promise<unknown>).finally(() => {
+      pushJsEvent({
+        name,
+        cat: "ipc",
+        ph: "X",
+        tsMs: start,
+        durMs: Math.max(0, nowMs() - start),
+        tid: TID_IPC,
+      });
+    }) as unknown as T;
+  }
+  pushJsEvent({
+    name,
+    cat: "ipc",
+    ph: "X",
+    tsMs: start,
+    durMs: Math.max(0, nowMs() - start),
+    tid: TID_IPC,
+  });
+  return result;
 }
 
 /** Records an instant UI anchor event; zero-cost when recording is off. */

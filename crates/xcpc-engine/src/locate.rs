@@ -477,6 +477,7 @@ fn walk(main: &Source, frame: &Frame, ts: Transform, depth: usize, out: &mut Col
 
                 let in_artifact = !out.active_artifacts.is_empty();
                 let active_eq = out.active_formulas.last().copied();
+                let mut last_span: Option<(Span, Option<MainSpanRange>)> = None;
                 let mut x = 0.0;
                 let mut y = 0.0;
                 for glyph in &text.glyphs {
@@ -500,7 +501,17 @@ fn walk(main: &Source, frame: &Frame, ts: Transform, depth: usize, out: &mut Col
                         continue;
                     }
                     let (span, sub) = glyph.span;
-                    if let Some(offset) = resolve_main_span(main, span, Some(sub)) {
+                    let resolved = match last_span {
+                        Some((prev, cached)) if prev == span => cached,
+                        _ => {
+                            let r = resolve_main_span_range(main, span);
+                            last_span = Some((span, r));
+                            r
+                        }
+                    };
+                    if let Some((start, end, apply_sub)) = resolved {
+                        let offset =
+                            apply_glyph_offset(main.text(), start, end, apply_sub, Some(sub));
                         out.items.push(MainItem {
                             kind: ItemKind::Text,
                             bounds,
@@ -590,8 +601,10 @@ fn is_markdown_math_span(span: Span) -> bool {
     path == "/xcpc/markdown.typ" || path.starts_with("/xcpc/mitex/")
 }
 
-/// Resolves a span belonging to `main` (`/main.typ`) to a UTF-8 char-boundary byte offset.
-fn resolve_main_span(main: &Source, span: Span, glyph_offset: Option<u16>) -> Option<usize> {
+type MainSpanRange = (usize, usize, bool);
+
+/// Resolves a span belonging to `main` (`/main.typ`) to `(start, end, apply_sub)`.
+fn resolve_main_span_range(main: &Source, span: Span) -> Option<MainSpanRange> {
     if span.id() != Some(main.id()) {
         return None;
     }
@@ -608,6 +621,16 @@ fn resolve_main_span(main: &Source, span: Span, glyph_offset: Option<u16>) -> Op
     let len = text.len();
     let start = text.floor_char_boundary(range.start.min(len));
     let end = text.floor_char_boundary(range.end.min(len));
+    Some((start, end, apply_sub))
+}
+
+fn apply_glyph_offset(
+    text: &str,
+    start: usize,
+    end: usize,
+    apply_sub: bool,
+    glyph_offset: Option<u16>,
+) -> usize {
     if apply_sub
         && let Some(sub) = glyph_offset
         && start < end
@@ -621,9 +644,21 @@ fn resolve_main_span(main: &Source, span: Span, glyph_offset: Option<u16>) -> Op
                 .next_back()
                 .map_or(start, |(i, _)| start + i)
         };
-        return Some(text.floor_char_boundary(clamped).max(start));
+        return text.floor_char_boundary(clamped).max(start);
     }
-    Some(start)
+    start
+}
+
+/// Resolves a span belonging to `main` (`/main.typ`) to a UTF-8 char-boundary byte offset.
+fn resolve_main_span(main: &Source, span: Span, glyph_offset: Option<u16>) -> Option<usize> {
+    let (start, end, apply_sub) = resolve_main_span_range(main, span)?;
+    Some(apply_glyph_offset(
+        main.text(),
+        start,
+        end,
+        apply_sub,
+        glyph_offset,
+    ))
 }
 
 /// `[left, top, width, height]` in points from `<xcpc-text-area>`, if the template emitted it.

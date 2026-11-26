@@ -470,6 +470,7 @@ pub struct Engine {
     library: LazyHash<Library>,
     fonts: FontStore,
     root: Option<PathBuf>,
+    canonical_root: Option<PathBuf>,
     main: Source,
     fonts_source: Source,
     fonts_used: AtomicBool,
@@ -493,10 +494,12 @@ impl Engine {
             store.extend(typst_kit::fonts::system());
         }
         let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
+        let canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
         Self {
             library: LazyHash::new(Library::default()),
             fonts: store,
             root,
+            canonical_root,
             main: Source::new(main_id(), String::new()),
             fonts_source: Source::new(project_id(FONTS_PATH), fonts_text),
             fonts_used: AtomicBool::new(false),
@@ -524,6 +527,7 @@ impl Engine {
 
     /// Resolves the project's files against `root` from now on.
     pub fn set_root(&mut self, root: Option<PathBuf>) {
+        self.canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
         self.root = root;
         self.reset_files();
     }
@@ -672,10 +676,17 @@ impl Engine {
         let real = path
             .canonicalize()
             .map_err(|e| FileError::from_io(e, &path))?;
-        let real_root = root
-            .canonicalize()
-            .map_err(|e| FileError::from_io(e, root))?;
-        if !real.starts_with(&real_root) {
+        let owned_real_root;
+        let real_root = match self.canonical_root.as_deref() {
+            Some(r) => r,
+            None => {
+                owned_real_root = root
+                    .canonicalize()
+                    .map_err(|e| FileError::from_io(e, root))?;
+                &owned_real_root
+            }
+        };
+        if !real.starts_with(real_root) {
             return Err(FileError::AccessDenied);
         }
         std::fs::read(&real)

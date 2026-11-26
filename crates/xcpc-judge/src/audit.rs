@@ -366,7 +366,19 @@ fn audit_single_problem(
             summary: "无法读取检查记录".to_owned(),
         },
     );
-    let current_hash = compute_package_hash(ws, slug).unwrap_or_default();
+    let current_hash = if limits_key.is_none() {
+        match &freshness {
+            PackageFreshness::NotAPackage => String::new(),
+            PackageFreshness::VerifiedFresh { package_hash, .. }
+            | PackageFreshness::Unverified { package_hash }
+            | PackageFreshness::Failed { package_hash, .. } => package_hash.clone(),
+            PackageFreshness::Stale { current_hash, .. } => current_hash.clone(),
+        }
+    } else if matches!(freshness, PackageFreshness::NotAPackage) {
+        String::new()
+    } else {
+        compute_package_hash(ws, slug).unwrap_or_default()
+    };
 
     let verification_status = match &freshness {
         PackageFreshness::NotAPackage => VerificationStatus::StatementOnly,

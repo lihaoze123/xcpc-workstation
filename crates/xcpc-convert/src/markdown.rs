@@ -7,6 +7,9 @@
 //! Second-level headings become the template's sections (docs/product.md §2.1) and the
 //! samples table goes where the statement asks for it, or after the input and output.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use xcpc_domain::{SectionKind, recognize_section};
 
@@ -334,7 +337,7 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
             Event::Code(code) => out.inline(&format!("#raw({});", string(&code))),
             Event::InlineMath(ref tex) | Event::DisplayMath(ref tex) => {
                 let display = matches!(event, Event::DisplayMath(_));
-                match mitex::convert_math(tex, None).map(|c| modernize(&c)) {
+                match convert_math_cached(tex) {
                     Ok(code) => {
                         let f = if display { "dm" } else { "m" };
                         out.inline(&format!("#{f}({});", string(code.trim())));
@@ -374,6 +377,25 @@ pub(crate) fn convert(body: Body, out: &mut Out, diagnostics: &mut Vec<Diagnosti
 fn open(out: &mut Out, stack: &mut Vec<Open>, start: &str) {
     out.inline(start);
     stack.push(Open::Close("]"));
+}
+
+fn convert_math_cached(tex: &str) -> Result<String, String> {
+    const MAX_CACHE_ENTRIES: usize = 4096;
+    static CACHE: OnceLock<Mutex<HashMap<String, Result<String, String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(hit) = guard.get(tex)
+    {
+        return hit.clone();
+    }
+    let converted = mitex::convert_math(tex, None).map(|c| modernize(&c));
+    if let Ok(mut guard) = cache.lock() {
+        if guard.len() >= MAX_CACHE_ENTRIES {
+            guard.clear();
+        }
+        guard.insert(tex.to_owned(), converted.clone());
+    }
+    converted
 }
 
 /// Symbols MiTeX 0.2.4 names as Typst did before 0.14, with their names in the Typst
