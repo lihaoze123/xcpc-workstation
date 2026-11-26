@@ -19,7 +19,7 @@ import { Preview } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { Btn } from "../kit";
 import { goSettings, openToolPlugin, pluginRevisionFor, preview } from "../store";
-import { MONO, token, UI_SANS } from "../theme";
+import { MONO, SANS, token } from "../theme";
 import { showToast, type ToastTone } from "../Toast";
 import { zhEn } from "../training/locale";
 import { classifyPluginUiError, formatPluginError, type PluginUiErrorInfo } from "./pluginErrors";
@@ -70,7 +70,7 @@ const FALLBACK_LIGHT_VARS: Record<string, string> = {
   "--xcpc-destructive": "#B91C1C",
   "--xcpc-success": "#15803D",
   "--xcpc-warning": "#B45309",
-  "--xcpc-font-sans": UI_SANS,
+  "--xcpc-font-sans": SANS,
   "--xcpc-font-mono": MONO,
 };
 
@@ -90,7 +90,7 @@ const FALLBACK_DARK_VARS: Record<string, string> = {
   "--xcpc-destructive": "#F87171",
   "--xcpc-success": "#4ADE80",
   "--xcpc-warning": "#FBBF24",
-  "--xcpc-font-sans": UI_SANS,
+  "--xcpc-font-sans": SANS,
   "--xcpc-font-mono": MONO,
 };
 
@@ -128,7 +128,7 @@ export function buildThemeCssVars(scheme: "light" | "dark"): Record<string, stri
     "--xcpc-destructive": safeToken("destructive", fb["--xcpc-destructive"]),
     "--xcpc-success": safeToken("chart-2", fb["--xcpc-success"]),
     "--xcpc-warning": safeToken("chart-4", fb["--xcpc-warning"]),
-    "--xcpc-font-sans": UI_SANS,
+    "--xcpc-font-sans": SANS,
     "--xcpc-font-mono": MONO,
   };
 }

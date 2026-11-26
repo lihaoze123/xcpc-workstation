@@ -62,9 +62,24 @@ const BASE_DARK_THEME: Record<string, string> = {
   destructive: "#F87171",
 };
 
+/** Cross-platform CJK system UI font fallback chain (Phase 6E §1). */
+const CJK = `"Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei"`;
+
+/** The UI sans-serif font stack (Phase 6E §1). */
+export const SANS = `Inter, ${CJK}, sans-serif`;
+
+/** The monospaced family of code, paths, and logs (Phase 6E §1). */
+export const MONO = `"JetBrains Mono", ${CJK}, monospace`;
+
+/** The monospaced family for the Markdown/code editor with cross-platform monospaced CJK fallback (§5). */
+export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', 'Sarasa Mono SC', 'NSimSun', monospace";
+
+/** Recorded UI font registration status, updated at startup before first mount (Phase 6E §4). */
+export const uiFontSource = signal<string>("system fallback");
+
 setTheme({
   cssVars: {
-    theme: { radius: "8px" },
+    theme: { radius: "8px", "font-sans": SANS, "font-mono": MONO },
     light: BASE_LIGHT_THEME,
     dark: BASE_DARK_THEME,
   },
@@ -88,7 +103,7 @@ export function applyThemeOverrides(overrides: {
   const radiusPx = overrides.radius != null && Number.isFinite(overrides.radius) ? `${Math.round(overrides.radius)}px` : "8px";
   setTheme({
     cssVars: {
-      theme: { radius: radiusPx },
+      theme: { radius: radiusPx, "font-sans": SANS, "font-mono": MONO },
       light,
       dark,
     },
@@ -140,16 +155,7 @@ export function tierSoft(tier: Tier): string {
   return `${hex}${alpha}`;
 }
 
-/** The UI sans-serif font stack (§5). */
-export const UI_SANS = "'Inter', 'Source Han Sans SC', 'Noto Sans CJK SC', system-ui, sans-serif";
-
-/** The monospaced family of code and samples (§5). */
-export const MONO = "'JetBrains Mono', 'Maple Mono', monospace";
-
-/** The monospaced family for the Markdown/code editor with cross-platform monospaced CJK fallback (§5). */
-export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source Han Sans HW SC', 'Sarasa Mono SC', 'NSimSun', monospace";
-
-/** Flipped to `true` after `registerFont` finishes loading bundled JetBrains Mono faces. */
+/** Flipped to `true` after `registerFont` finishes loading extra editor JetBrains Mono faces. */
 export const fontsReady = signal(false);
 
 /** Reactive editor font family: switches to `EDITOR_MONO` (or `theme.toml` override) after `registerFont` completes. */

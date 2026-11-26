@@ -41,12 +41,13 @@ export const TYPE: Record<FontSizeToken, TextStyle> = {
   /** Section headings, card titles. */
   strong: { fontSize: FONT_SIZE.strong, lineHeight: LINE_HEIGHT.strong, fontWeight: FONT_WEIGHT.semibold },
   /** DetailHeader titles. */
-  title: { fontSize: FONT_SIZE.title, lineHeight: LINE_HEIGHT.title, fontWeight: FONT_WEIGHT.semibold },
+  title: { fontSize: FONT_SIZE.title, lineHeight: LINE_HEIGHT.title, fontWeight: FONT_WEIGHT.semibold, letterSpacing: -0.25 },
   /** Training overview hero figures (`tabular-nums`). */
   display: {
     fontSize: FONT_SIZE.display,
     lineHeight: LINE_HEIGHT.display,
     fontWeight: FONT_WEIGHT.semibold,
+    letterSpacing: -0.5,
     fontVariant: ["tabular-nums"],
   },
 };

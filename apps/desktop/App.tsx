@@ -28,7 +28,10 @@ import { StudioView } from "./src/ui/studio/StudioView";
 import { ToastHost } from "./src/ui/Toast";
 import { ToolsView } from "./src/ui/ToolsView";
 import { TrainingView } from "./src/ui/TrainingView";
-import { EASE_STANDARD, fontsReady, ms, popoverShadow } from "./src/ui/theme";
+import interVariableFontUrl from "./src/ui/fonts/InterVariable.woff2?url";
+import jetBrainsMonoRegularFontUrl from "./src/ui/fonts/JetBrainsMono-Regular.woff2?url";
+import jetBrainsMonoSemiBoldFontUrl from "./src/ui/fonts/JetBrainsMono-SemiBold.woff2?url";
+import { EASE_STANDARD, fontsReady, ms, popoverShadow, uiFontSource } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import { bindDiagnosticsLifecycle, openDiagnosticsWindow } from "./src/ui/o11y/windowManager";
 import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
@@ -562,17 +565,51 @@ function App() {
 // Sync JS trace collector at startup when launched with `XCPC_TRACE=1`.
 syncTraceStatus();
 
-// Register bundled JetBrains Mono faces into the GUI text engine and flip `fontsReady`
-// once all faces are installed so mounted `Editor`s re-measure glyph widths with real JetBrains Mono.
-try {
-  const fonts = Preview.uiFonts();
-  if (fonts.length > 0) {
-    void Promise.all(fonts.map((bytes) => registerFont(bytes).catch(() => {}))).finally(() => fontsReady.set(true));
-  } else {
-    fontsReady.set(true);
+async function registerBundledUiFonts(): Promise<void> {
+  try {
+    const [interRes, monoRegularRes, monoSemiBoldRes] = await Promise.allSettled([
+      registerFont(interVariableFontUrl),
+      registerFont(jetBrainsMonoRegularFontUrl),
+      registerFont(jetBrainsMonoSemiBoldFontUrl),
+    ]);
+    const hasInter = interRes.status === "fulfilled";
+    const monoLoaded = (monoRegularRes.status === "fulfilled" ? 1 : 0) + (monoSemiBoldRes.status === "fulfilled" ? 1 : 0);
+    if (hasInter && monoLoaded === 2) {
+      uiFontSource.set("bundled Inter + JetBrains Mono");
+    } else if (hasInter && monoLoaded === 1) {
+      uiFontSource.set("bundled Inter + JetBrains Mono (partial)");
+    } else if (hasInter) {
+      uiFontSource.set("bundled Inter (JetBrains Mono fallback)");
+    } else if (monoLoaded === 2) {
+      uiFontSource.set("bundled JetBrains Mono (Inter fallback)");
+    } else if (monoLoaded === 1) {
+      uiFontSource.set("bundled JetBrains Mono (partial, Inter fallback)");
+    } else {
+      uiFontSource.set("system fallback");
+    }
+  } catch {
+    uiFontSource.set("system fallback");
   }
-} catch {
-  fontsReady.set(true);
 }
 
-mount(App);
+// Load extra JetBrains Mono faces (Italic/Bold/NL) asynchronously for the editor
+// without blocking the first frame.
+function loadExtraEditorFonts(): void {
+  try {
+    const fonts = Preview.uiFonts();
+    if (fonts.length > 0) {
+      void Promise.all(fonts.map((bytes) => registerFont(bytes).catch(() => {}))).finally(() => fontsReady.set(true));
+    } else {
+      fontsReady.set(true);
+    }
+  } catch {
+    fontsReady.set(true);
+  }
+}
+
+// Register bundled UI fonts (Inter + JetBrains Mono Regular/SemiBold) before mounting
+// the root component so the very first frame renders with zero font-swap flash or shift.
+void registerBundledUiFonts().finally(() => {
+  mount(App);
+  loadExtraEditorFonts();
+});

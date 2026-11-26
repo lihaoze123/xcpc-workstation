@@ -3,6 +3,7 @@
 // (`static_ui_design_token_guardrail`) so `nsh.json` does not need `capabilities.fs`.
 
 import { describe, expect, test } from "nsh/test";
+import { MONO, SANS } from "./theme";
 import {
   CONTROL,
   FONT_SIZE,
@@ -132,13 +133,29 @@ describe("Design tokens (Phase 6D §2)", () => {
     expect(TYPE.caption).toEqual({ fontSize: 12, lineHeight: 16, fontWeight: 400 });
     expect(TYPE.body).toEqual({ fontSize: 13, lineHeight: 19, fontWeight: 400 });
     expect(TYPE.strong).toEqual({ fontSize: 14, lineHeight: 20, fontWeight: 600 });
-    expect(TYPE.title).toEqual({ fontSize: 18, lineHeight: 24, fontWeight: 600 });
+    expect(TYPE.title).toEqual({ fontSize: 18, lineHeight: 24, fontWeight: 600, letterSpacing: -0.25 });
     expect(TYPE.display).toEqual({
       fontSize: 26,
       lineHeight: 30,
       fontWeight: 600,
+      letterSpacing: -0.5,
       fontVariant: ["tabular-nums"],
     });
+  });
+
+  test("tracking and font stacks match Phase 6E §1 & §3", () => {
+    expect(TYPE.title.letterSpacing).toBe(-0.25);
+    expect(TYPE.display.letterSpacing).toBe(-0.5);
+    expect(TYPE.micro.letterSpacing).toBeUndefined();
+    expect(TYPE.caption.letterSpacing).toBeUndefined();
+    expect(TYPE.body.letterSpacing).toBeUndefined();
+    expect(TYPE.strong.letterSpacing).toBeUndefined();
+
+    const expectedCjk = `"Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei"`;
+    expect(SANS).toBe(`Inter, ${expectedCjk}, sans-serif`);
+    expect(MONO).toBe(`"JetBrains Mono", ${expectedCjk}, monospace`);
+    expect(SANS).not.toContain("Maple Mono");
+    expect(MONO).not.toContain("Maple Mono");
   });
 
   test("spacing, radii, concentric inner(), control heights, and row heights match §2.2", () => {

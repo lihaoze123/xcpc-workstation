@@ -72,6 +72,7 @@ import {
   editorVimMode,
   MONO,
   ms,
+  uiFontSource,
   type AppearanceMode,
 } from "./theme";
 import {
@@ -158,7 +159,7 @@ function formatDiagnostics(about: AboutInfoJs): string {
     `Commit: ${commit}`,
     `Build Date: ${about.buildDate}`,
     `Platform: ${about.os} (${about.arch})`,
-    `Fonts: ${about.fontSource}`,
+    `Fonts: UI=${uiFontSource()}; Typesetting=${about.fontSource}`,
   ].join("\n");
 }
 
