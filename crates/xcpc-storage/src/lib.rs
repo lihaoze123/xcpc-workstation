@@ -554,6 +554,29 @@ pub struct Contest {
     pub meta: ContestMeta,
 }
 
+/// Strips Windows extended-length verbatim prefixes (`\\?\C:\...` -> `C:\...`,
+/// `\\?\UNC\server\share\...` -> `\\server\share\...`) returned by `fs::canonicalize()`.
+/// External tools such as MinGW/MSYS2 `g++` (`cc1plus.exe`) and testlib cannot open `\\?\` paths.
+pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(s) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/')
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
 /// An open workspace.
 #[derive(Debug, Clone)]
 pub struct Workspace {
@@ -566,7 +589,7 @@ impl Workspace {
     /// Opens the workspace at `root` (which must exist).
     pub fn open(root: impl AsRef<Path>, read_only: bool) -> Result<Self> {
         let root = root.as_ref();
-        let root = root.canonicalize().map_err(|e| io(root.display(), e))?;
+        let root = strip_verbatim_prefix(&root.canonicalize().map_err(|e| io(root.display(), e))?);
         if !root.is_dir() {
             return Err(Error::NotFound(root.display().to_string()));
         }
@@ -581,7 +604,8 @@ impl Workspace {
     /// `workspace.toml`.
     pub fn discover(start: impl AsRef<Path>, read_only: bool) -> Result<Self> {
         let start = start.as_ref();
-        let start = start.canonicalize().map_err(|e| io(start.display(), e))?;
+        let start =
+            strip_verbatim_prefix(&start.canonicalize().map_err(|e| io(start.display(), e))?);
         start
             .ancestors()
             .find(|d| d.join(WORKSPACE_FILE).is_file())

@@ -897,8 +897,11 @@ fn run_process_windows(
     };
     use windows_sys::Win32::System::Threading::GetProcessTimes;
 
-    let mut cmd = Command::new(binary);
-    cmd.args(args);
+    let binary_arg = xcpc_storage::strip_verbatim_prefix(binary);
+    let mut cmd = Command::new(&binary_arg);
+    for arg in args {
+        cmd.arg(xcpc_storage::strip_verbatim_prefix(Path::new(arg)));
+    }
 
     match stdin_path {
         Some(p) => {
@@ -1687,15 +1690,19 @@ fn run_interactive_windows(
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::Threading::GetProcessTimes;
 
-    let mut inter_cmd = Command::new(interactor_bin);
+    let interactor_arg = xcpc_storage::strip_verbatim_prefix(interactor_bin);
+    let input_arg = xcpc_storage::strip_verbatim_prefix(input_path);
+    let tout_arg = xcpc_storage::strip_verbatim_prefix(tout_path);
+    let mut inter_cmd = Command::new(&interactor_arg);
     inter_cmd
-        .arg(input_path)
-        .arg(tout_path)
+        .arg(&input_arg)
+        .arg(&tout_arg)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut sol_cmd = Command::new(solution_bin);
+    let solution_arg = xcpc_storage::strip_verbatim_prefix(solution_bin);
+    let mut sol_cmd = Command::new(&solution_arg);
     sol_cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

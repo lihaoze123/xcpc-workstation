@@ -462,12 +462,12 @@ fn platform_install_guide() -> &'static str {
 /// support on this host.
 pub fn probe_sanitizer_support(compiler: &DetectedCompiler) -> std::result::Result<(), String> {
     let tmp_dir = tempfile::tempdir().map_err(|e| format!("create temp dir: {e}"))?;
-    let src = tmp_dir.path().join("probe_san.cpp");
-    let bin = tmp_dir.path().join(if cfg!(windows) {
+    let src = xcpc_storage::strip_verbatim_prefix(&tmp_dir.path().join("probe_san.cpp"));
+    let bin = xcpc_storage::strip_verbatim_prefix(&tmp_dir.path().join(if cfg!(windows) {
         "probe_san.exe"
     } else {
         "probe_san"
-    });
+    }));
     fs::write(&src, "int main() { volatile int x = 0; return x; }\n")
         .map_err(|e| format!("write sanitizer probe source: {e}"))?;
 
@@ -561,15 +561,19 @@ pub fn compile_to_path(
         }
     };
 
+    let inc_dir = xcpc_storage::strip_verbatim_prefix(&inc_dir);
+    let src_arg = xcpc_storage::strip_verbatim_prefix(source_disk_path);
+    let out_arg = xcpc_storage::strip_verbatim_prefix(output_binary_path);
+
     let mut cmd = Command::new(&compiler.path);
     for f in &flags {
         cmd.arg(f);
     }
     cmd.arg("-I").arg(&inc_dir);
-    if let Some(parent) = source_disk_path.parent() {
+    if let Some(parent) = src_arg.parent() {
         cmd.arg("-I").arg(parent);
     }
-    cmd.arg(source_disk_path).arg("-o").arg(output_binary_path);
+    cmd.arg(&src_arg).arg("-o").arg(&out_arg);
 
     let output = cmd.output().map_err(|e| CompileFailure {
         target: target_label.to_owned(),
@@ -733,14 +737,21 @@ fn compile_cached_inner(
         tmp_src
     };
 
-    let tmp_out = bin_path.with_extension(format!("{}.tmp", std::process::id()));
+    let src_to_compile = xcpc_storage::strip_verbatim_prefix(&src_to_compile);
+    let inc_dir = xcpc_storage::strip_verbatim_prefix(&inc_dir);
+    let tmp_ext = if cfg!(windows) {
+        format!("{}.tmp.exe", std::process::id())
+    } else {
+        format!("{}.tmp", std::process::id())
+    };
+    let tmp_out = xcpc_storage::strip_verbatim_prefix(&bin_path.with_extension(tmp_ext));
     let mut cmd = Command::new(&compiler.path);
     for f in flags {
         cmd.arg(f);
     }
     cmd.arg("-I").arg(&inc_dir);
     for dir in extra_include_dirs {
-        cmd.arg("-I").arg(dir);
+        cmd.arg("-I").arg(xcpc_storage::strip_verbatim_prefix(dir));
     }
     if let Some(parent) = src_to_compile.parent() {
         cmd.arg("-I").arg(parent);

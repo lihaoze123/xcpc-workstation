@@ -149,7 +149,30 @@ fn read_only_refuses_writes() {
 fn discovers_the_root_from_inside() {
     let (dir, _) = workspace();
     let ws = Workspace::discover(dir.path().join("problems/two-sum"), false).unwrap();
-    assert_eq!(ws.root(), dir.path().canonicalize().unwrap());
+    assert_eq!(
+        ws.root(),
+        strip_verbatim_prefix(&dir.path().canonicalize().unwrap())
+    );
+}
+
+#[test]
+fn strip_verbatim_prefix_handles_windows_drive_unc_and_posix_paths() {
+    assert_eq!(
+        strip_verbatim_prefix(Path::new(r"\\?\C:\Users\alice\ws\solutions\std.cpp")),
+        PathBuf::from(r"C:\Users\alice\ws\solutions\std.cpp")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\ws")),
+        PathBuf::from(r"\\server\share\ws")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(Path::new(r"\\?\Volume{1234}\foo")),
+        PathBuf::from(r"\\?\Volume{1234}\foo")
+    );
+    assert_eq!(
+        strip_verbatim_prefix(Path::new("/home/alice/ws/solutions/std.cpp")),
+        PathBuf::from("/home/alice/ws/solutions/std.cpp")
+    );
 }
 
 #[test]
