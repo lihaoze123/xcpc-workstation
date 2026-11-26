@@ -2,6 +2,28 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-beta.1] - 2026-11-26
+
+Phase 6（6A–6G）首个预览版：升级宿主框架至 **NSH 0.7.1**，解耦 `xcpc-app` Core 层，推出独立多窗口 **`nsh-o11y` 开发者诊断面板**，并完成桌面端全套**设计系统、排版字体、状态完备性与物理弹簧动效**的体系化焕新。
+
+### 架构与底座（Phase 6A–6C）
+
+- **NSH 0.7.1 与 `nshm` 生态模块**：升级至 NSH 0.7.1，接入 `nsh-icon` / `nsh-icon-lucide` / `nsh-o11y`，移除 Linux GStreamer 冗余依赖与多项自造轮子（手维护 SVG、Vim 桥接、手写折线图、手写更新弹窗等），接入原生 `quitRequest` 未保存退出保护。
+- **Core 解耦与构建加速（`xcpc-app`）**：将与 GUI 无关的业务编排与单元测试下沉至 `crates/xcpc-app`，斩断 `xcpc-storage → xcpc-engine` 依赖倒挂；接入 `sccache` 与 `thin` LTO。
+- **独立多窗口 `nsh-o11y` 开发者诊断面板**：支持通过 `Ctrl+Shift+D` / `Ctrl+K` 独立唤起，提供实时帧率/排版/IPC 指标曲线、跨线程 Span 瀑布图与基线对比、结构化日志与 Perfetto JSON 导出；常态下零 `rAF` / 零落盘，主窗口保持零技术噪音。
+- **全链路性能与平台修复**：消除重复编译、异步化训练/工具链面板加载、修复 `TrainingView` 异步刷新循环与偏好设置字段覆盖问题、修复 Windows MinGW `\\?\` 路径前缀问题。
+
+### 设计系统与交互焕新（Phase 6D–6G）
+
+- **集中式设计 Token 与双层悬浮面板（Phase 6D）**：落地 `apps/desktop/src/ui/tokens/` 统一色彩、圆角、间距与图标尺度（含静态门禁 `static_ui_design_token_guardrail`），重构内嵌双层悬浮圆角面板、原型化页面顶栏，精细打磨题库、比赛、出版工作室与训练看板（统一总览 KPI 带、滚动 12 月热力图）。
+- **字体排版收敛（Phase 6E）**：内嵌 Inter 与 JetBrains Mono WOFF2 字体（挂载前注册），统一 `TYPE` 字阶与字距追踪，将等宽字体收敛至代码、路径/命令与日志，并在「关于」中展示字体许可声明。
+- **状态完备性与可访问性（Phase 6F）**：补齐三档空态 / 加载态 / 错误态与筛选空态、`TruncText` 截断悬浮提示、窗口失活时 Tab 指示条柔化，以及覆盖全部可交互控件的 `FOCUS_RING` 焦点环。
+- **物理弹簧动效体系（Phase 6G）**：在 `tokens/motion.ts` 集中管理三档 `SPRING` + 两档 `DURATION` 与三档 `prefers-reduced-motion` 降级策略（含静态门禁 `static_ui_motion_guardrail` 与调试期 `XCPC_MOTION_SLOW` 慢放开关）；实现对称可打断的 Studio 进出动画、锚点起源弹出层缩放与快速淡出、保留释放初速度的拖拽排序弹簧落位，以及基于 `ViewRef.animateLayout` 的局部折叠与列表增删平滑过渡。
+
+### 文档
+
+- 刷新全部 12 张中英文双语 README 界面截图（新增活体板子书 `trd.png` / `trd-en.png`），同步更新 `docs/design-system.md` 与路线图。
+
 ## [0.5.0] - 2026-11-26
 
 Phase 5 正式版：完整交付**活体板子书（Living TRD）与可验证算法模板库**，并完成全栈性能优化与 IPC 追踪回归门禁。
