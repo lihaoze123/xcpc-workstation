@@ -49,6 +49,7 @@ import {
   refresh,
   registerQuitFlusher,
   savePrefs,
+  selectedContest,
   splitRatioSignal,
   studio,
   studioActions,
@@ -78,7 +79,7 @@ import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
-import { FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE } from "../tokens";
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE, TYPE } from "../tokens";
 type StudioMode = "statement" | "authoring";
 type Tab = "statement" | "samples" | "editorial";
 const lastStudioModeByProblem = new Map<string, "statement" | "authoring">();
@@ -769,7 +770,15 @@ export function StudioView(props: { active: boolean }) {
     studioMode.set(next);
   }
 
-  const compactToggles = computed(() => target()?.target === "contest" && windowSize().width > 0 && windowSize().width < 1280);
+  function returnToContest() {
+    const tg = target();
+    if (tg?.target === "contest") {
+      selectedContest.set(tg.id);
+      goSpace("contests");
+    } else {
+      closeStudio();
+    }
+  }
 
   // ── Contest check (§4) ─────────────────────────────────────────────────────
   effect(() => {
@@ -1155,6 +1164,9 @@ export function StudioView(props: { active: boolean }) {
         if (isAuthoring()) buildConsole()?.triggerPrimaryRun();
       }),
       "mod+i": on(toggleInspector),
+      "mod+\\": on(() => {
+        if (!isFullConsole()) togglePreview();
+      }),
       "mod+s": on(save),
       "mod+e": on(() => void exportBook(book())),
       "mod+plus": on(() => canvas?.zoomBy(1.25)),
@@ -1248,14 +1260,14 @@ export function StudioView(props: { active: boolean }) {
   // ── Layout ─────────────────────────────────────────────────────────────────
 
   const initialRatio = untracked(splitRatioSignal);
-  const headerTitle = () => {
-    const t = target();
-    if (!t) return "";
-    if (t.target === "problem") return info().problems.find((p) => p.id === t.id)?.title ?? t.id;
-    return contest()?.name ?? t.id;
+  const contestName = () => {
+    const tg = target();
+    return tg?.target === "contest" ? (contest()?.name ?? tg.id) : "";
   };
-  const headerSubtitle = () => {
-    if (target()?.target !== "contest") return "";
+  const problemTitle = () => {
+    const tg = target();
+    if (!tg) return "";
+    if (tg.target === "problem") return info().problems.find((p) => p.id === tg.id)?.title ?? tg.id;
     const it = item();
     return it ? `${it.label}. ${it.title}` : "";
   };
@@ -1288,19 +1300,48 @@ export function StudioView(props: { active: boolean }) {
         leading={
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
             <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
-            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
-              <Text
-                style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
-                class="text-foreground"
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
+              <If
+                when={target()?.target === "contest" && !!problemTitle()}
+                else={
+                  <Text
+                    style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
+                    class="text-foreground"
+                  >
+                    {target()?.target === "contest" ? contestName() : problemTitle()}
+                  </Text>
+                }
               >
-                {headerTitle()}
-              </Text>
-              <If when={!!headerSubtitle() && (windowSize().width === 0 || windowSize().width >= 1120)}>
-                <Text
-                  style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, flexShrink: 2, minWidth: 0 }}
-                  class="text-muted-foreground"
+                <View
+                  testID="studio-breadcrumb-contest"
+                  onPress={returnToContest}
+                  class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  style={{
+                    height: CONTROL.sm,
+                    paddingLeft: SPACE[4],
+                    paddingRight: SPACE[4],
+                    borderRadius: RADIUS.xs,
+                    justifyContent: "center",
+                    flexShrink: 2,
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
                 >
-                  {headerSubtitle()}
+                  <Text
+                    style={{ ...TYPE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
+                    class="text-secondary-foreground"
+                  >
+                    {contestName()}
+                  </Text>
+                </View>
+                <Text style={{ ...TYPE.caption, flexShrink: 0 }} class="text-muted-foreground">
+                  ›
+                </Text>
+                <Text
+                  style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
+                  class="text-foreground"
+                >
+                  {problemTitle()}
                 </Text>
               </If>
             </View>
@@ -1345,7 +1386,7 @@ export function StudioView(props: { active: boolean }) {
           </View>
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
             <If when={target()?.target === "contest" ? target()!.id : undefined}>
               {(cid) => (
                 <ContestCheckBar
@@ -1356,48 +1397,27 @@ export function StudioView(props: { active: boolean }) {
                 />
               )}
             </If>
-            <If when={!isFullConsole()}>
-              {/* In a narrow contest window the two view toggles drop their labels (tooltips keep them). */}
-              <If
-                when={!compactToggles()}
-                else={
-                  <>
-                    <IconBtn
-                      icon="fileText"
-                      testID="toggle-preview"
-                      tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
-                      onPress={togglePreview}
-                      style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
-                    />
-                    <IconBtn
-                      icon="filePenLine"
-                      testID="toggle-focus"
-                      tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
-                      onPress={toggleFocusMode}
-                      style={focusMode() ? { backgroundColor: token("accent") } : undefined}
-                    />
-                  </>
-                }
-              >
-                <Btn
-                  label={t("studio.preview")}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2], flexShrink: 0 }}>
+              <If when={!isFullConsole()}>
+                <IconBtn
                   icon="fileText"
-                  variant="ghost"
+                  tone={!previewHidden() ? "foreground" : "secondary-foreground"}
                   testID="toggle-preview"
-                  tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"))}
+                  tooltip={tip(previewHidden() ? t("studio.expandPreview") : t("studio.collapsePreview"), "mod+\\")}
                   onPress={togglePreview}
                   style={!previewHidden() ? { backgroundColor: token("accent") } : undefined}
                 />
-                <Btn
-                  label={t("studio.focus")}
-                  icon="filePenLine"
-                  variant="ghost"
-                  testID="toggle-focus"
-                  tooltip={tip(focusMode() ? t("studio.exitFocusMode") : t("studio.focusMode"), "mod+shift+f")}
-                  onPress={toggleFocusMode}
-                  style={focusMode() ? { backgroundColor: token("accent") } : undefined}
-                />
               </If>
+              <IconBtn
+                icon="panelRight"
+                tone={inspectorOpen() ? "foreground" : "secondary-foreground"}
+                testID="toggle-inspector"
+                tooltip={tip(t("studio.properties"), "mod+i")}
+                onPress={toggleInspector}
+                style={inspectorOpen() ? { backgroundColor: token("accent") } : undefined}
+              />
+            </View>
+            <If when={!isFullConsole()}>
               <ExportButton
                 status={status()}
                 book={book()}
@@ -1411,13 +1431,6 @@ export function StudioView(props: { active: boolean }) {
                 onReveal={(b) => void reveal(b)}
               />
             </If>
-            <IconBtn
-              icon="panelRight"
-              testID="toggle-inspector"
-              tooltip={tip(t("studio.properties"), "mod+i")}
-              onPress={toggleInspector}
-              style={inspectorOpen() ? { backgroundColor: token("accent") } : undefined}
-            />
           </View>
         }
       />
