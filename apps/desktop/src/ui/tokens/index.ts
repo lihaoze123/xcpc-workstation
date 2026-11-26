@@ -31,6 +31,7 @@ export {
 
 export {
   anchorOrigin,
+  animateLayoutStandard,
   backdropTransition,
   chevronTransition,
   colorTransition,

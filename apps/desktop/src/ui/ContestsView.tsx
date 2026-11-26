@@ -12,7 +12,7 @@ import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger } from "./Menu";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ContestStats, createFreeze, freezeBlockedCopy } from "./Contest";
-import { DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "./layout";
+import { Collapsible, createListMotion, DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "./layout";
 import { labels, moveItem, partitionContests } from "./logic";
 import { popoverShadow } from "./theme";
 import {
@@ -63,6 +63,8 @@ function toggleContestArchive(
 export function ContestsView(props: { active: boolean }) {
   const rev = activeRevision(() => props.active);
   const contests = () => info().contests;
+  const contestListMotion = createListMotion();
+  contestListMotion.watchKeys(() => activeContests().map((c) => c.id));
   const contestDates = computed(() => {
     void rev();
     const map = new Map<string, string>();
@@ -285,9 +287,13 @@ export function ContestsView(props: { active: boolean }) {
           onLayout={(e) => (listHeight = e.bounds.size.height)}
           onScroll={(e) => (listScrollY = e.offset.y)}
         >
-          <View style={{ padding: SPACE[8], gap: SPACE[2] }}>
+          <View ref={(r) => contestListMotion.containerRef(r)} style={{ padding: SPACE[8], gap: SPACE[2] }}>
             <Each of={activeContests()} key={(c) => c.id}>
-              {(c) => renderContestRow(c, false)}
+              {(c) => (
+                <View style={contestListMotion.rowStyle(c().id)}>
+                  {renderContestRow(c, false)}
+                </View>
+              )}
             </Each>
           </View>
         </Scroll>
@@ -328,7 +334,7 @@ export function ContestsView(props: { active: boolean }) {
                 {String(archivedContests().length)}
               </Text>
             </View>
-            <If when={archivedExpanded()}>
+            <Collapsible open={archivedExpanded()}>
               <Scroll
                 ref={(r) => (archivedScroll = r)}
                 style={{ maxHeight: 220 }}
@@ -341,7 +347,7 @@ export function ContestsView(props: { active: boolean }) {
                   </Each>
                 </View>
               </Scroll>
-            </If>
+            </Collapsible>
           </View>
         </If>
       </View>

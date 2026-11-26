@@ -20,7 +20,7 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
-import { DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
+import { Collapsible, DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
 import { abbreviateHome, pathBase, spaceName } from "./logic";
 import { chevronTransition, colorTransition, indicatorTransition } from "./tokens";
 import { ShortcutsList } from "./ShortcutsModal";
@@ -380,7 +380,7 @@ function WorkspacePane(props: { active: boolean }) {
             {showJson() ? t("settings.mcp.hideConfig") : t("settings.mcp.showConfig")}
           </Text>
         </View>
-        <If when={showJson()}>
+        <Collapsible open={showJson()}>
           <View style={{ borderTopWidth: 1 }} class="border-border bg-muted/40">
             <Scroll horizontal style={{ maxWidth: "100%" }}>
               <View style={{ padding: SPACE[12] }}>
@@ -390,7 +390,7 @@ function WorkspacePane(props: { active: boolean }) {
               </View>
             </Scroll>
           </View>
-        </If>
+        </Collapsible>
       </Section>
     </View>
   );
@@ -806,7 +806,7 @@ function ToolchainPane() {
             {t("settings.toolchain.advanced")}
           </Text>
         </View>
-        <If when={toolchainAdvancedOpen()}>
+        <Collapsible open={toolchainAdvancedOpen()}>
           <View testID="toolchain-advanced" style={{ gap: SPACE[12] }}>
             <Section title={t("settings.lc.title")} description={t("settings.lc.desc")}>
               <SectionRow first>
@@ -874,7 +874,7 @@ function ToolchainPane() {
               </If>
             </View>
           </View>
-        </If>
+        </Collapsible>
       </View>
     </View>
   );

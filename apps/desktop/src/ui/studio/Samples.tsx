@@ -8,7 +8,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, IconBtn, tip } from "../kit";
-import { EmptyState } from "../layout";
+import { createListMotion, EmptyState } from "../layout";
 import { cleanSample, moveItem, samplesEqual } from "../logic";
 import { errorOf, preview, revision, type UiError } from "../store";
 import { cardShadow, EDITOR_MONO, popoverShadow } from "../theme";
@@ -77,25 +77,31 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
     timer = setTimeout(flush, SAVE_AFTER);
   }
 
+  const listMotion = createListMotion();
   const update = (key: number, patch: Partial<Sample>) => change(list().map((s) => (s.key === key ? { ...s, ...patch } : s)));
   const addSample = () => {
     deleted.set(undefined);
-    change([...list(), { key: nextKey++, input: "", output: "" }]);
+    const key = nextKey++;
+    listMotion.insert(String(key), () => change([...list(), { key, input: "", output: "" }]));
   };
   const removeSample = (sample: Sample, index: number) => {
     clearTimeout(undoTimer);
-    deleted.set({ sample, index });
-    change(list().filter((x) => x.key !== sample.key));
-    undoTimer = setTimeout(() => deleted.set(undefined), UNDO_MS);
+    listMotion.remove(String(sample.key), () => {
+      deleted.set({ sample, index });
+      change(list().filter((x) => x.key !== sample.key));
+      undoTimer = setTimeout(() => deleted.set(undefined), UNDO_MS);
+    });
   };
   const undoDelete = () => {
     const d = deleted();
     if (!d) return;
     clearTimeout(undoTimer);
     deleted.set(undefined);
-    const next = list().slice();
-    next.splice(Math.min(d.index, next.length), 0, d.sample);
-    change(next);
+    listMotion.insert(String(d.sample.key), () => {
+      const next = list().slice();
+      next.splice(Math.min(d.index, next.length), 0, d.sample);
+      change(next);
+    });
   };
 
   const r = createReorder((from, to) => change(moveItem(list(), from, to)), CARD_GAP);
@@ -134,7 +140,13 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
         }
       >
         <Scroll style={{ flex: 1 }}>
-          <View ref={(v) => r.container(v)} style={{ padding: SPACE[12], gap: CARD_GAP }}>
+          <View
+            ref={(v) => {
+              r.container(v);
+              listMotion.containerRef(v);
+            }}
+            style={{ padding: SPACE[12], gap: CARD_GAP }}
+          >
             <Each of={list()} key={(s) => s.key}>
               {(s, index) => {
                 const dragging = () => r.drag()?.from === index();
@@ -148,6 +160,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                       zIndex: r.isElevated(index()) ? 2 : 0,
                       transform: r.rowTransform(index()),
                       boxShadow: dragging() ? popoverShadow() : cardShadow(),
+                      ...listMotion.rowStyle(String(s().key)),
                     }}
                   >
                     <View

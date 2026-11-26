@@ -4,6 +4,7 @@
 import { Scroll, signal, Text, View, type JSX } from "nsh";
 import { Icon } from "../Icon";
 import { FOCUS_RING } from "../kit";
+import { Collapsible } from "../layout";
 import { headerCheckboxState, type ProblemGroupSection } from "../logic";
 import { chevronTransition, colorTransition } from "../tokens";
 import { LibraryListRow, TriCheckbox, type LibraryRow } from "./cells";
@@ -113,7 +114,7 @@ export function GroupedProblemList(props: {
                       </View>
                     </View>
 
-                    <If when={!isCollapsed()}>
+                    <Collapsible open={!isCollapsed()}>
                       <View style={{ flexShrink: 0 }}>
                         <Each of={sec().rows} key={(r) => r.id}>
                           {(row) => (
@@ -132,7 +133,7 @@ export function GroupedProblemList(props: {
                           )}
                         </Each>
                       </View>
-                    </If>
+                    </Collapsible>
                   </View>
                 );
               }}

@@ -8,6 +8,7 @@ import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName } from "../Icon";
 import { Btn, FOCUS_RING, tip } from "../kit";
+import { createListMotion } from "../layout";
 import { colorTransition, isReducedMotion, panelTransform, panelTransition } from "../tokens";
 
 import { CONTROL, FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -88,6 +89,9 @@ export function GroupSidebar(props: {
   onRenameGroup: (name: string) => void;
   onDeleteGroup: (name: string) => void;
 }) {
+  const groupListMotion = createListMotion();
+  groupListMotion.watchKeys(() => props.groups.map((g) => g.name));
+
   const revealed = signal(isReducedMotion());
   effect(() => {
     if (isReducedMotion()) {
@@ -157,16 +161,18 @@ export function GroupSidebar(props: {
         />
         <View style={{ height: 1, marginTop: SPACE[6], marginBottom: SPACE[6] }} class="bg-border" />
         <Scroll style={{ flex: 1 }}>
-          <View style={{ gap: SPACE[2] }}>
+          <View ref={(r) => groupListMotion.containerRef(r)} style={{ gap: SPACE[2] }}>
             <Each of={props.groups} key={(g) => g.name}>
               {(g) => (
-                <SidebarRow
-                  label={g().name}
-                  count={g().count}
-                  active={props.selection.kind === "named" && props.selection.name === g().name}
-                  onPress={() => props.onSelect({ kind: "named", name: g().name })}
-                  onContextMenu={(e) => openGroupMenu(g().name, e.pagePosition.x, e.pagePosition.y)}
-                />
+                <View style={groupListMotion.rowStyle(g().name)}>
+                  <SidebarRow
+                    label={g().name}
+                    count={g().count}
+                    active={props.selection.kind === "named" && props.selection.name === g().name}
+                    onPress={() => props.onSelect({ kind: "named", name: g().name })}
+                    onContextMenu={(e) => openGroupMenu(g().name, e.pagePosition.x, e.pagePosition.y)}
+                  />
+                </View>
               )}
             </Each>
           </View>

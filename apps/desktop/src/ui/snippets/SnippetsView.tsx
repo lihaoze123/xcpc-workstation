@@ -8,7 +8,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
 import { Btn, Chip, createTransientFlag, DelayedSpinner, FOCUS_RING, Lock, Segmented } from "../kit";
-import { DetailHeader, EmptyState, FilterEmpty, GUTTER, Spacer, Toolbar } from "../layout";
+import { Collapsible, createListMotion, DetailHeader, EmptyState, FilterEmpty, GUTTER, Spacer, Toolbar } from "../layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
@@ -70,6 +70,10 @@ export function SnippetsView(props: { active: boolean }) {
   const archivedOpen = signal(false);
   const deleteSnippetTarget = signal<SnippetSummaryItem | undefined>(undefined);
   const deleteTrdTarget = signal<TrdSummaryItem | undefined>(undefined);
+  const snippetListMotion = createListMotion();
+  const trdListMotion = createListMotion();
+  snippetListMotion.watchKeys(() => filteredSnippets().map((s) => s.slug));
+  trdListMotion.watchKeys(() => trdParts().active.map((t) => t.id));
 
   function loadLists() {
     if (!info().root) return;
@@ -337,30 +341,32 @@ export function SnippetsView(props: { active: boolean }) {
                   />
                 }
               >
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[2] }}>
-                  <Each of={filteredSnippets()} key={(s) => s.slug}>
-                    {(s) => {
-                      const selected = () => s().slug === selectedSnippetSlug();
-                      const st = () => snippetStatusStyle(s().status, s().has_code);
-                      return (
-                        <View
-                          testID={`snippet-row-${s().slug}`}
-                          onPress={(e) => {
-                            selectedSnippetSlug.set(s().slug);
-                            if (e.clickCount >= 2) openSnippetStudio(s().slug);
-                          }}
-                          class={selected() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
-                          style={{
-                            height: 54,
-                            paddingLeft: SPACE[12],
-                            paddingRight: SPACE[12],
-                            borderRadius: RADIUS.md,
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: SPACE[8],
-                            ...colorTransition(),
-                          }}
-                        >
+                <Scroll style={{ flex: 1 }}>
+                  <View ref={(r) => snippetListMotion.containerRef(r)} style={{ padding: SPACE[8], gap: SPACE[2] }}>
+                    <Each of={filteredSnippets()} key={(s) => s.slug}>
+                      {(s) => {
+                        const selected = () => s().slug === selectedSnippetSlug();
+                        const st = () => snippetStatusStyle(s().status, s().has_code);
+                        return (
+                          <View
+                            testID={`snippet-row-${s().slug}`}
+                            onPress={(e) => {
+                              selectedSnippetSlug.set(s().slug);
+                              if (e.clickCount >= 2) openSnippetStudio(s().slug);
+                            }}
+                            class={selected() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
+                            style={{
+                              height: 54,
+                              paddingLeft: SPACE[12],
+                              paddingRight: SPACE[12],
+                              borderRadius: RADIUS.md,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: SPACE[8],
+                              ...colorTransition(),
+                              ...snippetListMotion.rowStyle(s().slug),
+                            }}
+                          >
                           <Icon name={s().has_code ? "code" : "sigma"} size="sm" tone="secondary-foreground" />
                           <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
                             <Text
@@ -398,6 +404,7 @@ export function SnippetsView(props: { active: boolean }) {
                       );
                     }}
                   </Each>
+                  </View>
                 </Scroll>
               </If>
             </View>
@@ -442,16 +449,20 @@ export function SnippetsView(props: { active: boolean }) {
           <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
             <View style={{ width: LIST_PANE_WIDTH, borderRightWidth: 1, flexDirection: "column" }} class="border-border">
               <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[2] }}>
-                <Each of={trdParts().active} key={(trd) => trd.id}>
-                  {(trd) => (
-                    <TrdRow
-                      item={trd()}
-                      selected={trd().id === selectedTrdId()}
-                      onSelect={() => selectedTrdId.set(trd().id)}
-                      onOpen={() => openTrdStudio(trd().id)}
-                    />
-                  )}
-                </Each>
+                <View ref={(r) => trdListMotion.containerRef(r)} style={{ gap: SPACE[2] }}>
+                  <Each of={trdParts().active} key={(trd) => trd.id}>
+                    {(trd) => (
+                      <View style={trdListMotion.rowStyle(trd().id)}>
+                        <TrdRow
+                          item={trd()}
+                          selected={trd().id === selectedTrdId()}
+                          onSelect={() => selectedTrdId.set(trd().id)}
+                          onOpen={() => openTrdStudio(trd().id)}
+                        />
+                      </View>
+                    )}
+                  </Each>
+                </View>
 
                 <If when={trdParts().archived.length > 0}>
                   <View style={{ marginTop: SPACE[8] }}>
@@ -480,7 +491,7 @@ export function SnippetsView(props: { active: boolean }) {
                         {String(trdParts().archived.length)}
                       </Text>
                     </View>
-                    <If when={archivedOpen()}>
+                    <Collapsible open={archivedOpen()}>
                       <View style={{ gap: SPACE[2], marginTop: SPACE[2] }}>
                         <Each of={trdParts().archived} key={(trd) => trd.id}>
                           {(trd) => (
@@ -494,7 +505,7 @@ export function SnippetsView(props: { active: boolean }) {
                           )}
                         </Each>
                       </View>
-                    </If>
+                    </Collapsible>
                   </View>
                 </If>
               </Scroll>

@@ -2,7 +2,7 @@
 // All UI components must consume motion through this module instead of calling `reduceMotion()`,
 // writing `transitionDuration: ms(<number>)`, or authoring inline `spring(...)` strings.
 
-import { reduceMotion, type MotionSpring, type ViewStyle } from "nsh";
+import { reduceMotion, type MotionSpring, type ViewRef, type ViewStyle } from "nsh";
 import { Preview } from "xcpc-workstation/native";
 
 /** Three-tier warm physical spring scale (ζ = 0.872–0.895, overshoot ≤ 1%). */
@@ -272,6 +272,12 @@ export function layoutSpringConfig(): { type: "spring"; stiffness: number; dampi
     damping: s.damping ?? 35,
     mass: s.mass ?? 1,
   };
+}
+
+/** Triggers a scoped `ViewRef.animateLayout(SPRING.standard)` (no-op under reduced motion). */
+export function animateLayoutStandard(ref: ViewRef | undefined): void {
+  const cfg = layoutSpringConfig();
+  if (cfg) ref?.animateLayout(cfg);
 }
 
 /** Whether programmatic scrolling should animate (`false` under reduced motion). */

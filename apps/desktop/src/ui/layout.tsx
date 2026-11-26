@@ -3,12 +3,22 @@
 // whose head puts the title and its facts on the left and the actions on the right,
 // top-aligned with the title. Empty states are an icon, one sentence and one way on.
 
-import { Text, View, type JSX, type StyleProp, type ViewStyle } from "nsh";
+import { cleanup, effect, signal, Text, View, type JSX, type StyleProp, type ViewRef, type ViewStyle } from "nsh";
 import { t } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { DelayedSpinner, FOCUS_RING } from "./kit";
 import { cardShadow, panelShadow } from "./theme";
-import { CONTROL, GUTTER, RADIUS, SPACE, TOOLBAR, TYPE } from "./tokens";
+import {
+  animateLayoutStandard,
+  CONTROL,
+  GUTTER,
+  opacityTransition,
+  RADIUS,
+  SPACE,
+  structuralFadeMs,
+  TOOLBAR,
+  TYPE,
+} from "./tokens";
 
 export { GUTTER, TOOLBAR };
 
@@ -267,4 +277,183 @@ export function SectionRow(props: { children?: JSX.Element; trailing?: JSX.Eleme
       {props.trailing}
     </View>
   );
+}
+
+/**
+ * Collapsible disclosure body backed by scoped `ViewRef.animateLayout(SPRING.standard)` (Phase 6G §2).
+ * Only animates this region and pushed siblings; clips with `overflow: "hidden"` and fades content.
+ * Under reduced motion, expands/collapses instantaneously.
+ */
+export function Collapsible(props: { open: boolean; children?: JSX.Element; style?: ViewStyle }) {
+  const mounted = signal(props.open);
+  const shown = signal(props.open);
+  let boxRef: ViewRef | undefined;
+  let initialized = false;
+  let raf: number | undefined;
+
+  effect(() => {
+    const isOpen = props.open;
+    const first = !initialized;
+    initialized = true;
+    if (raf !== undefined) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    if (first) {
+      mounted.set(isOpen);
+      shown.set(isOpen);
+      return;
+    }
+    const fadeMs = structuralFadeMs();
+    animateLayoutStandard(boxRef);
+    if (isOpen) {
+      mounted.set(true);
+      if (fadeMs === 0) {
+        shown.set(true);
+      } else {
+        shown.set(false);
+        raf = requestAnimationFrame(() => {
+          raf = undefined;
+          shown.set(true);
+        });
+      }
+    } else {
+      shown.set(false);
+      mounted.set(false);
+    }
+  });
+
+  cleanup(() => {
+    if (raf !== undefined) cancelAnimationFrame(raf);
+  });
+
+  return (
+    <View
+      ref={(r) => {
+        boxRef = r;
+      }}
+      style={[{ overflow: "hidden" }, props.style]}
+    >
+      <If when={mounted()}>
+        <View
+          style={{
+            opacity: shown() ? 1 : 0,
+            ...opacityTransition(),
+          }}
+        >
+          {props.children}
+        </View>
+      </If>
+    </View>
+  );
+}
+
+/**
+ * Scoped structural animation helper for non-virtual lists (Phase 6G §2):
+ * - `insert`: mounts the new row transparent, calls `animateLayout(SPRING.standard)` to shift siblings down, then fades in.
+ * - `remove`: fades the deleted row out over `DURATION.base`, then removes + `animateLayout(SPRING.standard)` shifts siblings up.
+ * - `watchKeys`: reacts to external store-driven insertions/removals with `animateLayout(SPRING.standard)` + new-row fade-in.
+ * Under reduced motion (`structuralFadeMs() === 0`), all mutations happen instantaneously without fade.
+ */
+export function createListMotion() {
+  const entering = signal<ReadonlySet<string>>(new Set());
+  const exiting = signal<ReadonlySet<string>>(new Set());
+  let container: ViewRef | undefined;
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  const rafs = new Set<number>();
+
+  cleanup(() => {
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+    for (const r of rafs) cancelAnimationFrame(r);
+    rafs.clear();
+  });
+
+  function clearEntering(keys: readonly string[]) {
+    const next = new Set(entering());
+    let changed = false;
+    for (const k of keys) {
+      if (next.delete(k)) changed = true;
+    }
+    if (changed) entering.set(next);
+  }
+
+  return {
+    containerRef(r: ViewRef) {
+      container = r;
+    },
+    rowOpacity(key: string): number {
+      return entering().has(key) || exiting().has(key) ? 0 : 1;
+    },
+    rowStyle(key: string): ViewStyle {
+      return {
+        opacity: entering().has(key) || exiting().has(key) ? 0 : 1,
+        ...opacityTransition(),
+      };
+    },
+    insert(key: string, commit: () => void) {
+      if (structuralFadeMs() === 0) {
+        commit();
+        return;
+      }
+      const next = new Set(entering());
+      next.add(key);
+      entering.set(next);
+      animateLayoutStandard(container);
+      commit();
+      const raf = requestAnimationFrame(() => {
+        rafs.delete(raf);
+        clearEntering([key]);
+      });
+      rafs.add(raf);
+    },
+    remove(key: string, commit: () => void) {
+      const fadeMs = structuralFadeMs();
+      if (fadeMs === 0) {
+        commit();
+        return;
+      }
+      if (exiting().has(key)) return;
+      const next = new Set(exiting());
+      next.add(key);
+      exiting.set(next);
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        animateLayoutStandard(container);
+        commit();
+        const after = new Set(exiting());
+        after.delete(key);
+        exiting.set(after);
+      }, fadeMs);
+      timers.add(timer);
+    },
+    watchKeys(getKeys: () => readonly string[]) {
+      let prev: string[] | undefined;
+      effect(() => {
+        const cur = [...getKeys()];
+        if (prev === undefined) {
+          prev = cur;
+          return;
+        }
+        if (cur.length === prev.length && cur.every((k, i) => k === prev![i])) {
+          return;
+        }
+        const prevSet = new Set(prev);
+        const added = cur.filter((k) => !prevSet.has(k));
+        prev = cur;
+        if (structuralFadeMs() === 0) return;
+        animateLayoutStandard(container);
+        if (added.length > 0 && added.length <= 3) {
+          const next = new Set(entering());
+          for (const k of added) next.add(k);
+          entering.set(next);
+          const raf = requestAnimationFrame(() => {
+            rafs.delete(raf);
+            clearEntering(added);
+          });
+          rafs.add(raf);
+        }
+      });
+    },
+  };
 }
