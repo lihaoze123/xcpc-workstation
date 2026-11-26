@@ -2,6 +2,22 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-11-26
+
+Phase 5 正式版：完整交付**活体板子书（Living TRD）与可验证算法模板库**，并完成全栈性能优化与 IPC 追踪回归门禁。
+
+### 核心亮点
+
+- **活体板子书（Living TRD）与可验证算法模板库（`snippets/` 与 `trds/`）**：
+  - 同源管理代码、数学说明与验板脚本，支持 `#include "xcpc/<slug>.hpp"` 依赖 DAG、单文件 C++ 展开器（`xcpc snippet bundle`）、KACTL++ 逐行累积短哈希，以及自测 / 工作区题库 / Library Checker 三源自动验板。
+  - 提供 `trd-compact`（A4 横向三栏紧凑风）与 `trd-book`（A4 纵向单栏书册风）声明式 Typst 模板、可逆定稿归档、桌面端「模板」空间（算法库 + 板子书 + SnippetStudio / TrdStudio），以及全套 CLI / MCP 工具与 `xcpc-trd-curator` Skill。
+- **全栈性能优化与回归门禁**：
+  - 消除桌面端主线程同步阻塞与隐藏空间响应式雪崩，引入模板 schema 缓存、流式数据包哈希、`Workspace::resolve` 轻量校验与 SQLite 表达式索引，补齐前端/Rust IPC 性能追踪与自动化性能门禁。
+
+### 修复（自 `0.5.0-beta.2` 起）
+
+- 修复 `xcpc-mcp` 中 `LintOptions` 初始化字段与 Rust clippy `as_chunks` 警告。
+
 ## [0.5.0-beta.2] - 2026-11-26
 
 全栈性能优化版本：彻底修复切换版式选项（如题目类型）及日常操作出现 6–11 秒主线程卡死的问题，并补齐 IPC 性能追踪与自动化性能回归门禁。
