@@ -380,6 +380,10 @@
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6e-typography.md](./specs/phase-6e-typography.md)：内嵌 Inter 作为西文与数字字体，中文显式列出各平台系统字体（不内嵌）；界面另带 JetBrains Mono，等宽只用于代码、路径与命令、日志，slug / 题号 / 数值改用 Inter + `tabular-nums`；按 Inter Dynamic Metrics 公式只给 title（−0.25）与 display（−0.5）设字距；字体在首帧前注册完成，杜绝启动时字体替换闪烁。
 
+### Phase 6F：状态完整性（待实施）
+
+2026-11-26 对齐确认，详细规格见 [specs/phase-6f-state-completeness.md](./specs/phase-6f-state-completeness.md)：文字只在确实被截断时挂 Tooltip（`onTextLayout` 检测，不可靠则不做）；窗口失焦时只把指示条变灰；空 / 加载 / 出错按页级、区块级、行级三级各用一种表现，「筛选后无结果」与「还没有内容」分开，不做骨架屏；按固定清单手动验收超长文本、单条、大量数据与空工作区；聚焦环样式不变，补齐覆盖。
+
 **不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器。
 
 ## 待定与远期（尚未排期）
