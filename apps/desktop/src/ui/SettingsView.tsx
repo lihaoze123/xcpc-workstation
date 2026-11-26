@@ -1252,10 +1252,13 @@ export function AboutPane() {
             </Text>
             <View style={{ gap: SPACE[2] }}>
               <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
+                Inter (SIL Open Font License, OFL)
+              </Text>
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                 Latin Modern (GUST Font License)
               </Text>
               <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
-                JetBrains Mono (SIL Open Font License, OFL)
+                JetBrains Mono — UI &amp; Typesetting (SIL Open Font License, OFL)
               </Text>
             </View>
           </View>

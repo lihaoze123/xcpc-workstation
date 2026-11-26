@@ -123,22 +123,31 @@
 
 ## 5. 字体排印与信息密度
 
-- **UI 字体**：西文优先 `Inter`（可随应用打包），其次是系统无衬线字体；中文依次匹配 `Source Han Sans SC` / `Noto Sans CJK SC`。
-- **代码、样例和源码编辑**：优先 `JetBrains Mono` / `Maple Mono` / 系统等宽字体，连字开关可以配置。
+- **字体链（`apps/desktop/src/ui/theme.ts`，Phase 6E）**：
+  - **界面默认字体（`SANS`）**：`Inter, "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif`。
+    - 西文与数字内嵌 **Inter**（可变字重 WOFF2，SIL OFL），自带 `tabular-nums`，两平台观感一致。
+    - 中文不内嵌，显式列出各平台最优系统界面中文字体，不再依赖 fontconfig 对 `sans-serif` 的解析。
+    - `SANS` 通过主题 `font-sans` 作为根级默认字体统一生效，业务组件不再写 `fontFamily`（`MONO` 除外）。
+  - **等宽字体（`MONO`）**：`"JetBrains Mono", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", monospace`。
+    - 内嵌 **JetBrains Mono** Regular 与 SemiBold 两个 WOFF2（SIL OFL）；去掉 `Maple Mono`。
+    - **使用范围严格限定为三类内容**：① 代码（片段、TRD、源码预览）；② 文件路径与命令；③ 构建、判题、插件运行日志。slug、OJ 题号（如 `CF 1900A`）、版本号、数值一律使用 `SANS` + `tabular-nums`。
+  - **编辑器字体（`EDITOR_MONO`）**：保持跨平台等宽 CJK 回退链不变，字号、行高与连字开关由用户设置决定。
+  - **首帧前加载**：应用资源字体在入口处 `await registerFont("asset:/…")` 全部完成后再挂载根组件，杜绝首帧字体替换闪烁与布局抖动；注册失败时静默回落到字体链后续字体，并在诊断信息的「字体来源」中如实记录。
 - **数字**：Rating、时空限制、题号计数、页码和表格统计一律使用 `font-variant-numeric: tabular-nums`。
-- **底层 Token 体系（`apps/desktop/src/ui/tokens/`，Phase 6D）**：业务组件一律引用 Token，不得写字面量，由 `apps/desktop/src/ui/tokens.test.tsx` 护栏测试强制校验（仅允许带原因的 `// token-exempt: <原因>` 单行豁免）。
-  - **字号刻度（`type.ts`）**：
+- **底层 Token 体系（`apps/desktop/src/ui/tokens/`，Phase 6D / 6E）**：业务组件一律引用 Token，不得写字面量，由 `apps/desktop/src/ui/tokens.test.tsx` 与 `static_ui_design_token_guardrail` 护栏测试强制校验（仅允许带原因的 `// token-exempt: <原因>` 单行豁免）。
+  - **字号刻度与字距（`type.ts`）**：
 
-    | Token | 字号 / 行高 | 字重 | 用途 |
-    | :--- | :--- | :--- | :--- |
-    | `micro` | `11 / 14` | `600` | 键帽、徽章、热力图坐标 |
-    | `caption` | `12 / 16` | `400` | 元信息、次要说明、表头、副信息 |
-    | `body` | `13 / 19` | `400` | 正文、列表行、按钮、输入框、菜单 |
-    | `strong` | `14 / 20` | `600` | 区块标题、卡片标题 |
-    | `title` | `18 / 24` | `600` | `DetailHeader` 标题 |
-    | `display` | `26 / 30` | `600` | 训练页大数字（`tabular-nums`） |
+    | Token | 字号 / 行高 | 字重 | 字距（`letterSpacing`） | 用途 |
+    | :--- | :--- | :--- | :--- | :--- |
+    | `micro` | `11 / 14` | `600` | `0` | 键帽、徽章、热力图坐标 |
+    | `caption` | `12 / 16` | `400` | `0` | 元信息、次要说明、表头、副信息 |
+    | `body` | `13 / 19` | `400` | `0` | 正文、列表行、按钮、输入框、菜单 |
+    | `strong` | `14 / 20` | `600` | `0` | 区块标题、卡片标题 |
+    | `title` | `18 / 24` | `600` | `−0.25` | `DetailHeader` 标题 |
+    | `display` | `26 / 30` | `600` | `−0.5` | 训练页大数字（`tabular-nums`） |
 
-    - **字重只用 `400` 与 `600`**，取消 `500` 与 `700`。层级靠字号、颜色、字重三选一拉开，不叠加。
+    - **字重只用 `400` 与 `600`**，取消 `500` 与 `700`，不因 Inter 为可变字体而引入 `500`。层级靠字号、颜色、字重三选一拉开，不叠加。
+    - 字距出自 Inter Dynamic Metrics 公式（`tracking = −0.0223 + 0.185·e^(−0.1745·size)`），绝对值 `< 0.1px` 取 `0`，仅 `title`（`−0.25`）与 `display`（`−0.5`）收紧。
     - 编辑器字号由用户设置决定，题面纸张由 Typst 排版，二者不受本表约束。
 
   - **间距、圆角与尺寸（`metrics.ts`）**：
@@ -196,7 +205,7 @@
   - **SVG 工程约束**：投影只用 SVG 1.1 滤镜（`feGaussianBlur` + `feOffset` + `feFlood` + `feComposite` + `feMerge`），**禁用 SVG 2 的 `feDropShadow`**；三张纸与铅笔独立分层供动效复用。
 - **署名与「关于」页**：
   - **分层放置，不做常驻底栏**：品牌页底部一行；「设置 → 关于」；`Cmd+K` 可搜「关于」。
-  - **「关于」页**：icon 与字标、版本副标题（开发态 `v<版本>-dev (<7位commit>)`，发布态 `v<版本>`）；**检查更新卡片**（基于 NSH 原生 `nsh/updater`，开发态体面提示）；**重播首次引导**入口；**诊断信息卡片**（「复制诊断信息」描边按钮，点击后短暂切换为「已复制」，复制版本、commit、构建日期、系统与字体来源）；开源致谢（`olymp.sty`、Typst、NSH、MiTeX）；字体许可（Latin Modern 为 GUST Font License，JetBrains Mono 为 SIL Open Font License, OFL）；许可证（`Apache-2.0 License`）。
+  - **「关于」页**：icon 与字标、版本副标题（开发态 `v<版本>-dev (<7位commit>)`，发布态 `v<版本>`）；**检查更新卡片**（基于 NSH 原生 `nsh/updater`，开发态体面提示）；**重播首次引导**入口；**诊断信息卡片**（「复制诊断信息」描边按钮，点击后短暂切换为「已复制」，复制版本、commit、构建日期、系统与字体来源）；开源致谢（`olymp.sty`、Typst、NSH、MiTeX）；字体许可（Inter 为 SIL Open Font License, OFL；Latin Modern 为 GUST Font License；JetBrains Mono 用于界面与排版，为 SIL Open Font License, OFL）；许可证（`Apache-2.0 License`）。
   - **献词与彩蛋**：致谢列表末行小字写「**献给每一个和 WA 较劲到深夜的人**」；点击「关于」页 icon 重播「扇开 → 铅笔落定」动效（见 §8.5）。
 
 ### 6.4 窗口与冷启动
