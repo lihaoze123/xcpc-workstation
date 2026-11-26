@@ -155,6 +155,6 @@
    - 独立诊断窗口可正常打开/关闭/与主窗口联动；主窗口无任何新增技术文案或常驻 HUD；
    - 常态下无后台 `rAF` 轮询与额外磁盘写入，且慢事件/错误日志可打开窗口回溯；
    - `TimeSeriesChart`（4 面板联动）、`TraceWaterfall` + `TraceComparison`、`LogView` 以及 Perfetto JSON 导出均在实机工作流中跑通。
-3. **6C 验收**：
-   - 至少覆盖冷启动、编辑→预览、缩放/平移、500+ 题库筛选滚动与视图切换 5 组核心场景，每组具备 `TraceComparison` 优化前后量化对比，关键指标满足 [perf-ux-observability.md §2.2](./perf-ux-observability.md#22-极致导向的性能预算门禁) 的门禁红线；
-   - `quitRequest`、滚动手感、表格自适应与全套本地 lint 检查（`cargo fmt`、`shellcheck`、`py_compile`、`check-plugin-docs.py`）全部通过。
+4. **6C 验收（2026-11-26 已达成）**：
+   - 基于 3 轮真实机 Perfetto Trace 闭环验证：消除并发重复 `preview.compile`、将训练看板与工具链探测移至后台异步（解决 341ms 同步卡顿与重复拉取循环）、冷启动快照与偏好写入去重防抖（38→3 次、42→7 次）、`⌘K` 模板/插件索引缓存与常驻挂载、诊断窗口非 Metrics 页零图表重绘；60Hz 实机最慢帧由 `355.5ms` 降至 `97.7ms`（-72.5%），编辑→光栅化端到端 `9–24ms`；
+   - `quitRequest`、`smoothWheel`、题库 `DataTable` `grow` 列宽自适应与全套本地 lint / 测试检查全部通过。

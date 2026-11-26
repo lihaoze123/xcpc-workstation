@@ -3063,7 +3063,7 @@ fn batch_task_streaming_completion_and_cancellation() {
         .expect("output_path should be set");
     assert!(std::path::Path::new(out_path).is_file());
     assert!(
-        !dir.0.join("contests").read_dir().unwrap().next().is_some(),
+        dir.0.join("contests").read_dir().unwrap().next().is_none(),
         "merged_pdf must not create any contest directory"
     );
 

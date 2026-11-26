@@ -319,7 +319,7 @@
 
 **不做**（Phase 4 整体）：比赛复盘页（`training/reviews/*.md`）、独立待补队列页、耗时/VP/错因标签录入表单、单平台多账号合并、Competitive Companion 端口监听、题单（`sheets/*.toml`）、能力雷达图/平台环形图、盲盒抽题、间隔复习提醒、年度总结幻灯片、编译期响应式语法糖与独立 HMR 守护进程。
 
-## Phase 5：Living TRD（活模板册）与可验证算法库（规划已确认）
+## Phase 5：Living TRD（活模板册）与可验证算法库（已完成，v0.5.0）
 
 2026-11-26 深度对齐确认，按 **5A / 5B / 5C** 三步推进，详细规格见 [specs/phase-5-living-trd.md](./specs/phase-5-living-trd.md)：
 
@@ -343,7 +343,7 @@
 
 **不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
 
-## Phase 6：增强 o11y 与全面整体打磨（6A / 6A.5 / 6B 已落地，6C 进行中）
+## Phase 6：增强 o11y 与全面整体打磨（已完成，v0.6.0-beta.1）
 
 2026-11-26 对齐确认，按 **6A / 6A.5 / 6B / 6C** 四步推进，详细规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)：
 
@@ -366,8 +366,8 @@
 
 ### Phase 6C：数据驱动的全面整体打磨
 
-1. **核心链路量化优化**：以 `TraceComparison` 基线对比验收冷启动 TTI、编辑→编译→光栅化延迟、缩放/平移掉帧、500–1,000 题库筛选滚动与视图切换 INP。
-2. **NSH 0.7 体验红利**：接入 `quitRequest` 未保存改动退出保护、调优 `smoothWheel` 滚动手感、利用 `DataTable` `grow`/`autoFit` 优化表格列宽并完善主/诊断窗口生命周期联动。
+1. **核心链路量化优化**：以真实 Perfetto Trace 与 `TraceComparison` 基线对比驱动，消除重复并发 `preview.compile`、将训练看板与工具链探测异步化（`training_dashboard_async` / `toolchain_status_async` + SWR 缓存）、为冷启动快照与偏好落盘增加指纹去重防抖、缓存命令面板插件/模板索引并常驻挂载 `CommandPalette`、在诊断窗口非 Metrics 页暂停图表重绘；60Hz 实机最慢帧由 `355.5ms` 降至 `97.7ms`（-72.5%），连续打字端到端预览 `9–24ms`。
+2. **NSH 0.7 体验红利**：接入 `quitRequest` 未保存改动退出保护（统一刷盘注册表 `flushAllBeforeQuit`）、启用 `smoothWheel` 滚动手感、利用 `DataTable` `grow` 与单图标状态列优化题库表格列宽并完善主/诊断窗口生命周期联动。
 
 **不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器。
 

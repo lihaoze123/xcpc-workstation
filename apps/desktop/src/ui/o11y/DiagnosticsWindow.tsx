@@ -42,6 +42,7 @@ import {
   cacheSeries,
   capturedTraces,
   clearAllDiagnostics,
+  diagnosticsActiveTab,
   diagnosticsAnnotations,
   diagnosticsPaused,
   diagnosticsWindowMs,
@@ -813,7 +814,7 @@ function LogsTab() {
 
 export function DiagnosticsWindowContent() {
   useWindowTitle(() => t("o11y.windowTitle"));
-  const activeTab = signal<DiagTab>("metrics");
+  const activeTab = diagnosticsActiveTab;
   const selectedTraceId = signal<string | null>(null);
   const exporting = signal(false);
   const exportedFlag = createTransientFlag(1800);

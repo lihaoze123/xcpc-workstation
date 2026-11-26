@@ -235,6 +235,7 @@ pub struct State {
     /// Polling-free async batch build / export task slot.
     pub(crate) batch_task: Arc<Mutex<BatchTaskSlot>>,
     /// In-memory byte backup of the last `normalize_dirty_inputs` call for single-click undo.
+    #[allow(clippy::type_complexity)]
     pub(crate) dirty_inputs_backup: Mutex<Option<(String, Vec<(String, Vec<u8>)>)>>,
     /// Shared plugin credential store (OS keyring with in-memory fallback for headless tests).
     pub(crate) credentials: Arc<dyn xcpc_plugin::CredentialStore>,
@@ -484,10 +485,10 @@ impl State {
         let out = match event {
             WatchEvent::Changed(paths) => {
                 let mut core = self.core.lock().unwrap();
-                if !core
+                if core
                     .watch_session
                     .as_ref()
-                    .is_some_and(|s| s.id == session_id)
+                    .is_none_or(|s| s.id != session_id)
                 {
                     return WatchEventJs {
                         kind: "closed".into(),
@@ -511,10 +512,10 @@ impl State {
             WatchEvent::Rescan => {
                 let ws = {
                     let core = self.core.lock().unwrap();
-                    if !core
+                    if core
                         .watch_session
                         .as_ref()
-                        .is_some_and(|s| s.id == session_id)
+                        .is_none_or(|s| s.id != session_id)
                     {
                         return WatchEventJs {
                             kind: "closed".into(),
@@ -532,10 +533,10 @@ impl State {
                 let scanned = WorkspaceIndex::scan(&ws).ok();
                 {
                     let mut core = self.core.lock().unwrap();
-                    if !core
+                    if core
                         .watch_session
                         .as_ref()
-                        .is_some_and(|s| s.id == session_id)
+                        .is_none_or(|s| s.id != session_id)
                     {
                         return WatchEventJs {
                             kind: "closed".into(),
@@ -3906,6 +3907,7 @@ impl State {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_generator_test(
         &self,
         slug: &str,

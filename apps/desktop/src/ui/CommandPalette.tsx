@@ -3,17 +3,17 @@
 // bar's search pill is (both centered on the window), its field over the pill; every
 // row has its icon on the left and its shortcut flush right. Jumps are recorded as visits.
 
-import { Clipboard, computed, signal, Text, View } from "nsh";
-import { Command, type CommandEntry, type CommandItem } from "nsh/base";
+import { cleanup, Clipboard, computed, effect, signal, Text, View } from "nsh";
+import { Command, type CommandEntry, type CommandItem, type CommandRef } from "nsh/base";
 import { t } from "./i18n";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
 import { buildPaletteItems, shortcutForSpace } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
-import { Modal } from "./Modal";
+import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
 import { openDiagnosticsWindow } from "./o11y/windowManager";
 import { shortcutsOpen } from "./ShortcutsModal";
-import { MONO } from "./theme";
+import { modalBackdrop, modalShadow, MONO, ms } from "./theme";
 import { showToast } from "./Toast";
 import { parseJsonPayload } from "./snippets/snippetLogic";
 import type { SnippetListPayload, TrdSummaryItem } from "./snippets/types";
@@ -268,16 +268,133 @@ const PALETTE_TOP = TITLE_BAR + 16;
 const PALETTE_WIDTH = 600;
 
 export function CommandPalette() {
+  // Mount lazily on first open and keep mounted afterward (display: "none" when hidden)
+  // so repeated Cmd+K toggles skip rebuilding the `<Command>` virtual list (~18-31ms -> <5ms).
+  const hasOpened = signal(paletteOpen());
+  const visible = signal(paletteOpen());
+  const shown = signal(false);
+  let raf: number | undefined;
+  let closeTimer: number | undefined;
+
+  effect(() => {
+    const isOpen = paletteOpen();
+    if (raf !== undefined) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    clearTimeout(closeTimer);
+    if (isOpen) {
+      if (!hasOpened()) hasOpened.set(true);
+      visible.set(true);
+      raf = requestAnimationFrame(() => {
+        raf = undefined;
+        shown.set(true);
+      });
+    } else if (visible()) {
+      shown.set(false);
+      const dur = ms(140);
+      if (dur === 0) visible.set(false);
+      else closeTimer = setTimeout(() => visible.set(false), dur);
+    }
+  });
+  cleanup(() => {
+    if (raf !== undefined) cancelAnimationFrame(raf);
+    clearTimeout(closeTimer);
+  });
+
+  const close = () => paletteOpen.set(false);
+
   return (
-    <Modal open={paletteOpen()} onClose={() => paletteOpen.set(false)} width={PALETTE_WIDTH} topOffset={PALETTE_TOP} testID="command-palette">
-      <PaletteBody />
-    </Modal>
+    <If when={hasOpened()}>
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: visible() ? "flex" : "none",
+          zIndex: 90,
+        }}
+      >
+        <View
+          focusable={false}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: modalBackdrop(),
+            opacity: shown() ? 1 : 0,
+            pointerEvents: paletteOpen() ? "auto" : "none",
+            ...backdropTransition(),
+          }}
+          onPress={() => {
+            if (paletteOpen()) close();
+          }}
+        />
+        <View desktop={{ windowDrag: true }} style={{ position: "absolute", top: 0, left: 0, right: 0, height: TITLE_BAR }} />
+        <View
+          style={{
+            position: "absolute",
+            top: PALETTE_TOP,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            alignItems: "center",
+            justifyContent: "flex-start",
+            pointerEvents: "box-none",
+          }}
+        >
+          <View
+            testID="command-palette"
+            style={{
+              width: PALETTE_WIDTH,
+              maxWidth: "90%",
+              maxHeight: "85%",
+              borderRadius: 12,
+              borderWidth: 1,
+              overflow: "hidden",
+              boxShadow: modalShadow(),
+              opacity: shown() ? 1 : 0,
+              transform: overlayTransform(shown()),
+              ...overlayTransition(),
+              pointerEvents: paletteOpen() ? "auto" : "none",
+            }}
+            class="bg-card border-border"
+          >
+            <PaletteBody />
+          </View>
+        </View>
+      </View>
+    </If>
   );
 }
 
 function PaletteBody() {
   const query = signal("");
   const panelWidth = signal(PALETTE_WIDTH - 2);
+  let cmdRef: CommandRef | null = null;
+  let focusRaf: number | undefined;
+  // Reset query and focus the search input whenever the kept-mounted palette opens.
+  effect(() => {
+    const isOpen = paletteOpen();
+    if (focusRaf !== undefined) {
+      cancelAnimationFrame(focusRaf);
+      focusRaf = undefined;
+    }
+    if (isOpen) {
+      query.set("");
+      focusRaf = requestAnimationFrame(() => {
+        focusRaf = undefined;
+        cmdRef?.focus();
+      });
+    }
+  });
+  cleanup(() => {
+    if (focusRaf !== undefined) cancelAnimationFrame(focusRaf);
+  });
   // `Command`'s virtualized list sizes each rendered row to its content, so the row
   // declares the panel's live inner width (minus list `px-1.5` and row `px-2.5`) so
   // shortcuts align flush right at every window width without clipping on narrow windows.
@@ -292,20 +409,20 @@ function PaletteBody() {
   const actionMode = () => query().trimStart().startsWith(">");
 
   const jumps = computed(() => {
-    if (!hasWorkspace() || actionMode()) return [];
+    if (!paletteOpen() || !hasWorkspace() || actionMode()) return [];
     void info();
     return preview.fuzzyJump(query().trim(), activeContest());
   });
 
   const snippetCatalog = computed(() => {
-    if (!hasWorkspace() || !info().snippetsEnabled) {
+    if (!paletteOpen() || !hasWorkspace() || !info().snippetsEnabled) {
       return { snips: [] as SnippetListPayload["snippets"], trds: [] as TrdSummaryItem[] };
     }
     return getCachedSnippetCatalog(snippetsRevision(), workspaceVersion());
   });
 
   const snippetHits = computed(() => {
-    if (!hasWorkspace() || !info().snippetsEnabled || actionMode()) return [];
+    if (!paletteOpen() || !hasWorkspace() || !info().snippetsEnabled || actionMode()) return [];
     const { snips, trds } = snippetCatalog();
     const q = query().trim().toLowerCase();
     const out: { id: string; kind: "snippet" | "trd"; slug: string; label: string; group: string; hasCode?: boolean }[] = [];
@@ -337,7 +454,7 @@ function PaletteBody() {
     return out.slice(0, q ? 12 : space() === "snippets" ? 8 : 0);
   });
 
-  const allActions = computed(() => actions());
+  const allActions = computed(() => (paletteOpen() ? actions() : []));
   const actionById = computed(() => new Map(allActions().map((a) => [a.id, a])));
   const jumpById = computed(() => new Map(jumps().map((h) => [`j:${h.visitKey}`, h])));
   const snipHitById = computed(() => new Map(snippetHits().map((h) => [h.id, h])));
@@ -419,6 +536,9 @@ function PaletteBody() {
 
   return (
     <Command
+      ref={(r) => {
+        cmdRef = r;
+      }}
       onLayout={(e) => {
         if (e.bounds.size.width > 0) panelWidth.set(e.bounds.size.width);
       }}

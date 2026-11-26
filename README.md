@@ -5,7 +5,7 @@
 <h1 align="center">XCPC Workstation</h1>
 
 <p align="center">
-  本地优先的 XCPC 工作站 —— 集开放目录题库、本地 Polygon 出题与严格验收、Polygon / DOMjudge / Hydro 数据包流转、活引用组卷与 Typst PDF 出版、高密度训练看板与混合沙箱插件生态于一体，原生支持 AI Agent / MCP。
+  本地优先的 XCPC 工作站 —— 集开放目录题库、本地 Polygon 出题与严格验收、Polygon / DOMjudge / Hydro 数据包流转、活引用组卷与 Typst PDF 出版、活体板子书（Living TRD）与可验证算法库、高密度训练看板与混合沙箱插件生态于一体，原生支持 AI Agent / MCP。
 </p>
 
 <p align="center">
@@ -35,10 +35,11 @@
   - **双档门禁与「动静分离」**：开发态支持局部子集调试，`--strict` 严格验收强制通过自测、全量过检与标程时限余量检查；`xcpc check`、定稿与导出仅核对验收哈希，不暗中编译跑数。
 - **Polygon / DOMjudge / Hydro 生态数据包流转**：一键导入 Polygon 单题或整场比赛 ZIP（LaTeX 题面自动转 Markdown，完整导入 `interactor`、`run-count` 与 `groups` 子任务）；一键导出 DOMjudge 与 Hydro 最小集合 ZIP（自动剔除内部解法/生成器，内嵌 Typst 题面 PDF，支持交互题与 Hydro OI 子任务 `config.yaml`）。
 - **大规模题库组织、活引用组卷与多人 Git 协同**：全部项目数据以纯文本 Markdown + TOML 存储在开放目录中，个人配置与 `.xcpc/` 本地缓存彻底隔离；题库中心提供持久化分组侧栏、动态视图分组、多选与批量操作（加赛 / 归组 / 批量严格验收 / 批量导出）以及 `Ctrl+K` 分组配额与 `>` 动作检索；比赛以活引用组卷，定稿后将源文件、生效模板与两本 PDF 写入 `snapshot/` 永久只读复现。
+- **活体板子书（Living TRD）与可验证算法模板库**：开放目录 `snippets/` 与 `trds/` 同源管理代码、数学说明与验板脚本；自动解析 `#include` 依赖 DAG，提供一键单文件 C++ 展开器（`xcpc bundle`）、KACTL++ 逐行累计校验短哈希、三源自动验板（自测 / 题库 / Library Checker 按需缓存），以及 `trd-compact`（横向 A4 三栏紧凑风）与 `trd-book` 印刷级模板，支持可逆定稿归档。
 - **高密度训练看板与多平台 OJ 同步**：内置 Codeforces / AtCoder 增量同步，运行时自动合并外部提交与本地 `training/logs.jsonl` 记录（训练状态不污染题库文件）。提供全局时间窗、双模式年度热力图、Rating 走势曲线、难度突破趋势（P75 / P90）、难度与标签下钻分布、近期比赛日历、提交检索与题解聚合。
 - **混合沙箱插件生态与纯插件化「工具」Tab**：Core 层 QuickJS 沙箱运行 OJ 同步与无头计算，纯 Web `<WebView>` 沙箱承载独立 `ui.html` 交互画板（官方提供图论与几何画板、数论与位运算工作台、字符串算法调试器、复杂度与内存估算 4 款零权限工具），所有敏感权限均由 Rust Core 强制 `pending_trust` 信任门控与白名单拦截。
-- **AI Agent / MCP 一等公民与官方出题 Skill**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core，完整开放题库检索、题面读写、组卷、题目包检查/构建/严格验收/对拍与导入导出工具（支持 `--read-only` 守卫与外部修改零闪白同步）；内置 [`skills/xcpc-problem-creator/`](./skills/xcpc-problem-creator/SKILL.md) 官方出题 Skill，可通过 `xcpc init --with-skills` 一键装入工作区。
-- **为出题人打磨的写作、定制与双语界面**：内置简体中文 / English 实时热切换与双语模板参数；提供 `/` 斜杠命令菜单、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、自定义 `templates/*.typ` 与全局 `theme.toml`。
+- **AI Agent / MCP 一等公民与官方 Skill**：桌面端、`xcpc` CLI 与 `xcpc mcp`（stdio）共用同一套 Rust Core，完整开放题库检索、题面读写、组卷、题目包检查/构建/严格验收/对拍、模板验板/板子书构建与导入导出工具（支持 `--read-only` 守卫与外部修改零闪白同步）；内置 [`xcpc-problem-creator`](./skills/xcpc-problem-creator/SKILL.md)、[`xcpc-trd-curator`](./skills/xcpc-trd-curator/SKILL.md) 与 [`xcpc-plugin-creator`](./skills/xcpc-plugin-creator/SKILL.md) 官方 Skill，可通过 `xcpc init --with-skills` 一键装入工作区。
+- **为出题人打磨的写作、定制、诊断与双语界面**：内置简体中文 / English 实时热切换与双语模板参数；提供 `/` 斜杠命令菜单、编辑器内悬浮迷你公式预览、左右分栏拖拽样例管理、轻量素材库、专注写作模式、实用子集 Vim 模式、自定义 `templates/*.typ` 与全局 `theme.toml`；基于 NSH 0.7.1 与 `nsh-o11y` 提供独立开发者诊断窗口（`Ctrl+Shift+D` / `Ctrl+K`），支持实时帧率/排版/IPC 指标、跨线程 Span 瀑布图与基线对比、结构化日志与 Perfetto JSON 导出，主窗口保持零技术噪音。
 
 <p align="center">
   <img src="./docs/images/build.png" width="100%" alt="XCPC Workstation 本地 Polygon 出题构建台：交互题与 OI 子任务折叠矩阵、ILE 死锁检测与双向着色交互日志" />
@@ -157,6 +158,8 @@ xcpc plugin check ./my-tool
 - **Phase 1–2.5（已完成）**：开放目录题库与多人 Git 协同工作区、活引用组卷 / 定稿 / 归档、`olymp-classic` / `cnoi-classic` / `minimal` 声明式模板引擎、出版工作室、简体中文 / English 国际化、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制、CLI 与 MCP 服务。
 - **Phase 3A–3D（已完成）**：本地 Polygon 全链路（原生 `g++`/`clang++` + 内置 `testlib.h`、三级内容哈希缓存、严格验收门禁、对拍、ASan/UBSan 体检、外部验题人零污染试跑与整场审计）、Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出、题库分组 / 批量操作、交互题 / 多轮通信题 / OI 子任务，以及官方出题 Skill。
 - **Phase 4A–4D（已完成）**：混合沙箱插件引擎（Core QuickJS + 强制 `pending_trust` 信任门 + 纯 Web `<WebView>` 沙箱 `ui.html`）、Codeforces / AtCoder 训练同步与高密度训练看板（双模式热力图、Rating 曲线、难度突破趋势、比赛日历、提交检索与题解聚合）、纯净插件化「工具」Tab、`@xcpc/plugin-sdk` + Vite 单文件工具链与独立官方插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)。
+- **Phase 5A–5C（已完成，v0.5.0）**：活体板子书（Living TRD）与可验证算法模板库（`snippets/` 与 `trds/` 开放目录、依赖 DAG、单文件 C++ 展开器、KACTL++ 累计短哈希、自测/题库/Library Checker 三源验板、`trd-compact` / `trd-book` 模板、可逆定稿归档、桌面端「模板」空间及 CLI / MCP / `xcpc-trd-curator` Skill）。
+- **Phase 6A–6C（已完成，v0.6.0-beta.1）**：宿主框架升级至 NSH 0.7.1 与 `nshm` 生态模块（`nsh-icon` / `nsh-o11y`）、Core 解耦（`xcpc-app`）与 `sccache` / `thin` LTO 构建加速、独立多窗口 `nsh-o11y` 开发者诊断面板（实时指标、跨线程瀑布图与基线对比、结构化日志、Perfetto 导出），以及基于实机 Trace 的全链路性能与交互打磨。
 
 完整设计规格与阶段细节见 [`docs/`](./docs/README.md)（[产品规格](./docs/product.md)、[系统架构](./docs/architecture.md)、[题面版式](./docs/statement-style.md)、[设计系统](./docs/design-system.md)、[路线图](./docs/roadmap.md)）。
 
@@ -165,7 +168,7 @@ xcpc plugin check ./my-tool
 <details>
 <summary><strong>从源码构建与开发测试（Nix Flake）</strong></summary>
 
-仓库使用 Nix Flake 锁定 Rust 工具链、NSH 0.6.0 与基准字体：
+仓库使用 Nix Flake 锁定 Rust 工具链、NSH 0.7.1、`sccache` 与基准字体：
 
 ```bash
 # 进入开发环境

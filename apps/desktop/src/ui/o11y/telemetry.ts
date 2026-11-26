@@ -142,7 +142,7 @@ interface RustPollPayload {
   cacheStats: PixelCacheStatsPayload;
 }
 
-const POLL_INTERVAL_MS = 500;
+const POLL_INTERVAL_MS = 1000;
 const MAX_SERIES_POINTS = 12_000;
 const MAX_ANNOTATIONS = 200;
 const MAX_CAPTURED_TRACES = 80;
@@ -168,6 +168,7 @@ function emptySummaries(): O11yMetricSummaries {
 
 export const diagnosticsOpen = signal(false);
 export const diagnosticsPaused = signal(false);
+export const diagnosticsActiveTab = signal<"metrics" | "traces" | "logs">("metrics");
 export const diagnosticsWindowMs = signal<TimeWindowPreset>(300_000);
 export const diagnosticsAnnotations = signal<Annotation[]>([]);
 export const capturedTraces = signal<CapturedTrace[]>([]);
@@ -606,13 +607,17 @@ function pollOnce(): void {
     }
   }
 
-  // 3. Push samples into the 4 TimeSeries stores.
-  const cappedFrame = Number.isNaN(bucketFrameMaxMs)
-    ? NaN
-    : Math.min(bucketFrameMaxMs, FRAME_CHART_CAP_MS);
-  frameSeries.append(now, [cappedFrame, bucketMissedFrames]);
-  appendDiscretePulse(pipelineSeries, now, buildDocMaxMs, rasterizeMaxMs);
-  appendDiscretePulse(latencySeries, now, bucketIpcMaxMs, bucketInpMaxMs);
+  // 3. Push samples into the 4 TimeSeries stores only while the Metrics tab is visible
+  //    so Traces/Logs views incur zero chart redraw overhead.
+  const metricsVisible = diagnosticsActiveTab() === "metrics";
+  if (metricsVisible) {
+    const cappedFrame = Number.isNaN(bucketFrameMaxMs)
+      ? NaN
+      : Math.min(bucketFrameMaxMs, FRAME_CHART_CAP_MS);
+    frameSeries.append(now, [cappedFrame, bucketMissedFrames]);
+    appendDiscretePulse(pipelineSeries, now, buildDocMaxMs, rasterizeMaxMs);
+    appendDiscretePulse(latencySeries, now, bucketIpcMaxMs, bucketInpMaxMs);
+  }
 
   // Update sliding window summaries (last + P95 + frame peak over cap).
   buildDocSamples = pushSample(buildDocSamples, now, buildDocMaxMs, cutoff);
@@ -645,7 +650,9 @@ function pollOnce(): void {
     cacheBudgetMb.set(budgetMb);
     const totalLookups = cs.hits + cs.misses;
     const hitRate = totalLookups > 0 ? Math.round((cs.hits / totalLookups) * 1000) / 10 : NaN;
-    cacheSeries.append(now, [mb, hitRate]);
+    if (metricsVisible) {
+      cacheSeries.append(now, [mb, hitRate]);
+    }
   }
 
   // Reset per-tick JS accumulators.
