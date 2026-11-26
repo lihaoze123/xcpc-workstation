@@ -67,6 +67,122 @@ export function tip(label: string, keys?: string, side?: TooltipSide): JSX.Eleme
   );
 }
 
+/** A tooltip with the full text of a truncated label (Phase 6F §1): `tip()`'s delay and side, up to 360pt wide and 4 lines. */
+export function truncTip(label: string): JSX.Element {
+  return (
+    <Tooltip
+      delay={600}
+      placement="top"
+      style={{
+        maxWidth: 360,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        paddingTop: SPACE[4],
+        paddingBottom: SPACE[4],
+        borderRadius: RADIUS.sm,
+        borderWidth: 1,
+        boxShadow: popoverShadow(),
+      }}
+      class="bg-popover border-border"
+    >
+      <Text style={{ fontSize: FONT_SIZE.caption, numberOfLines: 4, textOverflow: "ellipsis" }}>{label}</Text>
+    </Tooltip>
+  );
+}
+
+function flattenTextStyle(style: StyleProp<TextStyle>): TextStyle {
+  if (!style) return {};
+  if (Array.isArray(style)) return Object.assign({}, ...style.map((s) => flattenTextStyle(s as StyleProp<TextStyle>)));
+  return style as TextStyle;
+}
+
+/**
+ * A `<Text>` with `numberOfLines` + `textOverflow: "ellipsis"` that shows its full text in a
+ * tooltip only when it is actually cut off (Phase 6F §1).
+ *
+ * `onTextLayout` cannot tell on its own: an ellipsized line reports the box's width, which a
+ * text sized to its content reports too, and headless engines report the box for every line.
+ * So an invisible, zero-height, clipped probe lays out the same text unconstrained and its own
+ * frame is compared with the visible one: one line at `max-content` width against the box's
+ * width; several lines at the box's width, without a line limit, against the box's height.
+ * An explicit `tooltip` always wins.
+ */
+export function TruncText(props: {
+  style?: StyleProp<TextStyle>;
+  class?: string;
+  tooltip?: JSX.Element;
+  testID?: string;
+  onPress?: () => void;
+  /** Tooltip text when the children are not a plain string. */
+  label?: string;
+  children?: JSX.Element;
+}) {
+  const box = signal({ width: 0, height: 0 });
+  const probe = signal({ width: 0, height: 0 });
+  const multiLine = () => {
+    const n = flattenTextStyle(props.style).numberOfLines;
+    return typeof n === "number" && n > 1;
+  };
+  const label = () => {
+    if (props.label !== undefined) return props.label;
+    const c = props.children as unknown;
+    return typeof c === "string" || typeof c === "number" ? String(c) : "";
+  };
+  const truncated = () => {
+    const b = box();
+    const p = probe();
+    if (b.width <= 0 || p.width <= 0 || !label()) return false;
+    return multiLine() ? p.height > b.height + 0.5 : p.width > b.width + 0.5;
+  };
+  return (
+    <>
+      <Text
+        style={props.style}
+        class={props.class}
+        testID={props.testID}
+        onPress={props.onPress}
+        onLayout={(e) => box.set({ width: e.bounds.size.width, height: e.bounds.size.height })}
+        tooltip={props.tooltip ?? (truncated() ? truncTip(label()) : undefined)}
+      >
+        {props.children}
+      </Text>
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: multiLine() ? Math.max(1, box().width) : "max-content",
+          height: 0,
+          overflow: "hidden",
+          opacity: 0,
+          alignItems: "flex-start",
+          pointerEvents: "none",
+        }}
+      >
+        <Text
+          style={[
+            props.style,
+            {
+              position: "relative",
+              flexGrow: 0,
+              flexShrink: 0,
+              flexBasis: "auto",
+              minWidth: 0,
+              width: multiLine() ? "100%" : "max-content",
+              numberOfLines: multiLine() ? 0 : 1,
+            },
+          ]}
+          onLayout={(e) => probe.set({ width: e.bounds.size.width, height: e.bounds.size.height })}
+        >
+          {label()}
+        </Text>
+      </View>
+    </>
+  );
+}
+
 type Variant = "primary" | "outline" | "ghost" | "danger";
 
 export const FOCUS_RING = "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
@@ -252,12 +368,12 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
         ...colorTransition(),
       }}
     >
-      <Text
+      <TruncText
         style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
         class={props.active ? "text-foreground" : "text-secondary-foreground"}
       >
         {props.label}
-      </Text>
+      </TruncText>
     </View>
   );
 }

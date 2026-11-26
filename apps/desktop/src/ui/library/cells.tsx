@@ -5,7 +5,7 @@ import { signal, Text, View, type JSX } from "nsh";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { FOCUS_RING, RatingBadge, tip } from "../kit";
+import { FOCUS_RING, RatingBadge, tip, TruncText } from "../kit";
 import type { CheckboxTriState } from "../logic";
 import { colorTransition } from "../tokens";
 import { StatusMark } from "../studio/StatusSlot";
@@ -228,7 +228,7 @@ export function LibraryListRow(props: {
       </View>
 
       {/* Title (TYPE.body, flex width, single-line ellipsis) */}
-      <Text
+      <TruncText
         style={{
           ...TYPE.body,
           flexGrow: 1,
@@ -240,11 +240,11 @@ export function LibraryListRow(props: {
         class="text-foreground"
       >
         {props.row.title}
-      </Text>
+      </TruncText>
 
       {/* Tags (TYPE.caption, secondary color, max 2 + `+N`, shrinks/truncates first when tight) */}
       <If when={tagText().length > 0}>
-        <Text
+        <TruncText
           style={{
             ...TYPE.caption,
             flexShrink: 3,
@@ -256,7 +256,7 @@ export function LibraryListRow(props: {
           class="text-muted-foreground"
         >
           {tagText()}
-        </Text>
+        </TruncText>
       </If>
 
       {/* Difficulty badge slot (fixed 44pt, hidden workspace-wide if all problems unrated §6.2) */}

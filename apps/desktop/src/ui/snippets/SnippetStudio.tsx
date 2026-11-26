@@ -7,7 +7,7 @@ import { Editor, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
-import { Btn, Chip, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { Btn, Chip, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip, TruncText } from "../kit";
 import { SectionEmpty } from "../layout";
 import { InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
@@ -341,12 +341,12 @@ export function SnippetStudio(props: { active: boolean }) {
               tooltip={tip(t("common.back"), "escape")}
               onPress={handleBack}
             />
-            <Text
+            <TruncText
               style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
               class="text-foreground"
             >
               {payload()?.detail.meta.title ?? slug()}
-            </Text>
+            </TruncText>
             <If when={!!statusInfo()}>
               <View
                 style={{
@@ -516,12 +516,12 @@ export function SnippetStudio(props: { active: boolean }) {
                               >
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                                   <Chip label={verifyKindLabel(row().spec.kind as VerifyKindOption)} />
-                                  <Text
+                                  <TruncText
                                     style={{ fontSize: FONT_SIZE.body, fontFamily: row().spec.kind === "self" ? MONO : undefined, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                                     class="text-foreground"
                                   >
                                     {row().adapter ? `${row().target} (${row().adapter})` : row().target}
-                                  </Text>
+                                  </TruncText>
                                   <If when={!!r()}>
                                     <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                                       <Icon
@@ -718,14 +718,14 @@ export function SnippetStudio(props: { active: boolean }) {
                         class="border-border bg-card"
                       >
                         <Chip label={verifyKindLabel(spec().kind as VerifyKindOption)} />
-                        <Text
+                        <TruncText
                           style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: spec().kind === "self" ? MONO : undefined, numberOfLines: 1, textOverflow: "ellipsis" }}
                           class="text-foreground"
                         >
                           {spec().kind === "self"
                             ? (spec() as { kind: "self"; file: string }).file
                             : (spec() as { problem: string }).problem}
-                        </Text>
+                        </TruncText>
                         <If when={!info().readOnly}>
                           <IconBtn
                             icon="x"

@@ -13,7 +13,7 @@ import {
 } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { PreviewRequest } from "xcpc-workstation/native";
-import { Btn, Chevron, Chip, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip } from "./kit";
+import { Btn, Chevron, Chip, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip, TruncText } from "./kit";
 import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
@@ -99,12 +99,12 @@ function FilterOptionPill(props: { label: string; active: boolean; onPress: () =
         ...colorTransition(),
       }}
     >
-      <Text
+      <TruncText
         style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
         class={props.active ? "text-foreground" : "text-secondary-foreground"}
       >
         {props.label}
-      </Text>
+      </TruncText>
     </View>
   );
 }
@@ -1240,12 +1240,12 @@ export function LibraryView(props: { active: boolean }) {
                             ...colorTransition(),
                           }}
                         >
-                          <Text
+                          <TruncText
                             style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
                             class="text-secondary-foreground"
                           >
                             {chip().label}
-                          </Text>
+                          </TruncText>
                           <Icon name="x" size="sm" tone="muted-foreground" />
                         </View>
                       )}
@@ -1551,12 +1551,12 @@ function ProblemInspector(props: {
                       class="bg-muted"
                     >
                       <Icon name="folder" size="sm" tone="muted-foreground" />
-                      <Text
+                      <TruncText
                         style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-secondary-foreground"
                       >
                         {g()}
-                      </Text>
+                      </TruncText>
                     </View>
                   )}
                 </If>
@@ -1582,7 +1582,7 @@ function ProblemInspector(props: {
                       class="bg-muted"
                     >
                       <Icon name="link" size="sm" tone="muted-foreground" />
-                      <Text
+                      <TruncText
                         style={{
                           fontSize: FONT_SIZE.caption,
                           fontVariant: ["tabular-nums"],
@@ -1594,7 +1594,7 @@ function ProblemInspector(props: {
                         class="text-secondary-foreground"
                       >
                         {`${s().platform} ${s().id}`}
-                      </Text>
+                      </TruncText>
                     </View>
                   )}
                 </Each>
@@ -1619,7 +1619,7 @@ function ProblemInspector(props: {
                       }}
                     >
                       <Icon name="trophy" size="sm" tone="muted-foreground" />
-                      <Text
+                      <TruncText
                         style={{
                           fontSize: FONT_SIZE.caption,
                           flexShrink: 1,
@@ -1630,7 +1630,7 @@ function ProblemInspector(props: {
                         class="text-secondary-foreground"
                       >
                         {c().name}
-                      </Text>
+                      </TruncText>
                     </View>
                   )}
                 </Each>

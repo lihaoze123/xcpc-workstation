@@ -5,7 +5,7 @@
 import { signal, Text, View, type JSX, type ViewStyle, type StyleProp } from "nsh";
 import { Menu, MenuItem, MenuSeparator } from "nsh/base";
 import { Icon, type IconName } from "./Icon";
-import { Kbd } from "./kit";
+import { Kbd, TruncText } from "./kit";
 import {
   anchorOrigin,
   colorTransition,
@@ -106,12 +106,12 @@ export function AppMenu(props: {
                   ) : null}
                 </View>
               </If>
-              <Text
+              <TruncText
                 style={{ flex: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                 class={item().disabled ? "text-muted-foreground" : item().destructive ? "text-destructive" : "text-foreground"}
               >
                 {item().label}
-              </Text>
+              </TruncText>
               {item().note && (
                 <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                   {item().note}

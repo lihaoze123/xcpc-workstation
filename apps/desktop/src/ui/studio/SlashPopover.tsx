@@ -20,7 +20,7 @@ import {
 import { Input } from "nsh/base";
 import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
-import { FOCUS_RING, Kbd, tip } from "../kit";
+import { FOCUS_RING, Kbd, tip, TruncText } from "../kit";
 import { SectionEmpty } from "../layout";
 import { anchorOrigin, colorTransition, overlayTransform, overlayTransition, type AnchorPlacement } from "../tokens";
 import { popoverShadow } from "../theme";
@@ -532,18 +532,18 @@ export function SlashPopover(props: {
           {renderGlyph(cmd, palette().fg, "sm")}
         </View>
         <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
-          <Text
+          <TruncText
             style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-foreground"
           >
             {slashCommandLabel(cmd)}
-          </Text>
-          <Text
+          </TruncText>
+          <TruncText
             style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-muted-foreground"
           >
             {slashCommandDescription(cmd)}
-          </Text>
+          </TruncText>
         </View>
         <If when={Boolean(cmd.shortcut)}>
           <View style={{ flexShrink: 0 }}>

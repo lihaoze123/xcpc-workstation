@@ -23,7 +23,7 @@ import type {
 import { createFreeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { locale, t, type MessageKey } from "../i18n";
-import { Btn, FOCUS_RING, IconBtn, Lock, Segmented, tip } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, Lock, Segmented, tip, TruncText } from "../kit";
 import { EmptyState, InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { adaptiveCompileDelayMs, minimalEdit, ratioOf, type Book } from "../logic";
@@ -1304,12 +1304,12 @@ export function StudioView(props: { active: boolean }) {
               <If
                 when={target()?.target === "contest" && !!problemTitle()}
                 else={
-                  <Text
+                  <TruncText
                     style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
                     class="text-foreground"
                   >
                     {target()?.target === "contest" ? contestName() : problemTitle()}
-                  </Text>
+                  </TruncText>
                 }
               >
                 <View
@@ -1327,22 +1327,22 @@ export function StudioView(props: { active: boolean }) {
                     overflow: "hidden",
                   }}
                 >
-                  <Text
+                  <TruncText
                     style={{ ...TYPE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
                     class="text-secondary-foreground"
                   >
                     {contestName()}
-                  </Text>
+                  </TruncText>
                 </View>
                 <Text style={{ ...TYPE.caption, flexShrink: 0 }} class="text-muted-foreground">
                   ›
                 </Text>
-                <Text
+                <TruncText
                   style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
                   class="text-foreground"
                 >
                   {problemTitle()}
-                </Text>
+                </TruncText>
               </If>
             </View>
             <If when={target()?.target === "problem" || (target()?.target === "contest" && !coverActive() && !!item() && !item()!.missing)}>

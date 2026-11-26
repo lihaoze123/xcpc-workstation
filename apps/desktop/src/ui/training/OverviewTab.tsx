@@ -20,6 +20,7 @@ import {
 } from "./types";
 
 import { RADIUS, SPACE, TYPE } from "../tokens";
+import { TruncText } from "../kit";
 
 function OverviewMetricCell(props: {
   label: string;
@@ -56,12 +57,12 @@ function OverviewMetricCell(props: {
         </If>
       </View>
       <If when={props.sub}>
-        <Text
+        <TruncText
           style={[TYPE.caption, { fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }]}
           class="text-muted-foreground"
         >
           {props.sub!}
-        </Text>
+        </TruncText>
       </If>
     </View>
   );

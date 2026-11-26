@@ -33,7 +33,7 @@ import {
   type Threshold,
 } from "nsh-o11y";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, FOCUS_RING, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, FOCUS_RING, Segmented, tip, TruncText } from "../kit";
 import { Icon } from "../Icon";
 import { MONO, token } from "../theme";
 import { TitleBar, useWindowTitle } from "../TitleBar";
@@ -465,12 +465,12 @@ function TracesTab(props: {
                     }}
                   >
                     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[6] }}>
-                      <Text
+                      <TruncText
                         style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class={tr().hasError ? "text-destructive" : "text-foreground"}
                       >
                         {tr().name}
-                      </Text>
+                      </TruncText>
                       <Text
                         style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }}
                         class={tr().durationMs >= 50 ? "text-destructive" : "text-muted-foreground"}
@@ -529,12 +529,12 @@ function TracesTab(props: {
                         gap: SPACE[6],
                       }}
                     >
-                      <Text
+                      <TruncText
                         style={{ fontSize: FONT_SIZE.caption, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {b().label}
-                      </Text>
+                      </TruncText>
                       <View
                         onPress={() => removeBaseline(b().id)}
                         class={`hover:bg-background ${FOCUS_RING}`}

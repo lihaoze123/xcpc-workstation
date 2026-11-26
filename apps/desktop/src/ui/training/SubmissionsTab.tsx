@@ -8,7 +8,7 @@ import { Input } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip, TruncText } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../tokens";
@@ -560,7 +560,7 @@ export function SubmissionsTab(props: {
                           >
                             {row().problem_key}
                           </Text>
-                          <Text
+                          <TruncText
                             onPress={row().problem_url ? () => openExternal(row().problem_url) : undefined}
                             style={{
                               fontSize: FONT_SIZE.body,
@@ -573,15 +573,15 @@ export function SubmissionsTab(props: {
                             class={row().problem_url ? `text-foreground hover:text-primary ${FOCUS_RING}` : "text-foreground"}
                           >
                             {row().problem_title || row().problem_key}
-                          </Text>
+                          </TruncText>
                         </View>
                         <If when={row().tags.length > 0}>
-                          <Text
+                          <TruncText
                             style={{ fontSize: FONT_SIZE.micro, numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-muted-foreground"
                           >
                             {row().tags.slice(0, 4).map((tag) => formatTagLabel(tag, isEn())).join("  ")}
-                          </Text>
+                          </TruncText>
                         </If>
                       </View>
 

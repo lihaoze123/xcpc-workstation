@@ -6,7 +6,7 @@ import { Editor, Switch } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, IconBtn } from "../kit";
+import { Btn, createTransientFlag, IconBtn, TruncText } from "../kit";
 import { SectionEmpty } from "../layout";
 import { Modal } from "../Modal";
 import { bundlerModalOpen, preview } from "../store";
@@ -191,12 +191,12 @@ export function BundlerModal() {
             class="border-border bg-muted/50"
           >
             <Icon name="fileText" size="sm" tone="secondary-foreground" />
-            <Text
+            <TruncText
               style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-foreground"
             >
               {filePath()}
-            </Text>
+            </TruncText>
             <IconBtn
               icon="x"
               size="sm"

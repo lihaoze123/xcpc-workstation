@@ -34,7 +34,7 @@ import {
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
-import { FOCUS_RING, tip } from "../kit";
+import { FOCUS_RING, tip, TruncText } from "../kit";
 import { PageLoading } from "../layout";
 import {
   BASE_SCALE,
@@ -84,8 +84,9 @@ function pageGap(z: number, reader = false): number {
 function fitZoom(list: readonly { width: number }[], paneWidth: number, reader = false): number {
   if (list.length === 0 || paneWidth <= 0) return 0;
   if (reader) {
+    // Same 125% cap as the studio: wider panes center the page instead of enlarging it.
     const raw = (paneWidth - 2 * READER_SIDE_PAD) / list[0].width;
-    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, raw));
+    return Math.min(MAX_FIT_ZOOM, Math.max(MIN_ZOOM, raw));
   }
   const pad = Math.min(FIT_SIDE_PAD, Math.max(GAP, paneWidth * 0.06));
   const raw = (paneWidth - 2 * pad) / list[0].width;
@@ -1566,9 +1567,9 @@ export function PreviewCanvas(props: {
                       >
                         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                           <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class={d().severity === "error" ? "bg-destructive" : "bg-chart-4"} />
-                          <Text style={{ numberOfLines: 2, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.caption }}>
+                          <TruncText style={{ numberOfLines: 2, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.caption }}>
                             {d().message}
-                          </Text>
+                          </TruncText>
                         </View>
                         <If when={Boolean(d().file || d().page != null)}>
                           <Text style={{ fontSize: FONT_SIZE.caption, marginLeft: SPACE[12], fontVariant: ["tabular-nums"] }} class="text-muted-foreground">

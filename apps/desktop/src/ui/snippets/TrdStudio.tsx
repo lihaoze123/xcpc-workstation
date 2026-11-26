@@ -8,7 +8,7 @@ import { Input } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, DelayedSpinner, IconBtn, Lock, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, DelayedSpinner, IconBtn, Lock, Segmented, tip, TruncText } from "../kit";
 import { InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
@@ -366,12 +366,12 @@ export function TrdStudio(props: { active: boolean }) {
               tooltip={tip(t("common.back"), "escape")}
               onPress={closeTrdStudio}
             />
-            <Text
+            <TruncText
               style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
               class="text-foreground"
             >
               {detail()?.meta.name ?? trdId()}
-            </Text>
+            </TruncText>
             <If when={frozen()}>
               <Lock closed size="sm" />
             </If>
@@ -542,12 +542,12 @@ export function TrdStudio(props: { active: boolean }) {
                     class="border-border bg-card"
                   >
                     <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-                      <Text
+                      <TruncText
                         style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {ch().title}
-                      </Text>
+                      </TruncText>
                       <If when={!locked()}>
                         <AppMenu
                           align="end"
@@ -622,12 +622,12 @@ export function TrdStudio(props: { active: boolean }) {
                                 tone={isMissing() ? "destructive" : "muted-foreground"}
                               />
                               <View style={{ flex: 1, minWidth: 0 }}>
-                                <Text
+                                <TruncText
                                   style={{ fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                                   class={isMissing() ? "text-destructive" : "text-foreground"}
                                 >
                                   {meta()?.title ?? itemSlug()}
-                                </Text>
+                                </TruncText>
                               </View>
                               <If when={!locked()}>
                                 <AppMenu

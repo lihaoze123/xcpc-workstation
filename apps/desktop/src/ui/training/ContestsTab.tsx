@@ -8,7 +8,7 @@ import { Switch } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Chip, FOCUS_RING, tip } from "../kit";
+import { Chip, FOCUS_RING, tip, TruncText } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
 import { colorTransition } from "../tokens";
 import { cardShadow } from "../theme";
@@ -287,15 +287,15 @@ export function ContestsTab(props: {
                                       flexShrink: 0,
                                     }}
                                   >
-                                    <Text
+                                    <TruncText
                                       style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                                       class="text-secondary-foreground"
                                     >
                                       {platformDisplayName(item().platform)}
-                                    </Text>
+                                    </TruncText>
                                   </View>
                                 </If>
-                                <Text
+                                <TruncText
                                   style={{
                                     fontSize: FONT_SIZE.body,
                                     fontWeight: FONT_WEIGHT.semibold,
@@ -307,7 +307,7 @@ export function ContestsTab(props: {
                                   class="text-foreground"
                                 >
                                   {item().name}
-                                </Text>
+                                </TruncText>
                               </View>
                               <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
                                 <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">

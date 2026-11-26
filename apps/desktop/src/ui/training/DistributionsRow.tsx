@@ -5,7 +5,7 @@
 
 import { computed, Text, View } from "nsh";
 import { t } from "../i18n";
-import { FOCUS_RING } from "../kit";
+import { FOCUS_RING, TruncText } from "../kit";
 import { FilterEmpty, SectionEmpty } from "../layout";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor } from "../theme";
@@ -229,7 +229,7 @@ export function DistributionsRow(props: {
                       height: CONTROL.sm,
                     }}
                   >
-                    <Text
+                    <TruncText
                       style={{
                         width: 112,
                         fontSize: FONT_SIZE.caption,
@@ -239,7 +239,7 @@ export function DistributionsRow(props: {
                       class="text-foreground"
                     >
                       {formatTagLabel(item().tag, isEn())}
-                    </Text>
+                    </TruncText>
                     <View style={{ flex: 1, height: 10, borderRadius: RADIUS.xs, overflow: "hidden" }} class="bg-muted">
                       <View
                         style={{

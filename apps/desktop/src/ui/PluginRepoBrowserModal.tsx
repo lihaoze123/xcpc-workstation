@@ -5,7 +5,7 @@ import { computed, effect, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import type { PluginRepoConfigJs, PluginSummaryJs, RepoPluginEntryJs } from "xcpc-workstation/native";
 import { Icon } from "./Icon";
-import { Btn } from "./kit";
+import { Btn, TruncText } from "./kit";
 import { DialogHeader, Modal } from "./Modal";
 import {
   notifyPluginsChanged,
@@ -419,26 +419,26 @@ export function PluginRepoBrowserModal(props: {
                             <If
                               when={Boolean(displayName())}
                               else={
-                                <Text
+                                <TruncText
                                   style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
                                   class="text-foreground"
                                 >
                                   {repo().url}
-                                </Text>
+                                </TruncText>
                               }
                             >
-                              <Text
+                              <TruncText
                                 style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                                 class="text-foreground"
                               >
                                 {displayName()}
-                              </Text>
-                              <Text
+                              </TruncText>
+                              <TruncText
                                 style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
                                 class="text-muted-foreground"
                               >
                                 {repo().url}
-                              </Text>
+                              </TruncText>
                             </If>
                             <If
                               when={
@@ -448,12 +448,12 @@ export function PluginRepoBrowserModal(props: {
                               }
                             >
                               {(msg) => (
-                                <Text
+                                <TruncText
                                   style={{ fontSize: FONT_SIZE.micro, numberOfLines: 2, textOverflow: "ellipsis" }}
                                   class="text-destructive"
                                 >
                                   {msg()}
-                                </Text>
+                                </TruncText>
                               )}
                             </If>
                           </View>
@@ -491,12 +491,12 @@ export function PluginRepoBrowserModal(props: {
               </View>
               <Each of={bannerErrors()} key={(e) => `${e.repoUrl}:${e.message}`}>
                 {(err) => (
-                  <Text
+                  <TruncText
                     style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
                     class="text-secondary-foreground"
                   >
                     {err().repoLabel}：{err().message}
-                  </Text>
+                  </TruncText>
                 )}
               </Each>
             </View>

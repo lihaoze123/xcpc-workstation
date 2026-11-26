@@ -5,7 +5,7 @@
 
 import { cleanup, effect, signal, Text, View } from "nsh";
 import { Icon } from "./Icon";
-import { FOCUS_RING } from "./kit";
+import { FOCUS_RING, TruncText } from "./kit";
 import { isReducedMotion, overlayCloseMs, overlayTransition, toastTransform } from "./tokens";
 import { popoverShadow } from "./theme";
 
@@ -169,13 +169,13 @@ export function ToastHost() {
           <If when={item().tone === "info"}>
             <Icon name="info" size="sm" tone="secondary-foreground" />
           </If>
-          <Text
+          <TruncText
             testID="app-toast-text"
             style={{ flexShrink: 1, minWidth: 0, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
             class="text-foreground"
           >
             {item().text}
-          </Text>
+          </TruncText>
           <If when={item().action}>
             {(act) => (
               <View

@@ -7,7 +7,7 @@ import { signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, DelayedSpinner, tip } from "../kit";
+import { Btn, DelayedSpinner, tip, TruncText } from "../kit";
 import { goSettings, info, notifyPluginsChanged, preview } from "../store";
 import { cardShadow } from "../theme";
 import { zhEn } from "./locale";
@@ -152,13 +152,13 @@ function HandleInputRow(props: {
       {/* Fixed single-line body-font error slot directly under the input: zero shift, no monospace */}
       {/* token-exempt: aligned with 104px form label column */}
       <View style={{ marginLeft: 104, height: 16, justifyContent: "center" }}>
-        <Text
+        <TruncText
           testID={`training-onboarding-error-${props.source.id}`}
           style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
           class="text-destructive"
         >
           {errorMessage()}
-        </Text>
+        </TruncText>
       </View>
     </View>
   );

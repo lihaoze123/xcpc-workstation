@@ -4,7 +4,7 @@
 
 import { Canvas, computed, effect, signal, Text, View } from "nsh";
 import { t } from "../i18n";
-import { Segmented } from "../kit";
+import { Segmented, TruncText } from "../kit";
 import { SectionEmpty } from "../layout";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor, token, type Tier } from "../theme";
@@ -309,12 +309,12 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
                 testID="training-rating-detail"
                 style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}
               >
-                <Text
+                <TruncText
                   style={{ fontSize: FONT_SIZE.caption, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-secondary-foreground"
                 >
                   {pt().contest_name}
-                </Text>
+                </TruncText>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
                   <If when={pt().rank != null}>
                     <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">

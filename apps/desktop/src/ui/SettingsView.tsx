@@ -19,7 +19,7 @@ import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
+import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip, TruncText } from "./kit";
 import { Collapsible, DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
 import { abbreviateHome, pathBase, spaceName } from "./logic";
 import { chevronTransition, colorTransition, indicatorTransition } from "./tokens";
@@ -160,25 +160,29 @@ function isDevShell(): boolean {
   }
 }
 
-/** A folder: its name over its path, with the full path on hover. */
+/** A folder: its name over its path, with the full path on hover when it is cut off. */
 function Folder(props: { path: string; note?: string }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }} tooltip={tip(props.path)}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
       <Icon name="folder" size="lg" />
       <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }}>
+          <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }}>
             {pathBase(props.path)}
-          </Text>
+          </TruncText>
           {props.note && (
             <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {props.note}
             </Text>
           )}
         </View>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }} class="text-muted-foreground">
+        <TruncText
+          label={props.path}
+          style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }}
+          class="text-muted-foreground"
+        >
           {abbreviateHome(props.path)}
-        </Text>
+        </TruncText>
       </View>
     </View>
   );
@@ -719,13 +723,13 @@ function ToolchainPane() {
                     <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                       {compiler().version}
                     </Text>
-                    <Text
+                    <TruncText
                       tooltip={tip(compiler().path)}
                       style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }}
                       class="text-muted-foreground"
                     >
                       {middleTruncatePath(compiler().path, 42)}
-                    </Text>
+                    </TruncText>
                   </View>
                 </SectionRow>
               );

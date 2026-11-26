@@ -83,6 +83,16 @@ export function scaledSpring(preset: MotionSpring): MotionSpring {
   };
 }
 
+/** Time (ms) for a spring preset (slow-motion applied) to settle within 5% of its travel:
+ *  the envelope `e^(−ζωt)` reaches 0.05 at `t = ln 20 / (ζω)`, with `ω = √(k/m)`, `ζ = c / (2√(km))`. */
+export function springSettleMs(preset: MotionSpring): number {
+  const s = scaledSpring(preset);
+  const c = s.damping ?? 35;
+  const m = s.mass ?? 1;
+  const decay = c / (2 * m); // ζω = c / 2m
+  return Math.round((Math.log(20) / decay) * 1000);
+}
+
 /** Formats a `MotionSpring` as NSH's native `transitionTimingFunction: spring(...)`. */
 export function springCss(preset: MotionSpring): `spring(${string})` {
   const s = scaledSpring(preset);
@@ -260,6 +270,11 @@ export function toastTransform(shown: boolean, dragY = 0): string | undefined {
 /** Structural deletion fade duration (`DURATION.base`, or `0` under reduced motion). */
 export function structuralFadeMs(): number {
   return isReducedMotion() ? 0 : scaledDuration(DURATION.base);
+}
+
+/** Delay (ms) before an inserted row fades in: the siblings it pushes settle first (Phase 6G §2). */
+export function insertFadeDelayMs(): number {
+  return isReducedMotion() ? 0 : springSettleMs(SPRING.standard);
 }
 
 /** `ViewRef.animateLayout` spring config (`SPRING.standard`, or `undefined` under reduced motion). */

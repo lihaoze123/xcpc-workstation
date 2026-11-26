@@ -17,7 +17,7 @@ import {
   type ScrollRef,
 } from "nsh";
 import { Input } from "nsh/base";
-import { Btn, Chip, Chevron, FOCUS_RING, RatingBadge, tip } from "./kit";
+import { Btn, Chip, Chevron, FOCUS_RING, RatingBadge, tip, TruncText } from "./kit";
 import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
@@ -83,12 +83,12 @@ function PickerFilterMenu(props: {
             ...colorTransition(),
           }}
         >
-          <Text
+          <TruncText
             style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: FONT_SIZE.caption }}
             class={props.active ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.label}
-          </Text>
+          </TruncText>
           <Chevron size="sm" tone="muted-foreground" />
         </View>
       }
@@ -462,19 +462,19 @@ export function PickProblemsBody(props: { contestId: string }) {
                         </If>
                       </View>
                       {/* Problem ID */}
-                      <Text
+                      <TruncText
                         style={{ width: 108, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 0 }}
                         class="text-muted-foreground"
                       >
                         {p().id}
-                      </Text>
+                      </TruncText>
                       {/* Title */}
-                      <Text
+                      <TruncText
                         style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class={disabled() ? "text-muted-foreground" : "text-foreground"}
                       >
                         {p().title}
-                      </Text>
+                      </TruncText>
                       {/* Compact tags (up to 2, single tag uses full 132pt without artificial 64pt clipping) */}
                       <If when={visibleTags().length > 0}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], maxWidth: 136, overflow: "hidden", flexShrink: 0 }}>

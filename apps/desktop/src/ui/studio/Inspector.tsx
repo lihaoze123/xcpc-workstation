@@ -12,7 +12,7 @@ import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { resolveLocalized, t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, DelayedSpinner, FOCUS_RING, IconBtn, Segmented, tip } from "../kit";
+import { Btn, DelayedSpinner, FOCUS_RING, IconBtn, Segmented, tip, TruncText } from "../kit";
 import { Modal } from "../Modal";
 import { colorTransition, panelExitMs, panelTransform, panelTransition } from "../tokens";
 import { activeRevision, errorOf, goSettings, info, preview, refresh, unfreezeFor, type UiError } from "../store";
@@ -370,9 +370,9 @@ function Section(props: { title?: string; children?: JSX.Element; last?: boolean
   return (
     <View style={{ padding: SPACE[12], gap: SPACE[8], borderBottomWidth: props.last ? 0 : 1 }} class="border-border">
       {props.title && (
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption }} class="text-foreground">
+        <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption }} class="text-foreground">
           {props.title}
-        </Text>
+        </TruncText>
       )}
       {props.children}
     </View>

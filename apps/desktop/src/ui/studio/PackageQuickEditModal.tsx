@@ -7,7 +7,7 @@ import { Editor } from "nsh/base";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
+import { Btn, createTransientFlag, IconBtn, tip, TruncText } from "../kit";
 import { EmptyState } from "../layout";
 import { Modal } from "../Modal";
 import { errorOf, preview, type UiError } from "../store";
@@ -126,12 +126,12 @@ export function PackageQuickEditModal(props: {
           class="border-border bg-background/50"
         >
           <Icon name="code" size="md" tone="secondary-foreground" />
-          <Text
+          <TruncText
             style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
             class="text-foreground"
           >
             {props.relPath ?? ""}
-          </Text>
+          </TruncText>
           <If when={dirty()}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
               <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class="bg-chart-4" />

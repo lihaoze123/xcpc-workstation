@@ -8,7 +8,7 @@ import type { TestCasePreviewJs } from "xcpc-workstation/native";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
-import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
+import { Btn, createTransientFlag, IconBtn, tip, TruncText } from "../kit";
 import { EmptyState } from "../layout";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO, popoverShadow } from "../theme";
@@ -151,12 +151,12 @@ export function InlineFileEditor(props: {
               <If when={!!props.icon}>
                 <Icon name={props.icon!} size="sm" tone="secondary-foreground" />
               </If>
-              <Text
+              <TruncText
                 style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
                 class="text-foreground"
               >
                 {props.title!}
-              </Text>
+              </TruncText>
               <If when={!!props.badge}>
                 <View
                   style={{ height: 19, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact status badge height
@@ -181,13 +181,13 @@ export function InlineFileEditor(props: {
             </View>
           </If>
           <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-            <Text
+            <TruncText
               testID="inline-editor-target-path"
               style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-muted-foreground"
             >
               {props.relPath}
-            </Text>
+            </TruncText>
             <If when={!props.title && dirty()}>
               <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-chart-4" />
             </If>
@@ -483,9 +483,9 @@ export function CellDiagnosticDrawer(props: {
             <IconBtn icon="x" size="sm" onPress={props.onClose} />
           </View>
         </View>
-        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+        <TruncText style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
           {meta()}
-        </Text>
+        </TruncText>
       </View>
 
       <View style={{ flex: 1, minHeight: 0, padding: SPACE[16], gap: SPACE[12] }}>

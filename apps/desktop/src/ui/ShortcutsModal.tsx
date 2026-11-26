@@ -6,7 +6,7 @@ import { computed, platform, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
-import { IconBtn, Kbd, keyLabel } from "./kit";
+import { IconBtn, Kbd, keyLabel, TruncText } from "./kit";
 import { FilterEmpty } from "./layout";
 import { shortcutForSpace, type Space } from "./logic";
 import { Modal } from "./Modal";
@@ -340,9 +340,9 @@ export function ShortcutsList(props: {
                         }}
                       >
                         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 1, minWidth: 0 }}>
-                          <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                          <TruncText style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                             {item().label}
-                          </Text>
+                          </TruncText>
                           {item().context && (
                             <View
                               style={{ height: 18, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center", flexShrink: 0 }} // token-exempt: compact inline keycap height

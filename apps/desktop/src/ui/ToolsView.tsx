@@ -5,7 +5,7 @@
 import { batch, computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
-import { Btn, FOCUS_RING } from "./kit";
+import { Btn, FOCUS_RING, TruncText } from "./kit";
 import { EmptyState, GUTTER, PageLoading, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
@@ -238,7 +238,7 @@ export function ToolsView(props: { active?: boolean }) {
                   }}
                 >
                   <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-                    <Text
+                    <TruncText
                       style={{
                         fontSize: FONT_SIZE.body,
                         fontWeight: FONT_WEIGHT.semibold,
@@ -249,7 +249,7 @@ export function ToolsView(props: { active?: boolean }) {
                       class={isSelected() ? "text-foreground" : "text-secondary-foreground"}
                     >
                       {group().plugin_name}
-                    </Text>
+                    </TruncText>
                     <If when={Boolean(group().is_linked)}>
                       <View
                         class="bg-muted border border-border"
@@ -262,12 +262,12 @@ export function ToolsView(props: { active?: boolean }) {
                     </If>
                   </View>
                   <If when={Boolean(group().plugin_description)}>
-                    <Text
+                    <TruncText
                       style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
                       class="text-muted-foreground"
                     >
                       {group().plugin_description}
-                    </Text>
+                    </TruncText>
                   </If>
                 </View>
               );
@@ -407,12 +407,12 @@ export function ToolsView(props: { active?: boolean }) {
             <View style={{ flex: 1, minHeight: 0, flexDirection: "column" }}>
               {/* Standard 52pt Toolbar header */}
               <Toolbar style={{ paddingLeft: GUTTER, paddingRight: GUTTER }}>
-                <Text
+                <TruncText
                   style={{ ...TYPE.strong, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-foreground"
                 >
                   {group().plugin_name}
-                </Text>
+                </TruncText>
               </Toolbar>
 
               {/* Render interactive UI (`ui.html`) if available, otherwise headless (`index.js`) runner */}

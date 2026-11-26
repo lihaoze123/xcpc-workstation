@@ -61,6 +61,8 @@ export {
   SPRING,
   springCss,
   structuralFadeMs,
+  insertFadeDelayMs,
+  springSettleMs,
   studioExitMs,
   studioTransform,
   studioTransition,

@@ -3,7 +3,7 @@
 
 import { Scroll, signal, Text, View, type JSX } from "nsh";
 import { Icon } from "../Icon";
-import { FOCUS_RING } from "../kit";
+import { FOCUS_RING, TruncText } from "../kit";
 import { Collapsible } from "../layout";
 import { headerCheckboxState, type ProblemGroupSection } from "../logic";
 import { chevronTransition, colorTransition } from "../tokens";
@@ -92,7 +92,7 @@ export function GroupedProblemList(props: {
                             ...chevronTransition(),
                           }}
                         />
-                        <Text
+                        <TruncText
                           style={{
                             fontSize: FONT_SIZE.caption,
                             fontWeight: FONT_WEIGHT.semibold,
@@ -104,7 +104,7 @@ export function GroupedProblemList(props: {
                           class="text-foreground"
                         >
                           {sec().label}
-                        </Text>
+                        </TruncText>
                         <Text
                           style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                           class="text-muted-foreground"

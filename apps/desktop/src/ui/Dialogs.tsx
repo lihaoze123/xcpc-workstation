@@ -3,7 +3,7 @@
 
 import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
-import { Btn, Chip, DelayedSpinner, FOCUS_RING, Segmented } from "./kit";
+import { Btn, Chip, DelayedSpinner, FOCUS_RING, Segmented, TruncText } from "./kit";
 import { SectionEmpty } from "./layout";
 import type { ResolvedProblemUrlJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
@@ -64,9 +64,9 @@ function Field(props: {
       <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
         <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{props.label}</Text>
         {(props.error || props.hint) && (
-          <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class={props.error ? "text-destructive" : "text-muted-foreground"}>
+          <TruncText style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class={props.error ? "text-destructive" : "text-muted-foreground"}>
             {props.error ?? props.hint}
-          </Text>
+          </TruncText>
         )}
       </View>
       <Input
@@ -221,9 +221,9 @@ function NewProblem(props: { addTo?: string }) {
           <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{t("dialogs.newProblem.urlLabel")}</Text>
           <DelayedSpinner active={resolvingUrl()} size={12} />
           <If when={!resolvingUrl() && !!urlError()}>
-            <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
+            <TruncText style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {urlError() ?? ""}
-            </Text>
+            </TruncText>
           </If>
         </View>
         <Input
@@ -584,9 +584,9 @@ function AddToContest(props: { problemId: string }) {
                       ...colorTransition(),
                     }}
                   >
-                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
+                    <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
                       {c().name}
-                    </Text>
+                    </TruncText>
                     {c().frozen && <Icon name="lock" size="sm" tone="muted-foreground" />}
                     <If
                       when={addedId() === c().id}
@@ -704,9 +704,9 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
                     }}
                   >
                     <Icon name="trophy" size="sm" tone="secondary-foreground" />
-                    <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                    <TruncText style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                       {c().name}
-                    </Text>
+                    </TruncText>
                     <Icon name="arrowRight" size="sm" tone="muted-foreground" />
                   </View>
                 )}
@@ -1202,18 +1202,18 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
                 <Each of={partition().blocked} key={(b) => b.id}>
                   {(b) => (
                     <View style={{ gap: SPACE[2], minWidth: 0 }}>
-                      <Text
+                      <TruncText
                         style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {titleById().get(b().id) ?? b().id}
-                      </Text>
-                      <Text
+                      </TruncText>
+                      <TruncText
                         style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-muted-foreground"
                       >
                         {b().contests.map((c) => c.name).join(" / ")}
-                      </Text>
+                      </TruncText>
                     </View>
                   )}
                 </Each>
@@ -1320,12 +1320,12 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                       ...colorTransition(),
                     }}
                   >
-                    <Text
+                    <TruncText
                       style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }}
                       class={off() && addedContestId() !== c().id ? "text-muted-foreground" : "text-foreground"}
                     >
                       {c().name}
-                    </Text>
+                    </TruncText>
                     {c().frozen && <Icon name="lock" size="sm" tone="muted-foreground" />}
                     <If
                       when={addedContestId() === c().id}

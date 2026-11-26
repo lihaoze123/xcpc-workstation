@@ -7,7 +7,7 @@ import { Input } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
-import { Btn, Chip, createTransientFlag, DelayedSpinner, FOCUS_RING, Lock, Segmented } from "../kit";
+import { Btn, Chip, createTransientFlag, DelayedSpinner, FOCUS_RING, Lock, Segmented, TruncText } from "../kit";
 import { Collapsible, createListMotion, DetailHeader, EmptyState, FilterEmpty, GUTTER, Spacer, Toolbar } from "../layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
@@ -72,7 +72,8 @@ export function SnippetsView(props: { active: boolean }) {
   const deleteTrdTarget = signal<TrdSummaryItem | undefined>(undefined);
   const snippetListMotion = createListMotion();
   const trdListMotion = createListMotion();
-  snippetListMotion.watchKeys(() => filteredSnippets().map((s) => s.slug));
+  // Watch the unfiltered list: typing in the search box must stay a 1-frame swap, not a structural animation.
+  snippetListMotion.watchKeys(() => snippetList().map((s) => s.slug));
   trdListMotion.watchKeys(() => trdParts().active.map((t) => t.id));
 
   function loadLists() {
@@ -369,12 +370,12 @@ export function SnippetsView(props: { active: boolean }) {
                           >
                           <Icon name={s().has_code ? "code" : "sigma"} size="sm" tone="secondary-foreground" />
                           <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
-                            <Text
+                            <TruncText
                               style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                               class="text-foreground"
                             >
                               {s().title}
-                            </Text>
+                            </TruncText>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                               <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                 {s().slug}
@@ -938,12 +939,12 @@ function TrdRow(props: {
       }}
     >
       <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
-        <Text
+        <TruncText
           style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }}
           class="text-foreground"
         >
           {props.item.name}
-        </Text>
+        </TruncText>
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {t("snippets.trd.chapterCount", {

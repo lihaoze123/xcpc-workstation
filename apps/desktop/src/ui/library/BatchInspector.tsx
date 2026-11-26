@@ -7,7 +7,7 @@ import { Progress } from "nsh/base";
 import type { BatchTaskItemJs, BatchTaskSnapshotJs, GroupSummaryJs, ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName, type IconTone } from "../Icon";
-import { Btn, DelayedSpinner, FOCUS_RING, tip } from "../kit";
+import { Btn, DelayedSpinner, FOCUS_RING, tip, TruncText } from "../kit";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { DetailHeader } from "../layout";
 import { errorCopy } from "../logic";
@@ -99,12 +99,12 @@ function ActionRow(props: {
         size="md"
         tone={props.destructive ? "destructive" : "secondary-foreground"}
       />
-      <Text
+      <TruncText
         style={{ fontSize: FONT_SIZE.body, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
         class={props.destructive ? "text-destructive" : "text-foreground"}
       >
         {props.label}
-      </Text>
+      </TruncText>
     </View>
   );
 }
@@ -293,12 +293,12 @@ export function BatchInspector(props: {
               {/* Live status header + Progress bar */}
               <View style={{ padding: SPACE[12], gap: SPACE[8], borderBottomWidth: 1 }} class="border-border">
                 <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                  <Text
+                  <TruncText
                     style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
                     class="text-foreground"
                   >
                     {taskHeadline(snap())}
-                  </Text>
+                  </TruncText>
                   <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                     {formatElapsed(snap().elapsedMs)}
                   </Text>
@@ -366,13 +366,13 @@ export function BatchInspector(props: {
                             ) : null}
                           </View>
                           <View style={{ flex: 1, minWidth: 0, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-                            <Text
+                            <TruncText
                               style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                               class="text-foreground"
                             >
                               {title()}
-                            </Text>
-                            <Text
+                            </TruncText>
+                            <TruncText
                               style={{
                                 fontSize: FONT_SIZE.micro,
                                 fontVariant: ["tabular-nums"],
@@ -385,9 +385,9 @@ export function BatchInspector(props: {
                               class="text-muted-foreground"
                             >
                               {it().problemId}
-                            </Text>
+                            </TruncText>
                           </View>
-                          <Text
+                          <TruncText
                             style={{
                               fontSize: FONT_SIZE.caption,
                               fontVariant: ["tabular-nums"],
@@ -403,7 +403,7 @@ export function BatchInspector(props: {
                             }
                           >
                             {detailText()}
-                          </Text>
+                          </TruncText>
                         </View>
                       );
                     }}

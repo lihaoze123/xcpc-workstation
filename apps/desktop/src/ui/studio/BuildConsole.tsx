@@ -17,7 +17,7 @@ import type {
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
-import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip, TruncText } from "../kit";
 import { EmptyState, FilterEmpty, PageLoading, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { compilerMissing, dialog, ensureToolchainLoaded, goSettings, onExternalChange, preview, type UiError } from "../store";
@@ -1847,12 +1847,12 @@ export function BuildConsole(props: {
                               {t("build.compileError.openSource")}
                             </Text>
                           </View>
-                          <Text
+                          <TruncText
                             style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.caption, numberOfLines: 4, textOverflow: "ellipsis" }}
                             class="text-secondary-foreground"
                           >
                             {cf().stderr}
-                          </Text>
+                          </TruncText>
                         </View>
                       )}
                     </Each>
@@ -1942,12 +1942,12 @@ export function BuildConsole(props: {
                                 <If when={spec().is_main}>
                                   <Icon name="crown" size="sm" tone="secondary-foreground" />
                                 </If>
-                                <Text
+                                <TruncText
                                   style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
                                   class="text-foreground"
                                 >
                                   {spec().name}
-                                </Text>
+                                </TruncText>
                                 <If when={mismatch()}>
                                   <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-destructive" />
                                 </If>
@@ -1973,7 +1973,7 @@ export function BuildConsole(props: {
                             else={<SectionEmpty message={t("build.tests.empty")} />}
                           >
                             <FilterEmpty
-                              message={t("build.tests.empty")}
+                              message={t("build.tests.filterEmpty")}
                               onClear={() => onlyAnomalyRows.set(false)}
                               clearLabel={t("build.filter.clear")}
                             />
@@ -2016,7 +2016,7 @@ export function BuildConsole(props: {
                                       size="sm"
                                       tone="secondary-foreground"
                                     />
-                                    <Text
+                                    <TruncText
                                       style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                       class="text-foreground"
                                     >
@@ -2025,7 +2025,7 @@ export function BuildConsole(props: {
                                         : group().samples
                                           ? t("build.tree.samples")
                                           : t("build.subtasks.unassigned")}
-                                    </Text>
+                                    </TruncText>
                                     <If when={group().summary}>
                                       {(s) => (
                                         <Text
@@ -2114,12 +2114,12 @@ export function BuildConsole(props: {
                                         >
                                           {String(row().index).padStart(2, "0")}
                                         </Text>
-                                        <Text
+                                        <TruncText
                                           style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                           class="text-foreground"
                                         >
                                           {row().name}
-                                        </Text>
+                                        </TruncText>
                                         <If when={row().validator_ok === false}>
                                           <View tooltip={tip(row().validator_message || t("build.tests.validatorFailed"))}>
                                             <Icon name="triangleAlert" size="sm" tone="destructive" />
@@ -2470,9 +2470,9 @@ export function BuildConsole(props: {
                             {t("build.tests.validatorFailed")}
                           </Text>
                           <If when={!!row()?.validator_message}>
-                            <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                            <TruncText style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {row()!.validator_message!}
-                            </Text>
+                            </TruncText>
                           </If>
                         </View>
                         <Btn
@@ -2517,9 +2517,9 @@ export function BuildConsole(props: {
                                 </Text>
                               </View>
                               <If when={fileRel() || activeGroup()?.genCmd}>
-                                <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                <TruncText style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
                                   {fileRel() ?? activeGroup()?.genCmd ?? ""}
-                                </Text>
+                                </TruncText>
                               </If>
                             </View>
 
@@ -3372,7 +3372,7 @@ export function BuildConsole(props: {
                 <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: SPACE[16], paddingBottom: SPACE[24], paddingLeft: SPACE[20], paddingRight: SPACE[20], gap: SPACE[12] }}>
                   <If
                     when={sanitizerReport()}
-                    else={<PageLoading active={true} />}
+                    else={<PageLoading active={true} style={{ minHeight: 160 }} />}
                   >
                     {(rep) => {
                       const mainName = () => solutionSpecs().find((sp) => sp.is_main)?.name;
@@ -3469,7 +3469,7 @@ export function BuildConsole(props: {
                         when={externalRunning()}
                         else={<SectionEmpty message={t("build.external.empty")} />}
                       >
-                        <PageLoading active={true} />
+                        <PageLoading active={true} style={{ minHeight: 160 }} />
                       </If>
                     }
                   >
@@ -3499,13 +3499,13 @@ export function BuildConsole(props: {
                             style={{ height: ROW.table, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center", gap: SPACE[12] }}
                           >
                             <If when={showTesterColumn()}>
-                              <Text style={{ width: 88, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+                              <TruncText style={{ width: 88, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
                                 {sub().tester ?? ""}
-                              </Text>
+                              </TruncText>
                             </If>
-                            <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                            <TruncText style={{ flex: 1, fontSize: FONT_SIZE.body, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {sub().file_name}
-                            </Text>
+                            </TruncText>
                             <Text
                               tooltip={failText() ? tip(failText()!) : undefined}
                               style={{ width: 64, fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"] }}
@@ -3685,7 +3685,7 @@ function TreeRow(props: {
         size="sm"
         tone={props.active ? "foreground" : "secondary-foreground"}
       />
-      <Text
+      <TruncText
         style={{
           flex: 1,
           fontSize: FONT_SIZE.body,
@@ -3697,7 +3697,7 @@ function TreeRow(props: {
         class={props.active ? "text-foreground" : "text-secondary-foreground"}
       >
         {props.label}
-      </Text>
+      </TruncText>
       <If when={!!props.sub}>
         <Text style={{ fontSize: FONT_SIZE.caption, flexShrink: 0 }} class="text-muted-foreground">
           {props.sub!}

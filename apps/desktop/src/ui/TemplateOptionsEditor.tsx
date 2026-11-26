@@ -11,7 +11,7 @@ import { Input, Switch } from "nsh/base";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { resolveLocalized, t } from "./i18n";
 import { Icon } from "./Icon";
-import { Btn, Chevron, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
+import { Btn, Chevron, FOCUS_RING, IconBtn, Segmented, tip, TruncText } from "./kit";
 import { pathBase, validId } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { Modal } from "./Modal";
@@ -101,9 +101,9 @@ export function TemplatePicker(props: {
                   gap: SPACE[6],
                 }}
               >
-                <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+                <TruncText style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
                   {currentName()}
-                </Text>
+                </TruncText>
               </View>
             }
           >
@@ -132,9 +132,9 @@ export function TemplatePicker(props: {
                     ...colorTransition(),
                   }}
                 >
-                  <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                  <TruncText style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                     {currentName()}
-                  </Text>
+                  </TruncText>
                   <Chevron size="sm" tone="muted-foreground" />
                 </View>
               }
@@ -455,12 +455,12 @@ function SchemaFieldRow(props: {
                     class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition() }}
                   >
-                    <Text
+                    <TruncText
                       style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                       class={strVal() ? "text-foreground" : "text-muted-foreground"}
                     >
                       {strVal() || defaultFontLabel()}
-                    </Text>
+                    </TruncText>
                     <Chevron size="sm" tone="muted-foreground" />
                   </View>
                 }
@@ -820,7 +820,7 @@ function ImageOptionField(props: {
           }}
         >
           <Icon name="image" size="sm" tone={displayName() ? "foreground" : "muted-foreground"} />
-          <Text
+          <TruncText
             style={{
               flex: 1,
               minWidth: 0,
@@ -832,7 +832,7 @@ function ImageOptionField(props: {
             class={displayName() ? "text-foreground" : "text-muted-foreground"}
           >
             {displayName() || (props.placeholder ?? t("template.noImageSelected"))}
-          </Text>
+          </TruncText>
         </View>
         <If when={!props.readOnly}>
           <Btn label={t("template.chooseImage")} onPress={() => void pickImage()} />

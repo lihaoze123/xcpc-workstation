@@ -3,10 +3,10 @@
 // whose head puts the title and its facts on the left and the actions on the right,
 // top-aligned with the title. Empty states are an icon, one sentence and one way on.
 
-import { cleanup, effect, signal, Text, View, type JSX, type StyleProp, type ViewRef, type ViewStyle } from "nsh";
+import { cleanup, effect, signal, Text, untracked, View, type JSX, type StyleProp, type ViewRef, type ViewStyle } from "nsh";
 import { t } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { DelayedSpinner, FOCUS_RING } from "./kit";
+import { DelayedSpinner, FOCUS_RING, TruncText } from "./kit";
 import { cardShadow, panelShadow } from "./theme";
 import {
   animateLayoutStandard,
@@ -15,6 +15,7 @@ import {
   opacityTransition,
   RADIUS,
   SPACE,
+  insertFadeDelayMs,
   structuralFadeMs,
   TOOLBAR,
   TYPE,
@@ -113,9 +114,9 @@ export function DetailHeader(props: {
       ]}
     >
       <View style={{ height: CONTROL.md, flexDirection: "row", alignItems: "center", gap: SPACE[8], overflow: "hidden" }}>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, ...TYPE.title }} class="text-foreground">
+        <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, ...TYPE.title }} class="text-foreground">
           {props.title}
-        </Text>
+        </TruncText>
         {props.badge && <View style={{ flexShrink: 0 }}>{props.badge}</View>}
         <View style={{ flex: 1 }} />
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>{props.actions}</View>
@@ -280,6 +281,19 @@ export function SectionRow(props: { children?: JSX.Element; trailing?: JSX.Eleme
 }
 
 /**
+ * Runs `fn` after the frame that mounts a transparent view has been painted: two
+ * animation frames, so the opacity transition starts from the painted `0` instead of
+ * being collapsed into the mount frame. `onReschedule` receives the second frame's id
+ * so callers can still cancel it.
+ */
+function afterFirstPaint(fn: () => void, onReschedule?: (id: number) => void): number {
+  return requestAnimationFrame(() => {
+    const id = requestAnimationFrame(fn);
+    onReschedule?.(id);
+  });
+}
+
+/**
  * Collapsible disclosure body backed by scoped `ViewRef.animateLayout(SPRING.standard)` (Phase 6G §2).
  * Only animates this region and pushed siblings; clips with `overflow: "hidden"` and fades content.
  * Under reduced motion, expands/collapses instantaneously.
@@ -290,42 +304,62 @@ export function Collapsible(props: { open: boolean; children?: JSX.Element; styl
   let boxRef: ViewRef | undefined;
   let initialized = false;
   let raf: number | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function cancelPending() {
+    if (raf !== undefined) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    if (closeTimer !== undefined) {
+      clearTimeout(closeTimer);
+      closeTimer = undefined;
+    }
+  }
 
   effect(() => {
     const isOpen = props.open;
     const first = !initialized;
     initialized = true;
-    if (raf !== undefined) {
-      cancelAnimationFrame(raf);
-      raf = undefined;
-    }
+    cancelPending();
     if (first) {
       mounted.set(isOpen);
       shown.set(isOpen);
       return;
     }
     const fadeMs = structuralFadeMs();
-    animateLayoutStandard(boxRef);
     if (isOpen) {
+      const wasMounted = untracked(mounted);
+      if (!wasMounted) animateLayoutStandard(boxRef);
       mounted.set(true);
-      if (fadeMs === 0) {
+      if (fadeMs === 0 || wasMounted) {
+        // Reopening mid-fade-out resumes the opacity transition from where it is.
         shown.set(true);
       } else {
         shown.set(false);
-        raf = requestAnimationFrame(() => {
-          raf = undefined;
-          shown.set(true);
-        });
+        raf = afterFirstPaint(
+          () => {
+            raf = undefined;
+            shown.set(true);
+          },
+          (next) => (raf = next),
+        );
       }
-    } else {
+    } else if (fadeMs === 0) {
       shown.set(false);
       mounted.set(false);
+    } else {
+      // Fade the content out in place first, then collapse the height (Phase 6G §2).
+      shown.set(false);
+      closeTimer = setTimeout(() => {
+        closeTimer = undefined;
+        animateLayoutStandard(boxRef);
+        mounted.set(false);
+      }, fadeMs);
     }
   });
 
-  cleanup(() => {
-    if (raf !== undefined) cancelAnimationFrame(raf);
-  });
+  cleanup(cancelPending);
 
   return (
     <View
@@ -369,6 +403,29 @@ export function createListMotion() {
     rafs.clear();
   });
 
+  /** Fades inserted rows in once the siblings they push have settled (Phase 6G §2). */
+  function fadeInAfterSettle(keys: readonly string[]) {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      trackFrame(() => clearEntering(keys));
+    }, insertFadeDelayMs());
+    timers.add(timer);
+  }
+
+  /** Runs `fn` once the transparent first frame has been painted (see `afterFirstPaint`). */
+  function trackFrame(fn: () => void) {
+    let id = 0;
+    id = afterFirstPaint(() => {
+      rafs.delete(id);
+      fn();
+    }, (next) => {
+      rafs.delete(id);
+      id = next;
+      rafs.add(id);
+    });
+    rafs.add(id);
+  }
+
   function clearEntering(keys: readonly string[]) {
     const next = new Set(entering());
     let changed = false;
@@ -401,11 +458,7 @@ export function createListMotion() {
       entering.set(next);
       animateLayoutStandard(container);
       commit();
-      const raf = requestAnimationFrame(() => {
-        rafs.delete(raf);
-        clearEntering([key]);
-      });
-      rafs.add(raf);
+      fadeInAfterSettle([key]);
     },
     remove(key: string, commit: () => void) {
       const fadeMs = structuralFadeMs();
@@ -447,11 +500,7 @@ export function createListMotion() {
           const next = new Set(entering());
           for (const k of added) next.add(k);
           entering.set(next);
-          const raf = requestAnimationFrame(() => {
-            rafs.delete(raf);
-            clearEntering(added);
-          });
-          rafs.add(raf);
+          fadeInAfterSettle(added);
         }
       });
     },

@@ -7,7 +7,7 @@ import { Input } from "nsh/base";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented, TruncText } from "../kit";
 import { DialogHeader, Modal } from "../Modal";
 import { colorTransition } from "../tokens";
 import { preview, refresh } from "../store";
@@ -352,12 +352,12 @@ export function ManualLogModal(props: ManualLogModalProps) {
                             ...colorTransition(),
                           }}
                         >
-                          <Text
+                          <TruncText
                             style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-foreground"
                           >
                             {prob().title || prob().id}
-                          </Text>
+                          </TruncText>
                           <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                             {prob().id}
                           </Text>

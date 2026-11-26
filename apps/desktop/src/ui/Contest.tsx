@@ -5,7 +5,7 @@
 import { cleanup, computed, Scroll, signal, Text, View } from "nsh";
 import type { PreviewDiagnostic } from "xcpc-workstation/native";
 import { t } from "./i18n";
-import { Btn, Chip, tip } from "./kit";
+import { Btn, Chip, tip, TruncText } from "./kit";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { DialogHeader, Modal } from "./Modal";
 import { diffKind, TIER_RANGES } from "./logic";
@@ -186,12 +186,12 @@ export function UnfreezeDialog() {
                       </View>
                       <Each of={d().changedFiles.slice(0, 6)} key={(f) => f}>
                         {(f) => (
-                          <Text
+                          <TruncText
                             style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, marginLeft: SPACE[24], numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-muted-foreground"
                           >
                             {f()}
-                          </Text>
+                          </TruncText>
                         )}
                       </Each>
                       <If when={d().changedFiles.length > 6}>

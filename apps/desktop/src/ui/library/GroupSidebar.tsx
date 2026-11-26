@@ -7,7 +7,7 @@ import { Menu as DesktopMenu } from "nsh/desktop";
 import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName } from "../Icon";
-import { Btn, FOCUS_RING, tip } from "../kit";
+import { Btn, FOCUS_RING, tip, TruncText } from "../kit";
 import { createListMotion } from "../layout";
 import { colorTransition, isReducedMotion, panelTransform, panelTransition } from "../tokens";
 
@@ -55,7 +55,7 @@ function SidebarRow(props: {
           tone={props.active ? "foreground" : "muted-foreground"}
         />
       )}
-      <Text
+      <TruncText
         style={{
           flex: 1,
           minWidth: 0,
@@ -67,7 +67,7 @@ function SidebarRow(props: {
         class={props.active ? "text-foreground" : "text-secondary-foreground"}
       >
         {props.label}
-      </Text>
+      </TruncText>
       <Text
         style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
         class={props.active ? "text-foreground" : "text-muted-foreground"}

@@ -8,7 +8,7 @@ import type { ContestDetailJs, PreviewStart } from "xcpc-workstation/native";
 import { ContestStats } from "../Contest";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { FOCUS_RING, tip } from "../kit";
+import { FOCUS_RING, tip, TruncText } from "../kit";
 import { labels, moveItem } from "../logic";
 import { popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
@@ -194,12 +194,12 @@ function Row(props: {
           <Icon name="fileText" size="sm" tone={props.active ? "foreground" : "muted-foreground"} />
         </If>
       </View>
-      <Text
+      <TruncText
         style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }}
         class={props.missing ? "text-destructive" : props.isCover ? "text-secondary-foreground" : "text-foreground"}
       >
         {props.title}
-      </Text>
+      </TruncText>
       <If when={props.missing}>
         <View tooltip={tip(t("contests.missingSuffix", { title: props.title }))}>
           <Icon name="triangleAlert" size="sm" tone="destructive" />

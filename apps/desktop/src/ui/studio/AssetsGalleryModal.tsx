@@ -25,7 +25,7 @@ import type { ActionResult, CleanUnusedAssetsResultJs, ProblemAssetJs } from "xc
 import { ErrorDisplay } from "../ErrorDisplay";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, createTransientValue, FOCUS_RING, IconBtn, tip } from "../kit";
+import { Btn, createTransientValue, FOCUS_RING, IconBtn, tip, TruncText } from "../kit";
 import { EmptyState, PageLoading } from "../layout";
 import { Modal } from "../Modal";
 import { colorTransition, isReducedMotion, overlayCloseMs, overlayTransform, overlayTransition, panelTransition } from "../tokens";
@@ -478,7 +478,7 @@ export function AssetsGalleryModal(props: {
               <If
                 when={renaming() === currentAsset()?.name}
                 else={
-                  <Text
+                  <TruncText
                     style={{
                       flex: 1,
                       fontSize: FONT_SIZE.body,
@@ -489,7 +489,7 @@ export function AssetsGalleryModal(props: {
                     class="text-foreground"
                   >
                     {currentAsset()?.name ?? ""}
-                  </Text>
+                  </TruncText>
                 }
               >
                 <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flex: 1, maxWidth: 320 }}>
@@ -1027,7 +1027,7 @@ function AssetTile(props: {
         else={
           <View onPress={props.onSelect} class={FOCUS_RING} style={{ gap: SPACE[2], paddingLeft: SPACE[2], paddingRight: SPACE[2] }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[6] }}>
-              <Text
+              <TruncText
                 style={{
                   flex: 1,
                   fontSize: FONT_SIZE.caption,
@@ -1039,7 +1039,7 @@ function AssetTile(props: {
                 class="text-foreground"
               >
                 {middleEllipsis(props.asset.name, 16)}
-              </Text>
+              </TruncText>
               <Text
                 style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                 class="text-muted-foreground"

@@ -6,7 +6,7 @@
 import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef, type ViewRef } from "nsh";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { WorkspaceContest } from "xcpc-workstation/native";
-import { Btn, DelayedSpinner, FOCUS_RING, RatingBadge, tip } from "./kit";
+import { Btn, DelayedSpinner, FOCUS_RING, RatingBadge, tip, TruncText } from "./kit";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger } from "./Menu";
@@ -221,9 +221,9 @@ export function ContestsView(props: { active: boolean }) {
         }}
       >
         <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
-          <Text style={{ ...TYPE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+          <TruncText style={{ ...TYPE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
             {c().name}
-          </Text>
+          </TruncText>
           <If when={hasSecondLine()}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
               <If when={Boolean(date())}>
@@ -728,12 +728,12 @@ function ContestPanel(props: { id: string; active: boolean }) {
                       >
                         {x().label}
                       </Text>
-                      <Text
+                      <TruncText
                         style={{ ...TYPE.body, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class={x().item.missing ? "text-destructive" : "text-foreground"}
                       >
                         {x().item.missing ? t("contests.missingSuffix", { title: x().item.title }) : x().item.title}
-                      </Text>
+                      </TruncText>
                       <View
                         tooltip={
                           x().item.missing

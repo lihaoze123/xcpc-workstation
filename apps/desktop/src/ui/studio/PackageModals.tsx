@@ -7,7 +7,7 @@ import { effect, signal, Text, untracked, View } from "nsh";
 import { Input, Switch } from "nsh/base";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
-import { Btn, FieldLabel, FOCUS_RING } from "../kit";
+import { Btn, FieldLabel, FOCUS_RING, TruncText } from "../kit";
 import { AppMenu } from "../Menu";
 import { Modal } from "../Modal";
 import { preview } from "../store";
@@ -125,12 +125,12 @@ export function CreateSourceModal(props: {
             }
           />
           {/* Fixed single-slot constraint / error line — turns red in-place with zero dialog height jump */}
-          <Text
+          <TruncText
             style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
           >
             {inlineError() ?? t("build.programs.nameHint")}
-          </Text>
+          </TruncText>
         </View>
 
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
@@ -729,12 +729,12 @@ export function SolutionScoringModal(props: {
             }
             style={{ fontVariant: ["tabular-nums"] }}
           />
-          <Text
+          <TruncText
             style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
           >
             {inlineError() ?? t("build.scoring.scoreHint")}
-          </Text>
+          </TruncText>
         </View>
 
         <If when={props.subtasks.length > 0}>

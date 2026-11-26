@@ -7,7 +7,7 @@ import { Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, Chip, FOCUS_RING, IconBtn, RatingBadge, tip } from "../kit";
+import { Btn, Chip, FOCUS_RING, IconBtn, RatingBadge, tip, TruncText } from "../kit";
 import { DetailHeader, EmptyState, FilterEmpty, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../tokens";
@@ -371,7 +371,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           }}
                         >
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
-                            <Text
+                            <TruncText
                               style={{
                                 fontSize: FONT_SIZE.body,
                                 fontWeight: FONT_WEIGHT.semibold,
@@ -383,14 +383,14 @@ export function EditorialsTab(props: EditorialsTabProps) {
                               class="text-foreground"
                             >
                               {item().title || item().problemId}
-                            </Text>
+                            </TruncText>
                             <If when={item().rating != null}>
                               <RatingBadge rating={item().rating} />
                             </If>
                           </View>
 
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
-                            <Text
+                            <TruncText
                               style={{
                                 fontSize: FONT_SIZE.caption,
                                 fontVariant: ["tabular-nums"],
@@ -404,7 +404,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                               {primarySource()
                                 ? `${platformDisplayName(primarySource()!.platform, isEn())} ${primarySource()!.id}`
                                 : item().problemId}
-                            </Text>
+                            </TruncText>
                             <Text
                               style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                               class="text-muted-foreground"
@@ -414,7 +414,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           </View>
 
                           <If when={item().excerpt.length > 0}>
-                            <Text
+                            <TruncText
                               style={{
                                 fontSize: FONT_SIZE.caption,
                                 lineHeight: LINE_HEIGHT.caption,
@@ -424,7 +424,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                               class="text-secondary-foreground"
                             >
                               {item().excerpt}
-                            </Text>
+                            </TruncText>
                           </If>
 
                           <If when={item().tags.length > 0}>
@@ -486,7 +486,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                                     class="bg-muted"
                                   >
                                     <Icon name="link" size="sm" tone="muted-foreground" />
-                                    <Text
+                                    <TruncText
                                       style={{
                                         fontSize: FONT_SIZE.caption,
                                         fontVariant: ["tabular-nums"],
@@ -498,7 +498,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                                       class="text-secondary-foreground"
                                     >
                                       {`${platformDisplayName(s().platform, isEn())} ${s().id}`}
-                                    </Text>
+                                    </TruncText>
                                   </View>
                                 )}
                               </Each>

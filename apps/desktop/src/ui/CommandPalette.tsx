@@ -6,7 +6,7 @@
 import { cleanup, Clipboard, computed, effect, signal, Text, View } from "nsh";
 import { Command, type CommandEntry, type CommandItem, type CommandRef } from "nsh/base";
 import { t } from "./i18n";
-import { Kbd } from "./kit";
+import { Kbd, TruncText } from "./kit";
 import { Icon, type IconName } from "./Icon";
 import { FilterEmpty } from "./layout";
 import { buildPaletteItems, shortcutForSpace } from "./logic";
@@ -577,13 +577,13 @@ function PaletteBody() {
       renderItem={(entry: CommandEntry) => (
         <View style={{ width: rowWidth(), flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <View style={{ width: 18, alignItems: "center", flexShrink: 0 }}>{lead(entry.id)}</View>
-          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.strong }}>
+          <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.strong }}>
             {entry.label}
-          </Text>
+          </TruncText>
           {meta(entry.id) && (
-            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.strong, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <TruncText style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.strong, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
               {meta(entry.id)!}
-            </Text>
+            </TruncText>
           )}
           {hitOf(entry.id)?.archived && (
             // token-exempt: compact inline badge height

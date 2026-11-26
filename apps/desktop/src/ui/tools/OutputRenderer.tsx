@@ -5,7 +5,7 @@
 import { Canvas, Clipboard, computed, Image, Scroll, Text, View, type JSX } from "nsh";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
-import { Btn } from "../kit";
+import { Btn, TruncText } from "../kit";
 import { openToolPlugin } from "../store";
 import { cardShadow, MONO, SANS, token } from "../theme";
 import { showToast } from "../Toast";
@@ -41,12 +41,12 @@ function BlockCard(props: {
             gap: SPACE[8],
           }}
         >
-          <Text
+          <TruncText
             style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-foreground"
           >
             {props.title ?? ""}
-          </Text>
+          </TruncText>
           {props.actions}
         </View>
       </If>

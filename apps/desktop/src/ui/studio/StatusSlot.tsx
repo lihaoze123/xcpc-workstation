@@ -10,7 +10,7 @@ import { cleanup, Clipboard, Scroll, signal, Text, View } from "nsh";
 import { Popover } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { DelayedSpinner, FOCUS_RING } from "../kit";
+import { DelayedSpinner, FOCUS_RING, TruncText } from "../kit";
 import {
   anchorOrigin,
   colorTransition,
@@ -150,12 +150,12 @@ export function StatusSlot(props: {
           }
         >
           <StatusMark kind={props.model.mark} emphasis="slot" />
-          <Text
+          <TruncText
             style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
             class={props.model.mark === "issues" ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.model.label}
-          </Text>
+          </TruncText>
         </View>
       }
     >

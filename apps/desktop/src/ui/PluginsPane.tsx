@@ -8,7 +8,7 @@ import { Input, Switch } from "nsh/base";
 import type { PluginSummaryJs, PluginsOverviewJs } from "xcpc-workstation/native";
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
-import { Btn, DelayedSpinner, tip } from "./kit";
+import { Btn, DelayedSpinner, tip, TruncText } from "./kit";
 import { Section, SectionEmpty, SectionRow } from "./layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DialogHeader, Modal } from "./Modal";
@@ -154,12 +154,12 @@ function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }
             const val = () => credDrafts()[key] ?? "";
             return (
               <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                <Text
+                <TruncText
                   style={{ fontSize: FONT_SIZE.caption, width: 72, flexShrink: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-secondary-foreground"
                 >
                   {cred().label}
-                </Text>
+                </TruncText>
                 <Input
                   class={INPUT_CLASS}
                   style={{ flex: 1 }}
@@ -373,12 +373,12 @@ function OjAccountRow(props: {
             <PluginBadges plugin={p()} hideBuiltinNetwork />
           </View>
           <If when={desc().length > 0}>
-            <Text
+            <TruncText
               style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-muted-foreground"
             >
               {desc()}
-            </Text>
+            </TruncText>
           </If>
         </View>
 
@@ -439,14 +439,14 @@ function OjAccountRow(props: {
           </View>
           <View style={{ height: 16, justifyContent: "center" }}>
             <If when={!!errorText()}>
-              <Text
+              <TruncText
                 testID={`oj-error-${p().id}`}
                 style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
                 class="text-destructive"
                 tooltip={tip(errorText()!)}
               >
                 {errorText()}
-              </Text>
+              </TruncText>
             </If>
           </View>
         </View>
