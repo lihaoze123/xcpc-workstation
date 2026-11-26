@@ -3,7 +3,8 @@
 // (`static_ui_design_token_guardrail`) so `nsh.json` does not need `capabilities.fs`.
 
 import { describe, expect, test } from "nsh/test";
-import { MONO, SANS } from "./theme";
+import { FOCUS_RING } from "./kit";
+import { MONO, SANS, setWindowActiveForTest, windowActive } from "./theme";
 import {
   CONTROL,
   FONT_SIZE,
@@ -211,5 +212,21 @@ describe("Token guardrail scanner (§2.4)", () => {
     expect(rules).toContain("raw-icon-size");
     expect(rules).toContain("raw-icon-stroke");
     expect(rules).toContain("token-exempt-empty-reason");
+  });
+});
+
+describe("State completeness primitives (Phase 6F)", () => {
+  test("windowActive defaults active and reacts to focus/blur override", () => {
+    setWindowActiveForTest(undefined);
+    expect(windowActive()).toBe(true);
+    setWindowActiveForTest(false);
+    expect(windowActive()).toBe(false);
+    setWindowActiveForTest(true);
+    expect(windowActive()).toBe(true);
+    setWindowActiveForTest(undefined);
+  });
+
+  test("FOCUS_RING uses zero-layout-shift 1px inset ring", () => {
+    expect(FOCUS_RING).toBe("focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring");
   });
 });

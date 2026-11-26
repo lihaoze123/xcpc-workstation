@@ -5,7 +5,7 @@
 import { cleanup, effect, keymap, signal, Text, View, type JSX, type ViewStyle, type TextStyle, type StyleProp } from "nsh";
 import { Tooltip } from "nsh/base";
 import { colorTransition, indicatorTransition, pressActiveStyle, pressTransition } from "./motion";
-import { cardShadow, EASE_STANDARD, ms, popoverShadow, tierColor, tierSoft } from "./theme";
+import { cardShadow, EASE_STANDARD, ms, popoverShadow, tierColor, tierSoft, windowActive } from "./theme";
 import { ratingTier } from "./logic";
 import { Icon, type IconName, type IconSize, type IconTone } from "./Icon";
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, inner, RADIUS, SPACE, type ControlSize } from "./tokens";
@@ -69,7 +69,7 @@ export function tip(label: string, keys?: string, side?: TooltipSide): JSX.Eleme
 
 type Variant = "primary" | "outline" | "ghost" | "danger";
 
-const FOCUS_RING = "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+export const FOCUS_RING = "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 const VARIANT: Record<Variant, { box: string; disabledBox: string; text: string }> = {
   primary: {
@@ -313,7 +313,7 @@ export function Segmented<T extends string>(props: {
           transform: `translateX(${index() * w}px)`,
           ...indicatorTransition(),
         }}
-        class={props.underline ? "bg-primary" : "bg-card"}
+        class={props.underline ? (windowActive() ? "bg-primary" : "bg-muted-foreground") : "bg-card"}
       />
       <Each of={props.items} key={(i) => i.value}>
         {(item) => {

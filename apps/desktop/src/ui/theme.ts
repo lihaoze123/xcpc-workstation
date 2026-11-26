@@ -1,4 +1,4 @@
-import { batch, colorScheme, computed, reduceMotion, setColorScheme, setTheme, signal, token } from "nsh";
+import { batch, colorScheme, computed, lifecycle, reduceMotion, setColorScheme, setTheme, signal, token } from "nsh";
 export { token };
 
 // The design tokens of docs/design-system.md §3 on shadcn's names, which the classes
@@ -76,6 +76,25 @@ export const EDITOR_MONO = "'JetBrains Mono', 'Noto Sans Mono CJK SC', 'Source H
 
 /** Recorded UI font registration status, updated at startup before first mount (Phase 6E §4). */
 export const uiFontSource = signal<string>("system fallback");
+
+/** Test-only override for `windowActive()` (`undefined` follows NSH's reactive `lifecycle()`). */
+const windowActiveOverride = signal<boolean | undefined>(undefined);
+
+/** Whether the application window is currently active/focused (`lifecycle() === "active"`, Phase 6F §2). */
+export const windowActive = computed<boolean>(() => {
+  const override = windowActiveOverride();
+  if (override !== undefined) return override;
+  try {
+    return lifecycle() === "active";
+  } catch {
+    return true;
+  }
+});
+
+/** @internal Test helper to simulate window focus / blur in headless tests. */
+export function setWindowActiveForTest(active: boolean | undefined): void {
+  windowActiveOverride.set(active);
+}
 
 setTheme({
   cssVars: {
