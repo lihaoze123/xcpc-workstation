@@ -8,6 +8,7 @@ edit_uri = "edit/main/website/docs/"
 copyright = "Copyright &copy; 2026 XCPC Workstation · Apache-2.0 License"
 
 extra_css = ["stylesheets/extra.css"]
+extra_javascript = ["javascripts/lang-switch.js"]
 
 nav = [
   { "首页" = "index.md" },
@@ -104,6 +105,16 @@ media = "(prefers-color-scheme: dark)"
 scheme = "slate"
 toggle.icon = "lucide/moon"
 toggle.name = "跟随系统主题"
+
+[[project.extra.alternate]]
+name = "简体中文"
+link = "/xcpc-workstation/"
+lang = "zh"
+
+[[project.extra.alternate]]
+name = "English"
+link = "/xcpc-workstation/en/"
+lang = "en"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"

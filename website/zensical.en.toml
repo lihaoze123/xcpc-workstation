@@ -1,0 +1,155 @@
+[project]
+site_name = "XCPC Workstation"
+site_description = "A local-first personal XCPC workstation: open-directory problem library, Typst PDF publishing, problem authoring & export, algorithm snippets & Team Reference Documents (TRD), training dashboard, sandboxed plugins, and native MCP."
+site_url = "https://lihaoze123.github.io/xcpc-workstation/en/"
+repo_url = "https://github.com/lihaoze123/xcpc-workstation"
+repo_name = "lihaoze123/xcpc-workstation"
+edit_uri = "edit/main/website/docs-en/"
+copyright = "Copyright &copy; 2026 XCPC Workstation · Apache-2.0 License"
+docs_dir = "docs-en"
+site_dir = "site/en"
+
+extra_css = ["stylesheets/extra.css"]
+extra_javascript = ["javascripts/lang-switch.js"]
+
+nav = [
+  { "Home" = "index.md" },
+  { "Getting Started" = [
+    "getting-started/index.md",
+    { "Installation" = "getting-started/installation.md" },
+    { "Quickstart" = "getting-started/quickstart.md" },
+    { "Fonts" = "getting-started/fonts.md" },
+  ] },
+  { "Library & Publishing" = [
+    { "Workspace & Open Directory" = "publishing/workspace.md" },
+    { "Library & Search" = "publishing/library.md" },
+    { "Publishing Studio" = "publishing/studio.md" },
+    { "Templates & Themes" = "publishing/templates.md" },
+    { "Contests & Snapshots" = "publishing/contests.md" },
+  ] },
+  { "Problem Authoring & Export" = [
+    "problem-build/index.md",
+    { "Traditional & Strict Verification" = "problem-build/traditional.md" },
+    { "Interactive, Communication & OI Subtasks" = "problem-build/interactive-and-oi.md" },
+    { "Package Import & Export" = "problem-build/import-export.md" },
+  ] },
+  { "Snippets & TRD" = [
+    "templates-trd/index.md",
+    { "Algorithm Snippets & Bundler" = "templates-trd/snippets.md" },
+    { "Three-Source Verification" = "templates-trd/verification.md" },
+    { "Team Reference Document (TRD)" = "templates-trd/trd.md" },
+  ] },
+  { "Training Dashboard" = [
+    "training/index.md",
+    { "Views & Manual Logs" = "training/dashboard.md" },
+  ] },
+  { "CLI & AI Agent" = [
+    { "CLI Reference" = "cli-mcp/cli.md" },
+    { "MCP Server" = "cli-mcp/mcp.md" },
+    { "Official AI Skills" = "cli-mcp/skills.md" },
+  ] },
+  { "Plugins" = [
+    "plugins/index.md",
+    { "Security & Trust Gate" = "plugins/security.md" },
+    { "Plugin Development" = "plugins/development.md" },
+  ] },
+  { "Reference" = [
+    { "Configuration Files" = "reference/workspace-files.md" },
+    { "Keyboard Shortcuts" = "reference/shortcuts.md" },
+    { "Diagnostics & Accessibility" = "reference/diagnostics.md" },
+    { "FAQ & Troubleshooting" = "reference/faq.md" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+language = "en"
+logo = "assets/logo.png"
+favicon = "assets/logo.png"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  "content.footnote.tooltips",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Follow system theme"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Follow system theme"
+
+[[project.extra.alternate]]
+name = "简体中文"
+link = "/xcpc-workstation/"
+lang = "zh"
+
+[[project.extra.alternate]]
+name = "English"
+link = "/xcpc-workstation/en/"
+lang = "en"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/lihaoze123/xcpc-workstation"
+name = "GitHub Repository"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.arithmatex.generic = true
+pymdownx.betterem = {}
+pymdownx.caret = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.magiclink = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tabbed.combine_header_slug = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}

@@ -37,9 +37,11 @@ jobs:
       - name: Install Zensical
         run: pip install --upgrade zensical
 
-      - name: Build site
+      - name: Build site (ZH + EN)
         working-directory: website
-        run: zensical build --clean
+        run: |
+          zensical build --clean
+          zensical build -f zensical.en.toml
 
       - name: Upload GitHub Pages artifact
         if: github.event_name != 'pull_request'
