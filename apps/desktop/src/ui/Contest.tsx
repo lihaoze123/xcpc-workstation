@@ -12,7 +12,7 @@ import { diffKind, TIER_RANGES } from "./logic";
 import { MONO, tierColor, type Tier } from "./theme";
 import { activeRevision, errorOf, info, preview, refresh, unfreezeFor, type UiError } from "./store";
 
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE, TYPE } from "./tokens";
 const TIER_RANGE_LABEL: Record<string, string> = Object.fromEntries(
   TIER_RANGES.map((r) => [r.tier, r.label]),
 );
@@ -22,7 +22,7 @@ function tierLabel(tier: string): string {
   return TIER_RANGE_LABEL[tier] ?? tier;
 }
 
-/** The 8-tier distribution as one bar with its legend, and the tags by count. */
+/** The 8-tier distribution as one 6pt bar with its compact legend (and tags in studio compact mode). */
 export function ContestStats(props: { id: string; compact?: boolean; active?: boolean }) {
   const rev = activeRevision(() => props.active ?? true);
   const stats = computed(() => {
@@ -34,14 +34,9 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
   );
   const hasRatedProblems = () => ratedBuckets().length > 0;
   const ratedTotal = () => Math.max(1, ratedBuckets().reduce((sum, b) => sum + b.count, 0));
-  const label = (text: string) => (
-    <Text style={{ width: 56, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
-      {text}
-    </Text>
-  );
   const bar = (
-    <View style={props.compact ? { gap: SPACE[8], minWidth: 0 } : { gap: SPACE[8], flex: 1, minWidth: 0 }}>
-      <View style={{ height: 8, flexDirection: "row", borderRadius: RADIUS.xs, overflow: "hidden", gap: SPACE[2] }} class="bg-muted">
+    <View style={{ gap: SPACE[8], minWidth: 0 }}>
+      <View style={{ height: SPACE[6], flexDirection: "row", borderRadius: RADIUS.xs, overflow: "hidden", gap: SPACE[2] }} class="bg-muted">
         <Each of={ratedBuckets()} key={(b) => b.tier}>
           {(b) => <View style={{ flexGrow: b().count / ratedTotal(), flexBasis: 0, backgroundColor: tierColor(b().tier as Tier) }} />}
         </Each>
@@ -53,14 +48,13 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
               tooltip={props.compact ? tip(tierLabel(b().tier)) : undefined}
               style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}
             >
-              {/* token-exempt: 7px chart legend swatch radius */}
-              <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: tierColor(b().tier as Tier) }} />
+              <View style={{ width: SPACE[6], height: SPACE[6], borderRadius: RADIUS.full, backgroundColor: tierColor(b().tier as Tier) }} />
               <If when={!props.compact}>
-                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                <Text style={{ ...TYPE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                   {tierLabel(b().tier)}
                 </Text>
               </If>
-              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], fontWeight: FONT_WEIGHT.semibold }}>
+              <Text style={{ ...TYPE.caption, fontVariant: ["tabular-nums"], fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("contests.problemCount", { count: b().count })}
               </Text>
             </View>
@@ -69,20 +63,14 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
       </View>
     </View>
   );
-  const tags = (
-    <View
-      style={
-        props.compact
-          ? { flexDirection: "row", flexWrap: "wrap", gap: SPACE[4], minWidth: 0 }
-          : { flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }
-      }
-    >
-      <Each of={stats().tagCounts.slice(0, props.compact ? 8 : 24)} key={(t) => t.tag}>
-        {(t) => <Chip label={`${t().tag} ${t().count}`} />}
-      </Each>
-    </View>
-  );
   if (props.compact) {
+    const tags = (
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4], minWidth: 0 }}>
+        <Each of={stats().tagCounts.slice(0, 8)} key={(t) => t.tag}>
+          {(t) => <Chip label={`${t().tag} ${t().count}`} />}
+        </Each>
+      </View>
+    );
     return (
       <If when={hasRatedProblems() || stats().tagCounts.length > 0}>
         <View style={{ gap: SPACE[8] }}>
@@ -92,24 +80,7 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
       </If>
     );
   }
-  return (
-    <If when={hasRatedProblems() || stats().tagCounts.length > 0}>
-      <View style={{ gap: SPACE[12] }}>
-        <If when={hasRatedProblems()}>
-          <View style={{ flexDirection: "row", gap: SPACE[12] }}>
-            {label(t("contests.stats.difficulty"))}
-            {bar}
-          </View>
-        </If>
-        <If when={stats().tagCounts.length > 0}>
-          <View style={{ flexDirection: "row", gap: SPACE[12] }}>
-            {label(t("contests.stats.tags"))}
-            {tags}
-          </View>
-        </If>
-      </View>
-    </If>
-  );
+  return <If when={hasRatedProblems()}>{bar}</If>;
 }
 
 /** Freezing a contest: in flight, delayed visibility (>=150 ms), and what stopped it (preflight findings, a rule). */

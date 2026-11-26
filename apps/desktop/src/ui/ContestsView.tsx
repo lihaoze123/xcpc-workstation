@@ -6,15 +6,15 @@
 import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef, type ViewRef } from "nsh";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { WorkspaceContest } from "xcpc-workstation/native";
-import { Btn, DelayedSpinner, Lock, RatingBadge, tip } from "./kit";
+import { Btn, DelayedSpinner, RatingBadge, tip } from "./kit";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger } from "./Menu";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ContestStats, createFreeze, freezeBlockedCopy } from "./Contest";
 import { DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "./layout";
-import { partitionContests } from "./logic";
-import { EASE_STANDARD, ms } from "./theme";
+import { labels, moveItem, partitionContests } from "./logic";
+import { EASE_STANDARD, MONO, ms, popoverShadow } from "./theme";
 import {
   activeRevision,
   archivedExpanded,
@@ -31,10 +31,11 @@ import {
   workspaceVersion,
   type UiError,
 } from "./store";
+import { createReorder } from "./studio/reorder";
 import { StatusMark } from "./studio/StatusSlot";
 import { markForPackageStatus } from "./studio/statusLogic";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE, TOOLBAR } from "./tokens";
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE, TOOLBAR, TYPE } from "./tokens";
 const ROW_STRIDE = 54; // 52pt row + 2pt gap
 
 function toggleContestArchive(
@@ -60,7 +61,17 @@ function toggleContestArchive(
 }
 
 export function ContestsView(props: { active: boolean }) {
+  const rev = activeRevision(() => props.active);
   const contests = () => info().contests;
+  const contestDates = computed(() => {
+    void rev();
+    const map = new Map<string, string>();
+    for (const c of contests()) {
+      const date = preview.contestDetail(c.id).date?.trim();
+      if (date) map.set(c.id, date);
+    }
+    return map;
+  });
   const split = computed(() => partitionContests(contests()));
   const activeContests = () => split().active;
   const archivedContests = () => split().archived;
@@ -156,6 +167,8 @@ export function ContestsView(props: { active: boolean }) {
 
   const renderContestRow = (c: () => WorkspaceContest, muted = false) => {
     const selected = () => c().id === selectedContest();
+    const date = () => contestDates().get(c().id);
+    const hasSecondLine = () => Boolean(date()) || c().frozen;
     return (
       <View
         testID={`contest-${c().id}`}
@@ -208,19 +221,22 @@ export function ContestsView(props: { active: boolean }) {
         }}
       >
         <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
-          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }}>{c().name}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {t("contests.problemCount", { count: c().items.length })}
-            </Text>
-            <If when={c().frozen}>
-              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
-                {t("contests.finalized")}
-              </Text>
-            </If>
-          </View>
+          <Text style={{ ...TYPE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+            {c().name}
+          </Text>
+          <If when={hasSecondLine()}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+              <If when={Boolean(date())}>
+                <Text style={{ ...TYPE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  {date()}
+                </Text>
+              </If>
+              <If when={c().frozen}>
+                <Icon name="lock" size="sm" tone="muted-foreground" />
+              </If>
+            </View>
+          </If>
         </View>
-        <Lock closed={c().frozen} size="sm" />
       </View>
     );
   };
@@ -380,16 +396,62 @@ function ContestPanel(props: { id: string; active: boolean }) {
   });
   const f = createFreeze();
   const actionError = signal<UiError | undefined>(undefined);
+  const pendingOrder = signal<string[] | undefined>(undefined);
+  const hoveredId = signal<string | undefined>(undefined);
   const open = (label?: string) => openStudio({ target: "contest", id: props.id, label });
   const readOnly = () => info().readOnly;
   const viewOnly = () => detail().frozen || detail().archived || readOnly();
 
-  // Clear stale freeze/action errors whenever switching contests or workspaces.
+  // Clear stale freeze/action errors and pending drag order whenever switching contests or workspaces.
   effect(() => {
     void props.id;
     void workspaceVersion();
     f.reset();
     actionError.set(undefined);
+    pendingOrder.set(undefined);
+    hoveredId.set(undefined);
+  });
+
+  effect(() => {
+    const p = pendingOrder();
+    if (p && detail().items.map((i) => i.id).join() === p.join()) {
+      queueMicrotask(() => pendingOrder.set(undefined));
+    }
+  });
+
+  const items = computed(() => {
+    const base = detail().items;
+    const p = pendingOrder();
+    const ordered = p ? p.map((id) => base.find((i) => i.id === id)).filter((x) => x !== undefined) : base;
+    const ls = labels(ordered.length);
+    return ordered.map((item, i) => ({ item, label: ls[i] }));
+  });
+
+  const hasRated = computed(() => items().some((x) => x.item.rating != null));
+  const canDrag = () => !viewOnly() && items().length > 1;
+  const metaItems = computed(() =>
+    [detail().language === "english" ? "English" : "中文", detail().date?.trim() ?? "", detail().location?.trim() ?? ""].filter(Boolean),
+  );
+
+  const reorder = createReorder((from, to) => {
+    const ids = moveItem(
+      items().map((x) => x.item.id),
+      from,
+      to,
+    );
+    pendingOrder.set(ids);
+    const res = preview.composeContest(props.id, ids);
+    if (!res.ok) {
+      pendingOrder.set(undefined);
+      actionError.set(errorOf(res, t("ctx.reorderContest")));
+      return;
+    }
+    actionError.set(undefined);
+    refresh();
+  });
+
+  effect(() => {
+    reorder.prune(items().length);
   });
 
   const reveal = async () => {
@@ -407,35 +469,22 @@ function ContestPanel(props: { id: string; active: boolean }) {
           detail().frozen || detail().archived ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
               <If when={detail().frozen}>
-                {/* token-exempt: compact status badge height */}
-                <View style={{ height: 22, paddingLeft: SPACE[6], paddingRight: SPACE[8], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center", gap: SPACE[4] }} class="bg-muted">
+                <View style={{ height: CONTROL.sm, paddingLeft: SPACE[6], paddingRight: SPACE[8], borderRadius: RADIUS.xs, flexDirection: "row", alignItems: "center", gap: SPACE[4] }} class="bg-muted">
                   <Icon name="lock" size="sm" />
-                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
+                  <Text style={TYPE.caption} class="text-secondary-foreground">
                     {t("contests.finalized")}
                   </Text>
                 </View>
               </If>
               <If when={detail().archived}>
-                {/* token-exempt: compact status badge height */}
-                <View style={{ height: 22, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center" }} class="bg-muted">
-                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
+                <View style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, flexDirection: "row", alignItems: "center" }} class="bg-muted">
+                  <Text style={TYPE.caption} class="text-secondary-foreground">
                     {t("contests.archived")}
                   </Text>
                 </View>
               </If>
             </View>
           ) : undefined
-        }
-        second={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[16] }}>
-            <Each of={[detail().language === "english" ? "English" : "中文", detail().date ?? "", detail().location ?? ""].filter(Boolean)} key="index">
-              {(t) => (
-                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                  {t()}
-                </Text>
-              )}
-            </Each>
-          </View>
         }
         actions={
           <>
@@ -524,7 +573,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
         }
       />
       <If when={f.error() || actionError()}>
-        <View style={{ paddingLeft: GUTTER, paddingRight: GUTTER, paddingBottom: SPACE[12] }}>
+        <View style={{ paddingLeft: GUTTER, paddingRight: GUTTER, paddingTop: SPACE[12] }}>
           <ErrorDisplay
             error={f.error() ? { ...f.error()!, context: undefined } : actionError()}
             onDismiss={() => {
@@ -601,85 +650,148 @@ function ContestPanel(props: { id: string; active: boolean }) {
           />
         }
       >
-        <Scroll smoothWheel style={{ flex: 1 }}>
-          <View style={{ paddingTop: SPACE[16], paddingLeft: GUTTER, paddingRight: GUTTER, paddingBottom: SPACE[24], gap: SPACE[20] }}>
-            <View style={{ gap: SPACE[8] }}>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
-                <Text style={{ fontSize: FONT_SIZE.strong, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                  {t("contests.section.problems")}
-                </Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                    {t("contests.problemCount", { count: detail().items.length })}
-                  </Text>
-                  <If when={!viewOnly()}>
-                    <Btn
-                      label={t("contests.pickProblemsShort")}
-                      icon="listPlus"
-                      size="sm"
-                      onPress={() => dialog.set({ kind: "pickProblems", contestId: props.id })}
-                      testID="contest-pick-problems"
-                    />
-                  </If>
-                </View>
+        <Scroll
+          smoothWheel
+          style={{ flex: 1 }}
+          onMouseMove={(e) => reorder.move(e)}
+          onMouseUp={(e) => reorder.end(e)}
+          onMouseLeave={(e) => {
+            reorder.leave(e);
+            hoveredId.set(undefined);
+          }}
+        >
+          <View style={{ paddingTop: SPACE[12], paddingLeft: GUTTER, paddingRight: GUTTER, paddingBottom: SPACE[24], gap: SPACE[16] }}>
+            <If when={metaItems().length > 0}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12], paddingLeft: SPACE[8] }}>
+                <Each of={metaItems()} key="index">
+                  {(meta) => (
+                    <Text style={{ ...TYPE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                      {meta()}
+                    </Text>
+                  )}
+                </Each>
               </View>
-              <View>
-                <View style={{ height: CONTROL.lg, paddingLeft: SPACE[12], paddingRight: SPACE[12], flexDirection: "row", alignItems: "center", gap: SPACE[12], borderBottomWidth: 1 }} class="border-border">
-                  <Text style={{ width: 28, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("contests.col.label")}</Text>
-                  <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("contests.col.title")}</Text>
-                  <Text style={{ width: 110, fontSize: FONT_SIZE.caption, textAlign: "right" }} class="text-muted-foreground">{t("contests.col.limits")}</Text>
-                  <Text style={{ width: 44, fontSize: FONT_SIZE.caption, textAlign: "right" }} class="text-muted-foreground">{t("contests.col.rating")}</Text>
-                </View>
-                <Each of={detail().items} key={(i) => i.label}>
-                  {(item, n) => (
+            </If>
+            <View ref={(v) => reorder.container(v)}>
+              <Each of={items()} key={(x) => x.item.id}>
+                {(x, index) => {
+                  const dragging = () => reorder.drag()?.from === index();
+                  const showHandle = () => canDrag() && (hoveredId() === x().item.id || dragging());
+                  return (
                     <View
-                      onPress={item().missing ? undefined : () => open(item().label)}
-                      tooltip={item().missing ? tip(t("contests.missingProblemTooltip")) : undefined}
-                      class={item().missing ? "border-border" : "hover:bg-muted active:bg-accent border-border"}
+                      ref={(v) => reorder.row(index(), v)}
+                      onMouseEnter={() => hoveredId.set(x().item.id)}
+                      onMouseLeave={() => {
+                        if (hoveredId() === x().item.id) hoveredId.set(undefined);
+                      }}
+                      onPressDown={(e) => canDrag() && reorder.pressDown(index(), e, items().length)}
+                      onPress={() => reorder.clicked() && !x().item.missing && open(x().label)}
+                      tooltip={x().item.missing ? tip(t("contests.missingProblemTooltip")) : undefined}
+                      class={
+                        dragging()
+                          ? "bg-card border border-border"
+                          : x().item.missing
+                            ? "border-border"
+                            : "hover:bg-muted active:bg-accent border-border"
+                      }
                       style={{
                         height: ROW.list,
-                        paddingLeft: SPACE[12],
+                        paddingLeft: SPACE[8],
                         paddingRight: SPACE[12],
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: SPACE[12],
-                        borderTopWidth: n() === 0 ? 0 : 1,
-                        opacity: item().missing ? 0.65 : 1,
+                        gap: SPACE[8],
+                        borderTopWidth: index() === 0 || dragging() ? 0 : 1,
+                        borderRadius: dragging() ? RADIUS.sm : RADIUS.none,
+                        zIndex: dragging() ? 2 : 0,
+                        transform: dragging() ? `translateY(${reorder.offset()}px)` : "none",
+                        boxShadow: dragging() ? popoverShadow() : "none",
+                        cursor: canDrag() ? (dragging() ? "grabbing" : "grab") : "default",
+                        opacity: x().item.missing ? 0.65 : 1,
                         transitionProperty: "colors",
                         transitionDuration: ms(120),
                         transitionTimingFunction: EASE_STANDARD,
                       }}
                     >
-                      <Text style={{ width: 28, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">{item().label}</Text>
-                      <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }} class={item().missing ? "text-destructive" : "text-foreground"}>
-                        {item().missing ? t("contests.missingSuffix", { title: item().title }) : item().title}
+                      <View
+                        style={{
+                          width: 16,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          opacity: showHandle() ? 1 : 0,
+                          transitionProperty: "opacity",
+                          transitionDuration: ms(120),
+                          transitionTimingFunction: EASE_STANDARD,
+                        }}
+                      >
+                        <Icon name="gripVertical" size="sm" tone="muted-foreground" />
+                      </View>
+                      <Text
+                        style={{ width: 28, ...TYPE.strong, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                        class="text-foreground"
+                      >
+                        {x().label}
+                      </Text>
+                      <Text
+                        style={{ ...TYPE.body, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        class={x().item.missing ? "text-destructive" : "text-foreground"}
+                      >
+                        {x().item.missing ? t("contests.missingSuffix", { title: x().item.title }) : x().item.title}
                       </Text>
                       <View
                         tooltip={
-                          item().packageStatus && item().packageStatus !== "verified_fresh"
-                            ? tip(item().packageStatus === "failed" ? t("library.package.failed") : t("library.package.unverified"))
+                          x().item.packageStatus && x().item.packageStatus !== "verified_fresh"
+                            ? tip(x().item.packageStatus === "failed" ? t("library.package.failed") : t("library.package.unverified"))
                             : undefined
                         }
                       >
-                        <StatusMark kind={markForPackageStatus(item().packageStatus)} />
+                        <StatusMark kind={markForPackageStatus(x().item.packageStatus)} />
                       </View>
-                      <Text style={{ width: 110, fontSize: FONT_SIZE.caption, textAlign: "right", fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
-                        {[item().limits.time, item().limits.memory].filter(Boolean).join(" / ")}
+                      <Text
+                        style={{ width: 110, ...TYPE.caption, textAlign: "right", fontVariant: ["tabular-nums"] }}
+                        class="text-secondary-foreground"
+                      >
+                        {[x().item.limits.time, x().item.limits.memory].filter(Boolean).join(" / ")}
                       </Text>
-                      <View style={{ width: 44, alignItems: "flex-end" }}>
-                        <RatingBadge rating={item().rating} />
-                      </View>
+                      <If when={hasRated()}>
+                        <View style={{ width: 44, alignItems: "flex-end" }}>
+                          <RatingBadge rating={x().item.rating} />
+                        </View>
+                      </If>
                     </View>
-                  )}
-                </Each>
-              </View>
+                  );
+                }}
+              </Each>
+              <If when={reorder.line() !== undefined}>
+                {/* token-exempt: 2px drag-drop insertion line */}
+                <View style={{ position: "absolute", left: 8, right: 8, top: reorder.line()!, height: 2, borderRadius: 1 }} class="bg-primary" />
+              </If>
+              <If when={!viewOnly()}>
+                <View
+                  testID="contest-pick-problems"
+                  onPress={() => dialog.set({ kind: "pickProblems", contestId: props.id })}
+                  class="hover:bg-muted active:bg-accent border-border"
+                  style={{
+                    height: ROW.list,
+                    paddingLeft: SPACE[32],
+                    paddingRight: SPACE[12],
+                    borderTopWidth: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: SPACE[8],
+                    transitionProperty: "colors",
+                    transitionDuration: ms(120),
+                    transitionTimingFunction: EASE_STANDARD,
+                  }}
+                >
+                  <Icon name="plus" size="sm" tone="muted-foreground" />
+                  <Text style={TYPE.body} class="text-muted-foreground">
+                    {t("contests.pickProblems")}
+                  </Text>
+                </View>
+              </If>
             </View>
-            <View style={{ paddingTop: SPACE[16], borderTopWidth: 1, gap: SPACE[8] }} class="border-border">
-              <Text style={{ fontSize: FONT_SIZE.strong, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                {t("contests.section.overview")}
-              </Text>
-              <ContestStats id={props.id} active={props.active} />
-            </View>
+            <ContestStats id={props.id} active={props.active} />
           </View>
         </Scroll>
       </If>
