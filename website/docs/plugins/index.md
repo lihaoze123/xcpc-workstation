@@ -107,4 +107,4 @@ xcpc tool run my-calc:powmod --input-json '{"a":2,"b":10,"m":998244353}' --json
 ## 延伸阅读
 
 - [安全边界与信任门控](./security.md)：了解 `pending_trust` 信任门、QuickJS 沙箱、三层 WebView 隔离与防逃逸校验。
-- [插件开发指南](./development.md)：使用 `@xcpc/plugin-sdk`、`xcpc plugin init` 与热重载工作流开发并发布自己的插件。
+- [插件开发指南](./development.md)：使用 `@xcpc-workstation/plugin-sdk`、`xcpc plugin init` 与热重载工作流开发并发布自己的插件。

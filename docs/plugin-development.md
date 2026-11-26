@@ -1,6 +1,6 @@
 # 插件开发指南（Plugin Development Guide）
 
-本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.6.0-beta.2` 与 `@xcpc/plugin-sdk` `v0.2.0`）。
+本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.6.0-beta.2` 与 `@xcpc-workstation/plugin-sdk` `v0.2.0`）。
 
 > **防漂移约定**：本文档只阐述架构模型、安全边界、开发工作流与最小可运行示例，**不复制**详尽的字段表与方法签名。所有权威 API 契约与清单字段以仓内类型定义和 Schema 为准：
 > - QuickJS 宿主 API 与插件导出契约：[packages/plugin-sdk/host.d.ts](../packages/plugin-sdk/host.d.ts)
@@ -69,7 +69,7 @@
 
 ### 2.3 QuickJS 沙箱、仓库协议与软链防护
 
-- **QuickJS 沙箱**：`index.js` 环境中没有 Node 内置模块（`fs`/`http`/`child_process` 等），也没有浏览器 DOM（`window`/`document`/`localStorage`/`XMLHttpRequest`）；使用 `@xcpc/plugin-sdk/vite` 时会在编译期拦截上述禁用导入与全局引用。
+- **QuickJS 沙箱**：`index.js` 环境中没有 Node 内置模块（`fs`/`http`/`child_process` 等），也没有浏览器 DOM（`window`/`document`/`localStorage`/`XMLHttpRequest`）；使用 `@xcpc-workstation/plugin-sdk/vite` 时会在编译期拦截上述禁用导入与全局引用。
 - **仓库源与下载校验**：插件仓库 URL 强制 **HTTPS**（仅豁免本地回环地址 `127.0.0.1` / `localhost` / `::1`），且重定向逐跳校验 HTTPS；安装包下载强制校验 SHA-256 与防 Zip Slip 路径穿越。
 - **开发软链隔离**：`xcpc plugin link <dir>` 仅放行登记在 `plugin_links.json` 中的顶层插件目录，目录内部任何试图逃逸出插件根的符号链接均会被拒绝（`SYMLINK_ESCAPE`）。
 
@@ -77,12 +77,12 @@
 
 ## 3. 开发工作流
 
-### 3.1 安装 `@xcpc/plugin-sdk`
+### 3.1 安装 `@xcpc-workstation/plugin-sdk`
 
-`@xcpc/plugin-sdk` 随官方插件仓库 `xcpc-plugins` 的 `official-latest` Release 以 tarball 形式发布，无需依赖公共 npm 仓库：
+`@xcpc-workstation/plugin-sdk` 已发布至 npm，直接安装为开发依赖即可：
 
 ```bash
-npm install -D https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/xcpc-plugin-sdk.tgz
+npm install -D @xcpc-workstation/plugin-sdk
 ```
 
 使用 `xcpc plugin init --vite` 创建项目时，上述依赖会自动写入 `package.json`。
@@ -98,14 +98,14 @@ xcpc plugin init ./my-tool
 # 免构建 OJ 插件（生成 manifest.toml + index.js）
 xcpc plugin init ./my-oj --kind oj
 
-# 2. Vite + TypeScript 轨道（自动配置 @xcpc/plugin-sdk/vite 单文件打包）
+# 2. Vite + TypeScript 轨道（自动配置 @xcpc-workstation/plugin-sdk/vite 单文件打包）
 xcpc plugin init ./my-tool --kind tool --vite
 cd ./my-tool
 npm install
 npm run build
 ```
 
-> 在编辑器中为 `manifest.toml` 首行保留 `# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json`（或配合 Taplo 配置），即可获得自动补全与静态校验。
+> 在编辑器中为 `manifest.toml` 首行保留 `# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json`（或配合 Taplo 配置），即可获得自动补全与静态校验。
 
 ### 3.3 本地联调与按插件热重载（`link` / `test` / `watch`）
 
@@ -234,15 +234,15 @@ export function runTool(toolId, inputs) {
 }
 ```
 
-### 4.2 纯 Web `<WebView>` 工具（Vite + `@xcpc/plugin-sdk`）
+### 4.2 纯 Web `<WebView>` 工具（Vite + `@xcpc-workstation/plugin-sdk`）
 
-演示 `window.xcpc`（通过 `getXcpc()` 获取）的 `storage`、主题同步、`toast` 与文件导出，以及 `@xcpc/plugin-sdk/vite` 单文件打包配置。
+演示 `window.xcpc`（通过 `getXcpc()` 获取）的 `storage`、主题同步、`toast` 与文件导出，以及 `@xcpc-workstation/plugin-sdk/vite` 单文件打包配置。
 
 `vite.config.ts`：
 
 ```ts
 import { defineConfig } from "vite";
-import { xcpcPlugin } from "@xcpc/plugin-sdk/vite";
+import { xcpcPlugin } from "@xcpc-workstation/plugin-sdk/vite";
 
 export default defineConfig({
   plugins: [xcpcPlugin()],
@@ -288,7 +288,7 @@ name = "字数统计"
 `src/main.ts`：
 
 ```ts
-import { getXcpc } from "@xcpc/plugin-sdk/ui";
+import { getXcpc } from "@xcpc-workstation/plugin-sdk/ui";
 
 const xcpc = getXcpc();
 const root = document.getElementById("app")!;

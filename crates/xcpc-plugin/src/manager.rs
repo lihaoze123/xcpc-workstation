@@ -22,7 +22,8 @@ pub const OFFICIAL_PLUGIN_REPO_URL: &str =
     "https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/index.json";
 pub const LEGACY_OFFICIAL_PLUGIN_REPO_URL: &str =
     "https://raw.githubusercontent.com/lihaoze123/xcpc-plugins/main/index.json";
-pub const OFFICIAL_PLUGIN_SDK_TARBALL_URL: &str = "https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/xcpc-plugin-sdk.tgz";
+pub const OFFICIAL_PLUGIN_SDK_PACKAGE: &str = "@xcpc-workstation/plugin-sdk";
+pub const OFFICIAL_PLUGIN_SDK_VERSION: &str = "^0.2.0";
 pub const OFFICIAL_PLUGIN_REPO_NAME: &str = "XCPC Official";
 pub const OFFICIAL_PLUGIN_REPO_ENV: &str = "XCPC_OFFICIAL_PLUGIN_REPO";
 
@@ -1708,7 +1709,7 @@ fn title_case_id(id: &str) -> String {
     }
 }
 
-/// Scaffolds a Vite + TypeScript WebView plugin project using `@xcpc/plugin-sdk`.
+/// Scaffolds a Vite + TypeScript WebView plugin project using `@xcpc-workstation/plugin-sdk`.
 pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     std::fs::create_dir_all(dir.join("src"))?;
     let id = derive_scaffold_id(dir);
@@ -1726,7 +1727,7 @@ pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     "typecheck": "tsc --noEmit"
   }},
   "devDependencies": {{
-    "@xcpc/plugin-sdk": "{OFFICIAL_PLUGIN_SDK_TARBALL_URL}",
+    "{OFFICIAL_PLUGIN_SDK_PACKAGE}": "{OFFICIAL_PLUGIN_SDK_VERSION}",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
   }}
@@ -1735,7 +1736,7 @@ pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     );
 
     let vite_config_ts = r#"import { defineConfig } from "vite";
-import { xcpcPlugin } from "@xcpc/plugin-sdk/vite";
+import { xcpcPlugin } from "@xcpc-workstation/plugin-sdk/vite";
 
 export default defineConfig({
   plugins: [xcpcPlugin()],
@@ -1761,7 +1762,7 @@ export default defineConfig({
     let (manifest_toml, index_ts, web_files) = match kind {
         ScaffoldKind::Oj => (
             format!(
-                r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
+                r#"# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json
 id = "{id}"
 name = "{display_name}"
 version = "0.1.0"
@@ -1774,7 +1775,7 @@ domains = ["example.com"]
 workspace_read = false
 "#
             ),
-            r#"import type { OjContext, OjSummarySync, OjVerifyResult, ParsedProblemUrl } from "@xcpc/plugin-sdk/host";
+            r#"import type { OjContext, OjSummarySync, OjVerifyResult, ParsedProblemUrl } from "@xcpc-workstation/plugin-sdk/host";
 
 export function verify(ctx: OjContext): OjVerifyResult {
   return { ok: true, handle: ctx.handle };
@@ -1802,7 +1803,7 @@ export function parseProblemUrl(_url: string): ParsedProblemUrl | null {
         ),
         ScaffoldKind::Tool => (
             format!(
-                r#"# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
+                r#"# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json
 id = "{id}"
 name = "{display_name}"
 version = "0.1.0"
@@ -1827,7 +1828,7 @@ kind = "string"
 required = true
 "#
             ),
-            r#"import type { ToolExecutionResult } from "@xcpc/plugin-sdk/host";
+            r#"import type { ToolExecutionResult } from "@xcpc-workstation/plugin-sdk/host";
 
 export function runTool(
   toolId: string,
@@ -1864,7 +1865,7 @@ export function runTool(
                 ),
                 format!(
                     r#"import "./style.css";
-import {{ getXcpc }} from "@xcpc/plugin-sdk/ui";
+import {{ getXcpc }} from "@xcpc-workstation/plugin-sdk/ui";
 
 const xcpc = getXcpc();
 const root = document.getElementById("app")!;

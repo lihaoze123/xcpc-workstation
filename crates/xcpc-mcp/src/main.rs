@@ -571,7 +571,7 @@ enum PluginCommand {
         /// Plugin template kind (`tool` or `oj`).
         #[arg(long, default_value = "tool")]
         kind: PluginScaffoldKind,
-        /// Generate a Vite + TypeScript/JSX project using `@xcpc/plugin-sdk`.
+        /// Generate a Vite + TypeScript/JSX project using `@xcpc-workstation/plugin-sdk`.
         #[arg(long)]
         vite: bool,
     },

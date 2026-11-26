@@ -1,6 +1,6 @@
 ---
 name: xcpc-plugin-creator
-description: 在 XCPC Workstation 中端到端设计、开发、测试、联调与打包插件（OJ 数据源、无头表单工具与纯 Web `<WebView>` 交互工具）的标准流程，涵盖安全沙箱红线、`manifest.toml` 规范、`@xcpc/plugin-sdk`（QuickJS `host` API / WebView `window.xcpc` / Vite 单文件构建）及 `xcpc plugin` 全生命周期命令。
+description: 在 XCPC Workstation 中端到端设计、开发、测试、联调与打包插件（OJ 数据源、无头表单工具与纯 Web `<WebView>` 交互工具）的标准流程，涵盖安全沙箱红线、`manifest.toml` 规范、`@xcpc-workstation/plugin-sdk`（QuickJS `host` API / WebView `window.xcpc` / Vite 单文件构建）及 `xcpc plugin` 全生命周期命令。
 ---
 
 # XCPC 插件开发编排 Skill（OJ 数据源 / 无头工具 / 纯 Web `<WebView>` 工具）
@@ -20,7 +20,7 @@ description: 在 XCPC Workstation 中端到端设计、开发、测试、联调�
 5. **保持 `ui.html` 单文件自包含，禁止外部 CDN**：禁止引用任何外部 `<script src="https://...">`、`<link rel="stylesheet" href="...">`、Google Fonts 或远程图片；所有 JS/CSS/图标必须内联（图片仅限 `data:` / `blob:`，字体仅限 `data:`）。
 6. **必须适配宿主主题与动态切换**：CSS 必须消费宿主注入的 `--xcpc-*` 变量并提供浅/深色 fallback，JS 必须读取 `window.xcpc.theme` 并订阅 `window.xcpc.onThemeChange(...)` 同步 `document.documentElement.setAttribute("data-theme", scheme)`，严禁写死纯白/纯黑背景导致深浅模式割裂。
 7. **必须使用 `window.xcpc.storage`（或 `host.kv`）持久化用户状态**：由于 iframe 无 `allow-same-origin`，直接访问 `localStorage` / `sessionStorage` 在真机 WebView 中会抛出 `SecurityError` 或丢失数据。持久化一律优先走 `window.xcpc.storage.get/set/remove`（本地浏览器单独预览时才可将 `localStorage` 置于 `try/catch` 降级分支）。
-8. **严禁在 QuickJS 沙箱代码中混入 Node.js 或 DOM API**：`index.js` 运行在 QuickJS（默认 30s 超时、64 MiB 内存），不存在 `fs` / `http` / `path` / `child_process` 等 Node 内置模块，也不存在 `window` / `document` / `XMLHttpRequest` / `localStorage`。`@xcpc/plugin-sdk/vite` 默认开启 `sandboxGuard` 在构建期拦截，禁止为图省事关闭它。
+8. **严禁在 QuickJS 沙箱代码中混入 Node.js 或 DOM API**：`index.js` 运行在 QuickJS（默认 30s 超时、64 MiB 内存），不存在 `fs` / `http` / `path` / `child_process` 等 Node 内置模块，也不存在 `window` / `document` / `XMLHttpRequest` / `localStorage`。`@xcpc-workstation/plugin-sdk/vite` 默认开启 `sandboxGuard` 在构建期拦截，禁止为图省事关闭它。
 9. **禁止跳过 `xcpc plugin check` 与 `xcpc plugin test` 直接交付**：交付或打包前必须保证静态校验、沙箱导出干跑与核心动作调用全部通过。
 
 ---
@@ -55,7 +55,7 @@ description: 在 XCPC Workstation 中端到端设计、开发、测试、联调�
 顶部推荐添加 Schema 提示，遵循最小权限原则（不需要网络或读工作区时保持 `domains = []`、`workspace_read = false`，避免触发不必要的信任拦截）：
 
 ```toml
-# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json
+# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json
 id = "my-tool"
 name = "我的算法工具"
 version = "0.1.0"
@@ -87,7 +87,7 @@ default = "998244353"
 required = true
 ```
 
-### 3.2 QuickJS 沙箱 `host` API（`@xcpc/plugin-sdk/host`）
+### 3.2 QuickJS 沙箱 `host` API（`@xcpc-workstation/plugin-sdk/host`）
 
 - `host.http.fetch({ url, method, headers, body, credentialHeader, timeoutMs })`：同步发起受域名白名单保护的 HTTP 请求；凭据优先用 `credentialHeader` 注入，避免明文拼装泄露。
 - `host.credentials.get(key)`：读取用户在设置中保存的加密凭据。
@@ -99,7 +99,7 @@ required = true
 - `host.log(level, msg)`：输出诊断日志（`"debug" | "info" | "warn" | "error"`）。
 - `ToolOutputBlock` 支持 6 种块类型：`text`、`markdown`、`table`、`graph`、`svg`、`image`。
 
-### 3.3 WebView `window.xcpc` API 与主题 Token（`@xcpc/plugin-sdk/ui`）
+### 3.3 WebView `window.xcpc` API 与主题 Token（`@xcpc-workstation/plugin-sdk/ui`）
 
 - `window.xcpc.runTool<T>(toolId, inputs)`：异步调用同插件 QuickJS 中的 `runTool`。
 - `window.xcpc.storage.get<T>(key)` / `set(key, value)` / `remove(key)`：异步持久化插件状态。
@@ -123,7 +123,7 @@ required = true
 优先根据复杂度选择 **Vite + TypeScript**（推荐用于中大型 WebView 工具或需要类型检查的插件）或 **零构建纯文件**（适合极简工具或简单 OJ 适配器）：
 
 ```bash
-# 方式 A：Vite + TypeScript（推荐，自动配置 @xcpc/plugin-sdk/vite）
+# 方式 A：Vite + TypeScript（推荐，自动配置 @xcpc-workstation/plugin-sdk/vite）
 xcpc plugin init ./my-plugin --kind tool --vite
 # 或 OJ 数据源：
 xcpc plugin init ./my-oj --kind oj --vite
@@ -138,7 +138,7 @@ Vite 模式生成标准结构：
 ### Step 2：实现 `manifest.toml` 与 QuickJS 逻辑（`src/index.ts` / `index.js`）
 
 1. 填写精确的 `id`、`name`、`version`、`capabilities` 与最小化 `[permissions]`。
-2. 在 `src/index.ts` 中使用 `import type { ... } from "@xcpc/plugin-sdk/host"` 编写纯逻辑与导出函数（如 `export function runTool(...)`、`export function runCommand(...)`）。
+2. 在 `src/index.ts` 中使用 `import type { ... } from "@xcpc-workstation/plugin-sdk/host"` 编写纯逻辑与导出函数（如 `export function runTool(...)`、`export function runCommand(...)`）。
 3. 若插件提供 `ui.html`，仍应保持 `runTool` 可独立工作（例如 `math-bitwise` 与 `graph-editor` 同时提供无头计算/渲染能力，便于 CLI/自动化测试和跨工具复用），并把 `open` 命令映射到 `{ type: "open_tool", plugin_id: "<id>" }`。
 
 ### Step 3：实现纯 Web UI（仅含 `ui_entry` 的插件）
@@ -208,7 +208,7 @@ xcpc plugin trust <plugin-id>
 
 ## 5. 常见踩坑排查清单
 
-- [ ] **Vite `<script>` 执行时机与 `#app` 为空**：Vite 默认把模块脚本放在 `<head>`，而单文件内联后会转为普通 IIFE `<script>`。`@xcpc/plugin-sdk/vite` 的 `inlineHtmlBundle` 会自动移除 `<head>` 中的原 script 标签并将其注入到 `</body>` 之前；若自行编写构建脚本或手写零构建 `ui.html`，**务必把内联 `<script>` 放在 `</body>` 前**（或监听 `DOMContentLoaded`），同时对内联代码中的 `</script` 转义为 `<\/script`。
+- [ ] **Vite `<script>` 执行时机与 `#app` 为空**：Vite 默认把模块脚本放在 `<head>`，而单文件内联后会转为普通 IIFE `<script>`。`@xcpc-workstation/plugin-sdk/vite` 的 `inlineHtmlBundle` 会自动移除 `<head>` 中的原 script 标签并将其注入到 `</body>` 之前；若自行编写构建脚本或手写零构建 `ui.html`，**务必把内联 `<script>` 放在 `</body>` 前**（或监听 `DOMContentLoaded`），同时对内联代码中的 `</script` 转义为 `<\/script`。
 - [ ] **`bridgeToken` 与 `sandbox="allow-scripts"` 导致的能力失效**：插件 iframe 的 `origin` 为 `"null"`，且不持有 `bridgeToken`。任何直接操作 `localStorage`、调用 `fetch()`、访问 `window.nsh` 或 `window.top` 的代码都会静默失败或抛出安全异常——必须全部改用 `window.xcpc.*`（UI 侧）或 `host.*`（QuickJS 侧）。
 - [ ] **`pending_trust` 静默拦截外部插件**：非内置插件只要声明了非空 `permissions.domains`、`credentials` 或 `workspace_read = true`，在 `install`、`link` 或后续修改 `manifest.toml` **扩大权限**重载时，都会被 Core 标记为 `pending_trust = true`。此时 `list_tools` 会隐藏该插件，`load_plugin_ui_html` 与 `run_tool` 均返回 `PLUGIN_UNTRUSTED`。调试时看到插件未出现或报未信任，先运行 `xcpc plugin list` 检查状态并执行 `xcpc plugin trust <id>`。
 - [ ] **`ui_entry` 扩展名与路径校验失败**：宿主强制校验 `ui_entry` 必须以 `.html` 或 `.htm` 结尾（旧版 `.js` 会报 `UNSUPPORTED_UI_ENTRY`）；文件不能为空白（`EMPTY_UI_HTML`）；且 `check` / `load_plugin_ui_html` 会对路径做规范化校验，任何指向插件目录外的 symlink 都会触发 `SYMLINK_ESCAPE`。

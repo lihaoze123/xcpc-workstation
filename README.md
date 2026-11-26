@@ -146,7 +146,7 @@ xcpc plugin check ./my-tool
 
 - **默认安全边界**：纯 Web 交互界面运行在独立 `<WebView>` 沙箱中（无文件系统或 Node 权限），仅通过结构化 `window.xcpc` 桥与宿主通信；后台 OJ 同步与无头工具运行在 Rust Core 内置的 QuickJS 沙箱中，所有网络域名、凭据与只读工作区访问均受白名单约束。
 - **核心强制信任门控**：零权限工具开箱即用；任何声明网络域名、凭据或工作区读取权限的第三方插件在首次安装或权限变更时默认处于 `pending_trust` 状态，需用户显式信任后方可执行。
-- **插件开发文档**：完整的清单格式、`@xcpc/plugin-sdk` API、单文件打包流程与社区上架指南见 [`docs/plugin-development.md`](./docs/plugin-development.md)；使用 AI Agent 辅助开发插件可参考 [`skills/xcpc-plugin-creator/SKILL.md`](./skills/xcpc-plugin-creator/SKILL.md)。
+- **插件开发文档**：完整的清单格式、`@xcpc-workstation/plugin-sdk` API、单文件打包流程与社区上架指南见 [`docs/plugin-development.md`](./docs/plugin-development.md)；使用 AI Agent 辅助开发插件可参考 [`skills/xcpc-plugin-creator/SKILL.md`](./skills/xcpc-plugin-creator/SKILL.md)。
 
 ---
 
@@ -162,7 +162,7 @@ xcpc plugin check ./my-tool
 
 - **Phase 1–2.5（已完成）**：开放目录题库与多人 Git 协同工作区、活引用组卷 / 定稿 / 归档、`olymp-classic` / `cnoi-classic` / `minimal` 声明式模板引擎、出版工作室、简体中文 / English 国际化、斜杠命令 / 素材库 / 悬浮公式预览 / Vim 模式 / 开放定制、CLI 与 MCP 服务。
 - **Phase 3A–3D（已完成）**：本地 Polygon 全链路（原生 `g++`/`clang++` + 内置 `testlib.h`、三级内容哈希缓存、严格验收门禁、对拍、ASan/UBSan 体检、外部验题人零污染试跑与整场审计）、Polygon ZIP 导入与 DOMjudge / Hydro 最小集合 ZIP 导出、题库分组 / 批量操作、交互题 / 多轮通信题 / OI 子任务，以及官方出题 Skill。
-- **Phase 4A–4D（已完成）**：混合沙箱插件引擎（Core QuickJS + 强制 `pending_trust` 信任门 + 纯 Web `<WebView>` 沙箱 `ui.html`）、Codeforces / AtCoder 训练同步与高密度训练看板（双模式热力图、Rating 曲线、难度突破趋势、比赛日历、提交检索与题解聚合）、纯净插件化「工具」Tab、`@xcpc/plugin-sdk` + Vite 单文件工具链与独立官方插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)。
+- **Phase 4A–4D（已完成）**：混合沙箱插件引擎（Core QuickJS + 强制 `pending_trust` 信任门 + 纯 Web `<WebView>` 沙箱 `ui.html`）、Codeforces / AtCoder 训练同步与高密度训练看板（双模式热力图、Rating 曲线、难度突破趋势、比赛日历、提交检索与题解聚合）、纯净插件化「工具」Tab、`@xcpc-workstation/plugin-sdk` + Vite 单文件工具链与独立官方插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)。
 - **Phase 5A–5C（已完成，v0.5.0）**：活体板子书（Living TRD）与可验证算法模板库（`snippets/` 与 `trds/` 开放目录、依赖 DAG、单文件 C++ 展开器、KACTL++ 累计短哈希、自测/题库/Library Checker 三源验板、`trd-compact` / `trd-book` 模板、可逆定稿归档、桌面端「模板」空间及 CLI / MCP / `xcpc-trd-curator` Skill）。
 - **Phase 6A–6G（已完成，v0.6.0-beta.1）**：宿主框架升级至 NSH 0.7.1 与 `nshm` 生态模块（`nsh-icon` / `nsh-o11y`）、Core 解耦（`xcpc-app`）与 `sccache` / `thin` LTO 构建加速、独立多窗口 `nsh-o11y` 开发者诊断面板（实时指标、跨线程瀑布图与基线对比、结构化日志、Perfetto 导出），以及全套设计系统与桌面端 UI 焕新（集中式设计/排版/动效 Token、内嵌 Inter & JetBrains Mono、双层悬浮面板与核心视图打磨、三档空态/加载/错误与焦点环全覆盖、物理弹簧动效与 `prefers-reduced-motion` 支持）。
 

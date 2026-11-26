@@ -44,7 +44,7 @@ Core 会持久化记录每个已安装插件的来源仓库（`source_repo`）�
 - **禁用 API**：
   - 不提供任何 Node.js 内置模块（`fs`、`path`、`http`、`https`、`child_process`、`net`、`os`、`process` 等）；
   - 不提供浏览器 DOM 或网络全局对象（`window`、`document`、`localStorage`、`XMLHttpRequest` 等）；
-  - 使用 `@xcpc/plugin-sdk/vite` 打包时，上述禁用导入与全局引用会在编译期直接报错拦截。
+  - 使用 `@xcpc-workstation/plugin-sdk/vite` 打包时，上述禁用导入与全局引用会在编译期直接报错拦截。
 - **托管能力边界**：
   - 凭据通过系统 `keyring` 按插件 ID 隔离托管，插件仅可按 key 读取自身作用域的凭据，无法访问或枚举其他插件的凭据；
   - 持久化状态通过插件独立作用域的 `host.kv` 存储，不同插件间完全隔离；

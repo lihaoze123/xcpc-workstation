@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://lihaoze123.github.io/xcpc-workstation/"><img src="https://img.shields.io/badge/Docs-Online%20Guide%20(ZH)-0B6989" alt="Documentation" /></a>
+  <a href="https://lihaoze123.github.io/xcpc-workstation/en/"><img src="https://img.shields.io/badge/Docs-Online%20Guide-0B6989" alt="Documentation" /></a>
   <a href="https://github.com/lihaoze123/xcpc-workstation/releases"><img src="https://img.shields.io/github/v/release/lihaoze123/xcpc-workstation?include_prereleases&label=Release&color=0B6989" alt="Release" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-52525B" alt="License" /></a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-52525B" alt="Platform" />
@@ -146,7 +146,7 @@ xcpc plugin check ./my-tool
 
 - **Sandboxed by Default**: Pure-Web UI panels run inside an isolated `<WebView>` sandbox (no filesystem or Node access) and talk to the host strictly via the structured `window.xcpc` bridge. Background OJ sync and headless tools execute inside the Rust Core QuickJS sandbox with explicit allowlists for network domains, credentials, and read-only workspace queries.
 - **Core-Enforced Trust Gate**: Zero-permission tools work out of the box. Any third-party plugin declaring network domains, credentials, or `workspace_read` starts in `pending_trust` on install or permission expansion and is blocked by Rust Core until explicitly trusted.
-- **Authoring Guide**: See [`docs/plugin-development.md`](./docs/plugin-development.md) for manifest specs, `@xcpc/plugin-sdk` APIs, single-file Vite bundling, and community registry submission; for AI-assisted plugin authoring, see [`skills/xcpc-plugin-creator/SKILL.md`](./skills/xcpc-plugin-creator/SKILL.md).
+- **Authoring Guide**: See [`docs/plugin-development.md`](./docs/plugin-development.md) for manifest specs, `@xcpc-workstation/plugin-sdk` APIs, single-file Vite bundling, and community registry submission; for AI-assisted plugin authoring, see [`skills/xcpc-plugin-creator/SKILL.md`](./skills/xcpc-plugin-creator/SKILL.md).
 
 ---
 
@@ -162,7 +162,7 @@ To match the `olymp.sty` (`ctex` `fontset=founder`) Chinese typography reference
 
 - **Phase 1–2.5 (Completed)**: Open-directory problem library & multi-author Git workspaces, live-reference contest assembly / finalization / archiving, declarative `olymp-classic` / `cnoi-classic` / `minimal` template engine, Publishing Studio, English / Simplified Chinese i18n, slash commands, asset gallery, floating math preview, Vim mode, CLI, and MCP server.
 - **Phase 3A–3D (Completed)**: Local Polygon end-to-end (native `g++`/`clang++` + bundled `testlib.h`, 3-tier content-hash cache, strict verification gate, stress testing, ASan/UBSan check mode, zero-pollution external verifier trial runs & contest audits), Polygon ZIP import & DOMjudge / Hydro minimal ZIP export, library groups / batch operations, stdio interactive / multi-run communication / OI subtasks, plus official problem-creator skills.
-- **Phase 4A–4D (Completed)**: Hybrid sandboxed plugin engine (Core QuickJS + Core-enforced `pending_trust` + pure-Web `<WebView>` sandbox `ui.html`), Codeforces / AtCoder training sync & high-density training dashboard (dual-mode heatmap, rating curve, breakthrough trend, contest calendar, submission search & editorial aggregation), pure plugin-hosted Tools tab, `@xcpc/plugin-sdk` + Vite single-file toolchain, and official plugin repository [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins).
+- **Phase 4A–4D (Completed)**: Hybrid sandboxed plugin engine (Core QuickJS + Core-enforced `pending_trust` + pure-Web `<WebView>` sandbox `ui.html`), Codeforces / AtCoder training sync & high-density training dashboard (dual-mode heatmap, rating curve, breakthrough trend, contest calendar, submission search & editorial aggregation), pure plugin-hosted Tools tab, `@xcpc-workstation/plugin-sdk` + Vite single-file toolchain, and official plugin repository [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins).
 - **Phase 5A–5C (Completed, v0.5.0)**: Living TRD & verifiable algorithm snippet library (open-directory `snippets/` and `trds/`, dependency DAG, single-file C++ bundler, KACTL++ cumulative verification hashes, 3-source verification including Library Checker, `trd-compact` / `trd-book` templates, reversible finalization, desktop Templates space, and CLI / MCP / `xcpc-trd-curator` skill).
 - **Phase 6A–6G (Completed, v0.6.0-beta.1)**: Upgraded host framework to NSH 0.7.1 with `nshm` modules (`nsh-icon` / `nsh-o11y`), Core decoupling (`xcpc-app`) & `sccache` / `thin` LTO build acceleration, independent multi-window `nsh-o11y` diagnostics console (live metrics, cross-thread waterfall & baseline diff, structured logs, Perfetto export), and a complete design-system & desktop UI overhaul (centralized design/typography/motion tokens, bundled Inter & JetBrains Mono, inset floating panels & key-screen polish, full empty/loading/error/focus-ring state coverage, and physics-based spring motion with `prefers-reduced-motion`).
 

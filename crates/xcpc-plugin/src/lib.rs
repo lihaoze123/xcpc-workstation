@@ -28,11 +28,12 @@ pub use kv::KvStore;
 pub use manager::{
     AggregatedRepoCatalog, AggregatedRepoPlugin, InstalledPlugin, LEGACY_OFFICIAL_PLUGIN_REPO_URL,
     LoadedPlugin, LoadedPluginUiHtml, OFFICIAL_PLUGIN_REPO_ENV, OFFICIAL_PLUGIN_REPO_NAME,
-    OFFICIAL_PLUGIN_REPO_URL, OFFICIAL_PLUGIN_SDK_TARBALL_URL, PluginCheckIssue, PluginCheckReport,
-    PluginLinkEntry, PluginManager, PluginOrigin, PluginPackReport, PluginRepoConfig,
-    PluginTestReport, RepoCatalog, RepoFetchError, RepoPluginEntry, ScaffoldKind, check_plugin_dir,
-    extract_zip_safe, init_plugin_scaffold, init_plugin_scaffold_vite, official_repo_url,
-    pack_plugin_dir, sha256_hex, test_plugin_dir, validate_repo_url,
+    OFFICIAL_PLUGIN_REPO_URL, OFFICIAL_PLUGIN_SDK_PACKAGE, OFFICIAL_PLUGIN_SDK_VERSION,
+    PluginCheckIssue, PluginCheckReport, PluginLinkEntry, PluginManager, PluginOrigin,
+    PluginPackReport, PluginRepoConfig, PluginTestReport, RepoCatalog, RepoFetchError,
+    RepoPluginEntry, ScaffoldKind, check_plugin_dir, extract_zip_safe, init_plugin_scaffold,
+    init_plugin_scaffold_vite, official_repo_url, pack_plugin_dir, sha256_hex, test_plugin_dir,
+    validate_repo_url,
 };
 pub use manifest::{
     CommandContext, CommandSpec, CredentialFieldSpec, ExporterSpec, ImporterSpec, PluginCapability,

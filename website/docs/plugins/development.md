@@ -4,7 +4,7 @@ title: 插件开发指南
 
 # 插件开发指南
 
-本指南介绍如何基于 `@xcpc/plugin-sdk`（当前版本 `v0.2.0`）与 `xcpc plugin` CLI 开发、本地联调、校验打包并发布 XCPC Workstation 插件。
+本指南介绍如何基于 `@xcpc-workstation/plugin-sdk`（当前版本 `v0.2.0`）与 `xcpc plugin` CLI 开发、本地联调、校验打包并发布 XCPC Workstation 插件。
 
 > **权威 API 契约**（以仓库内 TypeScript 类型定义与 JSON Schema 为唯一事实源）：
 > - QuickJS 宿主全局对象 `host` 与插件导出契约：[`packages/plugin-sdk/host.d.ts`](https://github.com/lihaoze123/xcpc-workstation/blob/main/packages/plugin-sdk/host.d.ts)
@@ -14,24 +14,24 @@ title: 插件开发指南
 
 ---
 
-## 1. 安装 `@xcpc/plugin-sdk`
+## 1. 安装 `@xcpc-workstation/plugin-sdk`
 
-`@xcpc/plugin-sdk` 随官方插件仓库 `xcpc-plugins` 的 `official-latest` Release 以 tarball 形式发布，不依赖公共 npm 仓库：
+`@xcpc-workstation/plugin-sdk` 已发布至 npm，直接安装为开发依赖即可：
 
 ```bash
-npm install -D https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/xcpc-plugin-sdk.tgz
+npm install -D @xcpc-workstation/plugin-sdk
 ```
 
 使用 `xcpc plugin init <dir> --vite` 创建项目时，该依赖会自动写入 `package.json`。
 
-`@xcpc/plugin-sdk` 提供四个子路径导出：
+`@xcpc-workstation/plugin-sdk` 提供四个子路径导出：
 
 | 子路径 | 用途 |
 | :--- | :--- |
-| `@xcpc/plugin-sdk/host` | QuickJS 沙箱 `host` 全局类型与各能力模块契约（`OjSourcePlugin`、`ToolPlugin`、`CommandPlugin`、`ImporterPlugin`、`ExporterPlugin` 等）。 |
-| `@xcpc/plugin-sdk/ui` | 类型化的 `window.xcpc` 桥接接口（`XcpcBridge`）与 `getXcpc()` 辅助函数。 |
-| `@xcpc/plugin-sdk/vite` | 零配置 `xcpcPlugin(options?)` Vite 插件：将 WebView 界面打包为单文件自包含 IIFE `dist/ui.html`，将 `src/index.ts` 编译为 `dist/index.js` 并启用 QuickJS 禁用 API 编译期护栏，同时复制 `manifest.toml`。 |
-| `@xcpc/plugin-sdk/manifest.schema.json` | 供编辑器（如 Taplo / YAML Language Server）提供 `manifest.toml` 自动补全与静态校验。 |
+| `@xcpc-workstation/plugin-sdk/host` | QuickJS 沙箱 `host` 全局类型与各能力模块契约（`OjSourcePlugin`、`ToolPlugin`、`CommandPlugin`、`ImporterPlugin`、`ExporterPlugin` 等）。 |
+| `@xcpc-workstation/plugin-sdk/ui` | 类型化的 `window.xcpc` 桥接接口（`XcpcBridge`）与 `getXcpc()` 辅助函数。 |
+| `@xcpc-workstation/plugin-sdk/vite` | 零配置 `xcpcPlugin(options?)` Vite 插件：将 WebView 界面打包为单文件自包含 IIFE `dist/ui.html`，将 `src/index.ts` 编译为 `dist/index.js` 并启用 QuickJS 禁用 API 编译期护栏，同时复制 `manifest.toml`。 |
+| `@xcpc-workstation/plugin-sdk/manifest.schema.json` | 供编辑器（如 Taplo / YAML Language Server）提供 `manifest.toml` 自动补全与静态校验。 |
 
 ---
 
@@ -46,14 +46,14 @@ xcpc plugin init ./my-tool
 # 免构建 OJ 数据源插件（生成 manifest.toml + index.js）
 xcpc plugin init ./my-oj --kind oj
 
-# 轨道二：Vite + TypeScript 工程化工具插件（自动配置 @xcpc/plugin-sdk/vite）
+# 轨道二：Vite + TypeScript 工程化工具插件（自动配置 @xcpc-workstation/plugin-sdk/vite）
 xcpc plugin init ./my-tool --kind tool --vite
 cd ./my-tool
 npm install
 npm run build
 ```
 
-> 在编辑器中为 `manifest.toml` 首行保留 `# yaml-language-server: $schema=./node_modules/@xcpc/plugin-sdk/manifest.schema.json`（或配合 Taplo 配置），即可获得字段补全与静态检查。
+> 在编辑器中为 `manifest.toml` 首行保留 `# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json`（或配合 Taplo 配置），即可获得字段补全与静态检查。
 
 ---
 
@@ -211,7 +211,7 @@ xcpc plugin check ./my-calc
 xcpc plugin test ./my-calc runTool --args '["powmod", {"a":2,"b":10,"m":998244353}]'
 ```
 
-### 示例 B：纯 Web `<WebView>` 工具（Vite + `@xcpc/plugin-sdk`）
+### 示例 B：纯 Web `<WebView>` 工具（Vite + `@xcpc-workstation/plugin-sdk`）
 
 以下示例展示如何通过 `getXcpc()` 使用插件作用域持久化存储（`storage`）、宿主主题自动同步（`--xcpc-*` 与 `onThemeChange`）、文件导出（`files.saveText`）与右下角提示（`toast`）。
 
@@ -219,7 +219,7 @@ xcpc plugin test ./my-calc runTool --args '["powmod", {"a":2,"b":10,"m":99824435
 
 ```ts
 import { defineConfig } from "vite";
-import { xcpcPlugin } from "@xcpc/plugin-sdk/vite";
+import { xcpcPlugin } from "@xcpc-workstation/plugin-sdk/vite";
 
 export default defineConfig({
   plugins: [xcpcPlugin()],
@@ -245,10 +245,10 @@ id = "stats"
 name = "字数统计"
 ```
 
-`src/index.ts`（声明 `capabilities = ["tool"]` 时必需，由 `@xcpc/plugin-sdk/vite` 编译为 `dist/index.js`）：
+`src/index.ts`（声明 `capabilities = ["tool"]` 时必需，由 `@xcpc-workstation/plugin-sdk/vite` 编译为 `dist/index.js`）：
 
 ```ts
-import type { ToolExecutionResult } from "@xcpc/plugin-sdk/host";
+import type { ToolExecutionResult } from "@xcpc-workstation/plugin-sdk/host";
 
 export function runTool(
   toolId: string,
@@ -285,7 +285,7 @@ export function runTool(
 `src/main.ts`：
 
 ```ts
-import { getXcpc } from "@xcpc/plugin-sdk/ui";
+import { getXcpc } from "@xcpc-workstation/plugin-sdk/ui";
 
 const xcpc = getXcpc();
 const root = document.getElementById("app")!;

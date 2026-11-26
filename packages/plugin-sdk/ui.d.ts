@@ -1,4 +1,4 @@
-// @xcpc/plugin-sdk/ui — Typed `window.xcpc` capability bridge for WebView plugins
+// @xcpc-workstation/plugin-sdk/ui — Typed `window.xcpc` capability bridge for WebView plugins
 
 import type {
   ToolExecutionResult,

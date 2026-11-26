@@ -1,4 +1,4 @@
-// @xcpc/plugin-sdk/vite — Zero-config Vite plugin for XCPC Workstation plugins
+// @xcpc-workstation/plugin-sdk/vite — Zero-config Vite plugin for XCPC Workstation plugins
 
 export interface XcpcVitePluginOptions {
   /** Path to manifest.toml relative to project root (default: "manifest.toml"). */

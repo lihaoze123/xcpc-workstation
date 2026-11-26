@@ -1,13 +1,11 @@
-# `@xcpc/plugin-sdk`
+# `@xcpc-workstation/plugin-sdk`
 
 TypeScript SDK (QuickJS host contracts + pure-Web `<WebView>` bridge) and zero-config Vite single-file HTML build plugin for [XCPC Workstation](https://github.com/lihaoze123/xcpc-workstation) plugins.
 
 ## Installation
 
-Install the prebuilt tarball published with the official `xcpc-plugins` release:
-
 ```bash
-npm install -D https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/xcpc-plugin-sdk.tgz
+npm install -D @xcpc-workstation/plugin-sdk
 ```
 
 If you scaffold a project with `xcpc plugin init <dir> --vite`, this dependency is added to `package.json` automatically.
@@ -16,16 +14,16 @@ If you scaffold a project with `xcpc plugin init <dir> --vite`, this dependency 
 
 | Subpath | Purpose |
 | :--- | :--- |
-| `@xcpc/plugin-sdk/host` | QuickJS sandbox `host` global types and plugin module contracts (`OjSourcePlugin`, `ToolPlugin`, `CommandPlugin`, `ImporterPlugin`, `ExporterPlugin`, etc.). |
-| `@xcpc/plugin-sdk/ui` | Typed `window.xcpc` WebView capability bridge (`XcpcBridge`) and `getXcpc()` helper. |
-| `@xcpc/plugin-sdk/vite` | Zero-config `xcpcPlugin(options?)` Vite plugin: bundles WebView UI into a single self-contained IIFE `dist/ui.html`, compiles `src/index.ts` to `dist/index.js` with QuickJS sandbox guardrails, and copies `manifest.toml`. |
-| `@xcpc/plugin-sdk/manifest.schema.json` | JSON Schema for `manifest.toml` editor validation and completion. |
+| `@xcpc-workstation/plugin-sdk/host` | QuickJS sandbox `host` global types and plugin module contracts (`OjSourcePlugin`, `ToolPlugin`, `CommandPlugin`, `ImporterPlugin`, `ExporterPlugin`, etc.). |
+| `@xcpc-workstation/plugin-sdk/ui` | Typed `window.xcpc` WebView capability bridge (`XcpcBridge`) and `getXcpc()` helper. |
+| `@xcpc-workstation/plugin-sdk/vite` | Zero-config `xcpcPlugin(options?)` Vite plugin: bundles WebView UI into a single self-contained IIFE `dist/ui.html`, compiles `src/index.ts` to `dist/index.js` with QuickJS sandbox guardrails, and copies `manifest.toml`. |
+| `@xcpc-workstation/plugin-sdk/manifest.schema.json` | JSON Schema for `manifest.toml` editor validation and completion. |
 
 ## Minimal Vite Configuration
 
 ```ts
 import { defineConfig } from "vite";
-import { xcpcPlugin } from "@xcpc/plugin-sdk/vite";
+import { xcpcPlugin } from "@xcpc-workstation/plugin-sdk/vite";
 
 export default defineConfig({
   plugins: [xcpcPlugin()],

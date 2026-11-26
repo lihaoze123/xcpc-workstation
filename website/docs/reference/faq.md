@@ -152,4 +152,4 @@ Core 按以下优先级自动定位 C++ 编译器：
 ### `SYMLINK_ESCAPE`
 
 - **原因**：通过 `xcpc plugin link <dir>` 链接的开发插件目录内部包含指向插件根目录之外的符号链接，被路径沙箱拦截。
-- **解决**：移除插件目录内的外部符号链接，或使用 `@xcpc/plugin-sdk/vite` 将所有依赖打包为自包含的 `dist/` 产物后再链接 `dist/`。详见 [安全边界与信任门控](../plugins/security.md)。
+- **解决**：移除插件目录内的外部符号链接，或使用 `@xcpc-workstation/plugin-sdk/vite` 将所有依赖打包为自包含的 `dist/` 产物后再链接 `dist/`。详见 [安全边界与信任门控](../plugins/security.md)。

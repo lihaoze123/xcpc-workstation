@@ -1,4 +1,4 @@
-// @xcpc/plugin-sdk/host — QuickJS sandbox Host API & plugin module contracts
+// @xcpc-workstation/plugin-sdk/host — QuickJS sandbox Host API & plugin module contracts
 
 export interface HostHttpRequest {
   url: string;

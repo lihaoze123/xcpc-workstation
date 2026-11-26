@@ -7,6 +7,6 @@ export function getXcpc() {
     return window.xcpc;
   }
   throw new Error(
-    "@xcpc/plugin-sdk/ui: window.xcpc is not available (must run inside an XCPC Workstation plugin WebView)",
+    "@xcpc-workstation/plugin-sdk/ui: window.xcpc is not available (must run inside an XCPC Workstation plugin WebView)",
   );
 }

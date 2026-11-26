@@ -53,7 +53,7 @@ hide:
   </a>
   <a class="xcpc-card" href="plugins/">
     <div class="xcpc-card-title">插件生态与开发</div>
-    <p class="xcpc-card-desc">Core 层 QuickJS 沙箱 + 桌面端三层隔离 <code>&lt;WebView&gt;</code> 沙箱，强制 <code>pending_trust</code> 信任门控，提供 <code>@xcpc/plugin-sdk</code> 与热重载 CLI 工具链。</p>
+    <p class="xcpc-card-desc">Core 层 QuickJS 沙箱 + 桌面端三层隔离 <code>&lt;WebView&gt;</code> 沙箱，强制 <code>pending_trust</code> 信任门控，提供 <code>@xcpc-workstation/plugin-sdk</code> 与热重载 CLI 工具链。</p>
   </a>
 </div>
 

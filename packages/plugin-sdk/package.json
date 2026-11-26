@@ -1,8 +1,17 @@
 {
-  "name": "@xcpc/plugin-sdk",
+  "name": "@xcpc-workstation/plugin-sdk",
   "version": "0.2.0",
   "description": "TypeScript SDK (QuickJS host + WebView bridge) and Vite single-file HTML build plugin for XCPC Workstation plugins.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lihaoze123/xcpc-workstation.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "homepage": "https://github.com/lihaoze123/xcpc-workstation/tree/main/packages/plugin-sdk#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "exports": {
     "./host": {

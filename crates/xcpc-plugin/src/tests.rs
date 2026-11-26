@@ -2316,11 +2316,15 @@ capabilities = ["tool"]
         );
     }
 
-    // Vite scaffold uses official release tarball URL and title-cased display name.
+    // Vite scaffold uses official npm SDK package and title-cased display name.
     let vite_dir = tmp.path().join("cool-graph-tool");
     crate::init_plugin_scaffold_vite(&vite_dir, ScaffoldKind::Tool).unwrap();
     let pkg = std::fs::read_to_string(vite_dir.join("package.json")).unwrap();
-    assert!(pkg.contains(crate::OFFICIAL_PLUGIN_SDK_TARBALL_URL));
+    assert!(pkg.contains(&format!(
+        "\"{}\": \"{}\"",
+        crate::OFFICIAL_PLUGIN_SDK_PACKAGE,
+        crate::OFFICIAL_PLUGIN_SDK_VERSION
+    )));
     let vite_manifest = PluginManifest::from_file(&vite_dir.join("manifest.toml")).unwrap();
     assert_eq!(vite_manifest.name, "Cool Graph Tool");
     assert_eq!(vite_manifest.ui_entry.as_deref(), Some("ui.html"));

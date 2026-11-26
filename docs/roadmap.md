@@ -310,7 +310,7 @@
 1. **纯 Web `<WebView>` 沙箱插件界面（`ui_entry = "ui.html"`）**：
    - 自定义界面插件由 NSH `<WebView incognito>` + 宿主受控外层壳 + `<iframe sandbox="allow-scripts" srcdoc>` 渲染，叠加 `capabilities.webview.hosts = []` 禁导航与严格 CSP（`default-src 'none'; connect-src 'none'`），通过随机令牌鉴权的 `window.xcpc` 仅提供受控宿主能力与可选 `--xcpc-*` 主题变量，不限制插件前端框架与样式；无界面表单工具保留原生 `HeadlessToolRunner`。
    - Core 层统一强制 `pending_trust` 信任门与 `source_repo` 来源隔离，仓库订阅强制 HTTPS（豁免本地回环地址）。
-2. **仓内单一 SDK 包 `packages/plugin-sdk`（`@xcpc/plugin-sdk` v0.2.0）**：
+2. **仓内单一 SDK 包 `packages/plugin-sdk`（`@xcpc-workstation/plugin-sdk` v0.2.0）**：
    - 多入口导出 `/host`（QuickJS 沙箱契约）、`/ui`（`window.xcpc` 桥接类型）、`/vite`（单文件 IIFE `dist/ui.html` + `dist/index.js` 打包、QuickJS 禁用模块编译期护栏、`--watch` 联动）与 `manifest.schema.json`。
 3. **按插件粒度热重载与 `xcpc plugin` 工具链**：
    - 完善 `xcpc plugin init [--kind tool|oj] [--vite]`、`install <path-or-id>`、`uninstall`、`trust`、`link` / `unlink`、`check`、`pack`、`test` 与 `repo list|add|remove|catalog`；桌面端按 `changedPluginIds` 粒度免重启热重载（兼容 Linux / Windows）。

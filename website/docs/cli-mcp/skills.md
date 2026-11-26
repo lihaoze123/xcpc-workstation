@@ -75,7 +75,7 @@ xcpc init ./my-contest --example --with-skills
 
 - **适用场景**：设计、编写、测试、热重载联调与打包 XCPC 插件，覆盖 **OJ 数据源（`oj_source`）**、**无头表单工具（`tool`）**与 **纯 Web `<WebView>` 交互工具（`tool` + `commands`）**。
 - **核心协作流程（6 步闭环）**：
-  1. **初始化脚手架**：根据复杂度选择 `xcpc plugin init <dir> --kind <tool|oj> --vite`（推荐，基于 `@xcpc/plugin-sdk` 与 Vite 单文件内联构建）或零构建纯文件模式。
+  1. **初始化脚手架**：根据复杂度选择 `xcpc plugin init <dir> --kind <tool|oj> --vite`（推荐，基于 `@xcpc-workstation/plugin-sdk` 与 Vite 单文件内联构建）或零构建纯文件模式。
   2. **实现 `manifest.toml` 与 QuickJS 逻辑**：遵循 `manifest.schema.json` 与最小权限原则（仅声明必需 `domains`、`credentials`、`workspace_read`），在 `src/index.ts` / `index.js` 中使用 `host.*` API 实现导出函数。
   3. **实现纯 Web UI（可选）**：单文件自包含 `ui.html`，消费宿主 `--xcpc-*` 主题变量并订阅 `window.xcpc.onThemeChange`，所有外部网络请求委托 `window.xcpc.runTool`，状态持久化使用 `window.xcpc.storage`。
   4. **构建与沙箱验证**：执行 `npm run build` 后运行 `xcpc plugin check dist`（静态校验与 QuickJS 导出干跑）与 `xcpc plugin test dist <action> --args ...`。
