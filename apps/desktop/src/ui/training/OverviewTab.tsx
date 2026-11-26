@@ -145,6 +145,7 @@ export function OverviewTab(props: {
 
   return (
     <Scroll
+      smoothWheel
       testID="training-overview-scroll"
       style={{ flex: 1, minHeight: 0 }}
       contentStyle={{ padding: 20, gap: 16, paddingBottom: 36 }}

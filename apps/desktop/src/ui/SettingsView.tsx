@@ -1370,7 +1370,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
       </View>
 
       {/* Right detail pane */}
-      <Scroll style={{ flex: 1 }} class="bg-background">
+      <Scroll smoothWheel style={{ flex: 1 }} class="bg-background">
         <View
           style={{
             width: 640,

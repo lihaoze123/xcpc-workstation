@@ -879,6 +879,7 @@ export interface LibraryColumnSpec {
   key: LibraryColumnKey;
   title: string;
   width: number;
+  grow?: number;
   align?: "start" | "center" | "end";
   resizable: false;
   sortable?: boolean;
@@ -896,8 +897,8 @@ export interface LibraryColumnsLayout {
 export function computeLibraryColumns(width: number): LibraryColumnsLayout {
   const selectW = 36;
   const ratingW = 78;
-  const statusW = 76;
-  const tagsW = width >= 560 ? 176 : width >= 480 ? 124 : 0;
+  const statusW = 52;
+  const tagsW = width >= 560 ? 188 : width >= 480 ? 132 : 0;
   const sourceW = width >= 780 ? 132 : 0;
   const used = selectW + ratingW + statusW + tagsW + sourceW;
   const titleW = Math.max(136, width - used - 2);
@@ -905,7 +906,7 @@ export function computeLibraryColumns(width: number): LibraryColumnsLayout {
   // so NSH DataTable's index-based header/cell recycling never shifts column indices on resize.
   const columns: LibraryColumnSpec[] = [
     { key: "select", title: "", width: selectW, align: "center", resizable: false, sortable: false, selectable: false },
-    { key: "title", title: t("library.col.title"), width: titleW, resizable: false, sortable: true },
+    { key: "title", title: t("library.col.title"), width: titleW, grow: 1, resizable: false, sortable: true },
     { key: "ratingText", title: t("library.col.rating"), width: ratingW, align: "end", resizable: false, sortable: true },
     { key: "status", title: t("library.col.status"), width: statusW, align: "center", resizable: false },
     ...(tagsW > 0 ? [{ key: "tagsText" as const, title: t("library.col.tags"), width: tagsW, resizable: false as const }] : []),

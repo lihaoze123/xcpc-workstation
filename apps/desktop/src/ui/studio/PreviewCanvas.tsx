@@ -50,7 +50,7 @@ import {
 import { info, preview } from "../store";
 import { panelTransition } from "../motion";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
-import { traceAsyncSpan, traceInteraction } from "../trace";
+import { traceInteraction } from "../trace";
 
 type ViewportMemory = { zoom: number; scrollY: number; panX: number; autoFit: boolean; pageSizes: PageSize[] };
 
@@ -466,6 +466,8 @@ export function PreviewCanvas(props: {
     }
   }
 
+  let lastSnapshotSig = "";
+
   function saveColdStartSnapshotNow() {
     if (!hasHud() || showingSnapshot || inFlight > 0) return;
     if (untracked(live).k !== 1 || untracked(dragging) || untracked(resizing)) return;
@@ -479,16 +481,19 @@ export function PreviewCanvas(props: {
     const curView = untracked(view);
     const visible = curView.filter((v) => v.width > 0 && v.height > 0).map((v) => v.page);
     const chosen = visible.length > 0 ? visible.slice(0, 2) : [untracked(currentPage)];
+    const renderScale = Math.max(1, z * pixelRatio());
     const metaJson = JSON.stringify({
       workspace: wsRoot,
       target: req.target,
       id: req.id,
       book: req.book,
-      zoom: z,
-      scrollY: untracked(scrollY),
+      zoom: Math.round(z * 1000) / 1000,
+      scrollY: Math.round(untracked(scrollY)),
     });
+    const sig = `${metaJson}|${chosen.join(",")}|${Math.round(renderScale * 100)}`;
+    if (sig === lastSnapshotSig) return;
+    lastSnapshotSig = sig;
     try {
-      const renderScale = Math.max(1, z * pixelRatio());
       void preview.saveColdStartSnapshot(metaJson, chosen, renderScale);
     } catch {
       // Snapshot persistence is best-effort and never blocks preview.
@@ -501,7 +506,7 @@ export function PreviewCanvas(props: {
     snapshotTimer = setTimeout(() => {
       snapshotTimer = undefined;
       saveColdStartSnapshotNow();
-    }, 800);
+    }, 1500);
   }
 
   function applyResult(reqKey: string, result: PreviewResult) {
@@ -607,6 +612,8 @@ export function PreviewCanvas(props: {
     scheduleColdStartSnapshot();
   }
 
+  let inFlightSig = "";
+
   function compile() {
     const req = untracked(props.request);
     if (!req) return;
@@ -621,8 +628,6 @@ export function PreviewCanvas(props: {
     }
     const reqKey = requestKey(req);
     const isSwitch = reqKey !== shownKey;
-    const seq = ++compileSeq;
-    inFlight += 1;
 
     const curPane = pane();
     const effPane = { width: untracked(effectiveWidth), height: curPane.height };
@@ -653,22 +658,29 @@ export function PreviewCanvas(props: {
       list = untracked(view);
     }
 
+    const pagesKey = list.map((v) => v.page).join();
+    const tileEntries = list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)] as const);
+    const sig = `${reqKey}|${s}|${pagesKey}|${tileEntries.map(([p, t]) => `${p}:${t}`).join(";")}`;
+    // Coalesce duplicate in-flight compiles triggered in the same frame by multiple effects.
+    if (inFlight > 0 && sig === inFlightSig) {
+      return;
+    }
+
+    const seq = ++compileSeq;
+    inFlight += 1;
+    inFlightSig = sig;
+
     asked = {
       key: reqKey,
       scale: s,
-      pages: list.map((v) => v.page).join(),
-      tiles: new Map(list.filter((v) => v.width > 0).map((v) => [v.page, tiles(v, s, TILE / 2)])),
+      pages: pagesKey,
+      tiles: new Map(tileEntries),
     };
 
     cancelPrewarm();
-    void traceAsyncSpan(
-      "ipc",
-      "preview.compile",
-      () => preview.compile(req, s, list),
-      { kind: req.target, id: req.id, scale: Math.round(s * 100) / 100, viewPages: list.length },
-      true,
-    ).then((result) => {
+    void preview.compile(req, s, list).then((result) => {
       inFlight -= 1;
+      if (inFlight === 0) inFlightSig = "";
       const stale = seq !== compileSeq || reqKey !== untracked(key);
       if (!stale) {
         lastCompileDurationMs = (result.compileMs ?? 0) + (result.renderMs ?? 0);

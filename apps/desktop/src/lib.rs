@@ -1302,6 +1302,18 @@ impl Preview {
         self.app.toolchain_status().into()
     }
 
+    /// Detects host C++ compilers off the UI thread so cold launch and Build tab entry
+    /// never block a frame on `g++ --version` / `clang++ --version` subprocess probing.
+    pub async fn toolchain_status_async(this: Instance<Self>) -> ToolchainStatusJs {
+        if this.is_disposed() {
+            return ToolchainStatusJs::default();
+        }
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.toolchain_status().into())
+            .await
+            .unwrap_or_default()
+    }
+
     /// Persists an explicit C++ compiler path override (passing `null` or empty clears it)
     /// and returns the refreshed toolchain detection status.
     pub fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
@@ -2380,6 +2392,35 @@ impl Preview {
         self.app
             .training_dashboard(window, heatmap_year, tag_min_rating)
             .into()
+    }
+
+    /// Computes the training dashboard analytics payload off the UI thread so switching to
+    /// the Training space never blocks a frame on SQLite aggregation.
+    pub async fn training_dashboard_async(
+        this: Instance<Self>,
+        window: Option<String>,
+        heatmap_year: Option<i32>,
+        tag_min_rating: Option<i32>,
+    ) -> JsonReportResultJs {
+        if this.is_disposed() {
+            return JsonReportResultJs {
+                ok: false,
+                error: Some("Preview disposed".to_owned()),
+                ..Default::default()
+            };
+        }
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .training_dashboard(window, heatmap_year, tag_min_rating)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs {
+            ok: false,
+            error: Some(format!("training_dashboard_async task failed: {e}")),
+            ..Default::default()
+        })
     }
 
     /// Queries aggregated upcoming / running (and optional finished) OJ contests as JSON.

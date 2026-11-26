@@ -198,22 +198,27 @@ describe("computeLibraryColumns responsive budget (§5.2)", () => {
     expect(layout.showInlineId).toBe(true);
     expect(layout.maxTags).toBe(3);
     expect(layout.columns.find((c) => c.key === "select")?.width).toBe(36);
+    expect(layout.columns.find((c) => c.key === "title")?.grow).toBe(1);
     expect(layout.columns.find((c) => c.key === "ratingText")?.width).toBe(78);
-    expect(layout.columns.find((c) => c.key === "status")?.width).toBe(76);
-    expect(layout.columns.find((c) => c.key === "tagsText")?.width).toBe(176);
+    expect(layout.columns.find((c) => c.key === "status")?.width).toBe(52);
+    expect(layout.columns.find((c) => c.key === "tagsText")?.width).toBe(188);
     expect(layout.columns.find((c) => c.key === "source")?.width).toBe(132);
   });
 
   test("drops source below 780pt and narrows tags at 480..559pt while keeping fixed indices stable", () => {
     const mid = computeLibraryColumns(650);
     expect(mid.columns.map((c) => c.key)).toEqual(["select", "title", "ratingText", "status", "tagsText"]);
-    expect(mid.columns.find((c) => c.key === "tagsText")?.width).toBe(176);
+    expect(mid.columns.find((c) => c.key === "tagsText")?.width).toBe(188);
 
     const compact = computeLibraryColumns(520);
     expect(compact.columns.map((c) => c.key)).toEqual(["select", "title", "ratingText", "status", "tagsText"]);
-    expect(compact.columns.find((c) => c.key === "tagsText")?.width).toBe(124);
+    expect(compact.columns.find((c) => c.key === "tagsText")?.width).toBe(132);
     expect(compact.maxTags).toBe(2);
-    expect(compact.showInlineId).toBe(false); // titleWidth < 220
+    expect(compact.titleWidth).toBe(220);
+    expect(compact.showInlineId).toBe(true); // compact 52pt status column frees room for inline ID
+
+    const tight = computeLibraryColumns(480);
+    expect(tight.showInlineId).toBe(false); // titleWidth < 220
 
     const narrow = computeLibraryColumns(420);
     expect(narrow.columns.map((c) => c.key)).toEqual(["select", "title", "ratingText", "status"]);

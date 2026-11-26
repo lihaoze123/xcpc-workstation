@@ -8,7 +8,7 @@ import { Icon } from "../Icon";
 import { Btn, tip } from "../kit";
 import { AppMenu } from "../Menu";
 import { Modal } from "../Modal";
-import { compilerMissing, goSettings, type UiError } from "../store";
+import { compilerMissing, ensureToolchainLoaded, goSettings, type UiError } from "../store";
 import {
   cancelContestCheck,
   contestBatch,
@@ -34,6 +34,7 @@ export function ContestCheckBar(props: {
   readOnly: boolean;
   onGoProblem: (problemId: string) => void;
 }) {
+  ensureToolchainLoaded();
 
   const state = computed(() => (contestCheck()?.contestId === props.contestId ? contestCheck() : undefined));
   const batch = computed(() => {

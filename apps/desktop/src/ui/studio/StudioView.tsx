@@ -47,6 +47,7 @@ import {
   pluginsRevision,
   preview,
   refresh,
+  registerQuitFlusher,
   savePrefs,
   splitRatioSignal,
   studio,
@@ -485,6 +486,7 @@ export function StudioView(props: { active: boolean }) {
       return false;
     }
   }
+  cleanup(registerQuitFlusher(save));
 
   effect(() => {
     const next = path();

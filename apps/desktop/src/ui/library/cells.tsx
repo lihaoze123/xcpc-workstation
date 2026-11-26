@@ -216,40 +216,37 @@ export function renderLibraryCellContent(
 
   if (key === "status") {
     const st = row.packageStatus;
-    const compact = Boolean(opts.trainingEnabled);
+    const tr = opts.trainingEnabled ? row.trainingStatus : undefined;
+    const summaryParts: string[] = [];
+    if (st === "verified_fresh") summaryParts.push(t("library.status.verified"));
+    else if (st === "failed") summaryParts.push(t("library.status.failed"));
+    else if (st === "stale") summaryParts.push(t("library.status.stale"));
+    else if (st === "unverified") summaryParts.push(t("library.status.unverified"));
+    if (tr === "ac") summaryParts.push(t("training.status.ac"));
+    else if (tr === "upsolved") summaryParts.push(t("training.status.upsolved"));
+    else if (tr === "attempted") summaryParts.push(t("training.status.attempted"));
+    else if (tr === "todo") summaryParts.push(t("training.status.todo"));
+    if (row.hasEditorial) summaryParts.push(t("library.status.hasEditorial"));
+    if (row.hasSolutions) summaryParts.push(t("library.status.hasCode"));
+    const combinedTip = summaryParts.length > 0 ? summaryParts.join("  ") : undefined;
+
+    // Show the single highest-priority status indicator; secondary details live in the tooltip.
+    let primary: JSX.Element | undefined;
+    if (st === "failed" || st === "stale") {
+      primary = <StatusMark kind={markForPackageStatus(st)} />;
+    } else if (tr && tr !== "none") {
+      primary = <TrainingStatusSlot status={tr} />;
+    } else if (st) {
+      primary = <StatusMark kind={markForPackageStatus(st)} />;
+    } else if (row.hasEditorial) {
+      primary = <Icon name="filePenLine" size={13} tone="secondary-foreground" />;
+    } else if (row.hasSolutions) {
+      primary = <Icon name="code" size={13} tone="secondary-foreground" />;
+    }
+
     return (
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: compact ? 2 : 4 }}>
-        {opts.trainingEnabled && <TrainingStatusSlot status={row.trainingStatus} />}
-        <StatusSlot
-          compact={compact}
-          tooltipText={
-            st === "verified_fresh"
-              ? t("library.status.verified")
-              : st === "failed"
-                ? t("library.status.failed")
-                : st === "stale"
-                  ? t("library.status.stale")
-                  : st === "unverified"
-                    ? t("library.status.unverified")
-                    : undefined
-          }
-        >
-          {st ? <StatusMark kind={markForPackageStatus(st)} /> : undefined}
-        </StatusSlot>
-        {row.hasEditorial ? (
-          <StatusSlot compact={compact} tooltipText={t("library.status.hasEditorial")}>
-            <Icon name="filePenLine" size={13} tone="secondary-foreground" />
-          </StatusSlot>
-        ) : (
-          <StatusSlot compact={compact} />
-        )}
-        {row.hasSolutions ? (
-          <StatusSlot compact={compact} tooltipText={t("library.status.hasCode")}>
-            <Icon name="code" size={13} tone="secondary-foreground" />
-          </StatusSlot>
-        ) : (
-          <StatusSlot compact={compact} />
-        )}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+        <StatusSlot tooltipText={combinedTip}>{primary}</StatusSlot>
       </View>
     );
   }

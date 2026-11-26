@@ -85,15 +85,35 @@ export function refreshToolchain(): ToolchainStatusJs {
   return next;
 }
 
+let toolchainLoading = false;
+
+/** Lazily detects the host C++ toolchain once (off-startup so cold launch never stalls ~112ms). */
+export function ensureToolchainLoaded(): void {
+  if (toolchainState() !== undefined || toolchainLoading) return;
+  toolchainLoading = true;
+  if (typeof preview.toolchainStatusAsync === "function") {
+    void preview
+      .toolchainStatusAsync()
+      .then((next) => {
+        toolchainState.set(next);
+      })
+      .finally(() => {
+        toolchainLoading = false;
+      });
+    return;
+  }
+  try {
+    refreshToolchain();
+  } finally {
+    toolchainLoading = false;
+  }
+}
+
 /** Whether no C++ compiler is usable (unknown until the first detection). */
 export function compilerMissing(): boolean {
   const s = toolchainState();
   return !!s && !s.active;
 }
-
-setTimeout(() => {
-  if (toolchainState() === undefined) refreshToolchain();
-}, 0);
 
 // Silent startup OJ auto-sync (runs at most once per session on a background thread; silent on success).
 setTimeout(() => {
@@ -239,9 +259,44 @@ export function flushPrefs() {
   preview.savePrefs(prefs);
 }
 
+// ── Unsaved-changes quit guard registry (NSH 0.7 `quitRequest`) ──────────────
+
+const quitFlusherSet = new Set<() => boolean>();
+
+/**
+ * Registers a synchronous flush handler invoked on `Application.on("quitRequest")`.
+ * Returning `false` indicates an unresolved conflict and cancels the quit so the
+ * user never loses unsaved work.
+ */
+export function registerQuitFlusher(fn: () => boolean): () => void {
+  quitFlusherSet.add(fn);
+  return () => quitFlusherSet.delete(fn);
+}
+
+/** Runs `flushPrefs()` and every registered studio flusher; returns `true` when safe to quit. */
+export function flushAllBeforeQuit(): boolean {
+  flushPrefs();
+  for (const fn of quitFlusherSet) {
+    try {
+      if (fn() === false) return false;
+    } catch {
+      // Best-effort flush; continue remaining flushers.
+    }
+  }
+  return true;
+}
+
 /** Merges `patch` into the in-memory preferences immediately and debounces disk persistence
  *  so high-frequency gestures (splitter drags, view switches, drawer toggles) never block the UI thread. */
 export function savePrefs(patch: Partial<AppPrefsJs>) {
+  let changed = false;
+  for (const key of Object.keys(patch) as (keyof AppPrefsJs)[]) {
+    if (patch[key] !== prefs[key]) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) return;
   prefs = { ...prefs, ...patch };
   if (patch.splitRatio !== undefined) {
     const next = clampRatio(patch.splitRatio);
@@ -257,7 +312,7 @@ export function savePrefs(patch: Partial<AppPrefsJs>) {
     if (!prefsDirty) return;
     prefsDirty = false;
     preview.savePrefs(prefs);
-  }, 250);
+  }, 600);
 }
 
 // ── Where the user is ────────────────────────────────────────────────────────

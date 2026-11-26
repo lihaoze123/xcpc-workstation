@@ -600,7 +600,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
           />
         }
       >
-        <Scroll style={{ flex: 1 }}>
+        <Scroll smoothWheel style={{ flex: 1 }}>
           <View style={{ paddingLeft: GUTTER, paddingRight: GUTTER, paddingBottom: 24, gap: 20 }}>
             <Section
               title={t("contests.section.problems")}

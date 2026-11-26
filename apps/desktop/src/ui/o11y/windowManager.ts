@@ -1,7 +1,8 @@
 // Multi-window lifecycle manager for the independent `XCPC 诊断` window (NSH 0.7).
 
-import { currentWindow, isAvailable as desktopAvailable, Window, type WindowRef } from "nsh/desktop";
+import { Application, currentWindow, isAvailable as desktopAvailable, Window, type WindowRef } from "nsh/desktop";
 import { t } from "../i18n";
+import { flushAllBeforeQuit } from "../store";
 import { DiagnosticsWindowContent } from "./DiagnosticsWindow";
 import {
   diagnosticsOpen,
@@ -93,7 +94,18 @@ export function bindDiagnosticsLifecycle(): void {
     try {
       const mainWin = currentWindow();
       mainWin.on("close", () => {
+        flushAllBeforeQuit();
         closeDiagnosticsWindow();
+      });
+      // NSH 0.7 cancellable quitRequest: atomically flush pending studio/snippet/prefs edits
+      // before approving quit; if an unresolved save conflict exists, cancel quit so no work is lost.
+      Application.on("quitRequest", () => {
+        if (flushAllBeforeQuit()) {
+          closeDiagnosticsWindow();
+          Application.quit();
+        } else {
+          Application.cancelQuitRequest();
+        }
       });
     } catch {
       // Headless / test environment without desktop window host.

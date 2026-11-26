@@ -20,7 +20,7 @@ import { locale, t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { compilerMissing, dialog, goSettings, onExternalChange, preview, type UiError } from "../store";
+import { compilerMissing, dialog, ensureToolchainLoaded, goSettings, onExternalChange, preview, type UiError } from "../store";
 import { showToast } from "../Toast";
 import { MONO, popoverShadow, token } from "../theme";
 import { traceInteraction, traceSpan } from "../trace";
@@ -266,6 +266,7 @@ export function BuildConsole(props: {
   controller?: (c: BuildConsoleController | undefined) => void;
 }) {
   const isZh = () => locale() === "zh-CN";
+  ensureToolchainLoaded();
 
   // ── Core live state (P0-2 Single State Model) ──────────────────────────────
   const selection = signal<TreeSelection>({ kind: "results" });

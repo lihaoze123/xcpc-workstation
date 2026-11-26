@@ -123,17 +123,51 @@ export function TrainingView(props: TrainingViewProps) {
     }
   };
 
+  const dashboardCache = new Map<string, TrainingDashboardData>();
+  let dashboardReqSeq = 0;
+
   const loadDashboard = () => {
+    const win = windowVal();
+    const year = heatmapYear();
+    const minRating = tagMinRating();
+    const cacheKey = `${win}|${year ?? ""}|${minRating ?? ""}`;
     try {
       if (props.fetchDashboard) {
-        const next = props.fetchDashboard(windowVal(), heatmapYear(), tagMinRating());
+        const next = props.fetchDashboard(win, year, minRating);
         dashboard.set(next);
-        if (next) setGlobalLastSyncedAt(next.last_synced_at);
+        if (next) {
+          dashboardCache.set(cacheKey, next);
+          setGlobalLastSyncedAt(next.last_synced_at);
+        }
         return;
       }
-      const res = preview.trainingDashboard(windowVal(), heatmapYear(), tagMinRating());
+      // Show cached snapshot immediately (stale-while-revalidate) so space switch never blocks.
+      const cached = dashboardCache.get(cacheKey);
+      if (cached && dashboard() !== cached) {
+        dashboard.set(cached);
+      }
+      if (typeof preview.trainingDashboardAsync === "function") {
+        const seq = ++dashboardReqSeq;
+        void preview
+          .trainingDashboardAsync(win, year, minRating)
+          .then((res) => {
+            if (seq !== dashboardReqSeq) return;
+            if (res.ok && res.reportJson) {
+              const next = JSON.parse(res.reportJson) as TrainingDashboardData;
+              dashboardCache.set(cacheKey, next);
+              dashboard.set(next);
+              setGlobalLastSyncedAt(next.last_synced_at);
+            }
+          })
+          .catch(() => {
+            // Ignore in headless tests without a native sync DB.
+          });
+        return;
+      }
+      const res = preview.trainingDashboard(win, year, minRating);
       if (res.ok && res.reportJson) {
         const next = JSON.parse(res.reportJson) as TrainingDashboardData;
+        dashboardCache.set(cacheKey, next);
         dashboard.set(next);
         setGlobalLastSyncedAt(next.last_synced_at);
       }

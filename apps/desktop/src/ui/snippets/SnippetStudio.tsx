@@ -19,6 +19,7 @@ import {
   goSettings,
   info,
   preview,
+  registerQuitFlusher,
   revision,
   snippetsRevision,
 } from "../store";
@@ -183,6 +184,10 @@ export function SnippetStudio(props: { active: boolean }) {
       canvasCtrl?.compile();
     }
   }
+  cleanup(registerQuitFlusher(() => {
+    flushSave();
+    return true;
+  }));
 
   function scheduleAutoSaveAndCompile() {
     clearTimeout(compileTimer);

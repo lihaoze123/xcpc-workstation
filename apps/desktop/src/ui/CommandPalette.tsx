@@ -58,6 +58,24 @@ import {
   workspaceVersion,
 } from "./store";
 
+let cachedPluginCmdsRev = -1;
+const cachedPluginCmdsByContext = new Map<string, RegisteredPluginCommand[]>();
+
+function getCachedPluginCommands(rev: number, cmdContext: string): RegisteredPluginCommand[] {
+  if (rev !== cachedPluginCmdsRev) {
+    cachedPluginCmdsRev = rev;
+    cachedPluginCmdsByContext.clear();
+  }
+  const hit = cachedPluginCmdsByContext.get(cmdContext);
+  if (hit) return hit;
+  const parsed = parseJsonReport<RegisteredPluginCommand[]>(
+    typeof preview.pluginListCommands === "function" ? preview.pluginListCommands(cmdContext) : undefined,
+    [],
+  );
+  cachedPluginCmdsByContext.set(cmdContext, parsed);
+  return parsed;
+}
+
 type Action = { id: string; label: string; icon: IconName; keywords?: string[]; shortcut?: string; run: () => void; when?: () => boolean };
 
 function actions(): Action[] {
@@ -178,14 +196,11 @@ function actions(): Action[] {
     { id: "a:new-workspace", icon: "folderPlus", label: t("palette.action.newWorkspace"), keywords: ["workspace", "new", "create", "新建", "工作区", "gongzuoqu"], run: () => requestNewWorkspace() },
   ];
 
-  // Dynamically collect enabled plugin commands matching the current context.
-  void pluginsRevision();
+  // Dynamically collect enabled plugin commands matching the current context (cached per revision).
+  const rev = pluginsRevision();
   const inTools = !inStudio && space() === "tools";
   const cmdContext = target?.target === "problem" ? "problem" : target?.target === "contest" ? "contest" : "global";
-  const pluginCmds = parseJsonReport<RegisteredPluginCommand[]>(
-    typeof preview.pluginListCommands === "function" ? preview.pluginListCommands(cmdContext) : undefined,
-    [],
-  );
+  const pluginCmds = getCachedPluginCommands(rev, cmdContext);
   const pluginActions: Action[] = pluginCmds.map((reg) => ({
     id: `a:plugin:${reg.plugin_id}:${reg.command.id}`,
     icon: "sparkles",
