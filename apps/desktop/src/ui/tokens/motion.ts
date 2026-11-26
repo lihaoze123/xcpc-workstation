@@ -165,7 +165,7 @@ export function studioTransform(visible: boolean): string | undefined {
 
 /** Time (ms) to keep an exiting studio mounted before unmounting. */
 export function studioExitMs(): number {
-  return scaledDuration(isReducedMotion() ? DURATION.base : 280);
+  return scaledDuration(isReducedMotion() ? DURATION.base : 340);
 }
 
 /** Side panel / drawer transition (`SPRING.smooth`; `DURATION.base` pure fade under reduced motion). */

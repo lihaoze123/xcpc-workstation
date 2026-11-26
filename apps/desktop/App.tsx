@@ -13,7 +13,7 @@ import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, visibleSpaces, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
-import { colorTransition, isReducedMotion, studioExitMs, studioTransform, studioTransition } from "./src/ui/tokens";
+import { colorTransition, studioExitMs, studioTransform, studioTransition } from "./src/ui/tokens";
 import { NavRail } from "./src/ui/NavRail";
 import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
@@ -105,8 +105,10 @@ function SpaceStage(props: {
       return;
     }
     if (isVisible) {
+      const wasDisplayed = displayed();
       displayed.set(true);
-      if (isReducedMotion() || (first && !props.animateOnMount)) {
+      if (wasDisplayed || (first && !props.animateOnMount)) {
+        // Re-entering mid-exit interrupts the native spring from its current position/velocity.
         revealed.set(true);
       } else {
         revealed.set(false);
@@ -117,10 +119,15 @@ function SpaceStage(props: {
       }
     } else {
       revealed.set(false);
-      hideTimer = setTimeout(() => {
-        hideTimer = undefined;
+      const exitMs = studioExitMs();
+      if (exitMs === 0) {
         displayed.set(false);
-      }, studioExitMs());
+      } else {
+        hideTimer = setTimeout(() => {
+          hideTimer = undefined;
+          displayed.set(false);
+        }, exitMs);
+      }
     }
   });
   cleanup(() => {

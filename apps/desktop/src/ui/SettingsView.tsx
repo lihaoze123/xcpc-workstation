@@ -2,18 +2,14 @@
 // paired with rounded cards on the right.
 
 import {
-  Animated,
   cleanup,
   Clipboard,
   computed,
-  createAnimatedValue,
-  Easing,
   effect,
   Scroll,
   signal,
   Text,
   View,
-  type CompositeAnimation,
   type JSX,
 } from "nsh";
 import { Input, Switch } from "nsh/base";
@@ -26,7 +22,7 @@ import { Icon, type IconName } from "./Icon";
 import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
 import { DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
 import { abbreviateHome, pathBase, spaceName } from "./logic";
-import { chevronTransition, colorTransition, indicatorTransition, isReducedMotion } from "./tokens";
+import { chevronTransition, colorTransition, indicatorTransition } from "./tokens";
 import { ShortcutsList } from "./ShortcutsModal";
 import { PluginsPane } from "./PluginsPane";
 import {
@@ -1272,42 +1268,6 @@ export function SettingsView(props: { active?: boolean } = {}) {
   const isActive = () => props.active ?? true;
   const active = () => settingsSection();
   const activeIndex = () => Math.max(0, NAV_ITEMS.findIndex((it) => it.id === active()));
-
-  const paneOpacity = createAnimatedValue(1);
-  const paneY = createAnimatedValue(0);
-  let firstRender = true;
-  let running: CompositeAnimation | undefined;
-
-  effect(() => {
-    void active();
-    if (firstRender) {
-      firstRender = false;
-      return;
-    }
-    if (running) {
-      running.stop();
-      running = undefined;
-    }
-    if (isReducedMotion()) {
-      paneOpacity.set(1);
-      paneY.set(0);
-      return;
-    }
-    // Keep opacity at 1 so switching settings panes (e.g. Workspace -> Plugins) never flashes a blank frame.
-    paneOpacity.set(1);
-    paneY.set(4);
-    const anim = Animated.timing(paneY, { toValue: 0, duration: 150, easing: Easing.bezier(0.16, 1, 0.3, 1) });
-    running = anim;
-    void anim.start(() => {
-      if (running === anim) running = undefined;
-    });
-  });
-
-  cleanup(() => {
-    running?.stop();
-    running = undefined;
-  });
-
   const activeNavItem = () => NAV_ITEMS[activeIndex()] ?? NAV_ITEMS[0];
 
   return (
@@ -1397,8 +1357,6 @@ export function SettingsView(props: { active?: boolean } = {}) {
               paddingBottom: SPACE[32],
               paddingLeft: GUTTER,
               paddingRight: GUTTER,
-              opacity: paneOpacity,
-              transform: [{ translateY: paneY }],
             }}
           >
             <If when={active() === "workspace"}>

@@ -40,7 +40,8 @@ type SnippetTab = "code" | "notes" | "verify";
 type VerifyKindOption = "self" | "library_checker" | "problem";
 
 export function SnippetStudio(props: { active: boolean }) {
-  const slug = () => activeSnippetStudio() ?? "";
+  // Retain last active slug while SpaceStage slides out symmetrically.
+  const slug = computed<string>((prev) => activeSnippetStudio() ?? prev ?? "");
   const payload = signal<SnippetDetailPayload | undefined>(undefined);
   const previewTemplate = signal<string>("trd-compact");
   const tab = signal<SnippetTab>("code");

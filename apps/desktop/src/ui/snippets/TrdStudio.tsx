@@ -43,7 +43,8 @@ import type {
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 export function TrdStudio(props: { active: boolean }) {
-  const trdId = () => activeTrdStudio() ?? "";
+  // Retain last active TRD id while SpaceStage slides out symmetrically.
+  const trdId = computed<string>((prev) => activeTrdStudio() ?? prev ?? "");
   const payload = signal<TrdDetailPayload | undefined>(undefined);
   const allSnippets = signal<SnippetListPayload["snippets"]>([]);
   const catalog = signal<TrdTemplatesCatalog>({ default: "trd-compact", templates: [], presets: [], fonts: [] });
