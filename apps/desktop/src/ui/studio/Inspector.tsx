@@ -139,6 +139,7 @@ export function Inspector(props: {
         width: INSPECTOR_WIDTH,
         borderLeftWidth: 1,
         display: displayed() ? "flex" : "none",
+        flexDirection: "column",
         opacity: props.open ? 1 : 0,
         transform: props.open ? "translateX(0px)" : `translateX(${INSPECTOR_WIDTH + 1}px)`,
         ...panelTransition(),

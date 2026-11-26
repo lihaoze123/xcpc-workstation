@@ -2,6 +2,25 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-11-26
+
+Phase 4 正式版：在题库、出版与本地 Polygon 之外，完整交付**混合沙箱插件引擎、个人训练看板、纯 Web `<WebView>` 插件生态与插件开发工具链**。
+
+### 核心亮点
+
+- **混合沙箱插件底座与安全模型（`xcpc-plugin`）**：
+  - 内嵌 `rquickjs` 沙箱（64 MiB 内存上限、2 秒超时、域名白名单逐跳重定向校验、系统 `keyring` 凭据托管、插件作用域 KV 存储），支持 `oj_source`、`tool`、`commands`、`importer`、`exporter` 与 `credentials` 扩展点；`host.http.fetch` 支持 `responseType: "text" | "base64"` 二进制安全拉取。
+  - Core 层强制信任门（`pending_trust`）、来源仓库持久化与 HTTPS/SHA-256/Zip Slip 校验；纯 Web `<WebView>` 沙箱插件界面（`<iframe sandbox="allow-scripts" srcdoc>` + 随机桥接令牌 + 严格 CSP）提供 `window.xcpc` 桥接（`runTool`、`storage`、`workspace`、`toast`、`clipboard.{writeText,writeImage}`、`oj.listAccounts`、`files`、`openTool` 与实时主题变量）。
+- **个人训练看板与 OJ 同步（`xcpc-sync`）**：
+  - 内置 **Codeforces** 与 **AtCoder** 官方 OJ 插件，全局 `<dataDir>/oj_sync.db` 跨工作区共享，`training/logs.jsonl` 仅记录状态变更（不污染 `problem.toml`）。
+  - 「训练」空间四视图（总览、比赛日历、提交、题解）及对应 CLI / MCP 工具（`get_training_dashboard`、`set_training_status`、`ingest_problem`）。
+- **纯净「工具」Tab 与插件开发生态（`@xcpc/plugin-sdk`）**：
+  - 官方离线工具迁出至独立插件仓库 [`xcpc-plugins`](https://github.com/lihaoze123/xcpc-plugins)，支持一键安装、按插件 ID 粒度免重启热重载与完整 `xcpc plugin` CLI（`init` / `install` / `uninstall` / `trust` / `link` / `check` / `pack` / `test` / `repo`），附 `docs/plugin-development.md` 与 `xcpc-plugin-creator` Skill。
+
+### 修复（自 `0.4.0-beta.4` 起）
+
+- 修复出版工作室右侧属性面板（`Inspector`）在折叠/展开切换时未显式声明纵向布局导致内容横向分栏错位的问题。
+
 ## [0.4.0-beta.4] - 2026-11-25
 
 ### 新增
