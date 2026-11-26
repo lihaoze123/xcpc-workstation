@@ -1,11 +1,9 @@
-// Training space View 1: Overview dashboard.
-// Inline empty-state onboarding when unconfigured, global time window selector with scope caption,
-// platform Rating cards + 3 focused KPI cards (Period Solved, Streak, Today),
-// dual-mode annual heatmap, Rating trajectory, difficulty trend, and distributions with drilldown.
+// Training space View 1: Overview dashboard (Phase 6D §8.4).
+// Inline empty-state onboarding when unconfigured, unified Overview Band (OJ Ratings + 3 KPIs in one card),
+// rolling 12-month dual-mode heatmap, Rating trajectory, difficulty trend, and distributions with drilldown.
 
-import { computed, Scroll, Text, View } from "nsh";
+import { Scroll, Text, View } from "nsh";
 import { t } from "../i18n";
-import { Segmented } from "../kit";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor } from "../theme";
 import { DifficultyTrendCard } from "./DifficultyTrendCard";
@@ -21,60 +19,46 @@ import {
   type TrainingDashboardData,
 } from "./types";
 
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
-function KpiCard(props: {
+import { RADIUS, SPACE, TYPE } from "../tokens";
+
+function OverviewMetricCell(props: {
   label: string;
-  windowBadge?: string;
   value: string;
+  dotColor?: string;
   sub?: string;
   testID?: string;
 }) {
   return (
     <View
       testID={props.testID}
-      class="bg-card border border-border"
       style={{
         flex: 1,
-        minWidth: 160,
-        borderRadius: RADIUS.lg,
-        paddingTop: SPACE[12],
-        paddingBottom: SPACE[12],
-        paddingLeft: SPACE[12],
-        paddingRight: SPACE[12],
+        minWidth: 112,
         gap: SPACE[4],
-        boxShadow: cardShadow(),
       }}
     >
+      <Text style={TYPE.caption} class="text-muted-foreground">
+        {props.label}
+      </Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
-        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-          {props.label}
+        <Text style={TYPE.display} class="text-foreground">
+          {props.value}
         </Text>
-        <If when={props.windowBadge}>
+        <If when={props.dotColor}>
           <View
-            class="bg-muted"
-            style={{ height: 17, paddingLeft: SPACE[4], paddingRight: SPACE[4], borderRadius: RADIUS.xs, justifyContent: "center" }}
-          >
-            <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
-              {props.windowBadge!}
-            </Text>
-          </View>
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: RADIUS.full,
+              backgroundColor: props.dotColor!,
+            }}
+          />
         </If>
       </View>
-      <Text
-        style={{
-          fontSize: FONT_SIZE.display,
-          lineHeight: LINE_HEIGHT.display,
-          fontWeight: FONT_WEIGHT.semibold,
-          fontVariant: ["tabular-nums"],
-        }}
-        class="text-foreground"
-      >
-        {props.value}
-      </Text>
       <If when={props.sub}>
         <Text
-          style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
-          class="text-secondary-foreground"
+          style={[TYPE.caption, { fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }]}
+          class="text-muted-foreground"
         >
           {props.sub!}
         </Text>
@@ -89,8 +73,6 @@ export function OverviewTab(props: {
   hasConfiguredAccounts?: boolean;
   window: TimeWindow;
   tagMinRating: number | null;
-  onWindowChange: (w: TimeWindow) => void;
-  onYearChange: (year: number) => void;
   onTagMinRatingChange: (min: number | null) => void;
   onDrilldownBucket: (bucket: DifficultyBucket) => void;
   onDrilldownTag: (tag: string, minRating: number | null) => void;
@@ -122,13 +104,6 @@ export function OverviewTab(props: {
     return cur.difficulty_trend.some((p) => p.p75 != null || p.p90 != null);
   };
 
-  const windowItems = computed(() => [
-    { value: "30d" as const, label: t("training.window.30d"), testID: "training-window-30d" },
-    { value: "90d" as const, label: t("training.window.90d"), testID: "training-window-90d" },
-    { value: "year" as const, label: t("training.window.year"), testID: "training-window-year" },
-    { value: "all" as const, label: t("training.window.all"), testID: "training-window-all" },
-  ]);
-
   const activeWindowLabel = () => {
     switch (props.window) {
       case "30d":
@@ -159,114 +134,54 @@ export function OverviewTab(props: {
           />
         }
       >
-        {/* Global time window selector */}
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Segmented
-            items={windowItems()}
-            value={props.window}
-            onChange={props.onWindowChange}
-            itemWidth={68}
-          />
-        </View>
-
-        {/* Platform Rating cards (when accounts exist) */}
-        <If when={(d()?.accounts.length ?? 0) > 0}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
-            <Each of={d()?.accounts ?? []} key={(a) => a.platform}>
-              {(acc) => {
-                const curRating = () => acc().rating;
-                const maxRating = () => acc().max_rating;
-                return (
-                  <View
-                    testID={`training-account-${acc().platform}`}
-                    class="bg-card border border-border"
-                    style={{
-                      flex: 1,
-                      minWidth: 200,
-                      borderRadius: RADIUS.lg,
-                      paddingTop: SPACE[12],
-                      paddingBottom: SPACE[12],
-                      paddingLeft: SPACE[12],
-                      paddingRight: SPACE[12],
-                      gap: SPACE[4],
-                      boxShadow: cardShadow(),
-                    }}
-                  >
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
-                      <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
-                        {platformDisplayName(acc().platform)}
-                      </Text>
-                      <If when={acc().handle}>
-                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                          {acc().handle}
-                        </Text>
-                      </If>
-                    </View>
-                    <If when={curRating() != null}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-                        <Text
-                          style={{
-                            fontSize: FONT_SIZE.display,
-                            lineHeight: LINE_HEIGHT.display,
-                            fontWeight: FONT_WEIGHT.semibold,
-                            fontVariant: ["tabular-nums"],
-                          }}
-                          class="text-foreground"
-                        >
-                          {String(curRating())}
-                        </Text>
-                        <View
-                          style={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: RADIUS.full,
-                            backgroundColor: tierColor(ratingTier(curRating())),
-                          }}
-                        />
-                        <If when={maxRating() != null}>
-                          <Text
-                            style={{
-                              fontSize: FONT_SIZE.caption,
-                              fontVariant: ["tabular-nums"],
-                            }}
-                            class="text-muted-foreground"
-                          >
-                            {t("training.kpi.maxRating", { rating: maxRating()! })}
-                          </Text>
-                        </If>
-                      </View>
-                    </If>
-                    <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-                      {t("training.kpi.accountStats", {
-                        ac: acc().solved_count,
-                        subs: acc().submission_count,
-                      })}
-                    </Text>
-                  </View>
-                );
-              }}
-            </Each>
-          </View>
-        </If>
-
-        {/* 3 focused KPI cards: Period Solved (follows window), Streak, Today */}
+        {/* Unified Overview Band: OJ Ratings (configured/present) + Solved / Streak / Today in one card */}
         <If when={d()}>
           {(cur) => (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
-              <KpiCard
+            <View
+              testID="training-overview-band"
+              class="bg-card border border-border"
+              style={{
+                flexDirection: "row",
+                flexWrap: "wrap",
+                alignItems: "flex-start",
+                borderRadius: RADIUS.lg,
+                padding: SPACE[16],
+                gap: SPACE[24],
+                boxShadow: cardShadow(),
+              }}
+            >
+              <Each of={cur().accounts} key={(a) => a.platform}>
+                {(acc) => {
+                  const curRating = () => acc().rating;
+                  const maxRating = () => acc().max_rating;
+                  return (
+                    <OverviewMetricCell
+                      testID={`training-account-${acc().platform}`}
+                      label={platformDisplayName(acc().platform)}
+                      value={curRating() != null ? String(curRating()) : String(acc().solved_count)}
+                      dotColor={curRating() != null ? tierColor(ratingTier(curRating())) : undefined}
+                      sub={
+                        maxRating() != null
+                          ? t("training.kpi.maxRating", { rating: maxRating()! })
+                          : t("training.kpi.subsCount", { count: acc().submission_count })
+                      }
+                    />
+                  );
+                }}
+              </Each>
+              <OverviewMetricCell
                 testID="training-kpi-window"
-                label={zhEn("周期内过题", "Period Solved")}
-                windowBadge={activeWindowLabel()}
+                label={zhEn("过题", "Solved")}
                 value={String(cur().kpi.window_ac)}
                 sub={t("training.kpi.subsCount", { count: cur().kpi.window_submissions })}
               />
-              <KpiCard
+              <OverviewMetricCell
                 testID="training-kpi-streak"
-                label={zhEn("连续天数", "Streak")}
+                label={zhEn("连续", "Streak")}
                 value={t("training.kpi.days", { count: cur().kpi.streak_days })}
                 sub={t("training.kpi.longestStreak", { count: cur().kpi.longest_streak_days })}
               />
-              <KpiCard
+              <OverviewMetricCell
                 testID="training-kpi-today"
                 label={zhEn("今日", "Today")}
                 value={String(cur().kpi.today_ac)}
@@ -276,16 +191,9 @@ export function OverviewTab(props: {
           )}
         </If>
 
-        {/* Dual-mode annual heatmap */}
+        {/* Rolling 12-month dual-mode heatmap */}
         <If when={d()}>
-          {(cur) => (
-            <HeatmapCard
-              year={cur().heatmap_year}
-              availableYears={cur().available_years}
-              cells={cur().heatmap}
-              onYearChange={props.onYearChange}
-            />
-          )}
+          {(cur) => <HeatmapCard cells={cur().heatmap} />}
         </If>
 
         {/* Rating curve (only when rating history exists) + Solved problem difficulty trend */}

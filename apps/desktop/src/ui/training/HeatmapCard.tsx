@@ -1,7 +1,6 @@
-// Dual-mode annual training heatmap:
-// Switches between daily distinct AC count and daily max solved difficulty,
-// uses host Segmented controls for mode & year switching, localized Chinese/English labels,
-// and fills the full card width cleanly with aligned first column.
+// Rolling 12-month dual-mode training heatmap (Phase 6D §8.4):
+// Fixed to GitHub-style last 52-53 weeks ending today, with a single mode Segmented control
+// (daily distinct AC count vs daily max solved difficulty) and brand teal 5-step scale (§7).
 
 import { Canvas, colorScheme, computed, signal, Text, View } from "nsh";
 import { t } from "../i18n";
@@ -10,14 +9,14 @@ import { ratingTier } from "../logic";
 import { cardShadow, tierColor, token } from "../theme";
 import { isEn } from "./locale";
 import {
-  buildYearHeatmapGrid,
+  buildRollingHeatmapGrid,
   heatmapCellColor,
   type HeatmapCell,
   type HeatmapGridDay,
   type HeatmapMode,
 } from "./types";
 
-import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE, TYPE } from "../tokens";
 const MONTH_LABELS_ZH = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 const MONTH_LABELS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_LABELS_ZH = [
@@ -47,17 +46,15 @@ function computeGridGeometry(width: number, weeks: number) {
 }
 
 export function HeatmapCard(props: {
-  year: number;
-  availableYears: readonly number[];
   cells: readonly HeatmapCell[];
-  onYearChange: (year: number) => void;
+  endDate?: Date;
 }) {
   const mode = signal<HeatmapMode>("count");
   const hovered = signal<HeatmapGridDay | undefined>(undefined);
   const pinned = signal<HeatmapGridDay | undefined>(undefined);
   const canvasWidth = signal(720);
 
-  const grid = computed(() => buildYearHeatmapGrid(props.year, props.cells));
+  const grid = computed(() => buildRollingHeatmapGrid(props.cells, props.endDate));
   const activeDay = () => hovered() ?? pinned();
 
   const cellMetrics = computed(() => computeGridGeometry(canvasWidth(), grid().weeks));
@@ -79,21 +76,13 @@ export function HeatmapCard(props: {
     return dayLookup().get(`${w}:${d}`);
   };
 
-  const totalAcYear = computed(() => props.cells.reduce((acc, c) => acc + c.ac_count, 0));
-  const activeDaysYear = computed(() => props.cells.filter((c) => c.ac_count > 0).length);
+  const totalAc = computed(() => grid().days.reduce((acc, d) => acc + d.acCount, 0));
+  const activeDays = computed(() => grid().days.filter((d) => d.acCount > 0).length);
 
   const modeItems = computed(() => [
     { value: "count" as const, label: t("training.heatmap.modeCount"), testID: "heatmap-mode-count" },
     { value: "rating" as const, label: t("training.heatmap.modeRating"), testID: "heatmap-mode-rating" },
   ]);
-
-  const yearItems = computed(() =>
-    props.availableYears.slice(0, 4).map((y) => ({
-      value: String(y),
-      label: String(y),
-      testID: `heatmap-year-${y}`,
-    })),
-  );
 
   return (
     <View
@@ -106,35 +95,22 @@ export function HeatmapCard(props: {
         boxShadow: cardShadow(),
       }}
     >
-      {/* Header: title + year summary + host Segmented mode & year switchers */}
+      {/* Header: title + rolling 12-month summary + single mode pill Segmented */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: SPACE[8] }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
-          <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+          <Text style={TYPE.strong} class="text-foreground">
             {t("training.heatmap.title")}
           </Text>
-          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-            {t("training.heatmap.yearSummary", { ac: totalAcYear(), days: activeDaysYear() })}
+          <Text style={[TYPE.caption, { fontVariant: ["tabular-nums"] }]} class="text-muted-foreground">
+            {t("training.heatmap.yearSummary", { ac: totalAc(), days: activeDays() })}
           </Text>
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
-          <Segmented
-            items={modeItems()}
-            value={mode()}
-            onChange={(m) => mode.set(m)}
-            itemWidth={88}
-          />
-          <If when={yearItems().length > 1}>
-            <Segmented
-              items={yearItems()}
-              value={String(props.year)}
-              onChange={(yr) => {
-                pinned.set(undefined);
-                props.onYearChange(Number(yr));
-              }}
-              itemWidth={50}
-            />
-          </If>
-        </View>
+        <Segmented
+          items={modeItems()}
+          value={mode()}
+          onChange={(m) => mode.set(m)}
+          itemWidth={88}
+        />
       </View>
 
       {/* Canvas grid */}
@@ -209,16 +185,9 @@ export function HeatmapCard(props: {
         }}
       />
 
-      {/* Bottom detail strip (hovered/pinned day readout + compact legend) */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12], minHeight: 20 }}>
-        <If
-          when={activeDay()}
-          else={
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("training.heatmap.hoverHint")}
-            </Text>
-          }
-        >
+      {/* Bottom detail strip (hovered/pinned day readout + compact legend; no static hint text) */}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12], minHeight: LINE_HEIGHT.caption }}>
+        <If when={activeDay()} else={<View />}>
           {(day) => (
             <View testID="training-heatmap-detail" style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
               <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">

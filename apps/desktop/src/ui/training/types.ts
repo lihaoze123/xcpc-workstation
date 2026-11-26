@@ -378,7 +378,7 @@ export function niceXTickIndices(count: number, maxTicks = 5): number[] {
   return res;
 }
 
-// ── Annual dual-mode heatmap grid builder ────────────────────────────────────
+// ── Rolling 12-month dual-mode heatmap grid builder ──────────────────────────
 
 export interface HeatmapGridDay {
   date: string;
@@ -391,7 +391,6 @@ export interface HeatmapGridDay {
 }
 
 export interface HeatmapGrid {
-  year: number;
   weeks: number;
   days: HeatmapGridDay[];
   monthStarts: { month: number; weekIndex: number }[];
@@ -401,30 +400,35 @@ function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-/** Builds a full-year calendar grid (Sunday-start weeks, 52–54 columns) merged with sparse `HeatmapCell`s. */
-export function buildYearHeatmapGrid(year: number, cells: readonly HeatmapCell[]): HeatmapGrid {
+/**
+ * Builds a GitHub-style rolling 12-month calendar grid (Sunday-start weeks, 53 columns ending on
+ * `endDate` / today) merged with sparse `HeatmapCell`s.
+ */
+export function buildRollingHeatmapGrid(
+  cells: readonly HeatmapCell[],
+  endDate: Date = new Date(),
+): HeatmapGrid {
   const byDate = new Map<string, HeatmapCell>();
   for (const c of cells) byDate.set(c.date, c);
 
-  const jan1 = new Date(Date.UTC(year, 0, 1));
-  const startDow = jan1.getUTCDay(); // 0..6
-  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-  const totalDays = isLeap ? 366 : 365;
+  const endUtc = Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const endDow = new Date(endUtc).getUTCDay(); // 0 = Sun .. 6 = Sat
+  const totalDays = 52 * 7 + endDow + 1; // 365..371 days -> always 53 weeks (col 0..52)
+  const startUtc = endUtc - (totalDays - 1) * 86_400_000;
 
   const days: HeatmapGridDay[] = [];
   const monthStarts: { month: number; weekIndex: number }[] = [];
-  let lastMonth = 0;
 
   for (let i = 0; i < totalDays; i++) {
-    const dt = new Date(Date.UTC(year, 0, 1 + i));
+    const dt = new Date(startUtc + i * 86_400_000);
+    const y = dt.getUTCFullYear();
     const m = dt.getUTCMonth() + 1;
     const d = dt.getUTCDate();
-    const date = `${year}-${pad2(m)}-${pad2(d)}`;
-    const weekIndex = Math.floor((startDow + i) / 7);
-    const dayOfWeek = (startDow + i) % 7;
-    if (m !== lastMonth) {
+    const date = `${y}-${pad2(m)}-${pad2(d)}`;
+    const weekIndex = Math.floor(i / 7);
+    const dayOfWeek = i % 7;
+    if (d === 1) {
       monthStarts.push({ month: m, weekIndex });
-      lastMonth = m;
     }
     const cell = byDate.get(date);
     days.push({
@@ -439,7 +443,7 @@ export function buildYearHeatmapGrid(year: number, cells: readonly HeatmapCell[]
   }
 
   const weeks = days.length > 0 ? days[days.length - 1].weekIndex + 1 : 53;
-  return { year, weeks, days, monthStarts };
+  return { weeks, days, monthStarts };
 }
 
 // Brand Deep Petrol / Teal-Blue (H:195°) 5-step heatmap scale (§7); green is reserved for AC / pass.

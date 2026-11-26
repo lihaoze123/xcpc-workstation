@@ -254,13 +254,28 @@ function TrainingTestHarness() {
         </View>
       </If>
 
+      <If when={mode() === "shell-populated"}>
+        <TrainingView
+          active
+          fetchDashboard={(w) => ({
+            ...makeSampleDashboard(),
+            window: w,
+          })}
+          fetchOjSources={() => [
+            { id: "codeforces", name: "Codeforces", handle: "tourist" },
+            { id: "atcoder", name: "AtCoder", handle: "tourist" },
+          ]}
+          fetchContests={() => []}
+          fetchSubmissions={() => makeSampleSubmissions()}
+          fetchEditorials={filterSampleEditorials}
+        />
+      </If>
+
       <If when={mode() === "overview"}>
         <OverviewTab
           data={makeSampleDashboard()}
           window={win()}
           tagMinRating={null}
-          onWindowChange={(w) => win.set(w)}
-          onYearChange={() => {}}
           onTagMinRatingChange={() => {}}
           onDrilldownBucket={() => {}}
           onDrilldownTag={() => {}}
@@ -286,8 +301,6 @@ function TrainingTestHarness() {
           hasConfiguredAccounts={false}
           window={win()}
           tagMinRating={null}
-          onWindowChange={(w) => win.set(w)}
-          onYearChange={() => {}}
           onTagMinRatingChange={() => {}}
           onDrilldownBucket={() => {}}
           onDrilldownTag={() => {}}
@@ -317,8 +330,6 @@ function TrainingTestHarness() {
           hasConfiguredAccounts={false}
           window={win()}
           tagMinRating={null}
-          onWindowChange={(w) => win.set(w)}
-          onYearChange={() => {}}
           onTagMinRatingChange={() => {}}
           onDrilldownBucket={() => {}}
           onDrilldownTag={() => {}}

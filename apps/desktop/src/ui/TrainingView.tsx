@@ -1,10 +1,11 @@
-// Training space shell (Phase 4B+):
-// Top bar with 4-view segmented switch (Overview | Contests | Submissions | Editorials) on the left,
-// manual log ("记一题") + conditional OJ last-synced & Sync controls on the right.
+// Training space shell (Phase 4B+ / Phase 6D §8.4):
+// 52pt Toolbar with 4-view underline tabs (Overview | Contests | Submissions | Editorials) on the left,
+// Overview-only time-range pill Segmented, spinning Sync IconBtn (last-synced in tooltip only),
+// and primary Manual Log ("记一题") button on the right.
 
-import { computed, effect, signal, Text, untracked, View } from "nsh";
+import { computed, effect, signal, untracked, View } from "nsh";
 import { t } from "./i18n";
-import { Btn, Segmented } from "./kit";
+import { Btn, IconBtn, Segmented, tip } from "./kit";
 import { GUTTER, Spacer, Toolbar } from "./layout";
 import {
   globalLastSyncedAt,
@@ -36,6 +37,7 @@ import {
   type DifficultyBucket,
   type EditorialFilter,
   type EditorialSummaryItem,
+  type HeatmapCell,
   type SubmissionsFilter,
   type SubmissionsPage,
   type TimeWindow,
@@ -43,7 +45,7 @@ import {
   type TrainingTab,
 } from "./training/types";
 
-import { FONT_SIZE, SPACE } from "./tokens";
+import { SPACE } from "./tokens";
 const PAGE_LIMIT = 50;
 
 const EMPTY_SUBMISSIONS_PAGE: SubmissionsPage = {
@@ -78,10 +80,16 @@ export interface TrainingViewProps {
   fetchSubmissions?: (filter: SubmissionsFilter, offset: number) => SubmissionsPage;
 }
 
+function mergeHeatmapCells(prev: readonly HeatmapCell[], current: readonly HeatmapCell[]): HeatmapCell[] {
+  const byDate = new Map<string, HeatmapCell>();
+  for (const c of prev) byDate.set(c.date, c);
+  for (const c of current) byDate.set(c.date, c);
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export function TrainingView(props: TrainingViewProps) {
   const tab = signal<TrainingTab>("overview");
   const windowVal = signal<TimeWindow>("all");
-  const heatmapYear = signal<number | null>(null);
   const tagMinRating = signal<number | null>(null);
 
   const contestsPlatform = signal<string>("");
@@ -130,12 +138,11 @@ export function TrainingView(props: TrainingViewProps) {
 
   const loadDashboard = () => {
     const win = windowVal();
-    const year = heatmapYear();
     const minRating = tagMinRating();
-    const cacheKey = `${win}|${year ?? ""}|${minRating ?? ""}`;
+    const cacheKey = `${win}|${minRating ?? ""}`;
     try {
       if (props.fetchDashboard) {
-        const next = props.fetchDashboard(win, year, minRating);
+        const next = props.fetchDashboard(win, null, minRating);
         dashboard.set(next);
         if (next) {
           dashboardCache.set(cacheKey, next);
@@ -153,7 +160,7 @@ export function TrainingView(props: TrainingViewProps) {
       if (typeof preview.trainingDashboardAsync === "function") {
         const seq = ++dashboardReqSeq;
         void preview
-          .trainingDashboardAsync(win, year, minRating)
+          .trainingDashboardAsync(win, null, minRating)
           .then((res) => {
             if (seq !== dashboardReqSeq) return;
             if (res.ok && res.reportJson) {
@@ -161,6 +168,25 @@ export function TrainingView(props: TrainingViewProps) {
               dashboardCache.set(cacheKey, next);
               dashboard.set(next);
               setGlobalLastSyncedAt(next.last_synced_at);
+              // Merge previous year's heatmap cells so the rolling 12-month window spans year boundaries.
+              const prevYear = next.heatmap_year - 1;
+              if (next.available_years.includes(prevYear)) {
+                void preview
+                  .trainingDashboardAsync(win, prevYear, minRating)
+                  .then((prevRes) => {
+                    if (seq !== dashboardReqSeq) return;
+                    if (prevRes.ok && prevRes.reportJson) {
+                      const prevData = JSON.parse(prevRes.reportJson) as TrainingDashboardData;
+                      const merged: TrainingDashboardData = {
+                        ...next,
+                        heatmap: mergeHeatmapCells(prevData.heatmap, next.heatmap),
+                      };
+                      dashboardCache.set(cacheKey, merged);
+                      dashboard.set(merged);
+                    }
+                  })
+                  .catch(() => {});
+              }
             }
           })
           .catch(() => {
@@ -168,9 +194,20 @@ export function TrainingView(props: TrainingViewProps) {
           });
         return;
       }
-      const res = preview.trainingDashboard(win, year, minRating);
+      const res = preview.trainingDashboard(win, null, minRating);
       if (res.ok && res.reportJson) {
-        const next = JSON.parse(res.reportJson) as TrainingDashboardData;
+        let next = JSON.parse(res.reportJson) as TrainingDashboardData;
+        const prevYear = next.heatmap_year - 1;
+        if (next.available_years.includes(prevYear)) {
+          const prevRes = preview.trainingDashboard(win, prevYear, minRating);
+          if (prevRes.ok && prevRes.reportJson) {
+            const prevData = JSON.parse(prevRes.reportJson) as TrainingDashboardData;
+            next = {
+              ...next,
+              heatmap: mergeHeatmapCells(prevData.heatmap, next.heatmap),
+            };
+          }
+        }
         dashboardCache.set(cacheKey, next);
         dashboard.set(next);
         setGlobalLastSyncedAt(next.last_synced_at);
@@ -432,6 +469,21 @@ export function TrainingView(props: TrainingViewProps) {
     { value: "editorials" as const, label: t("training.tab.editorials"), testID: "training-tab-editorials" },
   ]);
 
+  const windowItems = computed(() => [
+    { value: "30d" as const, label: t("training.window.30d"), testID: "training-window-30d" },
+    { value: "90d" as const, label: t("training.window.90d"), testID: "training-window-90d" },
+    { value: "year" as const, label: t("training.window.year"), testID: "training-window-year" },
+    { value: "all" as const, label: t("training.window.all"), testID: "training-window-all" },
+  ]);
+
+  const syncTooltipLabel = () =>
+    `${t("training.sync")} · ${t("settings.plugins.lastSyncedAt", {
+      time: formatSyncTimestamp(
+        globalLastSyncedAt() ?? dashboard()?.last_synced_at,
+        t("settings.plugins.neverSynced"),
+      ),
+    })}`;
+
   const readOnly = () => info().readOnly;
 
   return (
@@ -451,25 +503,32 @@ export function TrainingView(props: TrainingViewProps) {
         />
         <Spacer />
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <If when={tab() === "overview" && !showingOnboarding()}>
+            <Segmented
+              items={windowItems()}
+              value={windowVal()}
+              onChange={(w) => windowVal.set(w)}
+              itemWidth={68}
+            />
+          </If>
+
           <If when={hasConfiguredAccounts()}>
-            <Text
-              testID="training-last-synced"
-              style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
-              class="text-muted-foreground"
-            >
-              {t("settings.plugins.lastSyncedAt", {
-                time: formatSyncTimestamp(
-                  globalLastSyncedAt() ?? dashboard()?.last_synced_at,
-                  t("settings.plugins.neverSynced"),
-                ),
-              })}
-            </Text>
-            <Btn
+            <IconBtn
               testID="training-sync-btn"
-              label={t("training.sync")}
               icon="rotateCcw"
-              variant="outline"
               disabled={syncing()}
+              tooltip={tip(syncTooltipLabel(), undefined, "bottom")}
+              style={
+                syncing()
+                  ? {
+                      animationName: "spin",
+                      animationDuration: 700,
+                      animationIterationCount: "infinite",
+                      animationTimingFunction: "linear",
+                      animationFrameRate: 30,
+                    }
+                  : undefined
+              }
               onPress={() => void runSync()}
             />
           </If>
@@ -479,7 +538,7 @@ export function TrainingView(props: TrainingViewProps) {
               testID="training-manual-log-btn"
               label={t("training.manualLog.button")}
               icon="plus"
-              variant="outline"
+              variant="primary"
               disabled={readOnly()}
               onPress={() => manualLogOpen.set(true)}
             />
@@ -500,8 +559,6 @@ export function TrainingView(props: TrainingViewProps) {
               hasConfiguredAccounts={hasConfiguredAccounts()}
               window={windowVal()}
               tagMinRating={tagMinRating()}
-              onWindowChange={(w) => windowVal.set(w)}
-              onYearChange={(y) => heatmapYear.set(y)}
               onTagMinRatingChange={(m) => tagMinRating.set(m)}
               onDrilldownBucket={handleDrilldownBucket}
               onDrilldownTag={handleDrilldownTag}

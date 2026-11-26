@@ -2,7 +2,7 @@ import { describe, expect, open, test } from "nsh/test";
 import { spaceName, windowTitle } from "./logic";
 import { goSpace, info, space } from "./store";
 import {
-  buildYearHeatmapGrid,
+  buildRollingHeatmapGrid,
   DEFAULT_SUBMISSIONS_FILTER,
   drilldownFromBucket,
   drilldownFromTag,
@@ -49,20 +49,45 @@ describe("Training space helpers & drill-down state", () => {
     expect(hasActiveSubmissionsFilter(f)).toBe(true);
   });
 
-  test("buildYearHeatmapGrid covers full year (leap and non-leap) and merges sparse cells", () => {
-    const grid2024 = buildYearHeatmapGrid(2024, [
-      { date: "2024-02-29", ac_count: 3, submission_count: 5, max_rating: 2100 },
-    ]);
-    expect(grid2024.days.length).toBe(366);
-    const leapDay = grid2024.days.find((d) => d.date === "2024-02-29");
-    expect(leapDay).toBeDefined();
-    expect(leapDay!.acCount).toBe(3);
-    expect(leapDay!.submissionCount).toBe(5);
-    expect(leapDay!.maxRating).toBe(2100);
+  test("buildRollingHeatmapGrid builds a 53-week GitHub-style rolling 12-month grid and merges sparse cells", () => {
+    const endDate = new Date(2026, 10, 26); // 2026-11-26 (Thu)
+    const grid = buildRollingHeatmapGrid(
+      [
+        { date: "2025-12-15", ac_count: 2, submission_count: 4, max_rating: 1900 },
+        { date: "2026-11-26", ac_count: 3, submission_count: 5, max_rating: 2100 },
+        { date: "2020-01-01", ac_count: 9, submission_count: 9, max_rating: 3000 },
+      ],
+      endDate,
+    );
+    expect(grid.weeks).toBe(53);
+    expect(grid.days[0].dayOfWeek).toBe(0); // Sunday-aligned start
+    expect(grid.days[grid.days.length - 1].date).toBe("2026-11-26");
+    expect(grid.days.length).toBeGreaterThanOrEqual(365);
+    expect(grid.days.length).toBeLessThanOrEqual(371);
+    expect(grid.monthStarts.length).toBeGreaterThanOrEqual(12);
 
-    const grid2025 = buildYearHeatmapGrid(2025, []);
-    expect(grid2025.days.length).toBe(365);
-    expect(grid2025.monthStarts.length).toBe(12);
+    const prevYearCell = grid.days.find((d) => d.date === "2025-12-15");
+    expect(prevYearCell).toBeDefined();
+    expect(prevYearCell!.acCount).toBe(2);
+    expect(prevYearCell!.maxRating).toBe(1900);
+
+    const todayCell = grid.days.find((d) => d.date === "2026-11-26");
+    expect(todayCell).toBeDefined();
+    expect(todayCell!.acCount).toBe(3);
+    expect(todayCell!.submissionCount).toBe(5);
+    expect(todayCell!.maxRating).toBe(2100);
+
+    // Cells older than 12 months are excluded from the rolling grid
+    expect(grid.days.find((d) => d.date === "2020-01-01")).toBeUndefined();
+
+    // Leap day coverage when rolling window crosses Feb 29
+    const leapGrid = buildRollingHeatmapGrid(
+      [{ date: "2024-02-29", ac_count: 4, submission_count: 6, max_rating: 2200 }],
+      new Date(2024, 11, 31),
+    );
+    const leapDay = leapGrid.days.find((d) => d.date === "2024-02-29");
+    expect(leapDay).toBeDefined();
+    expect(leapDay!.acCount).toBe(4);
   });
 
   test("dual-mode heatmapCellColor distinguishes count vs rating modes and empty days", () => {
@@ -169,7 +194,7 @@ describe("Training space helpers & drill-down state", () => {
 });
 
 describe("Training UI headless layout & interaction tests (960x980)", () => {
-  test("Overview scrolls cleanly to 标签分布 and shows 3 focused KPI cards without redundant month card", async () => {
+  test("Overview renders unified Overview Band, rolling 12-month heatmap without year switcher/hint, and scrolls to 标签分布", async () => {
     const app = await open("./training/testHarness.tsx", {
       width: 960,
       height: 980,
@@ -177,25 +202,74 @@ describe("Training UI headless layout & interaction tests (960x980)", () => {
     });
 
     expect(app.shows("id:training-overview-scroll")).toBe(true);
+    expect(app.shows("id:training-overview-band")).toBe(true);
+    expect(app.shows("id:training-account-codeforces")).toBe(true);
     expect(app.shows("id:training-kpi-window")).toBe(true);
     expect(app.shows("id:training-kpi-streak")).toBe(true);
     expect(app.shows("id:training-kpi-today")).toBe(true);
+    expect(app.shows("id:training-heatmap-card")).toBe(true);
+    expect(app.shows("id:heatmap-mode-count")).toBe(true);
+    expect(app.shows("id:heatmap-mode-rating")).toBe(true);
+    // Rolling 12-month heatmap has no year switcher and no static hover hint text
+    expect(app.shows("id:heatmap-year-2026")).toBe(false);
+    expect(app.shows("id:heatmap-year-2025")).toBe(false);
+    // Time-window selector lives in TrainingView Toolbar, not inside OverviewTab body
+    expect(app.shows("id:training-window-30d")).toBe(false);
     expect(app.shows("id:training-rating-chart")).toBe(true);
     expect(app.shows("id:training-kpi-month")).toBe(false);
     expect(app.shows("id:training-window-caption")).toBe(false);
 
-    // Scroll down to reach the bottom distributions section
-    await app.scroll("id:training-overview-scroll", 400);
+    const topTexts = app.texts();
+    expect(topTexts).toContain("Codeforces");
+    expect(topTexts).toContain("3769");
+    expect(topTexts).toContain("过题");
+    expect(topTexts).toContain("连续");
+    expect(topTexts).toContain("今日");
+    expect(topTexts).not.toContain("悬停或点击方格查看当日明细");
+
+    // Compact unified Overview Band + rolling heatmap fits cleanly to bottom distributions on 960x980
     expect(app.shows("id:training-tags-card")).toBe(true);
     expect(app.shows("id:training-tags-header")).toBe(true);
-    const texts = app.texts();
-    expect(texts).toContain("标签分布");
-    expect(texts).toContain("标签");
-    expect(texts).toContain("过题");
-    expect(texts).toContain("均难");
-    expect(texts).toContain("动态规划");
-    expect(texts).toContain("图论");
-    expect(texts).toContain("做出的题有多难");
+    expect(topTexts).toContain("标签分布");
+    expect(topTexts).toContain("标签");
+    expect(topTexts).toContain("均难");
+    expect(topTexts).toContain("动态规划");
+    expect(topTexts).toContain("图论");
+    expect(topTexts).toContain("做出的题有多难");
+  });
+
+  test("TrainingView Toolbar shows time range ONLY on Overview and keeps last-synced out of permanent toolbar text", async () => {
+    const app = await open("./training/testHarness.tsx", {
+      width: 960,
+      height: 980,
+      storage: { mode: "shell-populated" },
+    });
+
+    expect(app.shows("id:training-topbar")).toBe(true);
+    expect(app.shows("id:training-window-30d")).toBe(true);
+    expect(app.shows("id:training-window-90d")).toBe(true);
+    expect(app.shows("id:training-window-year")).toBe(true);
+    expect(app.shows("id:training-window-all")).toBe(true);
+    expect(app.shows("id:training-sync-btn")).toBe(true);
+    expect(app.shows("id:training-manual-log-btn")).toBe(true);
+    // Last-synced timestamp lives only in the Sync IconBtn tooltip, never permanently in the toolbar
+    expect(app.shows("id:training-last-synced")).toBe(false);
+    expect(app.texts().some((s) => s.includes("上次同步"))).toBe(false);
+
+    // Switching to Contests hides the time-range selector
+    await app.press("id:training-tab-contests");
+    expect(app.shows("id:training-window-30d")).toBe(false);
+    expect(app.shows("id:training-sync-btn")).toBe(true);
+    expect(app.shows("id:training-manual-log-btn")).toBe(true);
+
+    // Switching to Submissions also keeps time-range hidden
+    await app.press("id:training-tab-submissions");
+    expect(app.shows("id:training-window-30d")).toBe(false);
+
+    // Switching back to Overview restores the time-range selector
+    await app.press("id:training-tab-overview");
+    expect(app.shows("id:training-window-30d")).toBe(true);
+    expect(app.shows("id:training-overview-band")).toBe(true);
   });
 
   test("Local-only user sees Overview dashboard (not onboarding) and hides empty Rating chart", async () => {
