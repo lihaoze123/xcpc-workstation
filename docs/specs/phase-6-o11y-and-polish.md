@@ -35,8 +35,8 @@
 | :--- | :--- | :--- | :--- |
 | 1 | `apps/desktop/src/ui/icons/*.svg`（60+ 手维护 Lucide SVG）+ `Icon.tsx` 静态表 | `nsh-icon` + `nsh-icon-lucide`（`nsh add`） | 删除 `ui/icons/` 目录；保留轻薄的语义封装或直接映射 `IconTone`，验证 release 产物体积仅打包实际用到的图标 |
 | 2 | `apps/desktop/src/vim_bridge.rs`（Rust 零尺寸组件抢 `Esc` / `Ctrl+[`） | NSH 0.7 `keymap.bind(..., { overFocused: true })` | 删除 `vim_bridge.rs` 及导出绑定，验证 Normal / Insert / Visual 下单次 `Esc` 与 `Ctrl+[` 行为完全一致 |
-| 3 | `apps/desktop/src/ui/TitleBar.tsx` + `apps/desktop/src/linux_chrome.rs`（GTK `dlsym` 剥离 `menu` 图标） | `nsh/base` 新增的 `TitleBar` | 用 `nsh/base` `TitleBar` 简化安全区与拖拽逻辑（保留居中命令栏与窗口标题同步）；实测 NSH 0.7.1 Linux 是否仍渲染多余应用菜单图标，若已修复则删除 `linux_chrome.rs` |
-| 4 | `apps/desktop/src/ui/training/RatingChartCard.tsx` 与 `DifficultyTrendCard.tsx`（手写 `<Canvas>` 折线图） | `nsh-o11y` `TimeSeriesChart` | 替换两条时间序列折线图，获得平滑缩放/平移、联动 crosshair、段位阈值线与比赛注释；保留手写年度日历热力图 `HeatmapCard.tsx` |
+| 3 | `apps/desktop/src/ui/TitleBar.tsx` + `apps/desktop/src/linux_chrome.rs`（GTK `dlsym` 剥离 `menu` 图标） | `nsh/base` 新增的 `TitleBar` | 用 `nsh/base` `TitleBar` 简化安全区与拖拽逻辑（保留居中命令栏与窗口标题同步）。**6A 核验结论**：检查 `nsh-platform-linux-0.7.1/src/window.rs:1228-1252`（`decoration_layout()`），`_ => true` 仍会保留 `gtk-decoration-layout` 中的 `"menu"` / `"icon"` 项，因此继续保留 `linux_chrome.rs` |
+| 4 | `apps/desktop/src/ui/training/RatingChartCard.tsx` 与 `DifficultyTrendCard.tsx`（手写 `<Canvas>` 折线图） | `nsh-o11y` `TimeSeriesChart`（难度趋势）+ `<Canvas>`（Rating） | **6B 复审取舍**：`TimeSeriesChart` 当前不支持横向段位色带与逐点着色，Rating 曲线保留自绘 `<Canvas>` 以完整呈现段位语义与日期级自定义浮层；难度趋势采用 `TimeSeriesChart` + 月度聚合与 3 期滑动平均；保留手写年度日历热力图 `HeatmapCard.tsx` |
 | 5 | `SettingsView.tsx` 手写更新下载状态机 + `updateNotes.ts` | NSH 0.7 原生 `promptForUpdate({ quiet })` | 替换自定义更新进度与说明弹窗，自动获得断点续传与 zstd 增量补丁；开发态继续体面提示 |
 | 6 | GStreamer 静态/构建期依赖声明与旧 `nsh.json` 布局 | NSH 0.7.1 运行期按需加载 + `nshm`/`nsh.lock` | 清理冗余打包依赖，确保 Linux 开发态与 release 归档均干净通过 |
 
@@ -49,6 +49,7 @@
 3. **长文档与 Vim 键位**：验证长题面/多题切换时的滚动流畅度、`overFocused: true` 接管后的 Vim 模式切换，以及斜杠命令、公式悬浮预览与诊断浮层坐标。
 
 - **决策门**：若上述体验全部达标（或仅需轻量参数/样式修补），则正式留在原生 `<Editor>`；若粗体度量或核心编辑能力仍存在无法绕过的根因缺陷，记录最小复现路径并单独开启 `editor-core`（裁剪版 + 原生 IME 合成槽）替代评估。
+- **6A 门控结论（2026-11-26）**：核查 `nsh-base-0.7.1/src/editor/display.rs:77-85`，`DisplayMap` 仍仅通过单一 Regular-400 `measure` 闭包缓存字符宽度，未按 `font-bold` 装饰单独计算粗体字形前进量；中英混排粗体标题若启用 `font-bold` 仍会产生光标落点与选区漂移。结合实机验证（去掉 `vim_bridge.rs` 后 `keymap.bind({ overFocused: true })` 下 Normal / Insert / Visual 及斜杠菜单 Esc 行为均达标），**决定留在原生 `<Editor>` 并维持 Regular 字重规避（标题用主色、粗体用下划线区分），暂不引入 `editor-core`**。
 
 ---
 

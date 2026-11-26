@@ -271,3 +271,9 @@ Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`
 
 - 人类可读的中文错误文案集中维护在 Core 层，供桌面 GUI 与 CLI 文本输出共用，统一按三段式组织（人话说明现象 → 可点击/可定位的位置 → 仅在有明确下一步时给出操作建议；规则拒绝如冻结只读不当错误处理，详规范见 [design-system.md §7](./design-system.md#7-文案克制规范)）。
 - 默认人类可读主文案不暴露底层错误码与英文技术原文（GUI 收入「复制详情」）；CLI `--json` 与 MCP 响应继续保留完整的结构化错误码与细节字段。
+
+### 7.5 可观测性与分层采集（Phase 6B）
+
+- **核心底座**：`crates/xcpc-trace`（Rust 侧零开销 Span + 内存环形缓冲 + Chrome Trace / Perfetto JSON 合并导出）、`crates/xcpc-app`（增量拉取 `o11y_poll_delta` 与 `PixelCache` 命中率统计）与桌面端 `apps/desktop/src/ui/o11y/`（基于 `nsh-o11y` 的独立多窗口诊断面板）。
+- **常态轻量层（Always-On Ring）**：始终开启，不启 `rAF` 轮询、不写磁盘。Rust 侧与 JS 侧各自在固定容量内存环（日志 `5,000` 条、慢事件 `1,000` 条）中记录结构化日志与慢操作/错误事件（编译/光栅化/IPC `> 50ms` 或异常），供打开诊断窗口后即时回溯。
+- **激活全量层（Live Diagnostics）**：仅在独立诊断窗口打开，或启动设置 `XCPC_TRACE=1` / `XCPC_O11Y=1` 时激活。以 `200ms` 节拍增量拉取 Rust Span、日志与像素缓存指标，合并 JS 帧间隔（过滤 `> 120ms` 空闲间隙）与交互 INP，驱动 `TimeSeriesChart`（4 面板联动）、`TraceWaterfall` / `TraceComparison` 与 `LogView`；窗口关闭后立即停掉定时器与 `rAF` 退回常态层。

@@ -1550,7 +1550,7 @@ id = "typst-showcase"
     (
         "contests/minimal-round/contest.toml",
         r#"name = "Local Polygon Exportable Round"
-location = "Minimal Template · Ready for DOMjudge / Hydro Export"
+location = "Minimal Template (Ready for DOMjudge / Hydro Export)"
 date = "November 2026"
 language = "english"
 template = "minimal"

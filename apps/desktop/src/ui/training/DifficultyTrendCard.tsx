@@ -40,10 +40,82 @@ function periodToTimestampMs(period: string, fallbackIndex: number): number {
   return Date.UTC(2020, 0, 1) + fallbackIndex * 86_400_000;
 }
 
+/** Converts a trend period (`YYYY-MM`, `YYYY-Www`, or `YYYY-MM-DD`) into a `YYYY-MM` month key. */
+function periodToMonthKey(period: string): string {
+  const ymMatch = /^(\d{4})-(\d{2})$/.exec(period);
+  if (ymMatch) return period;
+  const ymdMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(period);
+  if (ymdMatch) return `${ymdMatch[1]}-${ymdMatch[2]}`;
+  const weekMatch = /^(\d{4})-W(\d{2})$/.exec(period);
+  if (weekMatch) {
+    const year = Number(weekMatch[1]);
+    const week = Number(weekMatch[2]);
+    const jan4 = new Date(year, 0, 4);
+    const dow = (jan4.getDay() + 6) % 7;
+    const d = new Date(year, 0, 4 - dow + (week - 1) * 7);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return period;
+}
+
+/** Aggregates weekly/daily points into monthly buckets so multi-year histories remain legible. */
+function aggregateMonthly(points: readonly DifficultyTrendPoint[]): DifficultyTrendPoint[] {
+  const buckets = new Map<
+    string,
+    { p75Sum: number; p75W: number; p90Sum: number; p90W: number; ac: number; totalAc: number }
+  >();
+  for (const p of points) {
+    if (p.p75 == null && p.p90 == null) continue;
+    const key = periodToMonthKey(p.period);
+    let b = buckets.get(key);
+    if (!b) {
+      b = { p75Sum: 0, p75W: 0, p90Sum: 0, p90W: 0, ac: 0, totalAc: 0 };
+      buckets.set(key, b);
+    }
+    const w = Math.max(1, p.rated_ac_count);
+    if (p.p75 != null) {
+      b.p75Sum += p.p75 * w;
+      b.p75W += w;
+    }
+    if (p.p90 != null) {
+      b.p90Sum += p.p90 * w;
+      b.p90W += w;
+    }
+    b.ac += p.rated_ac_count;
+    b.totalAc += p.ac_count;
+  }
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, b]) => ({
+      period,
+      p75: b.p75W > 0 ? Math.round(b.p75Sum / b.p75W) : null,
+      p90: b.p90W > 0 ? Math.round(b.p90Sum / b.p90W) : null,
+      ac_count: b.totalAc,
+      rated_ac_count: b.ac,
+    }));
+}
+
+/** Computes a 3-period moving average over nullable values (NaN for missing). */
+function smooth3(values: readonly (number | null | undefined)[]): number[] {
+  return values.map((v, idx) => {
+    if (v == null) return NaN;
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.max(0, idx - 1); j <= Math.min(values.length - 1, idx + 1); j += 1) {
+      const val = values[j];
+      if (val != null) {
+        sum += val;
+        count += 1;
+      }
+    }
+    return count > 0 ? Math.round(sum / count) : NaN;
+  });
+}
+
 export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoint[] }) {
   const hoveredIdx = signal<number | undefined>(undefined);
 
-  const ratedPoints = computed(() => props.points.filter((p) => p.p75 != null || p.p90 != null));
+  const ratedPoints = computed(() => aggregateMonthly(props.points));
 
   const bounds = computed(() => {
     const pts = ratedPoints();
@@ -70,8 +142,8 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
     return {
       x: pts.map((p, i) => periodToTimestampMs(p.period, i)),
       ys: [
-        pts.map((p) => (p.p90 != null ? p.p90 : NaN)),
-        pts.map((p) => (p.p75 != null ? p.p75 : NaN)),
+        smooth3(pts.map((p) => p.p90)),
+        smooth3(pts.map((p) => p.p75)),
       ],
     };
   });
@@ -128,7 +200,7 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
             {zhEn("做出的题有多难", "Solved Problem Difficulty")}
           </Text>
           <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
-            {zhEn("75% / 90% 分位", "75th / 90th pct")}
+            {zhEn("90% / 75% 分位（月度平滑）", "90th / 75th pct (monthly)")}
           </Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>

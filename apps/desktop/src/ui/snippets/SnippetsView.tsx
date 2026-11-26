@@ -842,6 +842,7 @@ function SnippetDetailPane(props: {
           request={previewRequest}
           controller={(c) => {
             canvasCtrl = c;
+            setTimeout(() => canvasCtrl?.fitWidth(), 0);
           }}
           hud={false}
           active={props.active}

@@ -322,7 +322,7 @@
     block(width: 100%, above: if single { 0pt } else { 1.0 * s * text-pitch }, below: 0.3 * s, sticky: true, {
       let title = heading(level: 2, item.title)
       if cx.len() == 0 { title } else {
-        let cx-text = text(font: mono, size: code-size, fill: ink-2, cx.join(" · "))
+        let cx-text = text(font: mono, size: code-size, fill: ink-2, cx.join("  "))
         layout(sz => {
           // 标题与复杂度放得下就同一行，否则复杂度换到下一行右对齐。
           if measure(title).width + measure(cx-text).width + 0.8 * s <= sz.width {

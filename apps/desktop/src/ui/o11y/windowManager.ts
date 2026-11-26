@@ -29,6 +29,7 @@ export function openDiagnosticsWindow(): void {
       const ref = Window.open(DiagnosticsWindowContent, {
         id: DIAGNOSTICS_WINDOW_ID,
         title: t("o11y.windowTitle"),
+        titleBar: { style: "hidden", height: 44 },
         defaultSize: { width: 1120, height: 740 },
         minSize: { width: 780, height: 520 },
         restoreBounds: true,

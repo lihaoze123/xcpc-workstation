@@ -5,8 +5,12 @@
 //    - In-memory `LogStore` (max 5,000 entries) fed by structured logs, slow IPC (>50ms),
 //      uncaught errors, and Rust always-on slow/error logs pulled when the window opens.
 // 2. Live Diagnostics (active only while the diagnostics window is open or XCPC_TRACE/XCPC_O11Y=1):
-//    - 200ms batched push into 4 `nsh-o11y` `TimeSeries` stores (frame/jank, compile/rasterize,
-//      IPC/INP, pixel cache MB & hit rate) + merged Rust/JS cross-thread `TraceModel` traces.
+//    - 200ms batched push into 4 `nsh-o11y` `TimeSeries` stores:
+//      - Frame chart filters out idle gaps (>120ms) and caps active spikes at 50ms while tracking peak.
+//      - Discrete event charts (compile/rasterize, IPC/INP) emit isolated pulses (never sloped lines
+//        across idle minutes) and maintain window last + P95 summaries.
+//    - Merged Rust/JS cross-thread traces queue into `pendingTraces` once the list is non-empty so
+//      new arrivals never shift rows under the user's cursor.
 
 import { signal } from "nsh";
 import {
@@ -52,8 +56,24 @@ export const O11Y_SUBSYSTEMS: readonly O11ySubsystem[] = [
 
 export type TimeWindowPreset = 60_000 | 300_000 | 900_000;
 
+export interface MetricStat {
+  last: number | null;
+  p95: number | null;
+  count: number;
+}
+
+export interface O11yMetricSummaries {
+  framePeakMs: number | null;
+  buildDoc: MetricStat;
+  rasterize: MetricStat;
+  ipc: MetricStat;
+  inp: MetricStat;
+}
+
 export interface CapturedTrace {
   id: string;
+  /** Normalized scenario identifier used to guard against cross-scenario comparisons. */
+  scenarioKey: string;
   name: string;
   category: string;
   startedAtUnixMs: number;
@@ -65,6 +85,7 @@ export interface CapturedTrace {
 
 export interface NamedBaseline {
   id: string;
+  scenarioKey: string;
   label: string;
   capturedAtUnixMs: number;
   durationMs: number;
@@ -122,10 +143,26 @@ interface RustPollPayload {
 }
 
 const POLL_INTERVAL_MS = 200;
-const MAX_SERIES_POINTS = 6_000;
+const MAX_SERIES_POINTS = 12_000;
 const MAX_ANNOTATIONS = 200;
 const MAX_CAPTURED_TRACES = 80;
 const TRACE_GROUP_GAP_MS = 80;
+/** Frame deltas above 120ms indicate an idle window (no rAF tick), not a jank stall. */
+export const IDLE_FRAME_THRESHOLD_MS = 120;
+/** Upper Y bound for the frame time chart so 60Hz/120Hz lines remain clearly legible. */
+export const FRAME_CHART_CAP_MS = 50;
+
+const EMPTY_STAT: MetricStat = { last: null, p95: null, count: 0 };
+
+function emptySummaries(): O11yMetricSummaries {
+  return {
+    framePeakMs: null,
+    buildDoc: { ...EMPTY_STAT },
+    rasterize: { ...EMPTY_STAT },
+    ipc: { ...EMPTY_STAT },
+    inp: { ...EMPTY_STAT },
+  };
+}
 
 // ── Public reactive state ────────────────────────────────────────────────────
 
@@ -134,6 +171,8 @@ export const diagnosticsPaused = signal(false);
 export const diagnosticsWindowMs = signal<TimeWindowPreset>(300_000);
 export const diagnosticsAnnotations = signal<Annotation[]>([]);
 export const capturedTraces = signal<CapturedTrace[]>([]);
+/** Newly arrived traces queued when the list already has entries so rows never shift under click. */
+export const pendingTraces = signal<CapturedTrace[]>([]);
 export const namedBaselines = signal<NamedBaseline[]>([]);
 export const cacheBudgetMb = signal(96);
 export const latestCacheStats = signal<PixelCacheStatsPayload>({
@@ -144,14 +183,15 @@ export const latestCacheStats = signal<PixelCacheStatsPayload>({
   misses: 0,
 });
 export const slowEventCount = signal(0);
+export const metricSummaries = signal<O11yMetricSummaries>(emptySummaries());
 
 // ── nsh-o11y live data stores ────────────────────────────────────────────────
 
-/** Panel 1: [frameMaxMs, missedFrames] */
+/** Panel 1: [activeFrameMaxMs (capped at 50), activeMissedFrames] */
 export const frameSeries = new TimeSeries({ series: 2, maxPoints: MAX_SERIES_POINTS });
-/** Panel 2: [buildDocMs, rasterizeMs] */
+/** Panel 2: [buildDocMs pulses, rasterizeMs pulses] */
 export const pipelineSeries = new TimeSeries({ series: 2, maxPoints: MAX_SERIES_POINTS });
-/** Panel 3: [ipcMaxMs, inpMaxMs] */
+/** Panel 3: [ipcMaxMs pulses, inpMaxMs pulses] */
 export const latencySeries = new TimeSeries({ series: 2, maxPoints: MAX_SERIES_POINTS });
 /** Panel 4: [cacheMb, hitRatePct] */
 export const cacheSeries = new TimeSeries({ series: 2, maxPoints: MAX_SERIES_POINTS });
@@ -175,7 +215,18 @@ let bucketIpcMaxMs = NaN;
 let bucketInpMaxMs = NaN;
 let pendingJsSpans: RawSpan[] = [];
 
-interface RawSpan {
+// Sliding sample rings for window P95 / last summary readouts.
+interface TimedSample {
+  time: number;
+  value: number;
+}
+let buildDocSamples: TimedSample[] = [];
+let rasterizeSamples: TimedSample[] = [];
+let ipcSamples: TimedSample[] = [];
+let inpSamples: TimedSample[] = [];
+let activeFramePeakSamples: TimedSample[] = [];
+
+export interface RawSpan {
   id: string;
   name: string;
   service: string;
@@ -188,6 +239,36 @@ interface RawSpan {
 
 function nowPerfMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+/** Normalizes JS/Rust span names to consistent `snake_case` (P5). */
+export function normalizeSpanName(name: string): string {
+  if (name === "preview.compile") return "compile_preview";
+  if (name.startsWith("ux.inp.") || name.includes("_") || name.includes(".")) {
+    return name;
+  }
+  // Convert camelCase IPC method names (e.g. searchProblems -> search_problems).
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+}
+
+function formatTraceDisplayName(span: RawSpan): string {
+  const attrs = span.attributes;
+  if (span.name === "ux.inp.nav.space" && attrs && typeof attrs.space === "string") {
+    return `nav → ${attrs.space}`;
+  }
+  if (span.name === "ux.inp.outline.select" && attrs) {
+    const target = attrs.label ?? attrs.id ?? attrs.problemId;
+    if (typeof target === "string" && target.length > 0) {
+      return `outline → ${target}`;
+    }
+  }
+  if (span.name === "ux.inp.palette.toggle") {
+    return "palette.toggle";
+  }
+  if (span.name.startsWith("ux.inp.")) {
+    return span.name.slice("ux.inp.".length);
+  }
+  return span.name;
 }
 
 function flattenAttrs(
@@ -221,6 +302,43 @@ function serviceFromCategory(cat: string, pid: number, name: string): string {
     return "desktop";
   }
   return "ui";
+}
+
+function pushSample(list: TimedSample[], time: number, value: number, cutoff: number): TimedSample[] {
+  if (!Number.isNaN(value)) {
+    list.push({ time, value });
+  }
+  let drop = 0;
+  while (drop < list.length && list[drop]!.time < cutoff) drop += 1;
+  return drop > 0 ? list.slice(drop) : list;
+}
+
+function summarizeSamples(list: readonly TimedSample[]): MetricStat {
+  if (list.length === 0) return { ...EMPTY_STAT };
+  const last = Math.round(list[list.length - 1]!.value * 10) / 10;
+  const sorted = list.map((s) => s.value).sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  const p95 = Math.round(sorted[idx]! * 10) / 10;
+  return { last, p95, count: list.length };
+}
+
+/** Appends a discrete event pulse to a 2-series store without interpolating across idle gaps. */
+function appendDiscretePulse(store: TimeSeries, now: number, v0: number, v1: number): void {
+  const has0 = !Number.isNaN(v0);
+  const has1 = !Number.isNaN(v1);
+  if (!has0 && !has1) {
+    store.append(now, [NaN, NaN]);
+    return;
+  }
+  // Emit a crisp vertical impulse [0 -> val -> NaN] spanning 2ms so discrete operations never
+  // connect with sloped lines across idle minutes when `spanGaps: false`.
+  store.append(
+    [now - 2, now - 1, now],
+    [
+      [has0 ? 0 : NaN, has0 ? v0 : NaN, NaN],
+      [has1 ? 0 : NaN, has1 ? v1 : NaN, NaN],
+    ],
+  );
 }
 
 // ── Always-on logging & annotations ──────────────────────────────────────────
@@ -294,7 +412,6 @@ export function groupRawSpansIntoTraces(
 
   for (let g = 0; g < groups.length; g += 1) {
     const items = groups[g]!;
-    // Ignore tiny single-span noise (< 0.5ms) unless it is an error or interaction.
     const groupStart = items[0]!.startMs;
     let groupEnd = groupStart;
     let hasError = false;
@@ -342,10 +459,12 @@ export function groupRawSpansIntoTraces(
     });
 
     const chosen = inpSpan ?? primarySpan;
+    const displayName = formatTraceDisplayName(chosen);
     const traceId = `${traceIdPrefix}-${nextTraceSeq++}`;
     traces.push({
       id: traceId,
-      name: chosen.name,
+      scenarioKey: chosen.name,
+      name: displayName,
       category: chosen.cat,
       startedAtUnixMs: Math.round(baseUnixMs + (groupStart - firstStart)),
       durationMs: Math.round(totalDuration * 100) / 100,
@@ -363,6 +482,8 @@ export function groupRawSpansIntoTraces(
 addTraceObserver({
   onFrame(dtMs, missed) {
     if (!diagnosticsOpen() || diagnosticsPaused()) return;
+    // Ignore idle gaps when the host was not rendering frames (prevents 1.5s false jank spikes).
+    if (dtMs > IDLE_FRAME_THRESHOLD_MS) return;
     if (Number.isNaN(bucketFrameMaxMs) || dtMs > bucketFrameMaxMs) {
       bucketFrameMaxMs = dtMs;
     }
@@ -382,13 +503,13 @@ addTraceObserver({
         bucketInpMaxMs = ev.durMs;
       }
     }
-    // Skip raw missed-frame spans from the waterfall list (they belong on the frame chart).
     if (ev.cat === "frame") return;
     const rustUs = ev.tsMs * 1000.0 + getClockOffsetUs();
+    const normName = normalizeSpanName(ev.name);
     pendingJsSpans.push({
       id: `js-${Math.round(rustUs)}-${pendingJsSpans.length}`,
-      name: ev.name,
-      service: serviceFromCategory(ev.cat, 2, ev.name),
+      name: normName,
+      service: serviceFromCategory(ev.cat, 2, normName),
       cat: ev.cat,
       startMs: rustUs / 1000.0,
       durationMs: ev.durMs,
@@ -397,16 +518,17 @@ addTraceObserver({
     });
   },
   onSlowIpc(name, durMs, error) {
+    const norm = normalizeSpanName(name);
     slowEventCount.update((n) => n + 1);
     if (error !== undefined) {
-      o11yLog("error", "ipc", `IPC ${name} failed (${durMs.toFixed(1)} ms)`, {
-        method: name,
+      o11yLog("error", "ipc", `IPC ${norm} failed (${durMs.toFixed(1)} ms)`, {
+        method: norm,
         durMs: Math.round(durMs * 100) / 100,
         error: error instanceof Error ? error.message : String(error),
       });
     } else {
-      o11yLog("warn", "ipc", `Slow IPC ${name} (${durMs.toFixed(1)} ms)`, {
-        method: name,
+      o11yLog("warn", "ipc", `Slow IPC ${norm} (${durMs.toFixed(1)} ms)`, {
+        method: norm,
         durMs: Math.round(durMs * 100) / 100,
       });
     }
@@ -433,6 +555,7 @@ function pollOnce(): void {
   }
 
   const now = payload?.delta?.nowUnixMs ?? Date.now();
+  const cutoff = now - diagnosticsWindowMs();
 
   // 1. Ingest Rust structured logs.
   if (payload?.delta?.logs && payload.delta.logs.length > 0) {
@@ -461,15 +584,16 @@ function pollOnce(): void {
     for (const ev of payload.delta.events) {
       if (ev.ph !== "X" || ev.durUs === undefined) continue;
       const durMs = ev.durUs / 1000.0;
-      if (ev.name === "build_document" || ev.name === "compile" || ev.name === "compile_preview") {
+      const normName = normalizeSpanName(ev.name);
+      if (normName === "build_document" || normName === "compile" || normName === "compile_preview") {
         if (Number.isNaN(buildDocMaxMs) || durMs > buildDocMaxMs) buildDocMaxMs = durMs;
-      } else if (ev.name === "rasterize_cached") {
+      } else if (normName === "rasterize_cached") {
         if (Number.isNaN(rasterizeMaxMs) || durMs > rasterizeMaxMs) rasterizeMaxMs = durMs;
       }
       rustRawSpans.push({
         id: `rs-${ev.seq}`,
-        name: ev.name,
-        service: serviceFromCategory(ev.cat, ev.pid, ev.name),
+        name: normName,
+        service: serviceFromCategory(ev.cat, ev.pid, normName),
         cat: ev.cat,
         startMs: ev.tsUs / 1000.0,
         durationMs: durMs,
@@ -482,10 +606,36 @@ function pollOnce(): void {
     }
   }
 
-  // 3. Push one batched point into each of the 4 TimeSeries stores.
-  frameSeries.append(now, [bucketFrameMaxMs, bucketMissedFrames]);
-  pipelineSeries.append(now, [buildDocMaxMs, rasterizeMaxMs]);
-  latencySeries.append(now, [bucketIpcMaxMs, bucketInpMaxMs]);
+  // 3. Push samples into the 4 TimeSeries stores.
+  const cappedFrame = Number.isNaN(bucketFrameMaxMs)
+    ? NaN
+    : Math.min(bucketFrameMaxMs, FRAME_CHART_CAP_MS);
+  frameSeries.append(now, [cappedFrame, bucketMissedFrames]);
+  appendDiscretePulse(pipelineSeries, now, buildDocMaxMs, rasterizeMaxMs);
+  appendDiscretePulse(latencySeries, now, bucketIpcMaxMs, bucketInpMaxMs);
+
+  // Update sliding window summaries (last + P95 + frame peak over cap).
+  buildDocSamples = pushSample(buildDocSamples, now, buildDocMaxMs, cutoff);
+  rasterizeSamples = pushSample(rasterizeSamples, now, rasterizeMaxMs, cutoff);
+  ipcSamples = pushSample(ipcSamples, now, bucketIpcMaxMs, cutoff);
+  inpSamples = pushSample(inpSamples, now, bucketInpMaxMs, cutoff);
+  activeFramePeakSamples = pushSample(
+    activeFramePeakSamples,
+    now,
+    !Number.isNaN(bucketFrameMaxMs) && bucketFrameMaxMs > FRAME_CHART_CAP_MS ? bucketFrameMaxMs : NaN,
+    cutoff,
+  );
+  const framePeakMs =
+    activeFramePeakSamples.length > 0
+      ? Math.round(Math.max(...activeFramePeakSamples.map((s) => s.value)) * 10) / 10
+      : null;
+  metricSummaries.set({
+    framePeakMs,
+    buildDoc: summarizeSamples(buildDocSamples),
+    rasterize: summarizeSamples(rasterizeSamples),
+    ipc: summarizeSamples(ipcSamples),
+    inp: summarizeSamples(inpSamples),
+  });
 
   if (payload?.cacheStats) {
     const cs = payload.cacheStats;
@@ -504,7 +654,7 @@ function pollOnce(): void {
   bucketIpcMaxMs = NaN;
   bucketInpMaxMs = NaN;
 
-  // 4. Merge Rust + JS spans into grouped Traces.
+  // 4. Merge Rust + JS spans into grouped Traces without shifting an already-populated list.
   const batchSpans =
     pendingJsSpans.length > 0 ? [...rustRawSpans, ...pendingJsSpans] : rustRawSpans;
   pendingJsSpans = [];
@@ -512,14 +662,32 @@ function pollOnce(): void {
   if (batchSpans.length > 0) {
     const newTraces = groupRawSpansIntoTraces(batchSpans, now, "tr");
     if (newTraces.length > 0) {
-      capturedTraces.update((prev) => {
-        const merged = [...newTraces.reverse(), ...prev];
-        return merged.length > MAX_CAPTURED_TRACES
-          ? merged.slice(0, MAX_CAPTURED_TRACES)
-          : merged;
-      });
+      const incoming = newTraces.reverse();
+      if (capturedTraces().length === 0) {
+        capturedTraces.set(incoming.slice(0, MAX_CAPTURED_TRACES));
+      } else {
+        pendingTraces.update((prev) => {
+          const merged = [...incoming, ...prev];
+          return merged.length > MAX_CAPTURED_TRACES
+            ? merged.slice(0, MAX_CAPTURED_TRACES)
+            : merged;
+        });
+      }
     }
   }
+}
+
+/** Merges queued new traces into the visible trace list on explicit user click (A4). */
+export function flushPendingTraces(): void {
+  const queued = pendingTraces();
+  if (queued.length === 0) return;
+  capturedTraces.update((prev) => {
+    const merged = [...queued, ...prev];
+    return merged.length > MAX_CAPTURED_TRACES
+      ? merged.slice(0, MAX_CAPTURED_TRACES)
+      : merged;
+  });
+  pendingTraces.set([]);
 }
 
 // ── Public lifecycle controls ────────────────────────────────────────────────
@@ -528,7 +696,6 @@ function pollOnce(): void {
 export function startLiveDiagnostics(): void {
   diagnosticsOpen.set(true);
   diagnosticsPaused.set(false);
-  // First pull any always-on logs & slow events accumulated before opening.
   pollOnce();
   if (!isTraceRecording()) {
     startedTraceByWindow = true;
@@ -566,8 +733,15 @@ export function clearAllDiagnostics(): void {
   cacheSeries.clear();
   logStore.clear();
   capturedTraces.set([]);
+  pendingTraces.set([]);
   diagnosticsAnnotations.set([]);
   slowEventCount.set(0);
+  buildDocSamples = [];
+  rasterizeSamples = [];
+  ipcSamples = [];
+  inpSamples = [];
+  activeFramePeakSamples = [];
+  metricSummaries.set(emptySummaries());
   pendingJsSpans = [];
   lastRustEventSeq = 0;
   lastRustLogSeq = 0;
@@ -584,6 +758,7 @@ export function clearAllDiagnostics(): void {
 export function saveTraceAsBaseline(trace: CapturedTrace, label?: string): NamedBaseline {
   const baseline: NamedBaseline = {
     id: `base-${nextBaselineSeq++}`,
+    scenarioKey: trace.scenarioKey,
     label: label?.trim() || `${trace.name} (${trace.durationMs.toFixed(1)} ms)`,
     capturedAtUnixMs: Date.now(),
     durationMs: trace.durationMs,

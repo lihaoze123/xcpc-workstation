@@ -1572,7 +1572,7 @@ id = "typst-showcase"
     (
         "contests/oi-mock/contest.toml",
         r#"name = "2026 CCF 非专业级软件能力认证（示例）"
-location = "CSP-S 模拟第二轮认证 · 完整可导出数据包"
+location = "CSP-S 模拟第二轮认证（完整可导出数据包）"
 date = "2026 年 11 月 24 日 14:30 ~ 18:30"
 language = "chinese"
 template = "cnoi-classic"

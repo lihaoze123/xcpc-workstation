@@ -11,11 +11,14 @@ import {
   diagnosticsAnnotations,
   diagnosticsOpen,
   diagnosticsPaused,
+  flushPendingTraces,
   groupRawSpansIntoTraces,
   logStore,
   namedBaselines,
+  normalizeSpanName,
   o11yAnnotate,
   o11yLog,
+  pendingTraces,
   removeBaseline,
   saveTraceAsBaseline,
   startLiveDiagnostics,
@@ -90,7 +93,8 @@ describe("Phase 6B o11y telemetry and diagnostics window", () => {
 
     expect(traces.length).toBe(2);
     const first = traces[0]!;
-    expect(first.name).toBe("ux.inp.outline.select");
+    expect(first.scenarioKey).toBe("ux.inp.outline.select");
+    expect(first.name).toBe("outline.select");
     expect(first.inpMs).toBe(42);
     expect(first.hasError).toBe(false);
     expect(first.spans.length).toBe(5);
@@ -180,5 +184,42 @@ describe("Phase 6B o11y telemetry and diagnostics window", () => {
 
     // Ensure DiagnosticsWindowContent symbol is valid and callable as an NSH component.
     expect(typeof DiagnosticsWindowContent).toBe("function");
+  });
+
+  test("normalizes span names, appends INP target labels, and flushes queued pending traces", () => {
+    expect(normalizeSpanName("preview.compile")).toBe("compile_preview");
+    expect(normalizeSpanName("searchProblems")).toBe("search_problems");
+    expect(normalizeSpanName("ux.inp.nav.space")).toBe("ux.inp.nav.space");
+
+    const navTraces = groupRawSpansIntoTraces(
+      [
+        {
+          id: "nav-1",
+          name: "ux.inp.nav.space",
+          service: "ui",
+          cat: "ux.inp",
+          startMs: 50,
+          durationMs: 28,
+          hasError: false,
+          attributes: { space: "training" },
+        },
+      ],
+      Date.now(),
+      "nav",
+    );
+    expect(navTraces[0]?.name).toBe("nav → training");
+    expect(navTraces[0]?.scenarioKey).toBe("ux.inp.nav.space");
+
+    clearAllDiagnostics();
+    capturedTraces.set(navTraces);
+    pendingTraces.set([
+      { ...navTraces[0]!, id: "nav-queued", name: "nav → contests" },
+    ]);
+    expect(capturedTraces().length).toBe(1);
+    expect(pendingTraces().length).toBe(1);
+    flushPendingTraces();
+    expect(pendingTraces().length).toBe(0);
+    expect(capturedTraces().length).toBe(2);
+    expect(capturedTraces()[0]?.id).toBe("nav-queued");
   });
 });

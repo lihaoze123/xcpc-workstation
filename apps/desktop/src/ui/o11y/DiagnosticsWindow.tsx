@@ -1,9 +1,12 @@
 // Independent NSH 0.7 developer diagnostics window built on `nsh-o11y`.
 //
 // Keeps the main workspace 100% free of technical HUDs while offering:
-// 1. Metrics: 4 synchronized `TimeSeriesChart` panels via `createChartSync()`
-// 2. Traces: `TraceWaterfall` + named baselines + `TraceComparison` diff
-// 3. Logs: `LogView` with volume histogram, virtualized list, subsystem filter & copy
+// 1. Unified 44pt TitleBar (with window controls & live locale window title) + concise tabs
+// 2. Metrics: 4 synchronized `TimeSeriesChart` panels via `createChartSync()`, flex-filled height,
+//    idle-filtered 50ms-capped frame chart, discrete pulses with last/P95 readouts
+// 3. Traces: stable list (queued new-records banner), `TraceWaterfall`, inline named baseline
+//    creation, and same-scenario-guarded `TraceComparison`
+// 4. Logs: `LogView` with volume histogram, virtualized list, subsystem filter & copy
 
 import {
   Clipboard,
@@ -15,6 +18,7 @@ import {
   Text,
   View,
 } from "nsh";
+import { Input } from "nsh/base";
 import {
   createChartSync,
   LogView,
@@ -29,9 +33,10 @@ import {
   type Threshold,
 } from "nsh-o11y";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, Segmented } from "../kit";
+import { Btn, createTransientFlag, Segmented, tip } from "../kit";
 import { Icon } from "../Icon";
 import { MONO, token } from "../theme";
+import { TitleBar, useWindowTitle } from "../TitleBar";
 import {
   cacheBudgetMb,
   cacheSeries,
@@ -41,17 +46,21 @@ import {
   diagnosticsPaused,
   diagnosticsWindowMs,
   exportDiagnosticsTrace,
+  flushPendingTraces,
+  FRAME_CHART_CAP_MS,
   frameSeries,
   latencySeries,
-  latestCacheStats,
   logStore,
+  metricSummaries,
   namedBaselines,
   O11Y_SUBSYSTEMS,
+  pendingTraces,
   pipelineSeries,
   removeBaseline,
   saveTraceAsBaseline,
   toggleDiagnosticsPaused,
   type CapturedTrace,
+  type MetricStat,
   type NamedBaseline,
   type TimeWindowPreset,
 } from "./telemetry";
@@ -85,7 +94,16 @@ function useChartColors(): () => ChartColors {
   });
 }
 
-// ── Tab 1: Metrics (4 synced TimeSeriesChart panels) ─────────────────────────
+function formatStatReadout(label: string, stat: MetricStat): string {
+  if (stat.last === null) return `${label} —`;
+  return `${label} ${stat.last.toFixed(1)} / P95 ${stat.p95?.toFixed(1) ?? "—"} ms`;
+}
+
+function formatSpanCount(count: number): string {
+  return count === 1 ? "1 span" : `${count} spans`;
+}
+
+// ── Tab 1: Metrics (4 synced TimeSeriesChart panels, flex height) ────────────
 
 function MetricsTab() {
   const sync = createChartSync({ zoom: true });
@@ -96,7 +114,7 @@ function MetricsTab() {
   const frameSeriesOpts = computed<SeriesOptions[]>(() => {
     void colorScheme();
     return [
-      { label: t("o11y.series.frameMs"), color: token("primary"), width: 1.5, fill: 0.1 },
+      { label: t("o11y.series.frameMs"), color: token("primary"), width: 1.5, fill: 0.08 },
       {
         label: t("o11y.series.missedFrames"),
         color: token("destructive"),
@@ -110,38 +128,39 @@ function MetricsTab() {
   const frameThresholds = computed<Threshold[]>(() => {
     void colorScheme();
     return [
-      { value: 16.67, color: withAlpha(token("destructive"), 0.75), label: "16.67ms (60Hz)", dash: [4, 3] },
-      { value: 8.33, color: withAlpha(token("muted-foreground"), 0.55), label: "8.33ms (120Hz)", dash: [2, 3] },
+      { value: 16.67, color: withAlpha(token("destructive"), 0.7), label: "60Hz", dash: [4, 3] },
+      { value: 8.33, color: withAlpha(token("muted-foreground"), 0.55), label: "120Hz", dash: [2, 3] },
     ];
   });
 
+  // Discrete events: `spanGaps: false` + no area fill so isolated events render as crisp pulses.
   const pipelineSeriesOpts = computed<SeriesOptions[]>(() => {
     void colorScheme();
     return [
-      { label: "build_document", color: "#2a78d6", width: 1.5, fill: 0.08, spanGaps: true },
-      { label: "rasterize_cached", color: "#1baf7a", width: 1.5, fill: 0.08, spanGaps: true },
+      { label: "build_document", color: "#2a78d6", width: 2, spanGaps: false },
+      { label: "rasterize_cached", color: "#1baf7a", width: 2, spanGaps: false },
     ];
   });
 
   const latencySeriesOpts = computed<SeriesOptions[]>(() => {
     void colorScheme();
     return [
-      { label: "IPC", color: "#8b5cf6", width: 1.5, fill: 0.08, spanGaps: true },
-      { label: "ux.inp.*", color: "#eda100", width: 1.75, fill: 0.1, spanGaps: true },
+      { label: "IPC", color: "#8b5cf6", width: 2, spanGaps: false },
+      { label: "ux.inp.*", color: "#eda100", width: 2, spanGaps: false },
     ];
   });
 
   const slowThreshold = computed<Threshold[]>(() => {
     void colorScheme();
     return [
-      { value: 50, color: withAlpha("#eda100", 0.75), label: "50ms", dash: [4, 3] },
+      { value: 50, color: withAlpha("#eda100", 0.7), label: "50ms", dash: [4, 3] },
     ];
   });
 
   const cacheSeriesOpts = computed<SeriesOptions[]>(() => {
     void colorScheme();
     return [
-      { label: t("o11y.series.cacheMb"), color: "#0ea5e9", width: 1.5, fill: 0.12 },
+      { label: t("o11y.series.cacheMb"), color: "#0ea5e9", width: 1.5, fill: 0.1 },
       {
         label: t("o11y.series.hitRate"),
         color: "#10b981",
@@ -160,24 +179,17 @@ function MetricsTab() {
       {
         value: budget,
         color: withAlpha(token("destructive"), 0.65),
-        label: `LRU ${budget} MB`,
+        label: `${budget}MB`,
         dash: [4, 3],
       },
     ];
-  });
-
-  const cacheSummary = computed(() => {
-    const cs = latestCacheStats();
-    const mb = (cs.totalBytes / (1024 * 1024)).toFixed(1);
-    const total = cs.hits + cs.misses;
-    const hitPct = total > 0 ? ((cs.hits / total) * 100).toFixed(1) : "—";
-    return `${mb} / ${cacheBudgetMb()} MB · ${cs.entryCount} entries · ${hitPct}% hit`;
   });
 
   const cardClass = "bg-card border border-border";
   const cardStyle = {
     flex: 1,
     minWidth: 320,
+    minHeight: 220,
     borderRadius: 10,
     padding: 12,
     flexDirection: "column" as const,
@@ -185,48 +197,65 @@ function MetricsTab() {
   };
 
   return (
-    <Scroll style={{ flex: 1 }}>
-      <View style={{ padding: 14, gap: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-          {t("o11y.metrics.hint")}
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Text style={{ fontSize: 11.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-            {cacheSummary()}
-          </Text>
-          <Btn
-            label={t("o11y.metrics.resetZoom")}
-            size="sm"
-            variant="ghost"
-            onPress={() => sync.reset()}
-          />
-        </View>
-      </View>
-
-      <View style={{ flexDirection: "row", gap: 12, flexWrap: "wrap" }}>
-        <View class={cardClass} style={cardStyle}>
+    <View style={{ flex: 1, padding: 12, gap: 10, flexDirection: "column", minHeight: 0 }}>
+      {/* Row 1 */}
+      <View style={{ flex: 1, flexDirection: "row", gap: 10, minHeight: 220 }}>
+        <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+              {t("o11y.chart.frame")}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <If when={metricSummaries().framePeakMs !== null}>
+                <Text
+                  style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                  class="text-destructive"
+                >
+                  {`↑ ${t("o11y.metrics.peak")} ${metricSummaries().framePeakMs?.toFixed(1)} ms`}
+                </Text>
+              </If>
+              <Btn
+                label={t("o11y.metrics.resetZoom")}
+                size="sm"
+                variant="ghost"
+                tooltip={tip(t("o11y.metrics.hint"))}
+                onPress={() => sync.reset()}
+              />
+            </View>
+          </View>
           <TimeSeriesChart
             testID="o11y-chart-frame"
-            title={t("o11y.chart.frame")}
             data={frameSeries}
             series={frameSeriesOpts()}
             unit="ms"
-            softMin={0}
-            softMax={20}
+            yMin={0}
+            yMax={FRAME_CHART_CAP_MS}
             y2={{ unit: "short", softMin: 0, softMax: 4 }}
             window={winMs()}
             thresholds={frameThresholds()}
             annotations={anns()}
             sync={sync}
             colors={colors()}
-            style={{ height: 210 }}
+            style={{ flex: 1, minHeight: 170 }}
           />
         </View>
-        <View class={cardClass} style={cardStyle}>
+
+        <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+              {t("o11y.chart.pipeline")}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                {formatStatReadout("compile", metricSummaries().buildDoc)}
+              </Text>
+              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                {formatStatReadout("raster", metricSummaries().rasterize)}
+              </Text>
+            </View>
+          </View>
           <TimeSeriesChart
             testID="o11y-chart-pipeline"
-            title={t("o11y.chart.pipeline")}
             data={pipelineSeries}
             series={pipelineSeriesOpts()}
             unit="ms"
@@ -237,16 +266,29 @@ function MetricsTab() {
             annotations={anns()}
             sync={sync}
             colors={colors()}
-            style={{ height: 210 }}
+            style={{ flex: 1, minHeight: 170 }}
           />
         </View>
       </View>
 
-      <View style={{ flexDirection: "row", gap: 12, flexWrap: "wrap" }}>
-        <View class={cardClass} style={cardStyle}>
+      {/* Row 2 */}
+      <View style={{ flex: 1, flexDirection: "row", gap: 10, minHeight: 220 }}>
+        <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+              {t("o11y.chart.latency")}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                {formatStatReadout("IPC", metricSummaries().ipc)}
+              </Text>
+              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                {formatStatReadout("INP", metricSummaries().inp)}
+              </Text>
+            </View>
+          </View>
           <TimeSeriesChart
             testID="o11y-chart-latency"
-            title={t("o11y.chart.latency")}
             data={latencySeries}
             series={latencySeriesOpts()}
             unit="ms"
@@ -257,13 +299,18 @@ function MetricsTab() {
             annotations={anns()}
             sync={sync}
             colors={colors()}
-            style={{ height: 210 }}
+            style={{ flex: 1, minHeight: 170 }}
           />
         </View>
-        <View class={cardClass} style={cardStyle}>
+
+        <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+              {t("o11y.chart.cache")}
+            </Text>
+          </View>
           <TimeSeriesChart
             testID="o11y-chart-cache"
-            title={t("o11y.chart.cache")}
             data={cacheSeries}
             series={cacheSeriesOpts()}
             unit="short"
@@ -275,16 +322,15 @@ function MetricsTab() {
             annotations={anns()}
             sync={sync}
             colors={colors()}
-            style={{ height: 210 }}
+            style={{ flex: 1, minHeight: 170 }}
           />
         </View>
       </View>
-      </View>
-    </Scroll>
+    </View>
   );
 }
 
-// ── Tab 2: Traces (TraceWaterfall + Named Baselines + TraceComparison) ───────
+// ── Tab 2: Traces (Stable list + Waterfall + Named Baselines + Guarded Diff) ─
 
 function TracesTab(props: {
   selectedTraceId: () => string | null;
@@ -294,6 +340,8 @@ function TracesTab(props: {
   const mode = signal<TracePaneMode>("waterfall");
   const selectedSpan = signal<Span | null>(null);
   const activeBaselineId = signal<string | null>(null);
+  const namingBaseline = signal(false);
+  const baselineDraft = signal("");
   const colors = useChartColors();
   const savedFlag = createTransientFlag(1500);
 
@@ -318,6 +366,13 @@ function TracesTab(props: {
     return list.find((b) => b.id === id) ?? list[0] ?? null;
   });
 
+  const compareMismatch = computed(() => {
+    const b = activeBaseline();
+    const tr = selectedTrace();
+    if (!b || !tr) return false;
+    return b.scenarioKey !== tr.scenarioKey;
+  });
+
   effect(() => {
     const tr = selectedTrace();
     if (tr && props.selectedTraceId() !== tr.id) {
@@ -326,20 +381,31 @@ function TracesTab(props: {
     selectedSpan.set(null);
   });
 
-  const handleSaveBaseline = () => {
+  const openBaselineInput = () => {
     const tr = selectedTrace();
     if (!tr) return;
-    const base = saveTraceAsBaseline(tr);
+    baselineDraft.set(`${tr.name} (${tr.durationMs.toFixed(1)} ms)`);
+    namingBaseline.set(true);
+  };
+
+  const confirmSaveBaseline = () => {
+    const tr = selectedTrace();
+    if (!tr) {
+      namingBaseline.set(false);
+      return;
+    }
+    const base = saveTraceAsBaseline(tr, baselineDraft());
     activeBaselineId.set(base.id);
+    namingBaseline.set(false);
     savedFlag.trigger();
   };
 
   return (
     <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
-      {/* Left sidebar: captured traces + saved baselines */}
+      {/* Left sidebar: stable trace list + pending banner + saved baselines */}
       <View
         class="border-r border-border bg-card"
-        style={{ width: 280, flexDirection: "column", minHeight: 0 }}
+        style={{ width: 292, flexDirection: "column", minHeight: 0 }}
       >
         <View class="border-b border-border" style={{ padding: 10, gap: 8 }}>
           <Segmented
@@ -352,60 +418,78 @@ function TracesTab(props: {
               { value: "error", label: t("o11y.traces.filterError") },
             ]}
           />
+          <If when={pendingTraces().length > 0}>
+            <View
+              testID="o11y-flush-pending"
+              onPress={flushPendingTraces}
+              class="bg-primary/10 hover:bg-primary/20 border border-primary/30"
+              style={{
+                borderRadius: 6,
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-primary">
+                {t("o11y.traces.newRecords", { count: pendingTraces().length })}
+              </Text>
+            </View>
+          </If>
         </View>
 
         <Scroll style={{ flex: 1 }}>
           <View style={{ padding: 6, gap: 3 }}>
-          <If when={filteredTraces().length === 0}>
-            <View style={{ padding: 16, alignItems: "center" }}>
-              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
-                {t("o11y.traces.empty")}
-              </Text>
-            </View>
-          </If>
-          <Each of={filteredTraces()} key={(tr) => tr.id}>
-            {(tr) => {
-              const active = () => selectedTrace()?.id === tr().id;
-              return (
-                <View
-                  testID={`o11y-trace-row-${tr().id}`}
-                  onPress={() => props.onSelectTrace(tr().id)}
-                  class={active() ? "bg-accent" : "hover:bg-muted"}
-                  style={{
-                    paddingHorizontal: 9,
-                    paddingVertical: 7,
-                    borderRadius: 6,
-                    gap: 2,
-                  }}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                    <Text
-                      style={{ fontSize: 12, fontWeight: 500, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
-                      class={tr().hasError ? "text-destructive" : "text-foreground"}
-                    >
-                      {tr().name}
-                    </Text>
-                    <Text
-                      style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
-                      class={tr().durationMs >= 50 ? "text-destructive" : "text-muted-foreground"}
-                    >
-                      {tr().durationMs.toFixed(1)} ms
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
-                      {tr().spans.length} spans
-                    </Text>
-                    <If when={tr().inpMs !== undefined}>
-                      <Text style={{ fontSize: 10.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-primary">
-                        INP {tr().inpMs?.toFixed(1)} ms
+            <If when={filteredTraces().length === 0}>
+              <View style={{ padding: 16, alignItems: "center" }}>
+                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                  {t("o11y.traces.empty")}
+                </Text>
+              </View>
+            </If>
+            <Each of={filteredTraces()} key={(tr) => tr.id}>
+              {(tr) => {
+                const active = () => selectedTrace()?.id === tr().id;
+                return (
+                  <View
+                    testID={`o11y-trace-row-${tr().id}`}
+                    onPress={() => props.onSelectTrace(tr().id)}
+                    class={active() ? "bg-accent" : "hover:bg-muted"}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 7,
+                      borderRadius: 6,
+                      gap: 2,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                      <Text
+                        style={{ fontSize: 12, fontWeight: 500, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        class={tr().hasError ? "text-destructive" : "text-foreground"}
+                      >
+                        {tr().name}
                       </Text>
-                    </If>
+                      <Text
+                        style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                        class={tr().durationMs >= 50 ? "text-destructive" : "text-muted-foreground"}
+                      >
+                        {tr().durationMs.toFixed(1)} ms
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+                        {formatSpanCount(tr().spans.length)}
+                      </Text>
+                      <If when={tr().inpMs !== undefined}>
+                        <Text style={{ fontSize: 10.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-primary">
+                          INP {tr().inpMs?.toFixed(1)} ms
+                        </Text>
+                      </If>
+                    </View>
                   </View>
-                </View>
-              );
-            }}
-          </Each>
+                );
+              }}
+            </Each>
           </View>
         </Scroll>
 
@@ -418,48 +502,48 @@ function TracesTab(props: {
           </View>
           <Scroll style={{ maxHeight: 140 }}>
             <View style={{ gap: 3 }}>
-            <If when={namedBaselines().length === 0}>
-              <Text style={{ fontSize: 11 }} class="text-muted-foreground">
-                {t("o11y.traces.noBaselines")}
-              </Text>
-            </If>
-            <Each of={namedBaselines()} key={(b) => b.id}>
-              {(b) => {
-                const isSelected = () => activeBaseline()?.id === b().id;
-                return (
-                  <View
-                    onPress={() => {
-                      activeBaselineId.set(b().id);
-                      mode.set("compare");
-                    }}
-                    class={isSelected() ? "bg-accent" : "hover:bg-muted"}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      paddingHorizontal: 8,
-                      paddingVertical: 5,
-                      borderRadius: 5,
-                      gap: 6,
-                    }}
-                  >
-                    <Text
-                      style={{ fontSize: 11.5, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
-                      class="text-foreground"
-                    >
-                      {b().label}
-                    </Text>
+              <If when={namedBaselines().length === 0}>
+                <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                  {t("o11y.traces.noBaselines")}
+                </Text>
+              </If>
+              <Each of={namedBaselines()} key={(b) => b.id}>
+                {(b) => {
+                  const isSelected = () => activeBaseline()?.id === b().id;
+                  return (
                     <View
-                      onPress={() => removeBaseline(b().id)}
-                      class="hover:bg-background"
-                      style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }}
+                      onPress={() => {
+                        activeBaselineId.set(b().id);
+                        mode.set("compare");
+                      }}
+                      class={isSelected() ? "bg-accent" : "hover:bg-muted"}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        paddingHorizontal: 8,
+                        paddingVertical: 5,
+                        borderRadius: 5,
+                        gap: 6,
+                      }}
                     >
-                      <Icon name="x" size={11} tone="muted-foreground" />
+                      <Text
+                        style={{ fontSize: 11.5, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        class="text-foreground"
+                      >
+                        {b().label}
+                      </Text>
+                      <View
+                        onPress={() => removeBaseline(b().id)}
+                        class="hover:bg-background"
+                        style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }}
+                      >
+                        <Icon name="x" size={11} tone="muted-foreground" />
+                      </View>
                     </View>
-                  </View>
-                );
-              }}
-            </Each>
+                  );
+                }}
+              </Each>
             </View>
           </Scroll>
         </View>
@@ -486,15 +570,46 @@ function TracesTab(props: {
               { value: "compare", label: t("o11y.traces.compare") },
             ]}
           />
-          <Btn
-            testID="o11y-save-baseline"
-            size="sm"
-            variant="ghost"
-            icon={savedFlag.active() ? "check" : "flag"}
-            label={savedFlag.active() ? t("o11y.traces.baselineSaved") : t("o11y.traces.saveBaseline")}
-            disabled={!selectedTrace()}
-            onPress={handleSaveBaseline}
-          />
+          <If
+            when={namingBaseline()}
+            else={
+              <Btn
+                testID="o11y-save-baseline"
+                size="sm"
+                variant="ghost"
+                icon={savedFlag.active() ? "check" : "flag"}
+                label={t("o11y.traces.saveBaseline")}
+                disabled={!selectedTrace()}
+                onPress={openBaselineInput}
+                style={{ minWidth: 96 }}
+              />
+            }
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Input
+                testID="o11y-baseline-name-input"
+                value={baselineDraft()}
+                onChange={(e) => baselineDraft.set(e.value)}
+                onSubmit={confirmSaveBaseline}
+                placeholder={t("o11y.traces.baselinePlaceholder")}
+                autoFocus
+                style={{ width: 210, height: 28 }}
+              />
+              <Btn
+                testID="o11y-baseline-confirm"
+                size="sm"
+                variant="primary"
+                label={t("common.save")}
+                onPress={confirmSaveBaseline}
+              />
+              <Btn
+                size="sm"
+                variant="ghost"
+                label={t("common.cancel")}
+                onPress={() => namingBaseline.set(false)}
+              />
+            </View>
+          </If>
         </View>
 
         <If when={mode() === "waterfall"}>
@@ -548,12 +663,22 @@ function TracesTab(props: {
         <If when={mode() === "compare"}>
           <View style={{ flex: 1, padding: 10, minHeight: 0 }}>
             <If
-              when={activeBaseline() !== null && selectedTrace() !== null}
+              when={activeBaseline() !== null && selectedTrace() !== null && !compareMismatch()}
               else={
-                <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-                  <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
-                    {t("o11y.traces.compareHint")}
+                <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 6, padding: 24 }}>
+                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                    {compareMismatch()
+                      ? t("o11y.traces.compareMismatchTitle")
+                      : t("o11y.traces.compareHint")}
                   </Text>
+                  <If when={compareMismatch()}>
+                    <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                      {t("o11y.traces.compareMismatchDesc", {
+                        baseline: activeBaseline()!.scenarioKey,
+                        current: selectedTrace()!.scenarioKey,
+                      })}
+                    </Text>
+                  </If>
                 </View>
               }
             >
@@ -661,9 +786,10 @@ function LogsTab() {
           size="sm"
           variant="ghost"
           icon={copiedFlag.active() ? "check" : "copy"}
-          label={copiedFlag.active() ? t("common.copied") : t("o11y.logs.copyEntry")}
+          label={t("o11y.logs.copyEntry")}
           disabled={!selectedLog()}
           onPress={copySelectedLog}
+          style={{ minWidth: 96 }}
         />
       </View>
 
@@ -686,27 +812,19 @@ function LogsTab() {
 // ── Diagnostics Window Root ──────────────────────────────────────────────────
 
 export function DiagnosticsWindowContent() {
+  useWindowTitle(() => t("o11y.windowTitle"));
   const activeTab = signal<DiagTab>("metrics");
   const selectedTraceId = signal<string | null>(null);
   const exporting = signal(false);
   const exportedFlag = createTransientFlag(1800);
-  const baselineFlag = createTransientFlag(1500);
-
-  const handleCaptureBaseline = () => {
-    const list = capturedTraces();
-    const target = list.find((tr) => tr.id === selectedTraceId()) ?? list[0];
-    if (!target) return;
-    saveTraceAsBaseline(target);
-    baselineFlag.trigger();
-  };
 
   const handleExportPerfetto = async () => {
     if (exporting()) return;
     exporting.set(true);
     try {
       const res = await exportDiagnosticsTrace(
-        t("settings.about.traceExportTitle"),
-        t("settings.about.traceExportBtn"),
+        t("o11y.export.title"),
+        t("o11y.export.btn"),
       );
       if (res.ok) exportedFlag.trigger();
     } finally {
@@ -720,21 +838,10 @@ export function DiagnosticsWindowContent() {
       class="bg-background"
       style={{ flex: 1, flexDirection: "column", minHeight: 0 }}
     >
-      {/* Unified Top Control Bar */}
-      <View
-        class="border-b border-border bg-card"
-        style={{
-          paddingHorizontal: 14,
-          paddingVertical: 9,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      {/* Unified 44pt TitleBar with native window controls and live locale title */}
+      <TitleBar
+        leading={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <View
               style={{
                 width: 8,
@@ -747,6 +854,8 @@ export function DiagnosticsWindowContent() {
               {t("o11y.windowTitle")}
             </Text>
           </View>
+        }
+        center={
           <Segmented
             value={activeTab()}
             onChange={(v) => activeTab.set(v as DiagTab)}
@@ -756,50 +865,45 @@ export function DiagnosticsWindowContent() {
               { value: "logs", label: t("o11y.tab.logs") },
             ]}
           />
-        </View>
-
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <Segmented
-            value={String(diagnosticsWindowMs())}
-            onChange={(v) => diagnosticsWindowMs.set(Number(v) as TimeWindowPreset)}
-            items={WINDOW_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
-          />
-          <Btn
-            testID="o11y-toggle-pause"
-            size="sm"
-            variant={diagnosticsPaused() ? "primary" : "ghost"}
-            icon={diagnosticsPaused() ? "play" : "pause"}
-            label={diagnosticsPaused() ? t("o11y.action.resume") : t("o11y.action.pause")}
-            onPress={toggleDiagnosticsPaused}
-          />
-          <Btn
-            testID="o11y-clear"
-            size="sm"
-            variant="ghost"
-            icon="trash"
-            label={t("o11y.action.clear")}
-            onPress={clearAllDiagnostics}
-          />
-          <Btn
-            testID="o11y-capture-baseline"
-            size="sm"
-            variant="ghost"
-            icon={baselineFlag.active() ? "check" : "flag"}
-            label={baselineFlag.active() ? t("o11y.traces.baselineSaved") : t("o11y.action.captureBaseline")}
-            disabled={capturedTraces().length === 0}
-            onPress={handleCaptureBaseline}
-          />
-          <Btn
-            testID="o11y-export-perfetto"
-            size="sm"
-            variant="ghost"
-            icon={exportedFlag.active() ? "check" : "fileDown"}
-            label={exportedFlag.active() ? t("settings.about.traceExported") : t("o11y.action.exportPerfetto")}
-            disabled={exporting()}
-            onPress={() => void handleExportPerfetto()}
-          />
-        </View>
-      </View>
+        }
+        trailing={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Segmented
+              value={String(diagnosticsWindowMs())}
+              onChange={(v) => diagnosticsWindowMs.set(Number(v) as TimeWindowPreset)}
+              items={WINDOW_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
+              itemWidth={42}
+            />
+            <Btn
+              testID="o11y-toggle-pause"
+              size="sm"
+              variant={diagnosticsPaused() ? "primary" : "ghost"}
+              icon={diagnosticsPaused() ? "play" : "pause"}
+              label={diagnosticsPaused() ? t("o11y.action.resume") : t("o11y.action.pause")}
+              onPress={toggleDiagnosticsPaused}
+              style={{ minWidth: 68 }}
+            />
+            <Btn
+              testID="o11y-clear"
+              size="sm"
+              variant="ghost"
+              icon="trash"
+              label={t("o11y.action.clear")}
+              onPress={clearAllDiagnostics}
+            />
+            <Btn
+              testID="o11y-export-perfetto"
+              size="sm"
+              variant="ghost"
+              icon={exportedFlag.active() ? "check" : "fileDown"}
+              label={t("o11y.action.exportPerfetto")}
+              disabled={exporting()}
+              onPress={() => void handleExportPerfetto()}
+              style={{ minWidth: 138 }}
+            />
+          </View>
+        }
+      />
 
       {/* Active Tab Content */}
       <View style={{ flex: 1, minHeight: 0 }}>
