@@ -1,0 +1,142 @@
+[project]
+site_name = "XCPC Workstation"
+site_description = "本地优先的 XCPC 工作站：开放目录题库、Typst 题面出版、题目构建与导出、算法模板与团队参考手册、训练看板、插件生态与 MCP。"
+site_url = "https://lihaoze123.github.io/xcpc-workstation/"
+repo_url = "https://github.com/lihaoze123/xcpc-workstation"
+repo_name = "lihaoze123/xcpc-workstation"
+edit_uri = "edit/main/website/docs/"
+copyright = "Copyright &copy; 2026 XCPC Workstation · Apache-2.0 License"
+
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "首页" = "index.md" },
+  { "快速开始" = [
+    "getting-started/index.md",
+    { "下载与安装" = "getting-started/installation.md" },
+    { "快速上手" = "getting-started/quickstart.md" },
+    { "字体配置" = "getting-started/fonts.md" },
+  ] },
+  { "题库与出版" = [
+    { "工作区与开放目录" = "publishing/workspace.md" },
+    { "题库组织与检索" = "publishing/library.md" },
+    { "出版工作室" = "publishing/studio.md" },
+    { "模板与主题定制" = "publishing/templates.md" },
+    { "组卷与定稿归档" = "publishing/contests.md" },
+  ] },
+  { "题目构建与导出" = [
+    "problem-build/index.md",
+    { "传统题与严格验收" = "problem-build/traditional.md" },
+    { "交互、通信与 OI 子任务" = "problem-build/interactive-and-oi.md" },
+    { "数据包导入与导出" = "problem-build/import-export.md" },
+  ] },
+  { "算法模板与参考手册" = [
+    "templates-trd/index.md",
+    { "算法模板与单文件展开" = "templates-trd/snippets.md" },
+    { "三源自动验证" = "templates-trd/verification.md" },
+    { "团队参考手册（TRD）" = "templates-trd/trd.md" },
+  ] },
+  { "训练看板" = [
+    "training/index.md",
+    { "数据视图与记录" = "training/dashboard.md" },
+  ] },
+  { "CLI 与 AI Agent" = [
+    { "命令行手册（CLI）" = "cli-mcp/cli.md" },
+    { "MCP 服务接入" = "cli-mcp/mcp.md" },
+    { "官方 AI Skill" = "cli-mcp/skills.md" },
+  ] },
+  { "插件生态与开发" = [
+    "plugins/index.md",
+    { "安全边界与信任门控" = "plugins/security.md" },
+    { "插件开发指南" = "plugins/development.md" },
+  ] },
+  { "参考与排障" = [
+    { "配置文件速查" = "reference/workspace-files.md" },
+    { "快捷键速查" = "reference/shortcuts.md" },
+    { "开发者诊断与可访问性" = "reference/diagnostics.md" },
+    { "常见问题（FAQ）" = "reference/faq.md" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+language = "zh"
+logo = "assets/logo.png"
+favicon = "assets/logo.png"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  "content.footnote.tooltips",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "跟随系统主题"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "切换至深色模式"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "跟随系统主题"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/lihaoze123/xcpc-workstation"
+name = "GitHub 仓库"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.arithmatex.generic = true
+pymdownx.betterem = {}
+pymdownx.caret = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.magiclink = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tabbed.combine_header_slug = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}

@@ -13,6 +13,7 @@ from pathlib import Path
 REQUIRED_DOCS = (
     "docs/plugin-development.md",
     "packages/plugin-sdk/README.md",
+    "website/docs/plugins/development.md",
 )
 
 LINK_CHECK_FILES = (
@@ -26,6 +27,8 @@ CLI_CHECK_FILES = (
     "docs/plugin-development.md",
     "packages/plugin-sdk/README.md",
 )
+
+WEBSITE_DOCS_DIR = "website/docs"
 
 SDK_PACKAGE_JSON = "packages/plugin-sdk/package.json"
 CLI_SOURCE_PATH = "crates/xcpc-mcp/src/main.rs"
@@ -203,8 +206,18 @@ def check_repo(repo_root: Path) -> tuple[list[str], dict[str, int]]:
                     f"{SDK_PACKAGE_JSON} `files` array must include \"README.md\""
                 )
 
+    website_docs_root = repo_root / WEBSITE_DOCS_DIR
+    website_md_files = (
+        sorted(
+            p.relative_to(repo_root).as_posix()
+            for p in website_docs_root.rglob("*.md")
+        )
+        if website_docs_root.is_dir()
+        else []
+    )
+
     # 3. Verify all relative local Markdown links resolve to existing files or directories.
-    for rel_path in LINK_CHECK_FILES:
+    for rel_path in (*LINK_CHECK_FILES, *website_md_files):
         md_path = repo_root / rel_path
         if not md_path.is_file():
             if rel_path not in REQUIRED_DOCS:
@@ -252,7 +265,7 @@ def check_repo(repo_root: Path) -> tuple[list[str], dict[str, int]]:
         valid_plugin_cmds = plugin_subcommands | {"help"}
         valid_repo_cmds = repo_subcommands | {"help"}
 
-        for rel_path in CLI_CHECK_FILES:
+        for rel_path in (*CLI_CHECK_FILES, *website_md_files):
             md_path = repo_root / rel_path
             if not md_path.is_file():
                 continue

@@ -5,3 +5,5 @@ target/
 .nsh/
 __pycache__/
 tests/fixtures/**/workspace/build/
+website/site/
+website/.cache/

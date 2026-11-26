@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="https://lihaoze123.github.io/xcpc-workstation/"><img src="https://img.shields.io/badge/Docs-Online%20Guide%20(ZH)-0B6989" alt="Documentation" /></a>
   <a href="https://github.com/lihaoze123/xcpc-workstation/releases"><img src="https://img.shields.io/github/v/release/lihaoze123/xcpc-workstation?include_prereleases&label=Release&color=0B6989" alt="Release" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-52525B" alt="License" /></a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-52525B" alt="Platform" />
