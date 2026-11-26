@@ -343,6 +343,29 @@
 
 **不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
 
+## Phase 6：增强 o11y 与全面整体打磨（规划已确认）
+
+2026-11-26 对齐确认，按 **6A / 6B / 6C** 三步推进，详细规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)：
+
+### Phase 6A：升级 NSH v0.7.1、清理自造轮子与原生 `<Editor>` 复测
+
+1. **宿主框架升级**：`flake.nix` 与打包链路从 NSH `v0.6.0` 升级至 `v0.7.1`，启用 `nshm` / `nsh.lock` 依赖管理，精简 Linux 打包中不再需要的 GStreamer 强依赖。
+2. **清理 6 项自造轮子**：用 `nsh-icon` + `nsh-icon-lucide` 替代手维护的 60+ SVG 与静态图标表；用 `keymap.bind({ overFocused: true })` 删除 `vim_bridge.rs`；用 `nsh/base` `TitleBar` 简化自绘顶栏并复测是否可删除 `linux_chrome.rs`；用 `nsh-o11y` `TimeSeriesChart` 替换训练看板手写折线图（保留年度日历热力图）；用原生 `promptForUpdate({ quiet })` 替换「设置 → 关于」手写更新下载 UI。
+3. **原生 `<Editor>` 复测**：先留在 NSH 0.7.1 原生 `<Editor>`，实测粗体标题度量、中文 IME 跟随、长文档滚动与去掉 `vim_bridge.rs` 后的 Vim 键位；仅在存在无法绕过的根因问题时再评估引入 `huacnlee/nsvim` 的 `editor-core`。
+
+### Phase 6B：基于 `nsh-o11y` 的独立诊断窗口与分层采集底座
+
+1. **独立开发者诊断窗口**：基于 NSH 0.7 多窗口能力独立唤起（`Cmd+K` / 快捷键 / `XCPC_O11Y=1`），零侵入主界面，保留 Perfetto JSON 导出。
+2. **三大核心信号视图**：`TimeSeriesChart` 联动实时指标（帧耗时/掉帧、编译与光栅化耗时、IPC 延迟、缓存占用）、`TraceWaterfall` + `TraceComparison`（消费 `xcpc-trace` / `trace.ts` 并支持基线前后对比）与 `LogView`（结构化日志柱状图与模块/级别筛选）。
+3. **分层采集生命周期**：常态下不跑 `rAF`、不写盘，仅将结构化日志与慢事件/错误写入轻量内存环形缓冲以便回溯；打开诊断窗口或设 `XCPC_TRACE=1` 后激活高频实时帧监控与全量 Span 采集。
+
+### Phase 6C：数据驱动的全面整体打磨
+
+1. **核心链路量化优化**：以 `TraceComparison` 基线对比验收冷启动 TTI、编辑→编译→光栅化延迟、缩放/平移掉帧、500–1,000 题库筛选滚动与视图切换 INP。
+2. **NSH 0.7 体验红利**：接入 `quitRequest` 未保存改动退出保护、调优 `smoothWheel` 滚动手感、利用 `DataTable` `grow`/`autoFit` 优化表格列宽并完善主/诊断窗口生命周期联动。
+
+**不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器。
+
 ## 待定与远期（尚未排期）
 
 - **远期（原候选 Phase 3E）：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，2026-11-24 确认排到远期）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 赛制与断点续测；引入三道防线反作弊与分层审计模型，产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
