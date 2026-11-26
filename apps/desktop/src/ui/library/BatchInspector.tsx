@@ -22,6 +22,7 @@ import {
   preview,
 } from "../store";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 function formatElapsed(msVal: number): string {
   const rounded = Math.max(0, Math.round(msVal));
   if (rounded < 1000) return `${rounded} ms`;
@@ -82,24 +83,24 @@ function ActionRow(props: {
           : "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       }
       style={{
-        height: 36,
-        paddingLeft: 10,
-        paddingRight: 10,
-        borderRadius: 6,
+        height: ROW.table,
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[12],
+        borderRadius: RADIUS.sm,
         flexDirection: "row",
         alignItems: "center",
-        gap: 10,
+        gap: SPACE[8],
         opacity: props.disabled ? 0.5 : 1,
         ...colorTransition(120),
       }}
     >
       <Icon
         name={props.icon}
-        size={15}
+        size="md"
         tone={props.destructive ? "destructive" : "secondary-foreground"}
       />
       <Text
-        style={{ fontSize: 13, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+        style={{ fontSize: FONT_SIZE.body, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
         class={props.destructive ? "text-destructive" : "text-foreground"}
       >
         {props.label}
@@ -193,19 +194,19 @@ export function BatchInspector(props: {
       <If when={props.selectedProblems.length > 0}>
         <View
           style={{
-            paddingLeft: 16,
-            paddingRight: 16,
-            paddingTop: 10,
-            paddingBottom: 10,
-            gap: 4,
+            paddingLeft: SPACE[16],
+            paddingRight: SPACE[16],
+            paddingTop: SPACE[12],
+            paddingBottom: SPACE[12],
+            gap: SPACE[4],
             borderBottomWidth: 1,
           }}
           class="border-border bg-muted/30"
         >
-          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
             {summary().ratingText}
           </Text>
-          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {summary().packageText}
           </Text>
         </View>
@@ -215,7 +216,7 @@ export function BatchInspector(props: {
         when={task()}
         else={
           <Scroll style={{ flex: 1 }}>
-            <View style={{ padding: 12, gap: 2 }}>
+            <View style={{ padding: SPACE[12], gap: SPACE[2] }}>
               <ActionRow
                 icon="listPlus"
                 label={t("library.batch.addToContest")}
@@ -249,7 +250,7 @@ export function BatchInspector(props: {
                 disabled={props.readOnly}
                 onPress={props.onSetRating}
               />
-              <View style={{ height: 1, marginTop: 6, marginBottom: 6 }} class="bg-border" />
+              <View style={{ height: 1, marginTop: SPACE[6], marginBottom: SPACE[6] }} class="bg-border" />
               <ActionRow
                 icon="shieldCheck"
                 label={t("library.batch.buildVerify")}
@@ -268,7 +269,7 @@ export function BatchInspector(props: {
                 disabled={props.readOnly}
                 onPress={props.onExport}
               />
-              <View style={{ height: 1, marginTop: 6, marginBottom: 6 }} class="bg-border" />
+              <View style={{ height: 1, marginTop: SPACE[6], marginBottom: SPACE[6] }} class="bg-border" />
               <ActionRow
                 icon="trash"
                 label={t("library.batch.delete")}
@@ -290,15 +291,15 @@ export function BatchInspector(props: {
           return (
             <View style={{ flex: 1, minHeight: 0 }}>
               {/* Live status header + Progress bar */}
-              <View style={{ padding: 14, gap: 10, borderBottomWidth: 1 }} class="border-border">
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ padding: SPACE[12], gap: SPACE[8], borderBottomWidth: 1 }} class="border-border">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                   <Text
-                    style={{ flex: 1, fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
+                    style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
                     class="text-foreground"
                   >
                     {taskHeadline(snap())}
                   </Text>
-                  <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                     {formatElapsed(snap().elapsedMs)}
                   </Text>
                   <If when={snap().running}>
@@ -312,7 +313,7 @@ export function BatchInspector(props: {
                   indicatorClass="h-full rounded-full bg-primary"
                 />
                 {snap().error && (
-                  <Text style={{ fontSize: 12 }} class="text-destructive">
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
                     {errorCopy(snap().code, snap().error).message}
                   </Text>
                 )}
@@ -320,7 +321,7 @@ export function BatchInspector(props: {
 
               {/* Per-problem live results list */}
               <Scroll style={{ flex: 1 }}>
-                <View style={{ padding: 8, gap: 2 }}>
+                <View style={{ padding: SPACE[8], gap: SPACE[2] }}>
                   <Each of={snap().items} key={(it) => it.problemId}>
                     {(it) => {
                       const vis = () => itemVisual(it());
@@ -341,13 +342,13 @@ export function BatchInspector(props: {
                           tooltip={vis().clickable ? tip(t("library.batch.openBuildTooltip")) : undefined}
                           class={vis().clickable ? "hover:bg-muted active:bg-accent" : undefined}
                           style={{
-                            height: 34,
-                            paddingLeft: 8,
-                            paddingRight: 8,
-                            borderRadius: 6,
+                            height: CONTROL.lg,
+                            paddingLeft: SPACE[8],
+                            paddingRight: SPACE[8],
+                            borderRadius: RADIUS.sm,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 8,
+                            gap: SPACE[8],
                             minWidth: 0,
                             ...colorTransition(120),
                           }}
@@ -356,19 +357,19 @@ export function BatchInspector(props: {
                             {it().status === "running" ? (
                               <DelayedSpinner active size={12} />
                             ) : vis().icon ? (
-                              <Icon name={vis().icon!} size={14} tone={vis().tone} />
+                              <Icon name={vis().icon!} size="sm" tone={vis().tone} />
                             ) : null}
                           </View>
-                          <View style={{ flex: 1, minWidth: 0, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <View style={{ flex: 1, minWidth: 0, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                             <Text
-                              style={{ fontSize: 12.5, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                              style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                               class="text-foreground"
                             >
                               {title()}
                             </Text>
                             <Text
                               style={{
-                                fontSize: 11,
+                                fontSize: FONT_SIZE.micro,
                                 fontFamily: MONO,
                                 maxWidth: 96,
                                 flexShrink: 2,
@@ -383,7 +384,7 @@ export function BatchInspector(props: {
                           </View>
                           <Text
                             style={{
-                              fontSize: 11.5,
+                              fontSize: FONT_SIZE.caption,
                               fontVariant: ["tabular-nums"],
                               maxWidth: 120,
                               flexShrink: 0,
@@ -409,13 +410,13 @@ export function BatchInspector(props: {
               <If when={!snap().running}>
                 <View
                   style={{
-                    padding: 12,
+                    padding: SPACE[12],
                     borderTopWidth: 1,
-                    gap: 8,
+                    gap: SPACE[8],
                   }}
                   class="border-border bg-background/60"
                 >
-                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                     {isExport()
                       ? t("library.batch.summaryExportLine", {
                           succeeded: snap().succeeded,
@@ -428,7 +429,7 @@ export function BatchInspector(props: {
                           skipped: snap().skipped,
                         })}
                   </Text>
-                  <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+                  <View style={{ flexDirection: "row", gap: SPACE[8], justifyContent: "flex-end" }}>
                     <If when={!!snap().outputPath}>
                       <Btn
                         variant="outline"

@@ -29,6 +29,7 @@ import {
 } from "./templates";
 import { MONO } from "./theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 const ADD_PRESET_ID = "__add_preset__";
 
 /** Dropdown selector for choosing a workspace template (`templates/*.typ`). */
@@ -69,18 +70,19 @@ export function TemplatePicker(props: {
   });
 
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: SPACE[4] }}>
+      {/* token-exempt: compact field header row */}
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
           {t("template.label")}
         </Text>
         <If when={props.overridden && !props.readOnly && !!props.onRestore}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.inheritedLabel ?? t("template.restoreWorkspaceDefault"))} onPress={() => props.onRestore?.()} />
+          <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.inheritedLabel ?? t("template.restoreWorkspaceDefault"))} onPress={() => props.onRestore?.()} />
         </If>
       </View>
       <View style={{ flexDirection: "row" }}>
         <View
-          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
           class="bg-primary"
         />
         <View style={{ flex: 1 }}>
@@ -90,16 +92,16 @@ export function TemplatePicker(props: {
               <View
                 class="border border-border bg-muted/50"
                 style={{
-                  height: 32,
-                  borderRadius: 6,
-                  paddingLeft: 10,
-                  paddingRight: 8,
+                  height: CONTROL.lg,
+                  borderRadius: RADIUS.sm,
+                  paddingLeft: SPACE[12],
+                  paddingRight: SPACE[8],
                   flexDirection: "row",
                   alignItems: "center",
-                  gap: 6,
+                  gap: SPACE[6],
                 }}
               >
-                <Text style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+                <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
                   {currentName()}
                 </Text>
               </View>
@@ -120,20 +122,20 @@ export function TemplatePicker(props: {
                   testID="template-picker"
                   class="border border-border bg-card hover:bg-muted active:bg-accent"
                   style={{
-                    height: 32,
-                    borderRadius: 6,
-                    paddingLeft: 10,
-                    paddingRight: 8,
+                    height: CONTROL.lg,
+                    borderRadius: RADIUS.sm,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[8],
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 6,
+                    gap: SPACE[6],
                     ...colorTransition(120),
                   }}
                 >
-                  <Text style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                  <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                     {currentName()}
                   </Text>
-                  <Chevron size={13} tone="muted-foreground" />
+                  <Chevron size="sm" tone="muted-foreground" />
                 </View>
               }
             />
@@ -141,7 +143,7 @@ export function TemplatePicker(props: {
         </View>
       </View>
       <If when={!!currentDesc()}>
-        <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
           {currentDesc()}
         </Text>
       </If>
@@ -233,7 +235,7 @@ export function TemplateOptionsEditor(props: {
   };
 
   return (
-    <View style={props.sectioned ? undefined : { gap: 18 }}>
+    <View style={props.sectioned ? undefined : { gap: SPACE[16] }}>
       <Each of={grouped()} key={(g) => g.id}>
         {(group, idx) => {
           const isLast = () => idx() === grouped().length - 1;
@@ -242,13 +244,13 @@ export function TemplateOptionsEditor(props: {
               style={
                 props.sectioned
                   ? {
-                      padding: 14,
-                      gap: 10,
+                      padding: SPACE[12],
+                      gap: SPACE[8],
                       borderBottomWidth: props.lastSection && isLast() ? 0 : 1,
                     }
                   : {
-                      gap: 10,
-                      paddingTop: idx() > 0 ? 14 : 0,
+                      gap: SPACE[8],
+                      paddingTop: idx() > 0 ? SPACE[12] : SPACE[0],
                       borderTopWidth: idx() > 0 ? 1 : 0,
                     }
               }
@@ -256,7 +258,7 @@ export function TemplateOptionsEditor(props: {
             >
               <If when={!props.hideGroupLabels && !!group().label}>
                 <Text
-                  style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 17 }}
+                  style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption }}
                   class="text-foreground"
                 >
                   {group().label}
@@ -307,17 +309,17 @@ function SchemaFieldRow(props: {
   if (ty() === "bool") {
     const checked = () => Boolean(props.value);
     return (
-      <View style={{ gap: 2 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", height: 24, gap: 6 }}>
+      <View style={{ gap: SPACE[2] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", height: CONTROL.sm, gap: SPACE[6] }}>
           <View
-            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
             class="bg-primary"
           />
-          <Text style={{ flex: 1, fontSize: 13 }} class={props.readOnly ? "text-secondary-foreground" : "text-foreground"}>
+          <Text style={{ flex: 1, fontSize: FONT_SIZE.body }} class={props.readOnly ? "text-secondary-foreground" : "text-foreground"}>
             {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
-            <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+            <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
           </If>
           <Switch
             checked={checked()}
@@ -332,7 +334,7 @@ function SchemaFieldRow(props: {
           />
         </View>
         <If when={!!fieldDesc()}>
-          <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
             {fieldDesc()}
           </Text>
         </If>
@@ -347,18 +349,19 @@ function SchemaFieldRow(props: {
     const currentLabel = () => choices().find((c) => c.value === strVal())?.label ?? strVal();
 
     return (
-      <View style={{ gap: 4 }}>
+      <View style={{ gap: SPACE[4] }}>
+        {/* token-exempt: compact field header row */}
         <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-          <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+          <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
-            <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+            <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
           </If>
         </View>
         <View style={{ flexDirection: "row" }}>
           <View
-            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
             class="bg-primary"
           />
           <If
@@ -368,8 +371,8 @@ function SchemaFieldRow(props: {
                 <If
                   when={!props.readOnly}
                   else={
-                    <View class="border border-border bg-muted/50" style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 8, justifyContent: "center" }}>
-                      <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{currentLabel()}</Text>
+                    <View class="border border-border bg-muted/50" style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], justifyContent: "center" }}>
+                      <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">{currentLabel()}</Text>
                     </View>
                   }
                 >
@@ -380,10 +383,10 @@ function SchemaFieldRow(props: {
                     trigger={
                       <View
                         class="border border-border bg-card hover:bg-muted active:bg-accent"
-                        style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 8, flexDirection: "row", alignItems: "center", gap: 6, ...colorTransition(120) }}
+                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
                       >
-                        <Text style={{ flex: 1, fontSize: 13 }} class="text-foreground">{currentLabel()}</Text>
-                        <Chevron size={13} tone="muted-foreground" />
+                        <Text style={{ flex: 1, fontSize: FONT_SIZE.body }} class="text-foreground">{currentLabel()}</Text>
+                        <Chevron size="sm" tone="muted-foreground" />
                       </View>
                     }
                   />
@@ -419,26 +422,27 @@ function SchemaFieldRow(props: {
       return list;
     });
     return (
-      <View style={{ gap: 4 }}>
+      <View style={{ gap: SPACE[4] }}>
+        {/* token-exempt: compact field header row */}
         <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-          <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+          <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {fieldLabel()}
           </Text>
           <If when={props.overridden && !props.readOnly}>
-            <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+            <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
           </If>
         </View>
         <View style={{ flexDirection: "row" }}>
           <View
-            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+            style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
             class="bg-primary"
           />
           <View style={{ flex: 1 }}>
             <If
               when={!props.readOnly}
               else={
-                <View class="border border-border bg-muted/50" style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 8, justifyContent: "center" }}>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{strVal() || defaultFontLabel()}</Text>
+                <View class="border border-border bg-muted/50" style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], justifyContent: "center" }}>
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">{strVal() || defaultFontLabel()}</Text>
                 </View>
               }
             >
@@ -449,15 +453,15 @@ function SchemaFieldRow(props: {
                 trigger={
                   <View
                     class="border border-border bg-card hover:bg-muted active:bg-accent"
-                    style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 8, flexDirection: "row", alignItems: "center", gap: 6, ...colorTransition(120) }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
                   >
                     <Text
-                      style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }}
+                      style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                       class={strVal() ? "text-foreground" : "text-muted-foreground"}
                     >
                       {strVal() || defaultFontLabel()}
                     </Text>
-                    <Chevron size={13} tone="muted-foreground" />
+                    <Chevron size="sm" tone="muted-foreground" />
                   </View>
                 }
               />
@@ -572,24 +576,25 @@ function TextOptionField(props: {
   };
 
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: SPACE[4] }}>
+      {/* token-exempt: compact field header row */}
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
           {resolveLocalized(props.field.label)}
         </Text>
         <If when={props.overridden && !props.readOnly}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+          <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
         </If>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
         <View
-          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
           class="bg-primary"
         />
         <If when={isColor()}>
           <View
             class="border border-border"
-            style={{ width: 22, height: 22, borderRadius: 5, backgroundColor: swatchColor(), flexShrink: 0 }}
+            style={{ width: 22, height: 22, borderRadius: RADIUS.xs, backgroundColor: swatchColor(), flexShrink: 0 }} // token-exempt: color swatch square
           />
         </If>
         <Input
@@ -624,7 +629,7 @@ function TextOptionField(props: {
         />
       </View>
       <If when={!props.readOnly && (props.field.presets?.length ?? 0) > 0}>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4], paddingTop: SPACE[2] }}>
           <Each of={props.field.presets ?? []} key={(p) => p}>
             {(preset) => {
               const active = () => draft().trim() === preset();
@@ -635,10 +640,10 @@ function TextOptionField(props: {
                     props.onCommit(preset());
                   }}
                   class={active() ? "bg-accent border border-border" : "bg-muted/60 hover:bg-muted border border-border"}
-                  style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center", ...colorTransition(100) }}
+                  style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", ...colorTransition(100) }}
                 >
                   <Text
-                    style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                    style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
                     class={active() ? "text-foreground" : "text-secondary-foreground"}
                   >
                     {preset()}
@@ -700,18 +705,19 @@ function LinesField(props: {
   });
 
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: SPACE[4] }}>
+      {/* token-exempt: compact field header row */}
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
           {props.label}
         </Text>
         <If when={props.overridden && !props.readOnly}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+          <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
         </If>
       </View>
       <View style={{ flexDirection: "row" }}>
         <View
-          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
           class="bg-primary"
         />
         <Input
@@ -738,11 +744,11 @@ function LinesField(props: {
               ? "flex-1 px-2.5 py-1.5 rounded-md border border-border bg-muted/50 text-[12.5px] text-secondary-foreground"
               : "flex-1 px-2.5 py-1.5 rounded-md border border-border bg-card text-[12.5px] focus:border-primary focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
           }
-          style={{ lineHeight: 18, height: height() }}
+          style={{ lineHeight: LINE_HEIGHT.body, height: height() }}
         />
       </View>
       <If when={!!props.description}>
-        <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
           {props.description}
         </Text>
       </If>
@@ -783,18 +789,19 @@ function ImageOptionField(props: {
   };
 
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: SPACE[4] }}>
+      {/* token-exempt: compact field header row */}
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
-        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
           {props.label}
         </Text>
         <If when={props.overridden && !props.readOnly}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
+          <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.restoreTooltip)} onPress={props.onRestore} />
         </If>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
         <View
-          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }}
+          style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} // token-exempt: 2px override indicator bar
           class="bg-primary"
         />
         <View
@@ -803,22 +810,22 @@ function ImageOptionField(props: {
           style={{
             flex: 1,
             minWidth: 0,
-            height: 32,
-            borderRadius: 6,
-            paddingLeft: 8,
-            paddingRight: 8,
+            height: CONTROL.lg,
+            borderRadius: RADIUS.sm,
+            paddingLeft: SPACE[8],
+            paddingRight: SPACE[8],
             flexDirection: "row",
             alignItems: "center",
-            gap: 6,
+            gap: SPACE[6],
             overflow: "hidden",
           }}
         >
-          <Icon name="image" size={13} tone={displayName() ? "foreground" : "muted-foreground"} />
+          <Icon name="image" size="sm" tone={displayName() ? "foreground" : "muted-foreground"} />
           <Text
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 12.5,
+              fontSize: FONT_SIZE.caption,
               numberOfLines: 1,
               textOverflow: "ellipsis",
               ...(displayName() ? { fontFamily: MONO } : undefined),
@@ -831,12 +838,12 @@ function ImageOptionField(props: {
         <If when={!props.readOnly}>
           <Btn label={t("template.chooseImage")} onPress={() => void pickImage()} />
           <If when={!!currentPath()}>
-            <IconBtn icon="x" size={28} iconSize={13} tooltip={tip(t("template.clearImage"))} onPress={() => props.onCommit("")} />
+            <IconBtn icon="x" size="md" tooltip={tip(t("template.clearImage"))} onPress={() => props.onCommit("")} />
           </If>
         </If>
       </View>
       <If when={!!props.description}>
-        <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
           {props.description}
         </Text>
       </If>
@@ -909,22 +916,22 @@ export function ForkTemplateModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={380}>
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View class="bg-muted border border-border" style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}>
-            <Icon name="copy" size={15} tone="foreground" />
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <View class="bg-muted border border-border" style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}>
+            <Icon name="copy" size="md" tone="foreground" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("template.fork.title")}
             </Text>
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("template.fork.desc", { name: props.sourceName })}
             </Text>
           </View>
         </View>
-        <View style={{ gap: 5 }}>
-          <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+        <View style={{ gap: SPACE[4] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {t("template.fork.idLabel")}
           </Text>
           <Input
@@ -946,7 +953,7 @@ export function ForkTemplateModal(props: {
             style={{ fontFamily: MONO }}
           />
           <Text
-            style={{ fontSize: 11.5, lineHeight: 16 }}
+            style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
             class={validationError() ? "text-destructive" : "text-muted-foreground"}
           >
             {validationError() ?? t("template.fork.idHint")}
@@ -955,7 +962,7 @@ export function ForkTemplateModal(props: {
         <If when={err()}>
           <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
         </If>
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn label={t("common.create")} variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>
@@ -1047,22 +1054,22 @@ export function InstallPresetModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={420}>
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View class="bg-muted border border-border" style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}>
-            <Icon name="plus" size={15} tone="foreground" />
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <View class="bg-muted border border-border" style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}>
+            <Icon name="plus" size="md" tone="foreground" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("template.preset.title")}
             </Text>
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("template.preset.desc")}
             </Text>
           </View>
         </View>
 
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: SPACE[6] }}>
           <Each of={props.presets} key={(p) => p.id}>
             {(preset) => {
               const active = () => selectedPreset() === preset().id;
@@ -1071,24 +1078,24 @@ export function InstallPresetModal(props: {
                   onPress={() => choosePreset(preset().id)}
                   class={active() ? "border border-primary bg-accent/60" : "border border-border bg-card hover:bg-muted/60"}
                   style={{
-                    borderRadius: 8,
-                    paddingLeft: 12,
-                    paddingRight: 12,
-                    paddingTop: 9,
-                    paddingBottom: 9,
-                    gap: 2,
+                    borderRadius: RADIUS.md,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[12],
+                    paddingTop: SPACE[8],
+                    paddingBottom: SPACE[8],
+                    gap: SPACE[2],
                     ...colorTransition(120),
                   }}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                       {resolveLocalized(preset().name) || preset().id}
                     </Text>
-                    <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-muted-foreground">
                       {preset().id}
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                     {resolveLocalized(preset().description)}
                   </Text>
                 </View>
@@ -1097,8 +1104,8 @@ export function InstallPresetModal(props: {
           </Each>
         </View>
 
-        <View style={{ gap: 5 }}>
-          <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+        <View style={{ gap: SPACE[4] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {t("template.preset.saveAsLabel")}
           </Text>
           <Input
@@ -1121,7 +1128,7 @@ export function InstallPresetModal(props: {
             style={{ fontFamily: MONO }}
           />
           <Text
-            style={{ fontSize: 11.5, lineHeight: 16 }}
+            style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
             class={validationError() ? "text-destructive" : "text-muted-foreground"}
           >
             {validationError() ?? t("template.preset.idHint")}
@@ -1132,7 +1139,7 @@ export function InstallPresetModal(props: {
           <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
         </If>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn label={t("common.add")} variant="primary" disabled={!canSubmit()} onPress={submit} />
         </View>

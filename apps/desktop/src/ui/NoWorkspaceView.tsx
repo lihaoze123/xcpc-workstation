@@ -26,6 +26,7 @@ import { EASE_EXPO_CURVE } from "./motion";
 import { formatAppVersion, readAboutInfo } from "./SettingsView";
 import { goSpace, info, openError, pickWorkspace, requestNewWorkspace } from "./store";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "./tokens";
 export interface NoWorkspaceViewProps {
   onNew?: () => void;
   onOpen?: () => void;
@@ -161,7 +162,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
     else void pickWorkspace();
   };
 
-  const btnStyle = { width: 240, height: 36, borderRadius: 8 };
+  const btnStyle = { width: 240, height: ROW.table, borderRadius: RADIUS.md };
   const versionText = props.version ?? formatAppVersion(readAboutInfo());
 
   return (
@@ -177,7 +178,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
       style={{ flex: 1, flexDirection: "column" }}
       class="bg-background"
     >
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingLeft: 24, paddingRight: 24 }}>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingLeft: SPACE[24], paddingRight: SPACE[24] }}>
         <BrandIcon
           testID="brand-icon"
           size={144}
@@ -187,24 +188,24 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
 
         <View
           style={{
-            marginTop: 20,
+            marginTop: SPACE[20],
             flexDirection: "row",
             alignItems: "baseline",
             justifyContent: "center",
-            gap: 7,
+            gap: SPACE[8],
             opacity: opacities[0],
             transform: [{ translateY: offsets[0] }],
           }}
         >
-          <Text style={{ fontSize: 26, lineHeight: 32, fontWeight: 700, letterSpacing: -0.4 }} class="text-foreground">
+          <Text style={{ fontSize: FONT_SIZE.display, lineHeight: LINE_HEIGHT.display, fontWeight: FONT_WEIGHT.semibold, letterSpacing: -0.4 }} class="text-foreground">
             XCPC
           </Text>
-          <Text style={{ fontSize: 26, lineHeight: 32, fontWeight: 400, letterSpacing: -0.3 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.display, lineHeight: LINE_HEIGHT.display, fontWeight: FONT_WEIGHT.regular, letterSpacing: -0.3 }} class="text-secondary-foreground">
             Workstation
           </Text>
         </View>
 
-        <View style={{ marginTop: 28, width: 240, gap: 8 }}>
+        <View style={{ marginTop: SPACE[32], width: 240, gap: SPACE[8] }}>
           <View
             style={{
               pointerEvents: !props.replayOnly && visibleStage() >= 1 ? "auto" : "none",
@@ -219,7 +220,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               label={t("brand.newWorkspace")}
               onPress={handleNew}
               style={btnStyle}
-              textStyle={{ fontSize: 13.5, fontWeight: 500 }}
+              textStyle={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }}
             />
           </View>
           <View
@@ -237,16 +238,16 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
               onPress={handleOpen}
               tooltip={props.replayOnly ? undefined : tip(t("brand.openExistingFolder"), "mod+o")}
               style={btnStyle}
-              textStyle={{ fontSize: 13.5, fontWeight: 500 }}
+              textStyle={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }}
             />
           </View>
           <If when={!props.replayOnly}>
             <View
               style={{
-                marginTop: 6,
+                marginTop: SPACE[6],
                 flexDirection: "row",
                 justifyContent: "center",
-                gap: 8,
+                gap: SPACE[8],
                 pointerEvents: visibleStage() >= 2 ? "auto" : "none",
                 opacity: opacities[3],
                 transform: [{ translateY: offsets[3] }],
@@ -287,7 +288,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
             minHeight: 36,
             width: 320,
             maxWidth: "90%",
-            marginTop: 8,
+            marginTop: SPACE[8],
             justifyContent: "center",
             opacity: opacities[3],
             transform: [{ translateY: offsets[3] }],
@@ -297,7 +298,7 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
             when={!props.replayOnly && Boolean(openError())}
             else={
               !props.replayOnly && info().lastWorkspaceMissing ? (
-                <Text style={{ fontSize: 12, textAlign: "center" }} class="text-secondary-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, textAlign: "center" }} class="text-secondary-foreground">
                   {t("brand.lastWorkspaceMissing")}
                 </Text>
               ) : null
@@ -310,22 +311,22 @@ export function NoWorkspaceView(props: NoWorkspaceViewProps) {
 
       <View
         style={{
-          paddingTop: 14,
-          paddingBottom: 20,
-          paddingLeft: 24,
-          paddingRight: 24,
+          paddingTop: SPACE[12],
+          paddingBottom: SPACE[20],
+          paddingLeft: SPACE[24],
+          paddingRight: SPACE[24],
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 16,
+          gap: SPACE[16],
           opacity: opacities[3],
           transform: [{ translateY: offsets[3] }],
         }}
       >
-        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
           {versionText}
         </Text>
-        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
           {t("brand.madeWithLove")}
         </Text>
       </View>

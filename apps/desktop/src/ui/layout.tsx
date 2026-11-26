@@ -6,16 +6,24 @@
 import { Text, View, type JSX, type StyleProp, type ViewStyle } from "nsh";
 import { Icon, type IconName } from "./Icon";
 import { cardShadow } from "./theme";
+import { CONTROL, GUTTER, RADIUS, SPACE, TOOLBAR, TYPE } from "./tokens";
 
-export const TOOLBAR = 52;
-export const GUTTER = 20;
+export { GUTTER, TOOLBAR };
 
 /** The list column's toolbar: search and filters on the left, 新建 at the right end. */
 export function Toolbar(props: { children?: JSX.Element; style?: StyleProp<ViewStyle> }) {
   return (
     <View
       style={[
-        { height: TOOLBAR, flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 16, paddingRight: 12, borderBottomWidth: 1 },
+        {
+          height: TOOLBAR,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: SPACE[6],
+          paddingLeft: SPACE[16],
+          paddingRight: SPACE[12],
+          borderBottomWidth: 1,
+        },
         props.style,
       ]}
       class="border-border"
@@ -36,50 +44,69 @@ export function Spacer() {
  * the left toolbar without a blank metadata row. When `second` is present, tags/facts
  * wrap cleanly rather than being sliced mid-chip. */
 export function DetailHeader(props: { title: string; badge?: JSX.Element; second?: JSX.Element; actions?: JSX.Element; size?: "md" | "lg" }) {
-  const lg = props.size === "lg";
   const hasSecond = () => props.second !== undefined && props.second !== null && props.second !== false;
   return (
     <View
       style={
         hasSecond()
-          ? { paddingTop: (TOOLBAR - 28) / 2, paddingBottom: 12, paddingLeft: GUTTER, paddingRight: GUTTER, gap: 8 }
+          ? {
+              paddingTop: (TOOLBAR - CONTROL.md) / 2,
+              paddingBottom: SPACE[12],
+              paddingLeft: GUTTER,
+              paddingRight: GUTTER,
+              gap: SPACE[8],
+            }
           : { height: TOOLBAR, justifyContent: "center", paddingLeft: GUTTER, paddingRight: GUTTER }
       }
     >
-      <View style={{ height: 28, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" }}>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: lg ? 19 : 17, lineHeight: 26, fontWeight: 600 }} class="text-foreground">
+      <View style={{ height: CONTROL.md, flexDirection: "row", alignItems: "center", gap: SPACE[8], overflow: "hidden" }}>
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, ...TYPE.title }} class="text-foreground">
           {props.title}
         </Text>
         {props.badge && <View style={{ flexShrink: 0 }}>{props.badge}</View>}
         <View style={{ flex: 1 }} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.actions}</View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>{props.actions}</View>
       </View>
       <If when={hasSecond()}>
-        <View style={{ minHeight: 22, flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 4, rowGap: 4 }}>{props.second}</View>
+        <View style={{ minHeight: 22, flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: SPACE[4], rowGap: SPACE[4] }}>
+          {props.second}
+        </View>
       </If>
     </View>
   );
 }
 
 /** The detail head's default two-line height. */
-export const HEADER = (TOOLBAR - 28) / 2 + 28 + 8 + 22 + 12;
+export const HEADER = (TOOLBAR - CONTROL.md) / 2 + CONTROL.md + SPACE[8] + 22 + SPACE[12];
 
 /** An empty state: a soft icon, one sentence (and a quieter second), one way on. */
 export function EmptyState(props: { icon: IconName; title: string; hint?: string; action?: JSX.Element; style?: StyleProp<ViewStyle> }) {
   return (
-    <View style={[{ flex: 1, alignItems: "center", justifyContent: "center", paddingBottom: 48 }, props.style]}>
-      <View style={{ width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", marginBottom: 24 }} class="bg-muted">
-        <Icon name={props.icon} size={20} tone="muted-foreground" />
+    <View style={[{ flex: 1, alignItems: "center", justifyContent: "center", paddingBottom: SPACE[32] }, props.style]}>
+      <View
+        style={{
+          width: 44,
+          height: 44, // token-exempt: empty-state icon box square
+          borderRadius: RADIUS.lg,
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: SPACE[24],
+        }}
+        class="bg-muted"
+      >
+        <Icon name={props.icon} size="lg" tone="muted-foreground" />
       </View>
-      <View style={{ alignItems: "center", gap: 8, maxWidth: 320 }}>
-        <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: 500, textAlign: "center" }} class="text-foreground">{props.title}</Text>
+      <View style={{ alignItems: "center", gap: SPACE[8], maxWidth: 320 }}>
+        <Text style={{ ...TYPE.strong, textAlign: "center" }} class="text-foreground">
+          {props.title}
+        </Text>
         {props.hint && (
-          <Text style={{ fontSize: 12.5, lineHeight: 19, textAlign: "center" }} class="text-secondary-foreground">
+          <Text style={{ ...TYPE.caption, textAlign: "center" }} class="text-secondary-foreground">
             {props.hint}
           </Text>
         )}
       </View>
-      {props.action && <View style={{ marginTop: 24 }}>{props.action}</View>}
+      {props.action && <View style={{ marginTop: SPACE[24] }}>{props.action}</View>}
     </View>
   );
 }
@@ -87,19 +114,21 @@ export function EmptyState(props: { icon: IconName; title: string; hint?: string
 /** A titled group: a small heading over a card (the contest's overview, settings). */
 export function Section(props: { title: string; description?: string; trailing?: JSX.Element; children?: JSX.Element; style?: StyleProp<ViewStyle> }) {
   return (
-    <View style={[{ gap: 8 }, props.style]}>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 600 }} class="text-foreground">{props.title}</Text>
+    <View style={[{ gap: SPACE[8] }, props.style]}>
+      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: SPACE[8] }}>
+        <View style={{ flex: 1, gap: SPACE[2] }}>
+          <Text style={TYPE.strong} class="text-foreground">
+            {props.title}
+          </Text>
           {props.description && (
-            <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+            <Text style={TYPE.caption} class="text-secondary-foreground">
               {props.description}
             </Text>
           )}
         </View>
         {props.trailing}
       </View>
-      <View style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden", boxShadow: cardShadow() }} class="bg-card border-border">
+      <View style={{ borderRadius: RADIUS.lg, borderWidth: 1, overflow: "hidden", boxShadow: cardShadow() }} class="bg-card border-border">
         {props.children}
       </View>
     </View>
@@ -111,7 +140,17 @@ export function SectionRow(props: { children?: JSX.Element; trailing?: JSX.Eleme
   return (
     <View
       style={[
-        { minHeight: 52, paddingLeft: 14, paddingRight: 12, paddingTop: 10, paddingBottom: 10, flexDirection: "row", alignItems: "center", gap: 12, borderTopWidth: props.first ? 0 : 1 },
+        {
+          minHeight: TOOLBAR,
+          paddingLeft: SPACE[16],
+          paddingRight: SPACE[12],
+          paddingTop: SPACE[12],
+          paddingBottom: SPACE[12],
+          flexDirection: "row",
+          alignItems: "center",
+          gap: SPACE[12],
+          borderTopWidth: props.first ? 0 : 1,
+        },
         props.style,
       ]}
       class="border-border"

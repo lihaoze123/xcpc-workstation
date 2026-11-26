@@ -28,6 +28,7 @@ import { showToast } from "./Toast";
 import { formatPluginError } from "./tools/pluginErrors";
 import { zhEn } from "./training/locale";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 type ExtendedPluginSummary = PluginSummaryJs & {
   pendingTrust?: boolean;
   overridesBuiltin?: boolean;
@@ -51,15 +52,15 @@ function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork
   const showNetworkBadge = () =>
     hasNetworkAccess(p()) && !(props.hideBuiltinNetwork && p().origin === "builtin");
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[4] }}>
       <If when={Boolean(p().isLinked)}>
         <View
           testID={`plugin-badge-linked-${p().id}`}
           class="bg-muted border border-border"
-          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
           tooltip={p().linkTarget ? tip(p().linkTarget!) : undefined}
         >
-          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
             {t("tools.devLink")}
           </Text>
         </View>
@@ -68,9 +69,9 @@ function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork
         <View
           testID={`plugin-badge-override-${p().id}`}
           class="bg-muted border border-border"
-          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
         >
-          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
             {zhEn("覆写内置", "Overrides built-in")}
           </Text>
         </View>
@@ -79,10 +80,10 @@ function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork
         <View
           testID={`plugin-badge-network-${p().id}`}
           class="bg-muted border border-border"
-          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
           tooltip={p().domains.length > 0 ? tip(p().domains.join(", ")) : undefined}
         >
-          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
             {zhEn("联网", "Network")}
           </Text>
         </View>
@@ -91,9 +92,9 @@ function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork
         <View
           testID={`plugin-badge-untrusted-${p().id}`}
           class="bg-muted border border-destructive/40"
-          style={{ paddingLeft: 5, paddingRight: 5, paddingTop: 1, paddingBottom: 1, borderRadius: 4 }}
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
         >
-          <Text style={{ fontSize: 10.5, fontWeight: 500 }} class="text-destructive">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
             {zhEn("待信任", "Untrusted")}
           </Text>
         </View>
@@ -146,15 +147,15 @@ function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }
 
   return (
     <If when={p().credentials.length > 0}>
-      <View style={{ gap: 6 }}>
+      <View style={{ gap: SPACE[6] }}>
         <Each of={p().credentials} key={(c) => c.name}>
           {(cred) => {
             const key = cred().name;
             const val = () => credDrafts()[key] ?? "";
             return (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                 <Text
-                  style={{ fontSize: 12, width: 72, flexShrink: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                  style={{ fontSize: FONT_SIZE.caption, width: 72, flexShrink: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-secondary-foreground"
                 >
                   {cred().label}
@@ -181,14 +182,14 @@ function CredentialRows(props: { plugin: PluginSummaryJs; onReload: () => void }
                 <View
                   style={{
                     width: 22,
-                    height: 22,
+                    height: 22, // token-exempt: compact inline icon box
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
                   }}
                 >
                   <If when={credSavedKey() === key}>
-                    <Icon name="check" size={14} tone="chart-2" />
+                    <Icon name="check" size="sm" tone="chart-2" />
                   </If>
                 </View>
               </View>
@@ -354,26 +355,26 @@ function OjAccountRow(props: {
   return (
     <View
       style={{
-        paddingTop: 12,
-        paddingBottom: 8,
-        paddingLeft: 14,
-        paddingRight: 12,
-        gap: 6,
+        paddingTop: SPACE[12],
+        paddingBottom: SPACE[8],
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[12],
+        gap: SPACE[6],
         borderTopWidth: props.first ? 0 : 1,
       }}
       class="border-border"
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
-        <View style={{ width: 210, minHeight: 32, justifyContent: "center", flexShrink: 0, gap: 3 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: SPACE[12] }}>
+        <View style={{ width: 210, minHeight: 32, justifyContent: "center", flexShrink: 0, gap: SPACE[2] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {p().name}
             </Text>
             <PluginBadges plugin={p()} hideBuiltinNetwork />
           </View>
           <If when={desc().length > 0}>
             <Text
-              style={{ fontSize: 11.5, lineHeight: 15, numberOfLines: 1, textOverflow: "ellipsis" }}
+              style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-muted-foreground"
             >
               {desc()}
@@ -382,24 +383,24 @@ function OjAccountRow(props: {
         </View>
 
         {/* Handle input + fixed-height single-line error slot beneath it (zero vertical shift) */}
-        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>
           <View
             style={{
-              height: 32,
-              borderRadius: 6,
+              height: CONTROL.lg,
+              borderRadius: RADIUS.sm,
               borderWidth: 1,
               flexDirection: "row",
               alignItems: "center",
-              paddingLeft: 10,
-              paddingRight: 4,
-              gap: 4,
+              paddingLeft: SPACE[12],
+              paddingRight: SPACE[4],
+              gap: SPACE[4],
             }}
             class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
           >
             <Input
               testID={`oj-handle-${p().id}`}
               class="bg-transparent placeholder:text-muted-foreground"
-              style={{ flex: 1, height: 28, fontSize: 12.5, fontFamily: MONO }}
+              style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.caption, fontFamily: MONO }}
               value={handleDraft()}
               placeholder={t("settings.plugins.handlePlaceholder")}
               autoCapitalize="none"
@@ -418,7 +419,7 @@ function OjAccountRow(props: {
               tooltip={verifyStatus() ? tip(verifyStatus()!.text) : undefined}
               style={{
                 width: 22,
-                height: 22,
+                height: 22, // token-exempt: compact inline icon box
                 alignItems: "center",
                 justifyContent: "center",
                 flexShrink: 0,
@@ -430,7 +431,7 @@ function OjAccountRow(props: {
               <If when={!verifying() && verifyStatus() !== undefined}>
                 <Icon
                   name={verifyStatus()?.ok ? "check" : "circleAlert"}
-                  size={14}
+                  size="sm"
                   tone={verifyStatus()?.ok ? "chart-2" : "destructive"}
                 />
               </If>
@@ -440,7 +441,7 @@ function OjAccountRow(props: {
             <If when={!!errorText()}>
               <Text
                 testID={`oj-error-${p().id}`}
-                style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
                 class="text-destructive"
                 tooltip={tip(errorText()!)}
               >
@@ -450,7 +451,7 @@ function OjAccountRow(props: {
           </View>
         </View>
 
-        <View style={{ height: 32, flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <View style={{ height: CONTROL.lg, flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
           <If
             when={isPendingTrust(p())}
             else={
@@ -558,31 +559,31 @@ function ToolPluginRow(props: {
   return (
     <View
       style={{
-        paddingTop: 12,
-        paddingBottom: 12,
-        paddingLeft: 14,
-        paddingRight: 12,
-        gap: 8,
+        paddingTop: SPACE[12],
+        paddingBottom: SPACE[12],
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[12],
+        gap: SPACE[8],
         borderTopWidth: props.first ? 0 : 1,
       }}
       class="border-border"
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+        <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {p().name}
             </Text>
             <PluginBadges plugin={p()} />
           </View>
           <If when={desc().length > 0}>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {desc()}
             </Text>
           </If>
         </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
           <If
             when={isPendingTrust(p())}
             else={
@@ -620,7 +621,7 @@ function ToolPluginRow(props: {
       <CredentialRows plugin={p()} onReload={props.onReload} />
       <If when={!!p().lastError}>
         <Text
-          style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+          style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
           class="text-destructive"
           tooltip={tip(p().lastError!)}
         >
@@ -840,12 +841,12 @@ export function PluginsPane() {
   ];
 
   return (
-    <View style={{ gap: 22 }}>
+    <View style={{ gap: SPACE[24] }}>
       {/* Section 1: OJ Accounts & Sync */}
       <Section title={t("settings.plugins.ojAccountsSection")}>
         <If when={ojPlugins().length === 0}>
-          <View style={{ padding: 14 }}>
-            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+          <View style={{ padding: SPACE[12] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("settings.plugins.empty")}
             </Text>
           </View>
@@ -870,7 +871,7 @@ export function PluginsPane() {
         <SectionRow
           first={ojPlugins().length === 0}
           trailing={
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
               <Btn
                 testID="plugins-sync-now"
                 label={syncing() ? t("settings.plugins.syncing") : t("settings.plugins.syncNow")}
@@ -892,11 +893,11 @@ export function PluginsPane() {
             </View>
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.plugins.syncNowLabel")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
               {hasConfiguredAccount()
                 ? t("settings.plugins.lastSyncedAt", { time: formatSyncTime(effectiveLastSyncedAt()) })
                 : t("settings.plugins.fillAccountFirst")}
@@ -915,7 +916,7 @@ export function PluginsPane() {
             />
           }
         >
-          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("settings.plugins.autoSyncLabel")}
           </Text>
         </SectionRow>
@@ -945,8 +946,8 @@ export function PluginsPane() {
         }
       >
         <If when={toolPlugins().length === 0}>
-          <View style={{ padding: 14 }}>
-            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+          <View style={{ padding: SPACE[12] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("settings.plugins.empty")}
             </Text>
           </View>
@@ -977,7 +978,7 @@ export function PluginsPane() {
       >
         <If when={pendingTrustPlugin()}>
           {(plugin) => (
-            <View style={{ padding: 20, gap: 16 }}>
+            <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
               <DialogHeader
                 icon="triangleAlert"
                 tone="foreground"
@@ -991,24 +992,24 @@ export function PluginsPane() {
                 )}
               />
 
-              <View style={{ gap: 10 }}>
+              <View style={{ gap: SPACE[8] }}>
                 <If when={plugin().domains.length > 0}>
                   <View
                     testID="plugin-trust-domains"
                     class="bg-muted/60 border border-border"
-                    style={{ borderRadius: 8, padding: 10, gap: 6 }}
+                    style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}
                   >
-                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
                       {zhEn("请求访问的网络域名", "Requested network domains")}
                     </Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
                       <Each of={plugin().domains} key={(d) => d}>
                         {(domain) => (
                           <View
                             class="bg-card border border-border"
-                            style={{ borderRadius: 5, paddingLeft: 7, paddingRight: 7, height: 22, justifyContent: "center" }}
+                            style={{ borderRadius: RADIUS.xs, paddingLeft: SPACE[8], paddingRight: SPACE[8], height: 22, justifyContent: "center" }} // token-exempt: compact status badge height
                           >
-                            <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-foreground">
                               {domain()}
                             </Text>
                           </View>
@@ -1021,9 +1022,9 @@ export function PluginsPane() {
                 <If when={plugin().workspaceRead}>
                   <View
                     class="bg-muted/60 border border-border"
-                    style={{ borderRadius: 8, padding: 10 }}
+                    style={{ borderRadius: RADIUS.md, padding: SPACE[12] }}
                   >
-                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                       {zhEn("请求只读访问当前工作区文件。", "Requests read-only access to the current workspace.")}
                     </Text>
                   </View>
@@ -1032,9 +1033,9 @@ export function PluginsPane() {
                 <If when={plugin().credentials.length > 0}>
                   <View
                     class="bg-muted/60 border border-border"
-                    style={{ borderRadius: 8, padding: 10 }}
+                    style={{ borderRadius: RADIUS.md, padding: SPACE[12] }}
                   >
-                    <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                       {zhEn(
                         `请求读写凭据：${plugin().credentials.map((c) => c.label || c.name).join("、")}`,
                         `Requests credential access: ${plugin().credentials.map((c) => c.label || c.name).join(", ")}`,
@@ -1044,7 +1045,7 @@ export function PluginsPane() {
                 </If>
               </View>
 
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
                 <Btn
                   testID="plugin-trust-cancel"
                   label={zhEn("取消", "Cancel")}
@@ -1072,7 +1073,7 @@ export function PluginsPane() {
       >
         <If when={pendingUninstall()}>
           {(plugin) => (
-            <View style={{ padding: 20, gap: 16 }}>
+            <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
               <DialogHeader
                 icon="trash"
                 tone="destructive"
@@ -1082,7 +1083,7 @@ export function PluginsPane() {
                   "This removes the plugin from your local plugins directory. You can reinstall it anytime.",
                 )}
               />
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
                 <Btn
                   testID="plugin-uninstall-cancel"
                   label={zhEn("取消", "Cancel")}

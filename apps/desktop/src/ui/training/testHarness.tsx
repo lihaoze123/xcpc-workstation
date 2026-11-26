@@ -17,6 +17,7 @@ import {
   type TrainingDashboardData,
 } from "./types";
 
+import { FONT_SIZE } from "../tokens";
 function makeSampleDashboard(): TrainingDashboardData {
   return {
     window: "all",
@@ -220,10 +221,10 @@ function TrainingTestHarness() {
     <View style={{ flex: 1, height: "100%", minHeight: 0, overflow: "hidden", flexDirection: "column" }} class="bg-background">
       <If when={mode() === "shell"}>
         <View style={{ flex: 1, height: "100%", minHeight: 0, overflow: "hidden", flexDirection: "column" }}>
-          <Text testID="harness-manual-log-payload" style={{ fontSize: 10 }}>
+          <Text testID="harness-manual-log-payload" style={{ fontSize: FONT_SIZE.micro }}>
             {submittedManualLog()}
           </Text>
-          <Text testID="harness-shell-opened" style={{ fontSize: 10 }}>
+          <Text testID="harness-shell-opened" style={{ fontSize: FONT_SIZE.micro }}>
             {openedRecord()}
           </Text>
           <TrainingView
@@ -327,10 +328,10 @@ function TrainingTestHarness() {
 
       <If when={mode() === "submissions"}>
         <View style={{ flex: 1, height: "100%", minHeight: 0, overflow: "hidden", flexDirection: "column" }}>
-          <Text testID="harness-filter-state" style={{ fontSize: 10 }}>
+          <Text testID="harness-filter-state" style={{ fontSize: FONT_SIZE.micro }}>
             {JSON.stringify(filter())}
           </Text>
-          <Text testID="harness-opened-state" style={{ fontSize: 10 }}>
+          <Text testID="harness-opened-state" style={{ fontSize: FONT_SIZE.micro }}>
             {openedRecord()}
           </Text>
           <SubmissionsTab

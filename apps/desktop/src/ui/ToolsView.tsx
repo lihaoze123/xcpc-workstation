@@ -26,6 +26,7 @@ import { PluginWebView } from "./tools/PluginWebView";
 import { parseJsonReport, type PluginToolGroup } from "./tools/types";
 import { zhEn } from "./training/locale";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 interface RecommendedToolItem {
   repoUrl: string;
   repoName: string;
@@ -213,7 +214,7 @@ export function ToolsView(props: { active?: boolean }) {
         style={{ width: 204, flexShrink: 0, borderRightWidth: 1, flexDirection: "column" }}
         class="border-border bg-background"
       >
-        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 8, gap: 4 }}>
+        <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[4] }}>
           <Each of={toolGroups()} key={(g) => g.plugin_id}>
             {(group) => {
               const isSelected = () =>
@@ -228,19 +229,19 @@ export function ToolsView(props: { active?: boolean }) {
                       : "hover:bg-muted/70 active:bg-accent/60"
                   }
                   style={{
-                    paddingLeft: 10,
-                    paddingRight: 10,
-                    paddingTop: 8,
-                    paddingBottom: 8,
-                    borderRadius: 7,
-                    gap: 2,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[12],
+                    paddingTop: SPACE[8],
+                    paddingBottom: SPACE[8],
+                    borderRadius: RADIUS.sm,
+                    gap: SPACE[2],
                   }}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                     <Text
                       style={{
-                        fontSize: 13,
-                        fontWeight: 500,
+                        fontSize: FONT_SIZE.body,
+                        fontWeight: FONT_WEIGHT.semibold,
                         numberOfLines: 1,
                         textOverflow: "ellipsis",
                         flexShrink: 1,
@@ -252,9 +253,9 @@ export function ToolsView(props: { active?: boolean }) {
                     <If when={Boolean(group().is_linked)}>
                       <View
                         class="bg-muted border border-border"
-                        style={{ paddingLeft: 4, paddingRight: 4, borderRadius: 4, flexShrink: 0 }}
+                        style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], borderRadius: RADIUS.xs, flexShrink: 0 }}
                       >
-                        <Text style={{ fontSize: 10, fontWeight: 500 }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
                           {t("tools.devLink")}
                         </Text>
                       </View>
@@ -262,7 +263,7 @@ export function ToolsView(props: { active?: boolean }) {
                   </View>
                   <If when={Boolean(group().plugin_description)}>
                     <Text
-                      style={{ fontSize: 11, lineHeight: 15, numberOfLines: 2, textOverflow: "ellipsis" }}
+                      style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
                       class="text-muted-foreground"
                     >
                       {group().plugin_description}
@@ -275,7 +276,7 @@ export function ToolsView(props: { active?: boolean }) {
         </Scroll>
         <View
           class="border-t border-border"
-          style={{ padding: 8, flexShrink: 0 }}
+          style={{ padding: SPACE[8], flexShrink: 0 }}
         >
           <Btn
             testID="tools-browse-more"
@@ -298,12 +299,12 @@ export function ToolsView(props: { active?: boolean }) {
               <If
                 when={recommended().length > 0}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 10 }}>
-                    <Icon name="squareCode" size={28} tone="muted-foreground" />
-                    <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[8] }}>
+                    <Icon name="squareCode" size="lg" tone="muted-foreground" />
+                    <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                       {t("tools.emptyTitle")}
                     </Text>
-                    <Text style={{ fontSize: 12.5, textAlign: "center", maxWidth: 360 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, textAlign: "center", maxWidth: 360 }} class="text-secondary-foreground">
                       {t("tools.emptyDesc")}
                     </Text>
                     <Btn
@@ -316,13 +317,13 @@ export function ToolsView(props: { active?: boolean }) {
                   </View>
                 }
               >
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 28, gap: 16, maxWidth: 720, alignSelf: "center", width: "100%" }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <View style={{ gap: 3 }}>
-                      <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+                <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[32], gap: SPACE[16], maxWidth: 720, alignSelf: "center", width: "100%" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+                    <View style={{ gap: SPACE[2] }}>
+                      <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {t("tools.recommendedTitle")}
                       </Text>
-                      <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                         {t("tools.recommendedDesc")}
                       </Text>
                     </View>
@@ -335,7 +336,7 @@ export function ToolsView(props: { active?: boolean }) {
                     />
                   </View>
 
-                  <View style={{ gap: 10 }}>
+                  <View style={{ gap: SPACE[8] }}>
                     <Each of={recommended()} key={(item) => item.entry.id}>
                       {(item) => {
                         const stage = () => installingStages()[item().entry.id];
@@ -345,20 +346,20 @@ export function ToolsView(props: { active?: boolean }) {
                             testID={`recommended-tool-${item().entry.id}`}
                             class="bg-card border border-border"
                             style={{
-                              borderRadius: 10,
-                              padding: 14,
+                              borderRadius: RADIUS.lg,
+                              padding: SPACE[12],
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 14,
+                              gap: SPACE[12],
                             }}
                           >
-                            <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                              <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+                            <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>
+                              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                 {item().entry.name}
                               </Text>
                               <If when={Boolean(item().entry.description)}>
-                                <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                                   {item().entry.description}
                                 </Text>
                               </If>
@@ -403,15 +404,15 @@ export function ToolsView(props: { active?: boolean }) {
                 class="border-b border-border bg-background"
                 style={{
                   height: 44,
-                  paddingLeft: 16,
-                  paddingRight: 16,
+                  paddingLeft: SPACE[16],
+                  paddingRight: SPACE[16],
                   flexDirection: "row",
                   alignItems: "center",
                   flexShrink: 0,
                 }}
               >
                 <Text
-                  style={{ fontSize: 13.5, fontWeight: 600, numberOfLines: 1, textOverflow: "ellipsis" }}
+                  style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-foreground"
                 >
                   {group().plugin_name}

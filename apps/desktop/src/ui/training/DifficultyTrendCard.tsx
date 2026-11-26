@@ -14,6 +14,7 @@ import { cardShadow, token } from "../theme";
 import { zhEn } from "./locale";
 import type { DifficultyTrendPoint } from "./types";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 const CHART_H = 210;
 
 /** Converts a trend period (`YYYY-MM`, `YYYY-Www`, or `YYYY-MM-DD`) into a local ms timestamp. */
@@ -188,31 +189,31 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
       style={{
         flex: 1,
         minWidth: 320,
-        borderRadius: 10,
-        padding: 16,
-        gap: 10,
+        borderRadius: RADIUS.lg,
+        padding: SPACE[16],
+        gap: SPACE[8],
         boxShadow: cardShadow(),
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-          <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
+          <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {zhEn("做出的题有多难", "Solved Problem Difficulty")}
           </Text>
-          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
             {zhEn("90% / 75% 分位（月度平滑）", "90th / 75th pct (monthly)")}
           </Text>
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4 }} class="bg-primary" />
-            <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+            <View style={{ width: 8, height: 8, borderRadius: RADIUS.xs }} class="bg-primary" />
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
               P90
             </Text>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4 }} class="bg-chart-2" />
-            <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+            <View style={{ width: 8, height: 8, borderRadius: RADIUS.xs }} class="bg-chart-2" />
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
               P75
             </Text>
           </View>
@@ -223,7 +224,7 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
         when={ratedPoints().length > 0}
         else={
           <View style={{ height: CHART_H, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("training.trend.empty")}
             </Text>
           </View>
@@ -247,18 +248,18 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
           {(pt) => (
             <View
               testID="training-trend-detail"
-              style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}
+              style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}
             >
-              <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                 {pt().period}
               </Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                 <If when={pt().p90 != null}>
                   <Text
                     testID="training-trend-p90-val"
                     style={{
-                      fontSize: 12,
-                      fontWeight: 600,
+                      fontSize: FONT_SIZE.caption,
+                      fontWeight: FONT_WEIGHT.semibold,
                       fontVariant: ["tabular-nums"],
                     }}
                     class="text-primary"
@@ -270,8 +271,8 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
                   <Text
                     testID="training-trend-p75-val"
                     style={{
-                      fontSize: 12,
-                      fontWeight: 500,
+                      fontSize: FONT_SIZE.caption,
+                      fontWeight: FONT_WEIGHT.semibold,
                       fontVariant: ["tabular-nums"],
                     }}
                     class="text-chart-2"
@@ -279,7 +280,7 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
                     {`P75 ${pt().p75}`}
                   </Text>
                 </If>
-                <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                   {t("training.trend.ratedAc", { count: pt().rated_ac_count })}
                 </Text>
               </View>

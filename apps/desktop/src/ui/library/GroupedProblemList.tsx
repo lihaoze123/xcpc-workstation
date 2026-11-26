@@ -21,6 +21,7 @@ import {
   type LibraryRow,
 } from "./cells";
 
+import { FONT_SIZE, FONT_WEIGHT, SPACE } from "../tokens";
 const HEADER_H = 34;
 const GROUP_H = 32;
 const ROW_H = 40;
@@ -172,6 +173,7 @@ export function GroupedProblemList(props: {
 
       <If when={props.sections.length > 0} else={<View style={{ flex: 1 }}>{props.empty}</View>}>
         <Scroll style={{ flex: 1 }}>
+          {/* token-exempt: clearance above batch floating bar */}
           <View style={{ paddingBottom: 72 }}>
             <Each of={props.sections} key={(s) => s.key}>
               {(sec) => {
@@ -201,18 +203,18 @@ export function GroupedProblemList(props: {
                         style={{
                           flex: 1,
                           height: GROUP_H,
-                          paddingLeft: 4,
-                          paddingRight: 12,
+                          paddingLeft: SPACE[4],
+                          paddingRight: SPACE[12],
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 6,
+                          gap: SPACE[6],
                           minWidth: 0,
                           ...colorTransition(120),
                         }}
                       >
                         <Icon
                           name="chevronRight"
-                          size={13}
+                          size="sm"
                           tone="muted-foreground"
                           style={{
                             transform: isCollapsed() ? "rotate(0deg)" : "rotate(90deg)",
@@ -227,8 +229,8 @@ export function GroupedProblemList(props: {
                         />
                         <Text
                           style={{
-                            fontSize: 12.5,
-                            fontWeight: 500,
+                            fontSize: FONT_SIZE.caption,
+                            fontWeight: FONT_WEIGHT.semibold,
                             flexShrink: 1,
                             minWidth: 0,
                             numberOfLines: 1,
@@ -239,7 +241,7 @@ export function GroupedProblemList(props: {
                           {sec().label}
                         </Text>
                         <Text
-                          style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                          style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                           class="text-muted-foreground"
                         >
                           {String(sec().rows.length)}

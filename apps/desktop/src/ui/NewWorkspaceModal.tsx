@@ -10,6 +10,7 @@ import { Modal } from "./Modal";
 import { colorTransition } from "./motion";
 import { newWorkspace, openExampleWorkspace } from "./store";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 type DefaultTemplate = "olymp-classic" | "cnoi-classic";
 
 interface TemplateChoice {
@@ -65,25 +66,25 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={440}>
-      <View testID="new-workspace-modal" style={{ padding: 18, gap: 14 }}>
+      <View testID="new-workspace-modal" style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+          <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("newWorkspace.title")}
           </Text>
-          <IconBtn icon="x" size={26} iconSize={14} tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
+          <IconBtn icon="x" size="sm" tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
         </View>
 
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: SPACE[6] }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
               {t("newWorkspace.defaultTemplate")}
             </Text>
-            <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("newWorkspace.defaultTemplateHint")}
             </Text>
           </View>
           <View
-            style={{ flexDirection: "row", gap: 6, padding: 3, borderRadius: 9 }}
+            style={{ flexDirection: "row", gap: SPACE[6], padding: SPACE[4], borderRadius: RADIUS.md }}
             class="bg-muted border border-border"
           >
             <Each of={TEMPLATES} key={(t) => t.id}>
@@ -96,24 +97,24 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                     class={active() ? "bg-card border border-border" : "hover:bg-background/50"}
                     style={{
                       flex: 1,
-                      borderRadius: 6,
-                      paddingTop: 7,
-                      paddingBottom: 7,
-                      paddingLeft: 10,
-                      paddingRight: 10,
+                      borderRadius: RADIUS.sm,
+                      paddingTop: SPACE[8],
+                      paddingBottom: SPACE[8],
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
                       alignItems: "center",
-                      gap: 1,
+                      gap: SPACE[2],
                       borderWidth: active() ? 1 : 0,
                       ...colorTransition(120),
                     }}
                   >
                     <Text
-                      style={{ fontSize: 12.5, fontWeight: active() ? 600 : 500, lineHeight: 17 }}
+                      style={{ fontSize: FONT_SIZE.caption, fontWeight: active() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular, lineHeight: LINE_HEIGHT.caption }}
                       class={active() ? "text-foreground" : "text-secondary-foreground"}
                     >
                       {t(tpl().labelKey)}
                     </Text>
-                    <Text style={{ fontSize: 11, lineHeight: 14 }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro }} class="text-muted-foreground">
                       {tpl().sub}
                     </Text>
                   </View>
@@ -123,7 +124,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
           </View>
         </View>
 
-        <View style={{ gap: 8 }}>
+        <View style={{ gap: SPACE[8] }}>
           <Each of={options} key={(o) => o.id}>
             {(opt) => {
               const isTemplate = () => opt().id === "template";
@@ -149,39 +150,39 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                   onPress={() => opt().run()}
                   class="bg-background border border-border hover:bg-muted/70 active:bg-accent"
                   style={{
-                    borderRadius: 10,
-                    paddingTop: 12,
-                    paddingBottom: 12,
-                    paddingLeft: 12,
-                    paddingRight: 12,
+                    borderRadius: RADIUS.lg,
+                    paddingTop: SPACE[12],
+                    paddingBottom: SPACE[12],
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[12],
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 12,
+                    gap: SPACE[12],
                     ...colorTransition(120),
                   }}
                 >
                   <View
                     style={{
                       width: 34,
-                      height: 34,
-                      borderRadius: 8,
+                      height: CONTROL.lg,
+                      borderRadius: RADIUS.md,
                       backgroundColor: iconBg(),
                       alignItems: "center",
                       justifyContent: "center",
                       flexShrink: 0,
                     }}
                   >
-                    <Icon name={opt().icon} size={17} color={iconFg()} />
+                    <Icon name={opt().icon} size="md" color={iconFg()} />
                   </View>
-                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                    <Text style={{ fontSize: 13.5, fontWeight: 500, lineHeight: 18 }} class="text-foreground">
+                  <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
                       {t(opt().titleKey)}
                     </Text>
-                    <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
                       {t(opt().descriptionKey)}
                     </Text>
                   </View>
-                  <Icon name="chevronRight" size={15} tone="muted-foreground" />
+                  <Icon name="chevronRight" size="md" tone="muted-foreground" />
                 </View>
               );
             }}

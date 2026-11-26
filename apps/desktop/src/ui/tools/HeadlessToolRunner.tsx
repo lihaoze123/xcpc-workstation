@@ -19,6 +19,7 @@ import {
   type ToolSpec,
 } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 function FieldEditor(props: {
   field: ToolInputSpec;
   value: unknown;
@@ -36,22 +37,22 @@ function FieldEditor(props: {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 12,
-          paddingLeft: 10,
-          paddingRight: 10,
-          height: 32,
+          gap: SPACE[12],
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[12],
+          height: CONTROL.lg,
           minWidth: 140,
-          borderRadius: 6,
+          borderRadius: RADIUS.sm,
           borderWidth: 1,
         }}
         class={isOn() ? "border-border bg-accent" : "border-border bg-background hover:bg-muted"}
       >
-        <Text style={{ fontSize: 12.5 }} class="text-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
           {props.field.label}
         </Text>
         <Text
           testID={`tool-field-${props.field.name}-state`}
-          style={{ fontSize: 12, fontWeight: 500 }}
+          style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
           class={isOn() ? "text-foreground" : "text-muted-foreground"}
         >
           {isOn() ? t("tools.boolOn") : t("tools.boolOff")}
@@ -73,8 +74,8 @@ function FieldEditor(props: {
       const maxLen = options.reduce((m, o) => Math.max(m, o.length), 2);
       const itemWidth = Math.max(64, Math.min(120, maxLen * 9 + 20));
       return (
-        <View style={{ gap: 5, width: "100%" }}>
-          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+        <View style={{ gap: SPACE[4], width: "100%" }}>
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
             {props.field.label}
           </Text>
           <Segmented
@@ -89,8 +90,8 @@ function FieldEditor(props: {
 
     // Wrapping segmented pill track for larger option sets (e.g. 11 C++ data types)
     return (
-      <View style={{ gap: 5, width: "100%" }}>
-        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+      <View style={{ gap: SPACE[4], width: "100%" }}>
+        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
           {props.field.label}
         </Text>
         <View
@@ -98,9 +99,9 @@ function FieldEditor(props: {
           style={{
             flexDirection: "row",
             flexWrap: "wrap",
-            gap: 3,
-            padding: 3,
-            borderRadius: 8,
+            gap: SPACE[2],
+            padding: SPACE[4],
+            borderRadius: RADIUS.md,
           }}
         >
           <Each of={options} key={(o) => o}>
@@ -112,10 +113,10 @@ function FieldEditor(props: {
                   onPress={() => props.onChange(opt(), true)}
                   class={active() ? "bg-card" : "hover:bg-background/60"}
                   style={{
-                    height: 24,
-                    paddingLeft: 9,
-                    paddingRight: 9,
-                    borderRadius: 5,
+                    height: CONTROL.sm,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[8],
+                    borderRadius: RADIUS.xs,
                     alignItems: "center",
                     justifyContent: "center",
                     boxShadow: active() ? cardShadow() : undefined,
@@ -123,7 +124,7 @@ function FieldEditor(props: {
                 >
                   <Text
                     style={{
-                      fontSize: 12,
+                      fontSize: FONT_SIZE.caption,
                       fontFamily: MONO,
                     }}
                     class={active() ? "text-foreground" : "text-secondary-foreground"}
@@ -141,8 +142,8 @@ function FieldEditor(props: {
 
   const multiline = kind === "textarea";
   return (
-    <View style={{ gap: 5, flexGrow: 1, minWidth: multiline ? "100%" : 160 }}>
-      <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+    <View style={{ gap: SPACE[4], flexGrow: 1, minWidth: multiline ? "100%" : 160 }}>
+      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
         {props.field.label}
       </Text>
       <Input
@@ -154,13 +155,13 @@ function FieldEditor(props: {
         onChange={(e) => props.onChange(e.value, false)}
         class="border border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring"
         style={{
-          borderRadius: 6,
-          paddingLeft: 10,
-          paddingRight: 10,
-          paddingTop: multiline ? 8 : 5,
-          paddingBottom: multiline ? 8 : 5,
+          borderRadius: RADIUS.sm,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[12],
+          paddingTop: multiline ? SPACE[8] : SPACE[4],
+          paddingBottom: multiline ? SPACE[8] : SPACE[4],
           minHeight: multiline ? 100 : 32,
-          fontSize: 12.5,
+          fontSize: FONT_SIZE.caption,
           fontFamily: kind === "number" || multiline ? MONO : undefined,
         }}
       />
@@ -280,7 +281,7 @@ export function HeadlessToolRunner(props: {
   };
 
   return (
-    <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 16, gap: 14 }}>
+    <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: SPACE[16], gap: SPACE[12] }}>
       {/* Sub-tool switcher via host Segmented */}
       <If when={props.group.tools.length > 1}>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -297,13 +298,13 @@ export function HeadlessToolRunner(props: {
       <View
         class="bg-card border border-border"
         style={{
-          padding: 14,
-          borderRadius: 10,
-          gap: 12,
+          padding: SPACE[12],
+          borderRadius: RADIUS.lg,
+          gap: SPACE[12],
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12], alignItems: "flex-end" }}>
           <Each of={activeTool()?.inputs ?? []} key={(f) => `${selectedToolId()}:${f.name}`}>
             {(field) => (
               <FieldEditor
@@ -320,9 +321,9 @@ export function HeadlessToolRunner(props: {
       <If when={Boolean(errorText())}>
         <View
           class="bg-card border border-destructive/40"
-          style={{ padding: 12, borderRadius: 8 }}
+          style={{ padding: SPACE[12], borderRadius: RADIUS.md }}
         >
-          <Text style={{ fontSize: 12.5 }} class="text-destructive">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
             {errorText()}
           </Text>
         </View>

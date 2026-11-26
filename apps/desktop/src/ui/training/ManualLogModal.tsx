@@ -14,6 +14,7 @@ import { preview, refresh } from "../store";
 import { MONO, popoverShadow } from "../theme";
 import type { ManualLogStatus } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export interface ManualLogModalProps {
   open: boolean;
   onClose: () => void;
@@ -217,7 +218,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={520} testID="manual-log-modal">
-      <View style={{ padding: 20, gap: 16 }}>
+      <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
         <DialogHeader
           icon="filePenLine"
           title={t("training.manualLog.title")}
@@ -225,9 +226,9 @@ export function ManualLogModal(props: ManualLogModalProps) {
         />
 
         {/* Required: Problem title / URL / workspace picker */}
-        <View style={{ gap: 6, position: "relative", zIndex: 20 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+        <View style={{ gap: SPACE[6], position: "relative", zIndex: 20 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("training.manualLog.problemLabel")}
             </Text>
             <If when={linkedProblemId()}>
@@ -236,24 +237,23 @@ export function ManualLogModal(props: ManualLogModalProps) {
                   testID="manual-log-linked-badge"
                   class="bg-muted"
                   style={{
-                    height: 20,
-                    paddingLeft: 7,
-                    paddingRight: 4,
-                    borderRadius: 5,
+                    height: 20, // token-exempt: compact tag chip height
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[4],
+                    borderRadius: RADIUS.xs,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 4,
+                    gap: SPACE[4],
                   }}
                 >
-                  <Icon name="link" size={11} tone="muted-foreground" />
-                  <Text style={{ fontSize: 11, fontFamily: MONO }} class="text-secondary-foreground">
+                  <Icon name="link" size="sm" tone="muted-foreground" />
+                  <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO }} class="text-secondary-foreground">
                     {pid()}
                   </Text>
                   <IconBtn
                     testID="manual-log-unlink-btn"
                     icon="x"
-                    size={16}
-                    iconSize={10}
+                    size="sm"
                     tone="muted-foreground"
                     onPress={clearLinkedProblem}
                   />
@@ -266,19 +266,19 @@ export function ManualLogModal(props: ManualLogModalProps) {
             <View
               class="bg-background border border-border focus-within:border-input"
               style={{
-                height: 34,
-                borderRadius: 7,
-                paddingLeft: 10,
-                paddingRight: 8,
+                height: CONTROL.lg,
+                borderRadius: RADIUS.sm,
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[8],
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 6,
+                gap: SPACE[6],
               }}
             >
               <Input
                 testID="manual-log-problem-input"
                 class="bg-transparent placeholder:text-muted-foreground"
-                style={{ flex: 1, height: 28, fontSize: 13 }}
+                style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body }}
                 value={problemInput()}
                 placeholder={t("training.manualLog.problemPlaceholder")}
                 autoCapitalize="none"
@@ -302,8 +302,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
               <If when={problemInput().length > 0}>
                 <IconBtn
                   icon="x"
-                  size={18}
-                  iconSize={11}
+                  size="sm"
                   tone="muted-foreground"
                   onPress={() => {
                     setProblemQuery("", true);
@@ -325,7 +324,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                   left: 0,
                   right: 0,
                   zIndex: 50,
-                  borderRadius: 8,
+                  borderRadius: RADIUS.md,
                   maxHeight: 168,
                   overflow: "hidden",
                   boxShadow: popoverShadow(),
@@ -336,30 +335,30 @@ export function ManualLogModal(props: ManualLogModalProps) {
                     {(prob, idx) => (
                       <View>
                         <If when={idx() > 0}>
-                          <View style={{ height: 1, marginLeft: 10, marginRight: 10 }} class="bg-border" />
+                          <View style={{ height: 1, marginLeft: SPACE[8], marginRight: SPACE[8] }} class="bg-border" />
                         </If>
                         <View
                           testID={`manual-log-suggestion-${prob().id}`}
                           onPress={() => pickWorkspaceProblem(prob())}
                           class="hover:bg-muted active:bg-accent"
                           style={{
-                            paddingTop: 7,
-                            paddingBottom: 7,
-                            paddingLeft: 10,
-                            paddingRight: 10,
+                            paddingTop: SPACE[8],
+                            paddingBottom: SPACE[8],
+                            paddingLeft: SPACE[12],
+                            paddingRight: SPACE[12],
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 8,
+                            gap: SPACE[8],
                             ...colorTransition(100),
                           }}
                         >
                           <Text
-                            style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                            style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-foreground"
                           >
                             {prob().title || prob().id}
                           </Text>
-                          <Text style={{ fontSize: 11, fontFamily: MONO, flexShrink: 0 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, flexShrink: 0 }} class="text-muted-foreground">
                             {prob().id}
                           </Text>
                           <If when={prob().rating != null}>
@@ -376,8 +375,8 @@ export function ManualLogModal(props: ManualLogModalProps) {
         </View>
 
         {/* Required: Status segmented control */}
-        <View style={{ gap: 6 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+        <View style={{ gap: SPACE[6] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("training.manualLog.statusLabel")}
           </Text>
           <Segmented
@@ -389,21 +388,21 @@ export function ManualLogModal(props: ManualLogModalProps) {
         </View>
 
         {/* Optional compact grid */}
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: SPACE[8] }}>
           {/* Row 1: Rating + Date */}
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1, gap: 5 }}>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+          <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+            <View style={{ flex: 1, gap: SPACE[4] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("training.manualLog.ratingLabel")}
               </Text>
               <View
                 class="bg-background border border-border focus-within:border-input"
-                style={{ height: 32, borderRadius: 7, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }}
+                style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }}
               >
                 <Input
                   testID="manual-log-rating-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: 26, fontSize: 12.5, fontVariant: ["tabular-nums"] }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
                   value={ratingInput()}
                   placeholder={t("training.manualLog.ratingPlaceholder")}
                   onChange={(e) => {
@@ -414,18 +413,18 @@ export function ManualLogModal(props: ManualLogModalProps) {
               </View>
             </View>
 
-            <View style={{ flex: 1, gap: 5 }}>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            <View style={{ flex: 1, gap: SPACE[4] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("training.manualLog.dateLabel")}
               </Text>
               <View
                 class="bg-background border border-border focus-within:border-input"
-                style={{ height: 32, borderRadius: 7, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }}
+                style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }}
               >
                 <Input
                   testID="manual-log-date-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: 26, fontSize: 12.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
                   value={dateInput()}
                   placeholder="YYYY-MM-DD"
                   onChange={(e) => dateInput.set(e.value)}
@@ -435,19 +434,19 @@ export function ManualLogModal(props: ManualLogModalProps) {
           </View>
 
           {/* Row 2: Tags + Source/URL */}
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1, gap: 5 }}>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+          <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+            <View style={{ flex: 1, gap: SPACE[4] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("training.manualLog.tagsLabel")}
               </Text>
               <View
                 class="bg-background border border-border focus-within:border-input"
-                style={{ height: 32, borderRadius: 7, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }}
+                style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }}
               >
                 <Input
                   testID="manual-log-tags-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: 26, fontSize: 12.5 }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
                   value={tagsInput()}
                   placeholder={t("training.manualLog.tagsPlaceholder")}
                   autoCapitalize="none"
@@ -457,18 +456,18 @@ export function ManualLogModal(props: ManualLogModalProps) {
               </View>
             </View>
 
-            <View style={{ flex: 1, gap: 5 }}>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            <View style={{ flex: 1, gap: SPACE[4] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("training.manualLog.urlLabel")}
               </Text>
               <View
                 class="bg-background border border-border focus-within:border-input"
-                style={{ height: 32, borderRadius: 7, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }}
+                style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }}
               >
                 <Input
                   testID="manual-log-url-input"
                   class="bg-transparent placeholder:text-muted-foreground"
-                  style={{ height: 26, fontSize: 12.5, fontFamily: MONO }}
+                  style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                   value={urlInput()}
                   placeholder={t("training.manualLog.urlPlaceholder")}
                   autoCapitalize="none"
@@ -480,18 +479,18 @@ export function ManualLogModal(props: ManualLogModalProps) {
           </View>
 
           {/* Row 3: Note */}
-          <View style={{ gap: 5 }}>
-            <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
               {t("training.manualLog.noteLabel")}
             </Text>
             <View
               class="bg-background border border-border focus-within:border-input"
-              style={{ height: 32, borderRadius: 7, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }}
             >
               <Input
                 testID="manual-log-note-input"
                 class="bg-transparent placeholder:text-muted-foreground"
-                style={{ height: 26, fontSize: 12.5 }}
+                style={{ height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
                 value={noteInput()}
                 placeholder={t("training.manualLog.notePlaceholder")}
                 onChange={(e) => noteInput.set(e.value)}
@@ -502,13 +501,13 @@ export function ManualLogModal(props: ManualLogModalProps) {
 
         {/* Fixed error slot */}
         <If when={errorMsg().length > 0}>
-          <Text testID="manual-log-error" style={{ fontSize: 12 }} class="text-destructive">
+          <Text testID="manual-log-error" style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
             {errorMsg()}
           </Text>
         </If>
 
         {/* Footer actions */}
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[4] }}>
           <Btn
             testID="manual-log-cancel"
             label={t("common.cancel")}

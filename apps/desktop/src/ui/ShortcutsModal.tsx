@@ -12,6 +12,7 @@ import { Modal } from "./Modal";
 import { hasWorkspace, info } from "./store";
 import { cardShadow } from "./theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "./tokens";
 export interface ShortcutItem {
   readonly id: string;
   readonly label: string;
@@ -264,10 +265,10 @@ export function filterShortcutGroups(query: string): ShortcutGroup[] {
 function GestureKbd(props: { label: string }) {
   return (
     <View
-      style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 5, borderWidth: 1, justifyContent: "center" }}
+      style={{ height: 20, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, borderWidth: 1, justifyContent: "center" }} // token-exempt: compact inline keycap height
       class="border-border bg-muted"
     >
-      <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+      <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
         {props.label}
       </Text>
     </View>
@@ -294,13 +295,13 @@ export function ShortcutsList(props: {
   const groups = computed(() => filterShortcutGroups(query()));
 
   const listContent = (
-    <View style={{ gap: 16 }}>
+    <View style={{ gap: SPACE[16] }}>
       <If
         when={groups().length > 0}
         else={
-          <View style={{ height: 96, alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Icon name="searchX" size={18} tone="muted-foreground" />
-            <Text style={{ fontSize: 13 }} class="text-muted-foreground">
+          <View style={{ height: 96, alignItems: "center", justifyContent: "center", gap: SPACE[6] }}>
+            <Icon name="searchX" size="lg" tone="muted-foreground" />
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
               {t("common.searchNotFound", { query: query().trim() })}
             </Text>
           </View>
@@ -308,13 +309,13 @@ export function ShortcutsList(props: {
       >
         <Each of={groups()} key={(g) => g.id}>
           {(group) => (
-            <View style={{ gap: 6 }}>
-              <Text style={{ fontSize: 12, fontWeight: 500, paddingLeft: 4 }} class="text-muted-foreground">
+            <View style={{ gap: SPACE[6] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, paddingLeft: SPACE[4] }} class="text-muted-foreground">
                 {group().title}
               </Text>
               <View
                 style={{
-                  borderRadius: 10,
+                  borderRadius: RADIUS.lg,
                   borderWidth: 1,
                   overflow: "hidden",
                   boxShadow: cardShadow(),
@@ -325,29 +326,29 @@ export function ShortcutsList(props: {
                   {(item, idx) => (
                     <View>
                       <If when={idx() > 0}>
-                        <View style={{ height: 1, marginLeft: 14, marginRight: 14 }} class="bg-border" />
+                        <View style={{ height: 1, marginLeft: SPACE[12], marginRight: SPACE[12] }} class="bg-border" />
                       </If>
                       <View
                         style={{
-                          height: 38,
-                          paddingLeft: 14,
-                          paddingRight: 14,
+                          height: ROW.table,
+                          paddingLeft: SPACE[12],
+                          paddingRight: SPACE[12],
                           flexDirection: "row",
                           alignItems: "center",
                           justifyContent: "space-between",
-                          gap: 12,
+                          gap: SPACE[12],
                         }}
                       >
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, minWidth: 0 }}>
-                          <Text style={{ fontSize: 13, lineHeight: 18, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                             {item().label}
                           </Text>
                           {item().context && (
                             <View
-                              style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", flexShrink: 0 }}
+                              style={{ height: 18, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center", flexShrink: 0 }} // token-exempt: compact inline keycap height
                               class="bg-muted"
                             >
-                              <Text style={{ fontSize: 11, lineHeight: 14 }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro }} class="text-muted-foreground">
                                 {item().context}
                               </Text>
                             </View>
@@ -373,24 +374,24 @@ export function ShortcutsList(props: {
   );
 
   return (
-    <View style={{ gap: 14 }}>
+    <View style={{ gap: SPACE[12] }}>
       <View
         class="bg-muted border border-border focus-within:border-input"
         style={{
-          height: 34,
-          borderRadius: 8,
-          paddingLeft: 10,
-          paddingRight: 8,
+          height: CONTROL.lg,
+          borderRadius: RADIUS.md,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[8],
           flexDirection: "row",
           alignItems: "center",
-          gap: 8,
+          gap: SPACE[8],
         }}
       >
-        <Icon name="search" size={14} tone="muted-foreground" />
+        <Icon name="search" size="sm" tone="muted-foreground" />
         <Input
           testID="shortcuts-search"
           class="bg-transparent placeholder:text-muted-foreground"
-          style={{ flex: 1, height: 28, fontSize: 13 }}
+          style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body }}
           value={query()}
           placeholder={t("shortcuts.searchPlaceholder")}
           autoCapitalize="none"
@@ -399,12 +400,12 @@ export function ShortcutsList(props: {
           onChange={(e) => setQuery(e.value)}
         />
         <If when={query().length > 0}>
-          <IconBtn icon="x" size={22} iconSize={13} tone="muted-foreground" onPress={() => setQuery("")} />
+          <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={() => setQuery("")} />
         </If>
       </View>
 
       {props.maxHeight ? (
-        <Scroll style={{ maxHeight: props.maxHeight }} contentStyle={{ paddingBottom: 4 }}>
+        <Scroll style={{ maxHeight: props.maxHeight }} contentStyle={{ paddingBottom: SPACE[4] }}>
           {listContent}
         </Scroll>
       ) : (
@@ -424,15 +425,15 @@ export function ShortcutsModal(props?: { open?: boolean; onClose?: () => void })
 
   return (
     <Modal open={isOpen()} onClose={close} width={560} testID="shortcuts-modal">
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <Text style={{ fontSize: 15, lineHeight: 20, fontWeight: 600 }} class="text-foreground">
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.strong, lineHeight: LINE_HEIGHT.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("shortcuts.title")}
             </Text>
             <Kbd keys="mod+/" faint />
           </View>
-          <IconBtn icon="x" size={26} iconSize={15} tone="muted-foreground" onPress={close} />
+          <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={close} />
         </View>
         <ShortcutsList autoFocus maxHeight={460} />
       </View>

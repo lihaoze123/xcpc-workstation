@@ -86,3 +86,176 @@ fn static_ui_ipc_ban_no_sync_heavy_calls() {
         "banned synchronous heavy IPC calls found in UI code: {violations:#?}"
     );
 }
+
+#[test]
+fn static_ui_design_token_guardrail() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![manifest.join("App.tsx")];
+    let mut stack = vec![manifest.join("src/ui")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().and_then(|s| s.to_str()) == Some("tokens") {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !name.ends_with(".tsx") || name.ends_with(".test.tsx") || name == "BrandIcon.tsx" {
+                continue;
+            }
+            files.push(path);
+        }
+    }
+
+    const STYLE_PROPS: &[&str] = &[
+        "fontSize",
+        "fontWeight",
+        "gap",
+        "columnGap",
+        "rowGap",
+        "padding",
+        "paddingTop",
+        "paddingBottom",
+        "paddingLeft",
+        "paddingRight",
+        "paddingHorizontal",
+        "paddingVertical",
+        "margin",
+        "marginTop",
+        "marginBottom",
+        "marginLeft",
+        "marginRight",
+        "marginHorizontal",
+        "marginVertical",
+        "borderRadius",
+        "borderTopLeftRadius",
+        "borderTopRightRadius",
+        "borderBottomLeftRadius",
+        "borderBottomRightRadius",
+    ];
+
+    fn is_ident_char(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+
+    fn exemption_status(line: &str, prev: Option<&str>) -> Option<bool> {
+        for candidate in [Some(line), prev].into_iter().flatten() {
+            if let Some(pos) = candidate.find("token-exempt:") {
+                let reason = candidate[pos + "token-exempt:".len()..]
+                    .trim()
+                    .trim_end_matches("*/}")
+                    .trim_end_matches("*/")
+                    .trim();
+                return Some(!reason.is_empty());
+            }
+        }
+        None
+    }
+
+    fn parse_numeric_after_colon(s: &str) -> Option<&str> {
+        let rest = s.trim_start();
+        let rest = rest.strip_prefix(':')?.trim_start();
+        let bytes = rest.as_bytes();
+        let mut idx = 0;
+        if idx < bytes.len() && bytes[idx] == b'-' {
+            idx += 1;
+        }
+        let digit_start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if idx == digit_start {
+            return None;
+        }
+        if idx < bytes.len() && bytes[idx] == b'.' {
+            idx += 1;
+            let frac_start = idx;
+            while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+                idx += 1;
+            }
+            if idx == frac_start {
+                return None;
+            }
+        }
+        if idx < bytes.len() && is_ident_char(bytes[idx]) {
+            return None;
+        }
+        Some(&rest[..idx])
+    }
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.strip_prefix(manifest).unwrap_or(&path).display();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, &line) in lines.iter().enumerate() {
+            let prev = if i > 0 { Some(lines[i - 1]) } else { None };
+            match exemption_status(line, prev) {
+                Some(true) => continue,
+                Some(false) => {
+                    violations.push(format!("{rel}:{}: empty token-exempt reason", i + 1));
+                    continue;
+                }
+                None => {}
+            }
+
+            let bytes = line.as_bytes();
+            // 1. Raw style property numeric literals
+            for &prop in STYLE_PROPS {
+                let mut offset = 0;
+                while let Some(pos) = line[offset..].find(prop) {
+                    let abs = offset + pos;
+                    offset = abs + prop.len();
+                    if abs > 0 && is_ident_char(bytes[abs - 1]) {
+                        continue;
+                    }
+                    if let Some(num) = parse_numeric_after_colon(&line[offset..]) {
+                        violations.push(format!("{rel}:{}: raw {prop}: {num}", i + 1));
+                    }
+                }
+            }
+
+            // 2. Raw control heights (18..=40)
+            let mut offset = 0;
+            while let Some(pos) = line[offset..].find("height") {
+                let abs = offset + pos;
+                offset = abs + "height".len();
+                if abs > 0 && is_ident_char(bytes[abs - 1]) {
+                    continue;
+                }
+                if let Some(num) = parse_numeric_after_colon(&line[offset..])
+                    && let Ok(v) = num.parse::<u32>()
+                    && (18..=40).contains(&v)
+                {
+                    violations.push(format!("{rel}:{}: raw control height: {num}", i + 1));
+                }
+            }
+
+            // 3. Raw <Icon size={number}> or strokeWidth=
+            if let Some(icon_pos) = line.find("<Icon") {
+                let tag = &line[icon_pos..];
+                if let Some(sz_pos) = tag.find("size={") {
+                    let inner = tag[sz_pos + "size={".len()..].trim_start();
+                    if inner.bytes().next().is_some_and(|b| b.is_ascii_digit()) {
+                        violations
+                            .push(format!("{rel}:{}: raw numeric <Icon size={{...}}>", i + 1));
+                    }
+                }
+                if tag.contains("strokeWidth=") {
+                    violations.push(format!("{rel}:{}: caller <Icon strokeWidth=...>", i + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Phase 6D §2.4 design token guardrail violations:\n{}",
+        violations.join("\n")
+    );
+}

@@ -88,6 +88,7 @@ import {
   type PendingDeleteTarget,
 } from "./PackageModals";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 export interface BuildConsoleController {
   triggerPrimaryRun(): void;
   closePopovers(): boolean;
@@ -126,15 +127,15 @@ function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
     <View
       testID="authoring-toolbar"
       style={{
-        height: 38,
+        height: ROW.table,
         flexShrink: 0,
-        paddingLeft: 8,
-        paddingRight: 8,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
         borderBottomWidth: 1,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 8,
+        gap: SPACE[8],
       }}
       class="border-border"
     >
@@ -145,12 +146,12 @@ function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
         open={props.ctrl.statusOpen()}
         onOpenChange={(open) => props.ctrl.setStatusOpen(open)}
       />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flexShrink: 0 }}>
         <If when={selected() > 0 && !running()}>
           <IconBtn
             testID="build-clear-selection"
             icon="x"
-            size={26}
+            size="sm"
             tone="muted-foreground"
             tooltip={tip(t("build.action.clearSelection"))}
             onPress={() => props.ctrl.clearSelection()}
@@ -191,7 +192,7 @@ function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
                   disabled={props.readOnly || props.ctrl.runningExternal()}
                   tooltip={selected() > 0 ? undefined : tip(t("build.action.check"), "mod+b")}
                   onPress={() => props.ctrl.startRun(selected() > 0 ? "debug" : "verify")}
-                  style={{ width: W - 26, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                  style={{ width: W - 26, borderTopRightRadius: RADIUS.none, borderBottomRightRadius: RADIUS.none }}
                 />
                 <AppMenu
                   align="end"
@@ -213,15 +214,15 @@ function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
                       class="bg-primary hover:bg-sidebar-primary border-l border-primary-foreground/20"
                       style={{
                         width: 26,
-                        height: 28,
-                        borderTopRightRadius: 6,
-                        borderBottomRightRadius: 6,
+                        height: CONTROL.md,
+                        borderTopRightRadius: RADIUS.sm,
+                        borderBottomRightRadius: RADIUS.sm,
                         alignItems: "center",
                         justifyContent: "center",
                         opacity: props.readOnly ? 0.5 : 1,
                       }}
                     >
-                      <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                      <Icon name="chevronDown" size="sm" tone="primary-foreground" />
                     </View>
                   }
                 />
@@ -1300,11 +1301,11 @@ export function BuildConsole(props: {
               borderRightWidth: 1,
             }}
             contentStyle={{
-              paddingTop: 8,
-              paddingBottom: 16,
-              paddingLeft: 8,
-              paddingRight: 8,
-              gap: 14,
+              paddingTop: SPACE[8],
+              paddingBottom: SPACE[16],
+              paddingLeft: SPACE[8],
+              paddingRight: SPACE[8],
+              gap: SPACE[12],
             }}
             class="border-border bg-background/30"
           >
@@ -1319,7 +1320,7 @@ export function BuildConsole(props: {
             />
 
             {/* 检查结果: the matrix, plus memory check / tester code once they have results */}
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: SPACE[2] }}>
               <TreeSectionHeader label={t("build.tree.checkResults")} />
               <TreeRow
                 testID="tree-item-results"
@@ -1350,7 +1351,7 @@ export function BuildConsole(props: {
             </View>
 
             {/* 校验与评测: shown by problem type (no 评测器 for an interactive problem without its own checker) */}
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: SPACE[2] }}>
               <TreeSectionHeader label={t("build.tree.validation")} />
               <TreeRow
                 testID="tree-item-validator"
@@ -1421,7 +1422,7 @@ export function BuildConsole(props: {
             </View>
 
             {/* 3. Solutions (uniform `预期 WA` labels, small semantic dot, no ✓) */}
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: SPACE[2] }}>
               <TreeSectionHeader
                 label={t("build.tree.solutions")}
                 action={
@@ -1429,8 +1430,7 @@ export function BuildConsole(props: {
                     <IconBtn
                       testID="tree-add-solution-btn"
                       icon="plus"
-                      size={22}
-                      iconSize={13}
+                      size="sm"
                       tooltip={tip(t("build.programs.createSolutionTitle"))}
                       onPress={() => createModalKind.set("solution")}
                     />
@@ -1479,7 +1479,7 @@ export function BuildConsole(props: {
             </View>
 
             {/* 4. Generators */}
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: SPACE[2] }}>
               <TreeSectionHeader
                 label={t("build.tree.generators")}
                 action={
@@ -1487,8 +1487,7 @@ export function BuildConsole(props: {
                     <IconBtn
                       testID="tree-add-generator-btn"
                       icon="plus"
-                      size={22}
-                      iconSize={13}
+                      size="sm"
                       tooltip={tip(t("build.programs.createGeneratorTitle"))}
                       onPress={() => createModalKind.set("generator")}
                     />
@@ -1544,7 +1543,7 @@ export function BuildConsole(props: {
             </View>
 
             {/* 5. Test Data — logically grouped: Samples / Disambiguated Rules / Self-tests */}
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: SPACE[2] }}>
               <TreeSectionHeader
                 label={`${t("build.tree.tests")} (${testRows().length})`}
                 action={
@@ -1577,8 +1576,7 @@ export function BuildConsole(props: {
                         <IconBtn
                           testID="tree-add-test-btn"
                           icon="plus"
-                          size={22}
-                          iconSize={13}
+                          size="sm"
                           tooltip={tip(t("build.tests.add"))}
                         />
                       }
@@ -1716,7 +1714,7 @@ export function BuildConsole(props: {
             {/* 题型: judge mode, runs, scoring (§5.2) */}
             <If when={selection().kind === "problemType"}>
               <Scroll style={{ flex: 1, minHeight: 0 }}>
-                <View testID="problem-type-page" style={{ paddingTop: 24, paddingBottom: 32, paddingLeft: 28, paddingRight: 28, maxWidth: 600, gap: 28 }}>
+                <View testID="problem-type-page" style={{ paddingTop: SPACE[24], paddingBottom: SPACE[32], paddingLeft: SPACE[32], paddingRight: SPACE[32], maxWidth: 600, gap: SPACE[32] }}>
                   <TypeSetting label={t("build.type.judge")} hint={judgeMode() === "interactive" ? t("build.type.judgeHintInteractive") : judgeMode() === "custom" ? t("build.type.judgeHintCustom") : t("build.type.judgeHintStandard")}>
                     <Segmented
                       items={[
@@ -1769,21 +1767,21 @@ export function BuildConsole(props: {
                   <View
                     testID="dirty-inputs-banner"
                     style={{
-                      paddingLeft: 16,
-                      paddingRight: 14,
-                      paddingTop: 7,
-                      paddingBottom: 7,
+                      paddingLeft: SPACE[16],
+                      paddingRight: SPACE[12],
+                      paddingTop: SPACE[8],
+                      paddingBottom: SPACE[8],
                       borderBottomWidth: 1,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 10,
+                      gap: SPACE[8],
                     }}
                     class="border-b-border bg-background/30"
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1, minWidth: 0 }}>
-                      <Icon name="triangleAlert" size={14} tone="chart-4" />
-                      <Text style={{ fontSize: 12, flex: 1 }} class="text-foreground">
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flex: 1, minWidth: 0 }}>
+                      <Icon name="triangleAlert" size="sm" tone="chart-4" />
+                      <Text style={{ fontSize: FONT_SIZE.caption, flex: 1 }} class="text-foreground">
                         {t("build.dirtyInputs.banner", { count: dirtyInputs().length })}
                       </Text>
                     </View>
@@ -1802,22 +1800,22 @@ export function BuildConsole(props: {
                   <View
                     testID="dirty-inputs-undo-banner"
                     style={{
-                      paddingLeft: 16,
-                      paddingRight: 14,
-                      paddingTop: 6,
-                      paddingBottom: 6,
+                      paddingLeft: SPACE[16],
+                      paddingRight: SPACE[12],
+                      paddingTop: SPACE[6],
+                      paddingBottom: SPACE[6],
                       borderBottomWidth: 1,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 10,
+                      gap: SPACE[8],
                     }}
                     class="border-b-border bg-background/30"
                   >
-                    <Text style={{ fontSize: 12 }} class="text-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
                       {t("build.dirtyInputs.fixedNotice", { count: dirtyUndoNotice()! })}
                     </Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                       <Btn
                         testID="dirty-inputs-undo-btn"
                         label={t("common.undo")}
@@ -1825,7 +1823,7 @@ export function BuildConsole(props: {
                         variant="ghost"
                         onPress={handleUndoNormalizeDirty}
                       />
-                      <IconBtn icon="x" size={24} iconSize={13} onPress={() => dirtyUndoNotice.set(undefined)} />
+                      <IconBtn icon="x" size="sm" onPress={() => dirtyUndoNotice.set(undefined)} />
                     </View>
                   </View>
                 </If>
@@ -1835,22 +1833,22 @@ export function BuildConsole(props: {
                   <View style={{ borderBottomWidth: 1 }} class="border-border bg-background/20">
                     <Each of={compileFailures()} key={(cf) => cf.target}>
                       {(cf) => (
-                        <View style={{ paddingLeft: 16, paddingRight: 14, paddingTop: 8, paddingBottom: 8, gap: 4 }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <Icon name="circleAlert" size={13} tone="destructive" />
-                            <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-destructive">
+                        <View style={{ paddingLeft: SPACE[16], paddingRight: SPACE[12], paddingTop: SPACE[8], paddingBottom: SPACE[8], gap: SPACE[4] }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                            <Icon name="circleAlert" size="sm" tone="destructive" />
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
                               {t("build.compileError.title", { target: cf().source_path })}
                             </Text>
                             <Text
                               onPress={() => openFileInTree(cf().source_path)}
-                              style={{ fontSize: 12, fontWeight: 500 }}
+                              style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                               class="text-primary"
                             >
                               {t("build.compileError.openSource")}
                             </Text>
                           </View>
                           <Text
-                            style={{ fontSize: 12, fontFamily: MONO, lineHeight: 16, numberOfLines: 4, textOverflow: "ellipsis" }}
+                            style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.caption, numberOfLines: 4, textOverflow: "ellipsis" }}
                             class="text-secondary-foreground"
                           >
                             {cf().stderr}
@@ -1903,8 +1901,8 @@ export function BuildConsole(props: {
                     <View
                       style={{
                         height: isSubtaskProblem() ? 48 : 38,
-                        paddingLeft: 16,
-                        paddingRight: 16,
+                        paddingLeft: SPACE[16],
+                        paddingRight: SPACE[16],
                         borderBottomWidth: 1,
                         flexDirection: "row",
                         alignItems: "center",
@@ -1912,7 +1910,7 @@ export function BuildConsole(props: {
                       class="border-border"
                     >
                       <View style={{ width: COL_TEST_W, flexShrink: 0 }}>
-                        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                           {t("build.table.testCase")}
                         </Text>
                       </View>
@@ -1932,30 +1930,30 @@ export function BuildConsole(props: {
                                 minWidth: 120,
                                 maxWidth: 180,
                                 height: "100%",
-                                marginRight: 4,
-                                paddingLeft: 6,
-                                paddingRight: 6,
-                                borderRadius: 6,
+                                marginRight: SPACE[4],
+                                paddingLeft: SPACE[6],
+                                paddingRight: SPACE[6],
+                                borderRadius: RADIUS.sm,
                                 justifyContent: "center",
-                                gap: 2,
+                                gap: SPACE[2],
                               }}
                             >
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
                                 <If when={spec().is_main}>
-                                  <Icon name="crown" size={12} tone="secondary-foreground" />
+                                  <Icon name="crown" size="sm" tone="secondary-foreground" />
                                 </If>
                                 <Text
-                                  style={{ fontSize: 13, fontWeight: 600, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
+                                  style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
                                   class="text-foreground"
                                 >
                                   {spec().name}
                                 </Text>
                                 <If when={mismatch()}>
-                                  <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-destructive" />
+                                  <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-destructive" />
                                 </If>
                               </View>
                               <If when={isSubtaskProblem()}>
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                   {formatSolutionScoreSummary(sum()) ?? "–"}
                                 </Text>
                               </If>
@@ -1977,9 +1975,9 @@ export function BuildConsole(props: {
                                 <View
                                   testID={`matrix-subtask-header-${group().subtaskId ?? "unassigned"}`}
                                   style={{
-                                    height: 30,
-                                    paddingLeft: 16,
-                                    paddingRight: 16,
+                                    height: CONTROL.md,
+                                    paddingLeft: SPACE[16],
+                                    paddingRight: SPACE[16],
                                     borderBottomWidth: 1,
                                     flexDirection: "row",
                                     alignItems: "center",
@@ -1993,17 +1991,17 @@ export function BuildConsole(props: {
                                       flexShrink: 0,
                                       flexDirection: "row",
                                       alignItems: "center",
-                                      gap: 5,
-                                      paddingRight: 10,
+                                      gap: SPACE[4],
+                                      paddingRight: SPACE[12],
                                     }}
                                   >
                                     <Icon
                                       name={isCollapsed() ? "chevronRight" : "chevronDown"}
-                                      size={12}
+                                      size="sm"
                                       tone="secondary-foreground"
                                     />
                                     <Text
-                                      style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                      style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                       class="text-foreground"
                                     >
                                       {group().subtaskId
@@ -2015,7 +2013,7 @@ export function BuildConsole(props: {
                                     <If when={group().summary}>
                                       {(s) => (
                                         <Text
-                                          style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                                          style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                                           class="text-muted-foreground"
                                         >
                                           {t("build.tree.subtasksPts", { score: s().score })}
@@ -2039,16 +2037,16 @@ export function BuildConsole(props: {
                                             flex: 1,
                                             minWidth: 120,
                                             maxWidth: 180,
-                                            paddingRight: 10,
+                                            paddingRight: SPACE[12],
                                             flexDirection: "row",
                                             alignItems: "center",
-                                            gap: 6,
+                                            gap: SPACE[6],
                                           }}
                                         >
                                           <If when={subScore()}>
                                             {(ss) => (
                                               <Text
-                                                style={{ fontSize: 12, fontVariant: ["tabular-nums"], paddingLeft: 6 }}
+                                                style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], paddingLeft: SPACE[6] }}
                                                 class={ss().matched === false ? "text-destructive" : "text-secondary-foreground"}
                                               >
                                                 {`${formatScoreValue(ss().score)} / ${ss().max_score}`}
@@ -2067,9 +2065,9 @@ export function BuildConsole(props: {
                                   {(row) => (
                                     <View
                                       style={{
-                                        height: 38,
-                                        paddingLeft: 10,
-                                        paddingRight: 16,
+                                        height: ROW.table,
+                                        paddingLeft: SPACE[12],
+                                        paddingRight: SPACE[16],
                                         borderBottomWidth: 1,
                                         flexDirection: "row",
                                         alignItems: "center",
@@ -2083,34 +2081,34 @@ export function BuildConsole(props: {
                                         class={filterTests().includes(String(row().index)) ? "bg-accent" : "hover:bg-muted"}
                                         style={{
                                           width: COL_TEST_W - 6,
-                                          height: 30,
-                                          marginRight: 6,
+                                          height: CONTROL.md,
+                                          marginRight: SPACE[6],
                                           flexShrink: 0,
                                           flexDirection: "row",
                                           alignItems: "center",
-                                          gap: 6,
-                                          borderRadius: 6,
-                                          paddingLeft: isGrouped() ? 16 : 6,
-                                          paddingRight: 8,
+                                          gap: SPACE[6],
+                                          borderRadius: RADIUS.sm,
+                                          paddingLeft: isGrouped() ? SPACE[16] : SPACE[6],
+                                          paddingRight: SPACE[8],
                                         }}
                                       >
                                         <Text
-                                          style={{ fontSize: 12, fontVariant: ["tabular-nums"], width: 20, flexShrink: 0 }}
+                                          style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], width: 20, flexShrink: 0 }}
                                           class="text-muted-foreground"
                                         >
                                           {String(row().index).padStart(2, "0")}
                                         </Text>
                                         <Text
-                                          style={{ fontSize: 13, fontWeight: 500, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
+                                          style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis", flex: 1 }}
                                           class="text-foreground"
                                         >
                                           {row().name}
                                         </Text>
                                         <If when={row().validator_ok === false}>
-                                          <Icon name="triangleAlert" size={12} tone="destructive" />
+                                          <Icon name="triangleAlert" size="sm" tone="destructive" />
                                         </If>
                                         <If when={row().size_bytes > 0}>
-                                          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                                          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                                             {formatBytesCompact(row().size_bytes)}
                                           </Text>
                                         </If>
@@ -2158,23 +2156,23 @@ export function BuildConsole(props: {
                   <View
                     testID="results-quiet-footer"
                     style={{
-                      height: 32,
-                      paddingLeft: 16,
-                      paddingRight: 14,
+                      height: CONTROL.lg,
+                      paddingLeft: SPACE[16],
+                      paddingRight: SPACE[12],
                       borderTopWidth: 1,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      gap: SPACE[12],
                     }}
                     class="border-border bg-background/30"
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 14, flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12], flex: 1, minWidth: 0 }}>
                       <If
                         when={!isRunningThis()}
                         else={
                           <Text
-                            style={{ fontSize: 12, fontVariant: ["tabular-nums"] }}
+                            style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
                             class="text-secondary-foreground"
                           >
                             {buildStatus().total > 0
@@ -2186,15 +2184,15 @@ export function BuildConsole(props: {
                         <If when={effectiveSafetyMargin()}>
                           {(m) => (
                             <>
-                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {`${t("build.margin.maxInput")} ${formatBytesCompact(m().max_input_bytes)}`}
                               </Text>
-                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {`${t("build.margin.stdSlowest")} ${formatStdTimeRatio(m())}`}
                               </Text>
                               <If when={formatAcVsTleMargin(m())}>
                                 {(gap) => (
-                                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                     {`${t("build.margin.acVsTle")} ${gap()}`}
                                   </Text>
                                 )}
@@ -2211,17 +2209,17 @@ export function BuildConsole(props: {
                         onPress={() => onlyAnomalyRows.set(!onlyAnomalyRows())}
                         class={onlyAnomalyRows() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
                         style={{
-                          height: 22,
-                          paddingLeft: 7,
-                          paddingRight: 7,
-                          borderRadius: 5,
+                          height: CONTROL.sm,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[8],
+                          borderRadius: RADIUS.xs,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 5,
+                          gap: SPACE[4],
                           flexShrink: 0,
                         }}
                       >
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                           {`${t("build.filter.onlyAnomaly")} (${anomalousCellCount()})`}
                         </Text>
                       </View>
@@ -2343,19 +2341,19 @@ export function BuildConsole(props: {
                           testID="batch-test-dropdown"
                           class="border border-border bg-card hover:bg-muted"
                           style={{
-                            height: 28,
-                            paddingLeft: 9,
-                            paddingRight: 7,
-                            borderRadius: 6,
+                            height: CONTROL.md,
+                            paddingLeft: SPACE[8],
+                            paddingRight: SPACE[8],
+                            borderRadius: RADIUS.sm,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 5,
+                            gap: SPACE[4],
                           }}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                             {`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? ""}`}
                           </Text>
-                          <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                          <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                         </View>
                       }
                     />
@@ -2383,19 +2381,19 @@ export function BuildConsole(props: {
                           testID="test-subtask-dropdown"
                           class="border border-border bg-card hover:bg-muted"
                           style={{
-                            height: 28,
-                            paddingLeft: 9,
-                            paddingRight: 7,
-                            borderRadius: 6,
+                            height: CONTROL.md,
+                            paddingLeft: SPACE[8],
+                            paddingRight: SPACE[8],
+                            borderRadius: RADIUS.sm,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 5,
+                            gap: SPACE[4],
                           }}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                             {curSub ? t("build.table.subtaskHeader", { id: curSub }) : t("build.subtasks.assignNone")}
                           </Text>
-                          <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                          <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                         </View>
                       }
                     />
@@ -2435,25 +2433,25 @@ export function BuildConsole(props: {
                     <If when={row()?.validator_ok === false}>
                       <View
                         style={{
-                          paddingLeft: 20,
-                          paddingRight: 16,
-                          paddingTop: 8,
-                          paddingBottom: 8,
+                          paddingLeft: SPACE[20],
+                          paddingRight: SPACE[16],
+                          paddingTop: SPACE[8],
+                          paddingBottom: SPACE[8],
                           borderBottomWidth: 1,
                           flexDirection: "row",
                           alignItems: "center",
                           justifyContent: "space-between",
-                          gap: 10,
+                          gap: SPACE[8],
                         }}
                         class="border-b-border bg-muted/30"
                       >
-                        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                          <Icon name="circleAlert" size={14} tone="destructive" />
-                          <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-destructive">
+                        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                          <Icon name="circleAlert" size="sm" tone="destructive" />
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
                             {t("build.tests.validatorFailed")}
                           </Text>
                           <If when={!!row()?.validator_message}>
-                            <Text style={{ fontSize: 12, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {row()!.validator_message!}
                             </Text>
                           </If>
@@ -2476,37 +2474,37 @@ export function BuildConsole(props: {
                           <View
                             style={{
                               minHeight: 52,
-                              paddingLeft: 20,
-                              paddingRight: 16,
-                              paddingTop: 8,
-                              paddingBottom: 8,
+                              paddingLeft: SPACE[20],
+                              paddingRight: SPACE[16],
+                              paddingTop: SPACE[8],
+                              paddingBottom: SPACE[8],
                               borderBottomWidth: 1,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 10,
+                              gap: SPACE[8],
                             }}
                             class="border-border bg-background/30"
                           >
-                            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                            <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                                 <Icon
                                   name={activeGroup()?.kind === "samples" ? "fileText" : isGenBatch() ? "sparkles" : "database"}
-                                  size={14.5}
+                                  size="sm"
                                   tone="secondary-foreground"
                                 />
-                                <Text style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                                   {`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? prev()?.name ?? ""}`}
                                 </Text>
                               </View>
                               <If when={fileRel() || activeGroup()?.genCmd}>
-                                <Text style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-muted-foreground">
                                   {fileRel() ?? activeGroup()?.genCmd ?? ""}
                                 </Text>
                               </If>
                             </View>
 
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
                               {testSubtaskDropdown()}
                               {testDropdownSelector()}
                               <If when={paneItems().length > 1}>
@@ -2536,14 +2534,14 @@ export function BuildConsole(props: {
                             <View
                               testID="generator-batch-editor-bar"
                               style={{
-                                paddingLeft: 20,
-                                paddingRight: 16,
-                                paddingTop: 8,
-                                paddingBottom: 8,
+                                paddingLeft: SPACE[20],
+                                paddingRight: SPACE[16],
+                                paddingTop: SPACE[8],
+                                paddingBottom: SPACE[8],
                                 borderBottomWidth: 1,
                                 flexDirection: "row",
                                 alignItems: "center",
-                                gap: 8,
+                                gap: SPACE[8],
                                 flexWrap: "wrap",
                               }}
                               class="border-border bg-background/20"
@@ -2560,12 +2558,12 @@ export function BuildConsole(props: {
                                 trigger={
                                   <View
                                     class="border border-border bg-card hover:bg-muted"
-                                    style={{ height: 28, paddingLeft: 8, paddingRight: 6, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 5 }}
+                                    style={{ height: CONTROL.md, paddingLeft: SPACE[8], paddingRight: SPACE[6], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center", gap: SPACE[4] }}
                                   >
-                                    <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                    <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                       {batchEditGen() || t("build.tests.genModalGenerator")}
                                     </Text>
-                                    <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                    <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                                   </View>
                                 }
                               />
@@ -2608,8 +2606,8 @@ export function BuildConsole(props: {
                           </If>
 
                           {/* Bounded Preview with P1-1 maxWidth: 560 (~72ch) for small previews */}
-                          <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: 20, gap: 12 }}>
-                            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                          <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ padding: SPACE[20], gap: SPACE[12] }}>
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                               {activeContent().linesExact != null
                                 ? `${formatBytesCompact(activeContent().bytes)}   ${t("build.tests.linesCount", { count: activeContent().linesExact! })}`
                                 : formatBytesCompact(activeContent().bytes)}
@@ -2618,10 +2616,10 @@ export function BuildConsole(props: {
                             <If when={activeContent().truncated}>
                               <View
                                 testID="test-truncation-banner"
-                                style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 6, paddingBottom: 6, borderRadius: 6, maxWidth: 680 }}
+                                style={{ paddingLeft: SPACE[12], paddingRight: SPACE[12], paddingTop: SPACE[6], paddingBottom: SPACE[6], borderRadius: RADIUS.sm, maxWidth: 680 }}
                                 class="bg-muted/40"
                               >
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                                   {activeContent().omitted != null
                                     ? t("build.tests.truncatedWithOmitted", { bytes: formatBytesCompact(activeContent().omitted!) })
                                     : t("build.tests.truncatedBanner")}
@@ -2631,22 +2629,22 @@ export function BuildConsole(props: {
 
                             <View
                               style={{
-                                padding: 14,
-                                borderRadius: 6,
+                                padding: SPACE[12],
+                                borderRadius: RADIUS.sm,
                                 maxWidth: activeContent().truncated ? 820 : 560,
                               }}
                               class="bg-muted/40"
                             >
-                              <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
                                 {activeContent().head || t("build.tests.emptyContent")}
                               </Text>
                               <If when={activeContent().truncated && activeContent().tail.length > 0}>
-                                <View style={{ paddingTop: 8, paddingBottom: 8 }}>
-                                  <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-muted-foreground">
+                                <View style={{ paddingTop: SPACE[8], paddingBottom: SPACE[8] }}>
+                                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-muted-foreground">
                                     {"…"}
                                   </Text>
                                 </View>
-                                <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
                                   {activeContent().tail}
                                 </Text>
                               </If>
@@ -2663,7 +2661,7 @@ export function BuildConsole(props: {
                         title={`#${String(activeIdx()).padStart(2, "0")} ${row()?.name ?? prev()?.name ?? ""}`}
                         icon={activeGroup()?.kind === "samples" ? "fileText" : "database"}
                         extraActions={
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                             {testSubtaskDropdown()}
                             {testDropdownSelector()}
                             <If when={paneItems().length > 1}>
@@ -2717,7 +2715,7 @@ export function BuildConsole(props: {
                         title={t("build.tree.selfTests")}
                         icon="shieldCheck"
                         extraActions={
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                             <AppMenu
                               align="end"
                               minWidth={210}
@@ -2731,22 +2729,22 @@ export function BuildConsole(props: {
                                 <View
                                   class="border border-border bg-card hover:bg-muted"
                                   style={{
-                                    height: 28,
-                                    paddingLeft: 9,
-                                    paddingRight: 7,
-                                    borderRadius: 6,
+                                    height: CONTROL.md,
+                                    paddingLeft: SPACE[8],
+                                    paddingRight: SPACE[8],
+                                    borderRadius: RADIUS.sm,
                                     flexDirection: "row",
                                     alignItems: "center",
-                                    gap: 6,
+                                    gap: SPACE[6],
                                   }}
                                 >
                                   <If when={matchSelfTestResult(activeRel()!, activeReport()?.self_tests)?.passed === false}>
-                                    <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-destructive" />
+                                    <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class="bg-destructive" />
                                   </If>
-                                  <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                     {activeRel()!.split("/").slice(-2).join("/")}
                                   </Text>
-                                  <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                  <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                                 </View>
                               }
                             />
@@ -2824,21 +2822,21 @@ export function BuildConsole(props: {
                         testID="interactor-runs-trigger"
                         class="border border-border bg-card hover:bg-muted"
                         style={{
-                          height: 28,
-                          paddingLeft: 9,
-                          paddingRight: 7,
-                          borderRadius: 6,
+                          height: CONTROL.md,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[8],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 5,
+                          gap: SPACE[4],
                         }}
                       >
-                        <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                           {currentRuns() === 1
                             ? t("build.interactor.runsSingle")
                             : t("build.interactor.runsMulti", { count: currentRuns() })}
                         </Text>
-                        <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                        <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                       </View>
                     }
                   />
@@ -2853,26 +2851,26 @@ export function BuildConsole(props: {
                           <View
                             style={{
                               minHeight: 52,
-                              paddingLeft: 20,
-                              paddingRight: 16,
-                              paddingTop: 8,
-                              paddingBottom: 8,
+                              paddingLeft: SPACE[20],
+                              paddingRight: SPACE[16],
+                              paddingTop: SPACE[8],
+                              paddingBottom: SPACE[8],
                               borderBottomWidth: 1,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 10,
+                              gap: SPACE[8],
                             }}
                             class="border-border bg-background/30"
                           >
-                            <View style={{ gap: 2 }}>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-                                <Icon name="bot" size={14.5} tone="secondary-foreground" />
-                                <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                            <View style={{ gap: SPACE[2] }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                                <Icon name="bot" size="sm" tone="secondary-foreground" />
+                                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                   {t("build.interactor.title")}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                 {t("build.interactor.runsHint")}
                               </Text>
                             </View>
@@ -2908,7 +2906,7 @@ export function BuildConsole(props: {
                           icon="bot"
                           extraActions={
                             !props.readOnly ? (
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                                 {runsDropdown()}
                                 <IconBtn
                                   testID="interactor-delete-btn"
@@ -2939,31 +2937,31 @@ export function BuildConsole(props: {
                 <View
                   style={{
                     minHeight: 52,
-                    paddingLeft: 20,
-                    paddingRight: 16,
-                    paddingTop: 8,
-                    paddingBottom: 8,
+                    paddingLeft: SPACE[20],
+                    paddingRight: SPACE[16],
+                    paddingTop: SPACE[8],
+                    paddingBottom: SPACE[8],
                     borderBottomWidth: 1,
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    gap: 10,
+                    gap: SPACE[8],
                   }}
                   class="border-border bg-background/30"
                 >
-                  <View style={{ gap: 2 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <Icon name="listOrdered" size={14.5} tone="secondary-foreground" />
-                      <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                  <View style={{ gap: SPACE[2] }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                      <Icon name="listOrdered" size="sm" tone="secondary-foreground" />
+                      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {t("build.subtasks.title")}
                       </Text>
                       <If when={totalSubtaskScore() != null}>
-                        <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                           {t("build.subtasks.totalScore", { score: totalSubtaskScore()! })}
                         </Text>
                       </If>
                       <If when={totalSubtaskScore() != null && totalSubtaskScore() !== 100}>
-                        <Text style={{ fontSize: 12 }} class="text-chart-4">
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-chart-4">
                           {t("build.subtasks.scoreNot100")}
                         </Text>
                       </If>
@@ -3008,45 +3006,46 @@ export function BuildConsole(props: {
                     />
                   }
                 >
-                  <Scroll style={{ flex: 1 }} contentStyle={{ padding: 20, gap: 8 }}>
+                  <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[20], gap: SPACE[8] }}>
                     <Each of={subtasks()} key={(s) => s.id}>
                       {(sub) => (
                         <View
                           testID={`subtask-row-${sub().id}`}
                           style={{
-                            paddingLeft: 14,
-                            paddingRight: 10,
-                            paddingTop: 10,
-                            paddingBottom: 10,
-                            borderRadius: 8,
+                            paddingLeft: SPACE[12],
+                            paddingRight: SPACE[12],
+                            paddingTop: SPACE[12],
+                            paddingBottom: SPACE[12],
+                            borderRadius: RADIUS.md,
                             borderWidth: 1,
                             flexDirection: "row",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            gap: 12,
+                            gap: SPACE[12],
                           }}
                           class="border-border bg-card"
                         >
-                          <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                          <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                                 {t("build.table.subtaskHeader", { id: sub().id })}
                               </Text>
-                              <View style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }} class="bg-muted">
-                                <Text style={{ fontSize: 12, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                              {/* token-exempt: compact subtask badge height */}
+                              <View style={{ height: 20, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center" }} class="bg-muted">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                                   {t("build.tree.subtasksPts", { score: sub().score })}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                                 {sub().scoring === "sum" ? t("build.subtasks.scoringSum") : t("build.subtasks.scoringMin")}
                               </Text>
                             </View>
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                 {t("build.subtasks.testCount", { count: sub().test_count })}
                               </Text>
                               <If when={(sub().depends?.length ?? 0) > 0}>
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                   {t("build.subtasks.dependsOn", { list: sub().depends!.map((d) => t("build.table.subtaskHeader", { id: d })).join(isZh() ? "、" : ", ") })}
                                 </Text>
                               </If>
@@ -3054,7 +3053,7 @@ export function BuildConsole(props: {
                           </View>
 
                           <If when={!props.readOnly}>
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flexShrink: 0 }}>
                               <IconBtn
                                 testID={`edit-subtask-${sub().id}`}
                                 icon="pencil"
@@ -3105,19 +3104,19 @@ export function BuildConsole(props: {
                         testID="checker-select-trigger"
                         class="border border-border bg-card hover:bg-muted"
                         style={{
-                          height: 28,
-                          paddingLeft: 10,
-                          paddingRight: 8,
-                          borderRadius: 6,
+                          height: CONTROL.md,
+                          paddingLeft: SPACE[12],
+                          paddingRight: SPACE[8],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 6,
+                          gap: SPACE[6],
                         }}
                       >
-                        <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                           {inspection()?.checker || "wcmp"}
                         </Text>
-                        <Icon name="chevronDown" size={13} tone="muted-foreground" />
+                        <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                       </View>
                     }
                   />
@@ -3132,33 +3131,33 @@ export function BuildConsole(props: {
                           <View
                             style={{
                               minHeight: 52,
-                              paddingLeft: 20,
-                              paddingRight: 16,
-                              paddingTop: 8,
-                              paddingBottom: 8,
+                              paddingLeft: SPACE[20],
+                              paddingRight: SPACE[16],
+                              paddingTop: SPACE[8],
+                              paddingBottom: SPACE[8],
                               borderBottomWidth: 1,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 10,
+                              gap: SPACE[8],
                             }}
                             class="border-border bg-background/30"
                           >
-                            <View style={{ gap: 2 }}>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-                                <Icon name="scale" size={14.5} tone="secondary-foreground" />
-                                <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                            <View style={{ gap: SPACE[2] }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                                <Icon name="scale" size="sm" tone="secondary-foreground" />
+                                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                   {t("build.tree.checker")}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                 {t("build.programs.builtinCheckerActive", { name: inspection()?.checker || "wcmp" })}
                               </Text>
                             </View>
                             {checkerDropdown()}
                           </View>
-                          <View style={{ padding: 24, maxWidth: 560, gap: 8 }}>
-                            <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-secondary-foreground">
+                          <View style={{ padding: SPACE[24], maxWidth: 560, gap: SPACE[8] }}>
+                            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                               {t("build.programs.builtinCheckerHint")}
                             </Text>
                           </View>
@@ -3260,7 +3259,7 @@ export function BuildConsole(props: {
                           badge={roleLabel()}
                           extraActions={
                             !props.readOnly && spec() ? (
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                                 <AppMenu
                                   align="end"
                                   minWidth={184}
@@ -3288,19 +3287,19 @@ export function BuildConsole(props: {
                                       testID={`solution-config-trigger-${solName()}`}
                                       class="border border-border bg-card hover:bg-muted"
                                       style={{
-                                        height: 28,
-                                        paddingLeft: 9,
-                                        paddingRight: 7,
-                                        borderRadius: 6,
+                                        height: CONTROL.md,
+                                        paddingLeft: SPACE[8],
+                                        paddingRight: SPACE[8],
+                                        borderRadius: RADIUS.sm,
                                         flexDirection: "row",
                                         alignItems: "center",
-                                        gap: 5,
+                                        gap: SPACE[4],
                                       }}
                                     >
-                                      <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                                      <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                         {`${t("build.programs.expectPrefix")} ${spec()!.expected.join("/")}`}
                                       </Text>
-                                      <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                                      <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                                     </View>
                                   }
                                 />
@@ -3344,18 +3343,18 @@ export function BuildConsole(props: {
             <If when={selection().kind === "sanitizer"}>
               <View testID="build-sanitizer-view" style={{ flex: 1, minHeight: 0 }}>
                 <View
-                  style={{ height: 46, paddingLeft: 20, paddingRight: 16, borderBottomWidth: 1, flexDirection: "row", alignItems: "center", flexShrink: 0 }}
+                  style={{ height: 46, paddingLeft: SPACE[20], paddingRight: SPACE[16], borderBottomWidth: 1, flexDirection: "row", alignItems: "center", flexShrink: 0 }}
                   class="border-border"
                 >
-                  <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {t("build.tree.memoryCheck")}
                   </Text>
                 </View>
-                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: 16, paddingBottom: 24, paddingLeft: 20, paddingRight: 20, gap: 12 }}>
+                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: SPACE[16], paddingBottom: SPACE[24], paddingLeft: SPACE[20], paddingRight: SPACE[20], gap: SPACE[12] }}>
                   <If
                     when={sanitizerReport()}
                     else={
-                      <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                         {t("build.sanitize.running")}
                       </Text>
                     }
@@ -3363,25 +3362,25 @@ export function BuildConsole(props: {
                     {(rep) => {
                       const mainName = () => solutionSpecs().find((sp) => sp.is_main)?.name;
                       return (
-                        <View style={{ gap: 12, maxWidth: 640 }}>
+                        <View style={{ gap: SPACE[12], maxWidth: 640 }}>
                           <If when={rep().status === "passed" && (rep().findings?.length ?? 0) === 0}>
-                            <Text testID="sanitizer-clean" style={{ fontSize: 13 }} class="text-secondary-foreground">
+                            <Text testID="sanitizer-clean" style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                               {t("build.sanitize.noFindings")}
                             </Text>
                           </If>
                           <If when={rep().status === "unsupported"}>
-                            <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-secondary-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                               {rep().unsupported_reason || t("build.sanitize.unsupported")}
                             </Text>
                           </If>
                           <Each of={rep().compile_failures ?? []} key={(cf) => `${cf.target}:${cf.source}`}>
                             {(cf) => (
-                              <View style={{ gap: 6 }}>
-                                <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-destructive">
+                              <View style={{ gap: SPACE[6] }}>
+                                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
                                   {t("status.compileFailed", { file: sanitizerTargetName(cf().target, mainName()) })}
                                 </Text>
-                                <View style={{ padding: 8, borderRadius: 6 }} class="bg-muted">
-                                  <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+                                <View style={{ padding: SPACE[8], borderRadius: RADIUS.sm }} class="bg-muted">
+                                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                                     {cf().stderr.slice(0, 1200)}
                                   </Text>
                                 </View>
@@ -3390,25 +3389,25 @@ export function BuildConsole(props: {
                           </Each>
                           <Each of={rep().findings ?? []} key={(f, i) => `${f.target}:${f.test_index ?? i}:${f.summary}`}>
                             {(f) => (
-                              <View style={{ gap: 6, paddingBottom: 4 }}>
-                                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                                  <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+                              <View style={{ gap: SPACE[6], paddingBottom: SPACE[4] }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexWrap: "wrap" }}>
+                                  <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                                     {sanitizerTargetName(f().target, mainName())}
                                   </Text>
                                   <If when={!!f().test_name}>
-                                    <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                       {f().test_name!}
                                     </Text>
                                   </If>
                                 </View>
-                                <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-destructive">
+                                <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class="text-destructive">
                                   {f().summary}
                                 </Text>
                                 <If when={(f().stack_summary?.length ?? 0) > 0}>
-                                  <View style={{ padding: 8, borderRadius: 6, gap: 2 }} class="bg-muted">
+                                  <View style={{ padding: SPACE[8], borderRadius: RADIUS.sm, gap: SPACE[2] }} class="bg-muted">
                                     <Each of={f().stack_summary ?? []} key="index">
                                       {(line) => (
-                                        <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+                                        <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                                           {line()}
                                         </Text>
                                       )}
@@ -3430,10 +3429,10 @@ export function BuildConsole(props: {
             <If when={selection().kind === "external"}>
               <View testID="build-external-view" style={{ flex: 1, minHeight: 0 }}>
                 <View
-                  style={{ height: 46, paddingLeft: 20, paddingRight: 16, borderBottomWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0 }}
+                  style={{ height: 46, paddingLeft: SPACE[20], paddingRight: SPACE[16], borderBottomWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8], flexShrink: 0 }}
                   class="border-border"
                 >
-                  <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {t("build.tree.testerCode", { count: testerSubs().length })}
                   </Text>
                   <If when={!!externalMarkdown()}>
@@ -3447,24 +3446,24 @@ export function BuildConsole(props: {
                   </If>
                 </View>
 
-                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: 8, paddingBottom: 24, paddingLeft: 12, paddingRight: 12 }}>
+                <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: SPACE[8], paddingBottom: SPACE[24], paddingLeft: SPACE[12], paddingRight: SPACE[12] }}>
                   <If
                     when={testerSubs().length > 0}
                     else={
-                      <Text style={{ fontSize: 13, padding: 8 }} class="text-secondary-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body, padding: SPACE[8] }} class="text-secondary-foreground">
                         {t("build.external.running")}
                       </Text>
                     }
                   >
-                    <View style={{ height: 32, paddingLeft: 8, paddingRight: 8, flexDirection: "row", alignItems: "center", gap: 12 }}>
+                    <View style={{ height: CONTROL.lg, paddingLeft: SPACE[8], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
                       <If when={showTesterColumn()}>
-                        <Text style={{ width: 88, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colTester")}</Text>
+                        <Text style={{ width: 88, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("build.external.colTester")}</Text>
                       </If>
-                      <Text style={{ flex: 1, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colFile")}</Text>
-                      <Text style={{ width: 64, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colVerdict")}</Text>
-                      <Text style={{ width: 72, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colPassed")}</Text>
-                      <Text style={{ width: 80, fontSize: 12, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colTime")}</Text>
-                      <Text style={{ width: 112, fontSize: 12 }} class="text-muted-foreground">{t("build.external.colRatio")}</Text>
+                      <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("build.external.colFile")}</Text>
+                      <Text style={{ width: 64, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("build.external.colVerdict")}</Text>
+                      <Text style={{ width: 72, fontSize: FONT_SIZE.caption, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colPassed")}</Text>
+                      <Text style={{ width: 80, fontSize: FONT_SIZE.caption, textAlign: "right" }} class="text-muted-foreground">{t("build.external.colTime")}</Text>
+                      <Text style={{ width: 112, fontSize: FONT_SIZE.caption }} class="text-muted-foreground">{t("build.external.colRatio")}</Text>
                       <View style={{ width: 28 }} />
                     </View>
                     <Each of={testerSubs()} key={(s) => `${s.tester ?? ""}:${s.file_path}`}>
@@ -3479,37 +3478,37 @@ export function BuildConsole(props: {
                         return (
                           <View
                             class="group border-t border-border hover:bg-muted"
-                            style={{ height: 38, paddingLeft: 8, paddingRight: 8, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 12 }}
+                            style={{ height: ROW.table, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center", gap: SPACE[12] }}
                           >
                             <If when={showTesterColumn()}>
-                              <Text style={{ width: 88, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+                              <Text style={{ width: 88, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
                                 {sub().tester ?? ""}
                               </Text>
                             </If>
-                            <Text style={{ flex: 1, fontSize: 13, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                            <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                               {sub().file_name}
                             </Text>
                             <Text
                               tooltip={failText() ? tip(failText()!) : undefined}
-                              style={{ width: 64, fontSize: 13, fontVariant: ["tabular-nums"] }}
+                              style={{ width: 64, fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"] }}
                               class={sub().verdict === "AC" ? "text-foreground" : "text-secondary-foreground"}
                             >
                               {sub().compile_error ? "CE" : sub().verdict}
                             </Text>
-                            <Text style={{ width: 72, fontSize: 13, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
+                            <Text style={{ width: 72, fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
                               {sub().max_score != null ? `${sub().total_score ?? 0} / ${sub().max_score}` : `${sub().passed_tests} / ${sub().total_tests}`}
                             </Text>
-                            <Text style={{ width: 80, fontSize: 13, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
+                            <Text style={{ width: 80, fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"], textAlign: "right" }} class="text-secondary-foreground">
                               {`${sub().max_time_ms} ms`}
                             </Text>
-                            <Text style={{ width: 112, fontSize: 13 }} class="text-secondary-foreground">
+                            <Text style={{ width: 112, fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                               {stdRatioWords(sub().ratio_vs_std)}
                             </Text>
                             <View style={{ width: 28, alignItems: "flex-end" }} class={adopted() ? "" : "opacity-0 group-hover:opacity-100"}>
                               <IconBtn
                                 testID={`external-adopt-${idx()}`}
                                 icon={adopted() ? "check" : "plus"}
-                                size={26}
+                                size="sm"
                                 tone="secondary-foreground"
                                 disabled={props.readOnly || adopted()}
                                 tooltip={tip(adopted() ? t("build.external.adopted") : t("build.external.adopt"))}
@@ -3600,13 +3599,13 @@ export function BuildConsole(props: {
 /** One setting on the 题型 page: a label, the control, an optional plain-language hint. */
 function TypeSetting(props: { label: string; hint?: string; children?: JSX.Element }) {
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+    <View style={{ gap: SPACE[8] }}>
+      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
         {props.label}
       </Text>
       <View style={{ flexDirection: "row" }}>{props.children}</View>
       <If when={props.hint}>
-        <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
           {props.hint}
         </Text>
       </If>
@@ -3620,16 +3619,16 @@ function TreeSectionHeader(props: { label: string; action?: ReturnType<typeof Ic
   return (
     <View
       style={{
-        height: 24,
-        paddingLeft: 8,
-        paddingRight: 2,
+        height: CONTROL.sm,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[2],
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
       }}
     >
       {/* P2: 11px muted regular weight for clear hierarchy */}
-      <Text style={{ fontSize: 12, fontWeight: 400, letterSpacing: 0.2 }} class="text-muted-foreground">
+      <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.regular, letterSpacing: 0.2 }} class="text-muted-foreground">
         {props.label}
       </Text>
       {props.action}
@@ -3654,25 +3653,25 @@ function TreeRow(props: {
       onContextMenu={props.onContextMenu}
       class={props.active ? "bg-muted" : "hover:bg-muted/60"}
       style={{
-        height: 28,
-        paddingLeft: 8,
-        paddingRight: 8,
-        borderRadius: 6,
+        height: CONTROL.md,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
         flexDirection: "row",
         alignItems: "center",
-        gap: 7,
+        gap: SPACE[8],
       }}
     >
       <Icon
         name={props.icon}
-        size={13.5}
+        size="sm"
         tone={props.active ? "foreground" : "secondary-foreground"}
       />
       <Text
         style={{
           flex: 1,
-          fontSize: 13,
-          fontWeight: 500,
+          fontSize: FONT_SIZE.body,
+          fontWeight: FONT_WEIGHT.semibold,
           fontVariant: ["tabular-nums"],
           numberOfLines: 1,
           textOverflow: "ellipsis",
@@ -3682,13 +3681,13 @@ function TreeRow(props: {
         {props.label}
       </Text>
       <If when={!!props.sub}>
-        <Text style={{ fontSize: 12, flexShrink: 0 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, flexShrink: 0 }} class="text-muted-foreground">
           {props.sub!}
         </Text>
       </If>
       {/* P1-6: small semantic dot instead of checkmark ✓ */}
       <If when={props.statusDot === "fail"}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-destructive" />
+        <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-destructive" />
       </If>
     </View>
   );

@@ -14,6 +14,7 @@ import { errorOf, preview, revision, type UiError } from "../store";
 import { cardShadow, EDITOR_MONO, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 type Sample = { key: number; input: string; output: string };
 const SAVE_AFTER = 500;
 const UNDO_MS = 5000;
@@ -124,7 +125,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
             />
             <If when={deleted()}>
               {(d) => (
-                <View style={{ padding: 12 }}>
+                <View style={{ padding: SPACE[12] }}>
                   <UndoBar index={d().index} onUndo={undoDelete} onDismiss={() => deleted.set(undefined)} />
                 </View>
               )}
@@ -133,7 +134,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
         }
       >
         <Scroll style={{ flex: 1 }}>
-          <View ref={(v) => r.container(v)} style={{ padding: 12, gap: CARD_GAP }}>
+          <View ref={(v) => r.container(v)} style={{ padding: SPACE[12], gap: CARD_GAP }}>
             <Each of={list()} key={(s) => s.key}>
               {(s, index) => {
                 const dragging = () => r.drag()?.from === index();
@@ -142,7 +143,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                     ref={(v) => r.row(index(), v)}
                     class="border border-border bg-card"
                     style={{
-                      borderRadius: 8,
+                      borderRadius: RADIUS.md,
                       overflow: "hidden",
                       zIndex: dragging() ? 2 : 0,
                       transform: dragging() ? `translateY(${r.offset()}px)` : "none",
@@ -152,9 +153,9 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                     <View
                       class="bg-muted/50 border-b border-border"
                       style={{
-                        height: 32,
-                        paddingLeft: 10,
-                        paddingRight: 6,
+                        height: CONTROL.lg,
+                        paddingLeft: SPACE[12],
+                        paddingRight: SPACE[6],
                         flexDirection: "row",
                         alignItems: "center",
                         justifyContent: "space-between",
@@ -165,17 +166,17 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                         style={{
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 6,
-                          height: 28,
-                          paddingRight: 8,
+                          gap: SPACE[6],
+                          height: CONTROL.md,
+                          paddingRight: SPACE[8],
                           cursor: canDrag() ? "grab" : "default",
                         }}
                       >
                         <If when={canDrag()}>
-                          <Icon name="gripVertical" size={14} tone="muted-foreground" />
+                          <Icon name="gripVertical" size="sm" tone="muted-foreground" />
                         </If>
                         <Text
-                          style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                          style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
                           class="text-secondary-foreground"
                         >
                           {t("samples.cardTitle", { num: String(index() + 1).padStart(2, "0") })}
@@ -184,8 +185,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                       <If when={!props.readOnly}>
                         <IconBtn
                           icon="trash"
-                          size={24}
-                          iconSize={13}
+                          size="sm"
                           tone="muted-foreground"
                           tooltip={tip(t("samples.deleteTooltip"))}
                           onPress={() => removeSample(s(), index())}
@@ -194,8 +194,8 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                     </View>
                     <View style={{ flexDirection: "row" }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ paddingLeft: 10, paddingTop: 6, paddingBottom: 2 }}>
-                          <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                        <View style={{ paddingLeft: SPACE[12], paddingTop: SPACE[6], paddingBottom: SPACE[2] }}>
+                          <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                             {t("samples.input")}
                           </Text>
                         </View>
@@ -208,8 +208,8 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                       </View>
                       <View style={{ width: 1 }} class="bg-border" />
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ paddingLeft: 10, paddingTop: 6, paddingBottom: 2 }}>
-                          <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                        <View style={{ paddingLeft: SPACE[12], paddingTop: SPACE[6], paddingBottom: SPACE[2] }}>
+                          <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                             {t("samples.output")}
                           </Text>
                         </View>
@@ -227,7 +227,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
             </Each>
             <If when={r.line() !== undefined}>
               <View
-                style={{ position: "absolute", left: 12, right: 12, top: r.line()!, height: 2, borderRadius: 1 }}
+                style={{ position: "absolute", left: 12, right: 12, top: r.line()!, height: 2, borderRadius: 1 }} // token-exempt: 2px drag-drop insertion line
                 class="bg-primary"
               />
             </If>
@@ -252,20 +252,20 @@ function UndoBar(props: { index: number; onUndo: () => void; onDismiss: () => vo
     <View
       class="bg-muted/70 border border-border"
       style={{
-        height: 34,
-        borderRadius: 8,
-        paddingLeft: 12,
-        paddingRight: 6,
+        height: CONTROL.lg,
+        borderRadius: RADIUS.md,
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[6],
         flexDirection: "row",
         alignItems: "center",
-        gap: 6,
+        gap: SPACE[6],
       }}
     >
-      <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+      <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
         {t("samples.deletedBanner", { num: String(props.index + 1).padStart(2, "0") })}
       </Text>
       <Btn label={t("common.undo")} variant="ghost" onPress={props.onUndo} />
-      <IconBtn icon="x" size={24} iconSize={13} tone="muted-foreground" onPress={props.onDismiss} />
+      <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={props.onDismiss} />
     </View>
   );
 }
@@ -293,7 +293,7 @@ function SampleField(props: { value: string; placeholder: string; readOnly: bool
           ? "w-full px-2.5 py-1.5 bg-muted/50 text-secondary-foreground placeholder:text-muted-foreground"
           : "w-full px-2.5 py-1.5 bg-transparent placeholder:text-muted-foreground focus:ring-1 focus:ring-inset focus:ring-ring transition-colors"
       }
-      style={{ fontFamily: EDITOR_MONO, fontSize: 12.5, lineHeight: 19, height: height() }}
+      style={{ fontFamily: EDITOR_MONO, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, height: height() }}
     />
   );
 }

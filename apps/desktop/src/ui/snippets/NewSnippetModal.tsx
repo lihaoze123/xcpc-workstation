@@ -20,6 +20,7 @@ import {
 import { MONO } from "../theme";
 import { encodeStringPatch, suggestSnippetSlug } from "./snippetLogic";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export function NewSnippetModal() {
   const slug = signal("");
   const slugTouched = signal(false);
@@ -83,28 +84,28 @@ export function NewSnippetModal() {
 
   return (
     <Modal open={newSnippetSeed() !== undefined} onClose={close} width={460} testID="new-snippet-modal">
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <View
-            style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+            style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
             class="bg-muted"
           >
-            <Icon name="code" size={16} tone="foreground" />
+            <Icon name="code" size="md" tone="foreground" />
           </View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flex: 1, gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("snippets.newModal.title")}
             </Text>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.newModal.desc")}
             </Text>
           </View>
-          <IconBtn icon="x" size={26} iconSize={15} tone="muted-foreground" onPress={close} />
+          <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={close} />
         </View>
 
-        <View style={{ gap: 12 }}>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+        <View style={{ gap: SPACE[12] }}>
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.newModal.name")}
             </Text>
             <Input
@@ -116,12 +117,12 @@ export function NewSnippetModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
             />
           </View>
 
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.newModal.slug")}
             </Text>
             <Input
@@ -133,10 +134,10 @@ export function NewSnippetModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13, fontFamily: MONO }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body, fontFamily: MONO }}
             />
             <Text
-              style={{ fontSize: 12, lineHeight: 17 }}
+              style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
               class={error() ? "text-destructive" : "text-muted-foreground"}
             >
               {error() ?? t("snippets.newModal.slugHint")}
@@ -144,15 +145,15 @@ export function NewSnippetModal() {
           </View>
 
           <If when={Boolean(seedCode())}>
-            <View style={{ gap: 4 }}>
-              <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+            <View style={{ gap: SPACE[4] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                 {t("snippets.newModal.importedPreview", { lines: importedLines() })}
               </Text>
               <View
-                style={{ padding: 8, borderRadius: 6, borderWidth: 1, maxHeight: 112, overflow: "hidden" }}
+                style={{ padding: SPACE[8], borderRadius: RADIUS.sm, borderWidth: 1, maxHeight: 112, overflow: "hidden" }}
                 class="border-border bg-muted/60"
               >
-                <Text style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }} class="text-secondary-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }} class="text-secondary-foreground">
                   {importedPreview()}
                 </Text>
               </View>
@@ -160,8 +161,8 @@ export function NewSnippetModal() {
           </If>
 
           <If when={!seedCode()}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: 2 }}>
-              <Text style={{ fontSize: 13 }} class="text-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-foreground">
                 {t("snippets.newModal.formulaOnly")}
               </Text>
               <Switch
@@ -174,7 +175,7 @@ export function NewSnippetModal() {
           </If>
         </View>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[4] }}>
           <Btn variant="outline" label={t("common.cancel")} onPress={close} />
           <Btn variant="primary" label={t("snippets.newModal.create")} onPress={submit} />
         </View>
@@ -228,28 +229,28 @@ export function NewTrdModal() {
 
   return (
     <Modal open={newTrdModalOpen()} onClose={close} width={440} testID="new-trd-modal">
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <View
-            style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+            style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
             class="bg-muted"
           >
-            <Icon name="bookOpen" size={16} tone="foreground" />
+            <Icon name="bookOpen" size="md" tone="foreground" />
           </View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flex: 1, gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("snippets.trd.newTitle")}
             </Text>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.trd.newDesc")}
             </Text>
           </View>
-          <IconBtn icon="x" size={26} iconSize={15} tone="muted-foreground" onPress={close} />
+          <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={close} />
         </View>
 
-        <View style={{ gap: 12 }}>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+        <View style={{ gap: SPACE[12] }}>
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.trd.nameLabel")}
             </Text>
             <Input
@@ -261,11 +262,11 @@ export function NewTrdModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
             />
           </View>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.trd.idLabel")}
             </Text>
             <Input
@@ -277,17 +278,17 @@ export function NewTrdModal() {
               }}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13, fontFamily: MONO }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body, fontFamily: MONO }}
             />
             <Text
-              style={{ fontSize: 12, lineHeight: 17 }}
+              style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
               class={error() ? "text-destructive" : "text-muted-foreground"}
             >
               {error() ?? t("snippets.newModal.slugHint")}
             </Text>
           </View>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
               {t("snippets.trd.authorLabel")}
             </Text>
             <Input
@@ -295,12 +296,12 @@ export function NewTrdModal() {
               onChange={(e) => author.set(e.value)}
               onSubmit={submit}
               class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-              style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+              style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
             />
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[4] }}>
           <Btn variant="outline" label={t("common.cancel")} onPress={close} />
           <Btn variant="primary" label={t("snippets.newModal.create")} onPress={submit} />
         </View>

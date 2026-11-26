@@ -23,6 +23,7 @@ import {
 import { StatusSlot } from "./StatusSlot";
 import { contestStatusModel } from "./statusLogic";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 // Shared by the two parts: the status slot sits after the contest name, the button on the right.
 const notice = signal<UiError | undefined>(undefined);
 const statusOpen = signal(false);
@@ -95,7 +96,7 @@ export function ContestCheckBar(props: {
     );
   }
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
       <View style={{ width: W, flexDirection: "row", justifyContent: "flex-end" }}>
         <If
           when={!batch() && !testerRunning()}
@@ -123,7 +124,7 @@ export function ContestCheckBar(props: {
               variant="outline"
               disabled={props.readOnly}
               onPress={() => run(false)}
-              style={{ width: W - 26, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              style={{ width: W - 26, borderTopRightRadius: RADIUS.none, borderBottomRightRadius: RADIUS.none }}
             />
             <AppMenu
               align="end"
@@ -151,14 +152,14 @@ export function ContestCheckBar(props: {
                   class="border border-l-0 border-border bg-card hover:bg-muted"
                   style={{
                     width: 26,
-                    height: 28,
-                    borderTopRightRadius: 6,
-                    borderBottomRightRadius: 6,
+                    height: CONTROL.md,
+                    borderTopRightRadius: RADIUS.sm,
+                    borderBottomRightRadius: RADIUS.sm,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
-                  <Icon name="chevronDown" size={13} tone="secondary-foreground" />
+                  <Icon name="chevronDown" size="sm" tone="secondary-foreground" />
                 </View>
               }
             />
@@ -168,14 +169,14 @@ export function ContestCheckBar(props: {
 
       {/* One sentence before the folder picker: what the folder should look like (§4.1). */}
       <Modal open={folderIntroOpen()} onClose={() => folderIntroOpen.set(false)} width={400} testID="tester-folder-intro">
-        <View style={{ padding: 18, gap: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
+        <View style={{ padding: SPACE[16], gap: SPACE[16] }}>
+          <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("contestCheck.tryTesterCode").replace("…", "")}
           </Text>
-          <Text style={{ fontSize: 13, lineHeight: 20 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.strong }} class="text-secondary-foreground">
             {t("contestCheck.folderIntro")}
           </Text>
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn label={t("common.cancel")} onPress={() => folderIntroOpen.set(false)} />
             <Btn testID="tester-folder-continue" label={t("contestCheck.folderContinue")} variant="primary" onPress={() => void tryTesterCode()} />
           </View>

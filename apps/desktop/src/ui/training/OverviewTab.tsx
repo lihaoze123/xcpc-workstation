@@ -21,6 +21,7 @@ import {
   type TrainingDashboardData,
 } from "./types";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 function KpiCard(props: {
   label: string;
   windowBadge?: string;
@@ -36,25 +37,25 @@ function KpiCard(props: {
       style={{
         flex: 1,
         minWidth: 160,
-        borderRadius: 10,
-        paddingTop: 12,
-        paddingBottom: 12,
-        paddingLeft: 14,
-        paddingRight: 14,
-        gap: 4,
+        borderRadius: RADIUS.lg,
+        paddingTop: SPACE[12],
+        paddingBottom: SPACE[12],
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[12],
+        gap: SPACE[4],
         boxShadow: cardShadow(),
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
           {props.label}
         </Text>
         <If when={props.windowBadge}>
           <View
             class="bg-muted"
-            style={{ height: 17, paddingLeft: 5, paddingRight: 5, borderRadius: 4, justifyContent: "center" }}
+            style={{ height: 17, paddingLeft: SPACE[4], paddingRight: SPACE[4], borderRadius: RADIUS.xs, justifyContent: "center" }}
           >
-            <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
               {props.windowBadge!}
             </Text>
           </View>
@@ -62,9 +63,9 @@ function KpiCard(props: {
       </View>
       <Text
         style={{
-          fontSize: 22,
-          lineHeight: 28,
-          fontWeight: 600,
+          fontSize: FONT_SIZE.display,
+          lineHeight: LINE_HEIGHT.display,
+          fontWeight: FONT_WEIGHT.semibold,
           fontVariant: ["tabular-nums"],
           color: props.valueColor,
         }}
@@ -74,7 +75,7 @@ function KpiCard(props: {
       </Text>
       <If when={props.sub}>
         <Text
-          style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
+          style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
           class="text-secondary-foreground"
         >
           {props.sub!}
@@ -148,7 +149,7 @@ export function OverviewTab(props: {
       smoothWheel
       testID="training-overview-scroll"
       style={{ flex: 1, minHeight: 0 }}
-      contentStyle={{ padding: 20, gap: 16, paddingBottom: 36 }}
+      contentStyle={{ padding: SPACE[20], gap: SPACE[16], paddingBottom: SPACE[32] }}
     >
       <If
         when={hasAnyData()}
@@ -172,7 +173,7 @@ export function OverviewTab(props: {
 
         {/* Platform Rating cards (when accounts exist) */}
         <If when={(d()?.accounts.length ?? 0) > 0}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
             <Each of={d()?.accounts ?? []} key={(a) => a.platform}>
               {(acc) => {
                 const curRating = () => acc().rating;
@@ -184,29 +185,29 @@ export function OverviewTab(props: {
                     style={{
                       flex: 1,
                       minWidth: 200,
-                      borderRadius: 10,
-                      paddingTop: 12,
-                      paddingBottom: 12,
-                      paddingLeft: 14,
-                      paddingRight: 14,
-                      gap: 4,
+                      borderRadius: RADIUS.lg,
+                      paddingTop: SPACE[12],
+                      paddingBottom: SPACE[12],
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      gap: SPACE[4],
                       boxShadow: cardShadow(),
                     }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+                      <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
                         {platformDisplayName(acc().platform)}
                       </Text>
-                      <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                         {acc().handle || "—"}
                       </Text>
                     </View>
-                    <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                    <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
                       <Text
                         style={{
-                          fontSize: 22,
-                          lineHeight: 28,
-                          fontWeight: 600,
+                          fontSize: FONT_SIZE.display,
+                          lineHeight: LINE_HEIGHT.display,
+                          fontWeight: FONT_WEIGHT.semibold,
                           fontVariant: ["tabular-nums"],
                           color: curRating() != null ? tierColor(ratingTier(curRating())) : undefined,
                         }}
@@ -217,7 +218,7 @@ export function OverviewTab(props: {
                       <If when={maxRating() != null}>
                         <Text
                           style={{
-                            fontSize: 11.5,
+                            fontSize: FONT_SIZE.caption,
                             fontVariant: ["tabular-nums"],
                             color: tierColor(ratingTier(maxRating())),
                           }}
@@ -226,7 +227,7 @@ export function OverviewTab(props: {
                         </Text>
                       </If>
                     </View>
-                    <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                       {t("training.kpi.accountStats", {
                         ac: acc().solved_count,
                         subs: acc().submission_count,
@@ -242,7 +243,7 @@ export function OverviewTab(props: {
         {/* 3 focused KPI cards: Period Solved (follows window), Streak, Today */}
         <If when={d()}>
           {(cur) => (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
               <KpiCard
                 testID="training-kpi-window"
                 label={zhEn("周期内过题", "Period Solved")}
@@ -280,7 +281,7 @@ export function OverviewTab(props: {
 
         {/* Rating curve (only when rating history exists) + Solved problem difficulty trend */}
         <If when={d() && (hasRatingHistory() || hasDifficultyTrend())}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
             <If when={hasRatingHistory()}>
               <RatingChartCard series={d()!.rating_series} />
             </If>

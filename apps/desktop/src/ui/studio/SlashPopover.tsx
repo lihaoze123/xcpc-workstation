@@ -19,12 +19,13 @@ import {
   type ScrollRef,
 } from "nsh";
 import { Input } from "nsh/base";
-import { Icon, type IconName } from "../Icon";
+import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
 import { Kbd, tip } from "../kit";
 import { colorTransition, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export type SlashCommandGroup = "basic" | "common" | "advanced";
 
 export type SlashTint = "neutral" | "ochre" | "amber" | "emerald" | "indigo" | "teal" | "violet" | "sky";
@@ -479,17 +480,17 @@ export function SlashPopover(props: {
   const isFiltering = () => props.query.trim().length > 0;
   const dark = () => colorScheme() === "dark";
 
-  const renderGlyph = (cmd: SlashCommand, color: string, iconSize: number, badgeSize: number) => {
+  const renderGlyph = (cmd: SlashCommand, color: string, iconSize: IconSize) => {
     if (cmd.icon) {
       return <Icon name={cmd.icon} size={iconSize} color={color} />;
     }
     return (
       <Text
         style={{
-          fontSize: cmd.badge && cmd.badge.length >= 3 ? badgeSize - 1.5 : badgeSize,
-          fontWeight: 600,
+          fontSize: cmd.badge && cmd.badge.length >= 3 ? FONT_SIZE.micro : FONT_SIZE.caption,
+          fontWeight: FONT_WEIGHT.semibold,
           color,
-          lineHeight: badgeSize + 3,
+          lineHeight: LINE_HEIGHT.caption,
         }}
       >
         {cmd.badge ?? ""}
@@ -508,37 +509,37 @@ export function SlashPopover(props: {
         class={active() ? "bg-accent" : "hover:bg-muted/70"}
         style={{
           height: ROW_HEIGHT,
-          paddingLeft: 8,
-          paddingRight: 10,
-          borderRadius: 8,
+          paddingLeft: SPACE[8],
+          paddingRight: SPACE[12],
+          borderRadius: RADIUS.md,
           flexDirection: "row",
           alignItems: "center",
-          gap: 10,
+          gap: SPACE[8],
           ...colorTransition(110),
         }}
       >
         <View
           style={{
             width: 26,
-            height: 26,
-            borderRadius: 7,
+            height: CONTROL.sm,
+            borderRadius: RADIUS.sm,
             backgroundColor: palette().bg,
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
           }}
         >
-          {renderGlyph(cmd, palette().fg, 14, 12.5)}
+          {renderGlyph(cmd, palette().fg, "sm")}
         </View>
-        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
           <Text
-            style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-foreground"
           >
             {slashCommandLabel(cmd)}
           </Text>
           <Text
-            style={{ fontSize: 11, lineHeight: 14, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-muted-foreground"
           >
             {slashCommandDescription(cmd)}
@@ -576,8 +577,8 @@ export function SlashPopover(props: {
         style={{
           width: 288,
           maxHeight: MAX_LIST_HEIGHT + 36,
-          borderRadius: 12,
-          padding: 6,
+          borderRadius: RADIUS.lg,
+          padding: SPACE[6],
           overflow: "hidden",
           boxShadow: popoverShadow(),
           opacity: shown() ? 1 : 0,
@@ -595,14 +596,14 @@ export function SlashPopover(props: {
           style={{
             flexDirection: "row",
             alignItems: "center",
-            height: 30,
-            paddingLeft: 8,
-            paddingRight: 6,
-            marginBottom: 4,
-            gap: 4,
+            height: CONTROL.md,
+            paddingLeft: SPACE[8],
+            paddingRight: SPACE[6],
+            marginBottom: SPACE[4],
+            gap: SPACE[4],
           }}
         >
-          <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-primary">
+          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-primary">
             /
           </Text>
           <Input
@@ -639,7 +640,7 @@ export function SlashPopover(props: {
               }, delay) as unknown as number;
             }}
             class="flex-1 h-6 bg-transparent text-[12.5px] text-foreground placeholder:text-muted-foreground/65"
-            style={{ borderWidth: 0, paddingLeft: 2, paddingRight: 4 }}
+            style={{ borderWidth: 0, paddingLeft: SPACE[2], paddingRight: SPACE[4] }}
           />
         </View>
         <Scroll
@@ -659,8 +660,8 @@ export function SlashPopover(props: {
               <If
                 when={props.items.length > 0}
                 else={
-                  <View style={{ paddingTop: 14, paddingBottom: 14, alignItems: "center" }}>
-                    <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                  <View style={{ paddingTop: SPACE[12], paddingBottom: SPACE[12], alignItems: "center" }}>
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                       {t("slash.noMatch")}
                     </Text>
                   </View>
@@ -678,18 +679,18 @@ export function SlashPopover(props: {
               {/* Top compact 6-icon "基础" strip */}
               <Text
                 style={{
-                  fontSize: 11,
-                  fontWeight: 500,
-                  lineHeight: 14,
-                  paddingLeft: 8,
-                  paddingTop: 4,
-                  paddingBottom: 4,
+                  fontSize: FONT_SIZE.micro,
+                  fontWeight: FONT_WEIGHT.semibold,
+                  lineHeight: LINE_HEIGHT.micro,
+                  paddingLeft: SPACE[8],
+                  paddingTop: SPACE[4],
+                  paddingBottom: SPACE[4],
                 }}
                 class="text-muted-foreground"
               >
                 {t("slash.group.basic")}
               </Text>
-              <View style={{ flexDirection: "row", gap: 4, paddingLeft: 2, paddingRight: 2, paddingBottom: 4 }}>
+              <View style={{ flexDirection: "row", gap: SPACE[4], paddingLeft: SPACE[2], paddingRight: SPACE[2], paddingBottom: SPACE[4] }}>
                 <Each of={SLASH_BASIC_COMMANDS} key={(cmd) => cmd.id}>
                   {(cmd, idx) => {
                     const active = () => props.activeIndex === idx();
@@ -702,8 +703,8 @@ export function SlashPopover(props: {
                         class={active() ? "bg-accent" : "hover:bg-muted/75"}
                         style={{
                           flex: 1,
-                          height: 32,
-                          borderRadius: 7,
+                          height: CONTROL.lg,
+                          borderRadius: RADIUS.sm,
                           alignItems: "center",
                           justifyContent: "center",
                           ...colorTransition(110),
@@ -712,8 +713,7 @@ export function SlashPopover(props: {
                         {renderGlyph(
                           cmd(),
                           dark() ? "#e5e7eb" : "#334155",
-                          14.5,
-                          12.5,
+                          "sm",
                         )}
                       </View>
                     );
@@ -724,18 +724,18 @@ export function SlashPopover(props: {
               {/* Common section */}
               <Text
                 style={{
-                  fontSize: 11,
-                  fontWeight: 500,
-                  lineHeight: 14,
-                  paddingLeft: 8,
-                  paddingTop: 6,
-                  paddingBottom: 3,
+                  fontSize: FONT_SIZE.micro,
+                  fontWeight: FONT_WEIGHT.semibold,
+                  lineHeight: LINE_HEIGHT.micro,
+                  paddingLeft: SPACE[8],
+                  paddingTop: SPACE[6],
+                  paddingBottom: SPACE[4],
                 }}
                 class="text-muted-foreground"
               >
                 {t("slash.group.common")}
               </Text>
-              <View style={{ gap: 1 }}>
+              <View style={{ gap: SPACE[2] }}>
                 <Each of={SLASH_COMMON_COMMANDS} key={(cmd) => cmd.id}>
                   {(cmd, idx) => renderRow(cmd(), () => SLASH_BASIC_COUNT + idx())}
                 </Each>
@@ -744,18 +744,18 @@ export function SlashPopover(props: {
               {/* Advanced / statement structure section */}
               <Text
                 style={{
-                  fontSize: 11,
-                  fontWeight: 500,
-                  lineHeight: 14,
-                  paddingLeft: 8,
-                  paddingTop: 8,
-                  paddingBottom: 3,
+                  fontSize: FONT_SIZE.micro,
+                  fontWeight: FONT_WEIGHT.semibold,
+                  lineHeight: LINE_HEIGHT.micro,
+                  paddingLeft: SPACE[8],
+                  paddingTop: SPACE[8],
+                  paddingBottom: SPACE[4],
                 }}
                 class="text-muted-foreground"
               >
                 {t("slash.group.advanced")}
               </Text>
-              <View style={{ gap: 1 }}>
+              <View style={{ gap: SPACE[2] }}>
                 <Each of={SLASH_ADVANCED_COMMANDS} key={(cmd) => cmd.id}>
                   {(cmd, idx) =>
                     renderRow(cmd(), () => SLASH_BASIC_COUNT + SLASH_COMMON_COMMANDS.length + idx())

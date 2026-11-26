@@ -8,6 +8,7 @@ import { Icon } from "./Icon";
 import { overlayTransition } from "./motion";
 import { ms, popoverShadow } from "./theme";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export type ToastTone = "success" | "issues" | "info";
 
 export interface ToastAction {
@@ -134,14 +135,14 @@ export function ToastHost() {
             bottom: 20,
             maxWidth: 420,
             minHeight: 36,
-            paddingLeft: 12,
-            paddingRight: 12,
-            paddingTop: 7,
-            paddingBottom: 7,
-            borderRadius: 9,
+            paddingLeft: SPACE[12],
+            paddingRight: SPACE[12],
+            paddingTop: SPACE[8],
+            paddingBottom: SPACE[8],
+            borderRadius: RADIUS.md,
             flexDirection: "row",
             alignItems: "center",
-            gap: 8,
+            gap: SPACE[8],
             boxShadow: popoverShadow(),
             opacity: shown() ? 1 : 0,
             transform: (() => {
@@ -153,17 +154,17 @@ export function ToastHost() {
           }}
         >
           <If when={item().tone === "success"}>
-            <Icon name="check" size={14} tone="chart-2" />
+            <Icon name="check" size="sm" tone="chart-2" />
           </If>
           <If when={item().tone === "issues"}>
-            <View style={{ width: 7, height: 7, borderRadius: 3.5, flexShrink: 0 }} class="bg-destructive" />
+            <View style={{ width: 7, height: 7, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-destructive" />
           </If>
           <If when={item().tone === "info"}>
-            <Icon name="info" size={14} tone="secondary-foreground" />
+            <Icon name="info" size="sm" tone="secondary-foreground" />
           </If>
           <Text
             testID="app-toast-text"
-            style={{ flexShrink: 1, minWidth: 0, fontSize: 13, lineHeight: 18, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
+            style={{ flexShrink: 1, minWidth: 0, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
             class="text-foreground"
           >
             {item().text}
@@ -177,7 +178,7 @@ export function ToastHost() {
                   dismissToast();
                   run();
                 }}
-                style={{ fontSize: 12.5, fontWeight: 500, flexShrink: 0, paddingLeft: 4 }}
+                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flexShrink: 0, paddingLeft: SPACE[4] }}
                 class="text-primary"
               >
                 {act().label}

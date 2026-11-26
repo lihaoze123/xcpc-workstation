@@ -27,6 +27,7 @@ import {
   type UiError,
 } from "./store";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
 const message = (e: UiError | undefined) => {
   if (!e) return undefined;
   if (e.code === "invalid_id") return t("dialogs.invalidId");
@@ -58,11 +59,11 @@ function Field(props: {
   onSubmit: () => void;
 }) {
   return (
-    <View style={{ gap: 6 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-        <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{props.label}</Text>
+    <View style={{ gap: SPACE[6] }}>
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
+        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{props.label}</Text>
         {(props.error || props.hint) && (
-          <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12 }} class={props.error ? "text-destructive" : "text-muted-foreground"}>
+          <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class={props.error ? "text-destructive" : "text-muted-foreground"}>
             {props.error ?? props.hint}
           </Text>
         )}
@@ -88,10 +89,10 @@ function Field(props: {
  * place of the ID field's hint, so nothing moves and no room is kept empty for it. */
 function Form(props: { head: any; submit: string; onSubmit: () => void; children?: any }) {
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       {props.head}
-      <View style={{ gap: 12 }}>{props.children}</View>
-      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+      <View style={{ gap: SPACE[12] }}>{props.children}</View>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], marginTop: SPACE[4] }}>
         <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <Btn variant="primary" label={props.submit} onPress={() => props.onSubmit()} style={{ minWidth: 72 }} />
       </View>
@@ -214,12 +215,12 @@ function NewProblem(props: { addTo?: string }) {
       submit={t("common.create")}
       onSubmit={submit}
     >
-      <View style={{ gap: 6 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{t("dialogs.newProblem.urlLabel")}</Text>
+      <View style={{ gap: SPACE[6] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{t("dialogs.newProblem.urlLabel")}</Text>
           <DelayedSpinner active={resolvingUrl()} size={12} />
           <If when={!resolvingUrl() && !!urlError()}>
-            <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {urlError() ?? ""}
             </Text>
           </If>
@@ -239,8 +240,8 @@ function NewProblem(props: { addTo?: string }) {
           onSubmit={() => triggerResolveUrl(url())}
         />
         <If when={resolved()?.ok}>
-          <View style={{ gap: 6 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
               <Chip label={`${resolved()!.platform} ${resolved()!.problemKey}`} />
               <If when={resolved()!.rating != null}>
                 <Chip label={`★ ${resolved()!.rating}`} />
@@ -250,8 +251,8 @@ function NewProblem(props: { addTo?: string }) {
               </Each>
             </View>
             <If when={!!resolved()!.existingProblemId}>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("dialogs.newProblem.urlExistsHint", { id: resolved()!.existingProblemId! })}
                 </Text>
                 <Btn
@@ -537,14 +538,14 @@ function AddToContest(props: { problemId: string }) {
       }}
       focusable
       onKeyDown={onKeyDown}
-      style={{ padding: 6, gap: 2 }}
+      style={{ padding: SPACE[6], gap: SPACE[2] }}
     >
-      <View style={{ padding: 14, paddingBottom: 10 }}>
+      <View style={{ padding: SPACE[12], paddingBottom: SPACE[12] }}>
         <DialogHeader icon="listPlus" title={t("dialogs.addToContest.title")} description={t("dialogs.addToContest.desc")} />
       </View>
       <If when={contests().length > 0}>
         <Scroll style={{ maxHeight: 280 }}>
-          <View style={{ gap: 2 }}>
+          <View style={{ gap: SPACE[2] }}>
             <Each of={contests()} key={(c) => c.id}>
               {(c, i) => {
                 const has = () => c().items.some((x) => x.id === props.problemId);
@@ -562,27 +563,27 @@ function AddToContest(props: { problemId: string }) {
                     }}
                     class={off() ? "" : focused() ? "bg-accent active:bg-accent" : "hover:bg-muted active:bg-accent"}
                     style={{
-                      height: 34,
-                      paddingLeft: 10,
-                      paddingRight: 10,
-                      borderRadius: 6,
+                      height: CONTROL.lg,
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      borderRadius: RADIUS.sm,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 8,
+                      gap: SPACE[8],
                       opacity: off() ? 0.55 : 1,
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13 }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
+                    <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
                       {c().name}
                     </Text>
-                    {c().frozen && <Icon name="lock" size={13} tone="muted-foreground" />}
+                    {c().frozen && <Icon name="lock" size="sm" tone="muted-foreground" />}
                     <If
                       when={addedId() === c().id}
                       else={
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                           {has()
                             ? t("dialogs.addToContest.alreadyIn")
                             : c().frozen
@@ -593,9 +594,9 @@ function AddToContest(props: { problemId: string }) {
                         </Text>
                       }
                     >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                        <Icon name="check" size={12.5} tone="primary" />
-                        <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-primary">
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+                        <Icon name="check" size="sm" tone="primary" />
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-primary">
                           {t("dialogs.addToContest.added")}
                         </Text>
                       </View>
@@ -606,7 +607,7 @@ function AddToContest(props: { problemId: string }) {
             </Each>
           </View>
         </Scroll>
-        <View style={{ height: 1, marginTop: 4, marginBottom: 4, marginLeft: 4, marginRight: 4 }} class="bg-border" />
+        <View style={{ height: 1, marginTop: SPACE[4], marginBottom: SPACE[4], marginLeft: SPACE[4], marginRight: SPACE[4] }} class="bg-border" />
       </If>
       <View
         onPress={() => dialog.set({ kind: "newContest", withProblem: props.problemId })}
@@ -616,25 +617,25 @@ function AddToContest(props: { problemId: string }) {
         }}
         class={highlighted() === contests().length ? "bg-accent active:bg-accent" : "hover:bg-muted active:bg-accent"}
         style={{
-          height: 34,
-          paddingLeft: 10,
-          paddingRight: 10,
-          borderRadius: 6,
+          height: CONTROL.lg,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[12],
+          borderRadius: RADIUS.sm,
           flexDirection: "row",
           alignItems: "center",
-          gap: 8,
+          gap: SPACE[8],
           transitionProperty: "colors",
           transitionDuration: ms(120),
           transitionTimingFunction: EASE_STANDARD,
         }}
       >
-        <Icon name="plus" size={15} tone="primary" />
-        <Text style={{ fontSize: 13 }} class="text-primary">
+        <Icon name="plus" size="md" tone="primary" />
+        <Text style={{ fontSize: FONT_SIZE.body }} class="text-primary">
           {t("contests.newContest")}
         </Text>
       </View>
       <If when={error()}>
-        <View style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 4, paddingBottom: 4 }}>
+        <View style={{ paddingLeft: SPACE[12], paddingRight: SPACE[12], paddingTop: SPACE[4], paddingBottom: SPACE[4] }}>
           <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
         </View>
       </If>
@@ -663,41 +664,42 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
     }
   };
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       <If
         when={used().length === 0}
         else={
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: SPACE[12] }}>
             <DialogHeader
               icon="triangleAlert"
               tone="destructive"
               title={t("dialogs.deleteProblem.blockedTitle", { title: p()?.title ?? props.problemId })}
               description={t("dialogs.deleteProblem.blockedDesc")}
             />
-            <View style={{ gap: 4, paddingLeft: 44 }}>
+            {/* token-exempt: aligned with 32px icon + 12px gap */}
+            <View style={{ gap: SPACE[4], paddingLeft: 44 }}>
               <Each of={used()} key={(c) => c.id}>
                 {(c) => (
                   <View
                     onPress={() => jumpContest(c().id)}
                     class="border border-border bg-muted/50 hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                     style={{
-                      height: 32,
-                      paddingLeft: 10,
-                      paddingRight: 10,
-                      borderRadius: 6,
+                      height: CONTROL.lg,
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      borderRadius: RADIUS.sm,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 8,
+                      gap: SPACE[8],
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Icon name="trophy" size={14} tone="secondary-foreground" />
-                    <Text style={{ flex: 1, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
+                    <Icon name="trophy" size="sm" tone="secondary-foreground" />
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
                       {c().name}
                     </Text>
-                    <Icon name="arrowRight" size={13} tone="muted-foreground" />
+                    <Icon name="arrowRight" size="sm" tone="muted-foreground" />
                   </View>
                 )}
               </Each>
@@ -715,7 +717,7 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
       <If when={error()}>
         <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
       </If>
-      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
         <Btn label={used().length === 0 ? t("common.cancel") : t("common.gotIt")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <If when={used().length === 0}>
           <Btn label={t("common.delete")} variant="danger" onPress={remove} testID="confirm-delete" />
@@ -833,7 +835,7 @@ function DeleteGroup(props: { name: string }) {
   };
 
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       <DialogHeader
         icon="trash"
         tone="destructive"
@@ -843,7 +845,7 @@ function DeleteGroup(props: { name: string }) {
       <If when={error()}>
         <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
       </If>
-      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
         <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <Btn label={t("common.delete")} variant="danger" onPress={remove} testID="confirm-delete-group" />
       </View>
@@ -930,12 +932,12 @@ function BatchTags(props: { open: boolean; problemIds: readonly string[] }) {
       submit={t("dialogs.batchTags.submit")}
       onSubmit={submit}
     >
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+      <View style={{ gap: SPACE[6] }}>
+        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
           {existingTags().length > 0 ? t("dialogs.batchTags.existing") : t("dialogs.batchTags.noExisting")}
         </Text>
         <If when={existingTags().length > 0}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
             <Each of={existingTags()} key={(item) => item.tag}>
               {(item) => {
                 const mode = () => modes()[item().tag] ?? "keep";
@@ -962,22 +964,22 @@ function BatchTags(props: { open: boolean; problemIds: readonly string[] }) {
                     onPress={() => cycleTag(item().tag)}
                     class={cls()}
                     style={{
-                      height: 24,
-                      paddingLeft: 8,
-                      paddingRight: 8,
-                      borderRadius: 6,
+                      height: CONTROL.sm,
+                      paddingLeft: SPACE[8],
+                      paddingRight: SPACE[8],
+                      borderRadius: RADIUS.sm,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 6,
+                      gap: SPACE[6],
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Text style={{ fontSize: 12 }} class={textCls()}>
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class={textCls()}>
                       {item().tag}
                     </Text>
-                    <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                       {badge()}
                     </Text>
                   </View>
@@ -1044,13 +1046,13 @@ function BatchRating(props: { open: boolean; problemIds: readonly string[] }) {
   };
 
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       <DialogHeader
         icon="scale"
         title={t("dialogs.batchRating.title")}
         description={t("dialogs.batchRating.desc", { count: props.problemIds.length })}
       />
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: SPACE[8] }}>
         <Field
           label={t("dialogs.batchRating.label")}
           hint={t("dialogs.batchRating.hint")}
@@ -1067,7 +1069,7 @@ function BatchRating(props: { open: boolean; problemIds: readonly string[] }) {
           }
           onSubmit={submit}
         />
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
           <Each of={RATING_PRESETS} key={(n) => String(n)}>
             {(n) => (
               <Btn
@@ -1083,7 +1085,7 @@ function BatchRating(props: { open: boolean; problemIds: readonly string[] }) {
           </Each>
         </View>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], marginTop: SPACE[4] }}>
         <Btn label={t("dialogs.batchRating.clear")} variant="outline" onPress={() => applyRating(null)} />
         <View style={{ flex: 1 }} />
         <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
@@ -1114,11 +1116,11 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
   };
 
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       <If
         when={partition().deletable.length > 0}
         else={
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: SPACE[12] }}>
             <DialogHeader
               icon="triangleAlert"
               tone="secondary-foreground"
@@ -1126,31 +1128,32 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
               description={t("dialogs.batchDelete.allBlockedDesc", { count: partition().blocked.length })}
             />
             <Scroll style={{ maxHeight: 200 }}>
-              <View style={{ gap: 6, paddingLeft: 44 }}>
+              {/* token-exempt: aligned with 32px icon + 12px gap */}
+              <View style={{ gap: SPACE[6], paddingLeft: 44 }}>
                 <Each of={partition().blocked} key={(b) => b.id}>
                   {(b) => (
-                    <View style={{ gap: 3 }}>
-                      <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                    <View style={{ gap: SPACE[2] }}>
+                      <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {titleById().get(b().id) ?? b().id}
                       </Text>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
                         <Each of={b().contests} key={(c) => c.id}>
                           {(c) => (
                             <View
                               onPress={() => jumpContest(c().id)}
                               class="border border-border bg-muted/60 hover:bg-muted"
                               style={{
-                                height: 22,
-                                paddingLeft: 6,
-                                paddingRight: 6,
-                                borderRadius: 4,
+                                height: CONTROL.sm,
+                                paddingLeft: SPACE[6],
+                                paddingRight: SPACE[6],
+                                borderRadius: RADIUS.xs,
                                 flexDirection: "row",
                                 alignItems: "center",
-                                gap: 4,
+                                gap: SPACE[4],
                               }}
                             >
-                              <Icon name="trophy" size={11} tone="muted-foreground" />
-                              <Text style={{ fontSize: 11.5 }} class="text-secondary-foreground">
+                              <Icon name="trophy" size="sm" tone="muted-foreground" />
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                                 {c().name}
                               </Text>
                             </View>
@@ -1165,7 +1168,7 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
           </View>
         }
       >
-        <View style={{ gap: 12 }}>
+        <View style={{ gap: SPACE[12] }}>
           <DialogHeader
             icon="trash"
             tone="destructive"
@@ -1188,18 +1191,19 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
           />
           <If when={partition().blocked.length > 0}>
             <Scroll style={{ maxHeight: 160 }}>
-              <View style={{ gap: 8, paddingLeft: 44 }}>
+              {/* token-exempt: aligned with 32px icon + 12px gap */}
+              <View style={{ gap: SPACE[8], paddingLeft: 44 }}>
                 <Each of={partition().blocked} key={(b) => b.id}>
                   {(b) => (
-                    <View style={{ gap: 2, minWidth: 0 }}>
+                    <View style={{ gap: SPACE[2], minWidth: 0 }}>
                       <Text
-                        style={{ fontSize: 12.5, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {titleById().get(b().id) ?? b().id}
                       </Text>
                       <Text
-                        style={{ fontSize: 11.5, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-muted-foreground"
                       >
                         {b().contests.map((c) => c.name).join(" / ")}
@@ -1217,7 +1221,7 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
         <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
       </If>
 
-      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
         <Btn
           label={partition().deletable.length > 0 ? t("common.cancel") : t("common.gotIt")}
           variant="ghost"
@@ -1272,8 +1276,8 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
   };
 
   return (
-    <View style={{ padding: 6, gap: 2 }}>
-      <View style={{ padding: 14, paddingBottom: 10 }}>
+    <View style={{ padding: SPACE[6], gap: SPACE[2] }}>
+      <View style={{ padding: SPACE[12], paddingBottom: SPACE[12] }}>
         <DialogHeader
           icon="listPlus"
           title={t("dialogs.batchAddToContest.title")}
@@ -1282,7 +1286,7 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
       </View>
       <If when={contests().length > 0}>
         <Scroll style={{ maxHeight: 280 }}>
-          <View style={{ gap: 2 }}>
+          <View style={{ gap: SPACE[2] }}>
             <Each of={contests()} key={(c) => c.id}>
               {(c) => {
                 const net = () => netAddFor(c());
@@ -1296,13 +1300,13 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                     }}
                     class={off() ? "" : "hover:bg-muted active:bg-accent"}
                     style={{
-                      height: 34,
-                      paddingLeft: 10,
-                      paddingRight: 10,
-                      borderRadius: 6,
+                      height: CONTROL.lg,
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[12],
+                      borderRadius: RADIUS.sm,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 8,
+                      gap: SPACE[8],
                       opacity: off() ? 0.55 : 1,
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
@@ -1310,16 +1314,16 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                     }}
                   >
                     <Text
-                      style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13 }}
+                      style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }}
                       class={off() && addedContestId() !== c().id ? "text-muted-foreground" : "text-foreground"}
                     >
                       {c().name}
                     </Text>
-                    {c().frozen && <Icon name="lock" size={13} tone="muted-foreground" />}
+                    {c().frozen && <Icon name="lock" size="sm" tone="muted-foreground" />}
                     <If
                       when={addedContestId() === c().id}
                       else={
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                           {c().frozen
                             ? t("contests.finalized")
                             : net() === 0
@@ -1330,9 +1334,9 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                         </Text>
                       }
                     >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                        <Icon name="check" size={12.5} tone="primary" />
-                        <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-primary">
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+                        <Icon name="check" size="sm" tone="primary" />
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-primary">
                           {t("dialogs.batchAddToContest.addedCount", { count: addedCount() })}
                         </Text>
                       </View>
@@ -1345,7 +1349,7 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
         </Scroll>
       </If>
       <If when={error()}>
-        <View style={{ paddingLeft: 10, paddingRight: 10, paddingTop: 4, paddingBottom: 4 }}>
+        <View style={{ paddingLeft: SPACE[12], paddingRight: SPACE[12], paddingTop: SPACE[4], paddingBottom: SPACE[4] }}>
           <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
         </View>
       </If>
@@ -1406,16 +1410,16 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
   };
 
   return (
-    <View style={{ padding: 20, gap: 16 }}>
+    <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
       <DialogHeader
         icon="fileDown"
         title={t("dialogs.batchExport.title")}
         description={t("dialogs.batchExport.desc", { count: props.problemIds.length })}
       />
 
-      <View style={{ gap: 12 }}>
-        <View style={{ gap: 6 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{t("dialogs.batchExport.formatLabel")}</Text>
+      <View style={{ gap: SPACE[12] }}>
+        <View style={{ gap: SPACE[6] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{t("dialogs.batchExport.formatLabel")}</Text>
           <Segmented<ExportFormat>
             items={[
               { value: "domjudge", label: t("dialogs.batchExport.formatDomjudge") },
@@ -1431,7 +1435,7 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
         <If
           when={isOj()}
           else={
-            <View style={{ gap: 10 }}>
+            <View style={{ gap: SPACE[8] }}>
               <Field
                 label={t("dialogs.batchExport.pdfTitleLabel")}
                 value={pdfTitle()}
@@ -1439,9 +1443,9 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
                 onChange={(v) => pdfTitle.set(v)}
                 onSubmit={submit}
               />
-              <View style={{ flexDirection: "row", gap: 16 }}>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{t("dialogs.batchExport.pdfLangLabel")}</Text>
+              <View style={{ flexDirection: "row", gap: SPACE[16] }}>
+                <View style={{ gap: SPACE[6] }}>
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{t("dialogs.batchExport.pdfLangLabel")}</Text>
                   <Segmented<PdfLang>
                     items={[
                       { value: "chinese", label: t("dialogs.batchExport.pdfLangZh") },
@@ -1452,8 +1456,8 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
                     itemWidth={80}
                   />
                 </View>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 12.5, fontWeight: 500 }}>{t("dialogs.batchExport.pdfBookLabel")}</Text>
+                <View style={{ gap: SPACE[6] }}>
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>{t("dialogs.batchExport.pdfBookLabel")}</Text>
                   <Segmented<PdfBook>
                     items={[
                       { value: "statements", label: t("dialogs.batchExport.pdfBookStatements") },
@@ -1470,21 +1474,21 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
         >
           <View
             style={{
-              padding: 10,
-              borderRadius: 8,
+              padding: SPACE[12],
+              borderRadius: RADIUS.md,
               borderWidth: 1,
               flexDirection: "row",
               alignItems: "center",
-              gap: 8,
+              gap: SPACE[8],
             }}
             class="border-border bg-muted/40"
           >
             <Icon
               name={ojGate().ready > 0 ? "shieldCheck" : "circleAlert"}
-              size={15}
+              size="md"
               tone={ojGate().ready > 0 ? "primary" : "muted-foreground"}
             />
-            <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"], flex: 1 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flex: 1 }} class="text-secondary-foreground">
               {ojGate().ready > 0
                 ? t("dialogs.batchExport.ojGateSummary", { ready: ojGate().ready, skipped: ojGate().skipped })
                 : t("dialogs.batchExport.ojGateNone")}
@@ -1497,7 +1501,7 @@ function BatchExport(props: { open: boolean; problemIds: readonly string[] }) {
         <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
       </If>
 
-      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
         <Btn label={t("common.cancel")} variant="ghost" onPress={() => dialog.set(undefined)} />
         <Btn
           variant="primary"

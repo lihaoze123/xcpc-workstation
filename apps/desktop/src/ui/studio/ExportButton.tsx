@@ -14,6 +14,7 @@ import type { OjPackageFormat } from "../store";
 import { EASE_STANDARD, ms } from "../theme";
 import type { RegisteredExporter } from "../tools/types";
 
+import { CONTROL, FONT_SIZE, RADIUS, SPACE } from "../tokens";
 const CONFIRM_MS = 1800;
 
 export function ExportButton(props: {
@@ -158,7 +159,7 @@ export function ExportButton(props: {
       class={btnClass(disabled)}
       style={{
         width: 24,
-        height: 28,
+        height: CONTROL.md,
         alignItems: "center",
         justifyContent: "center",
         transitionProperty: "colors",
@@ -166,7 +167,7 @@ export function ExportButton(props: {
         transitionTimingFunction: EASE_STANDARD,
       }}
     >
-      <Icon name="chevronDown" size={14} tone={fgTone()} />
+      <Icon name="chevronDown" size="sm" tone={fgTone()} />
     </View>
   );
 
@@ -174,8 +175,8 @@ export function ExportButton(props: {
     <View
       style={{
         flexDirection: "row",
-        height: 28,
-        borderRadius: 6,
+        height: CONTROL.md,
+        borderRadius: RADIUS.sm,
         borderWidth: sec() ? 1 : 0,
         overflow: "hidden",
         opacity: busy() ? 0.8 : 1,
@@ -192,8 +193,8 @@ export function ExportButton(props: {
         class={btnClass(busy())}
         style={{
           minWidth: 96,
-          paddingLeft: 12,
-          paddingRight: 12,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[12],
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
@@ -202,13 +203,13 @@ export function ExportButton(props: {
           transitionTimingFunction: EASE_STANDARD,
         }}
       >
-        <View style={{ width: showSpinner() ? 12 : 0, marginRight: showSpinner() ? 6 : 0, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
+        <View style={{ width: showSpinner() ? 12 : 0, marginRight: showSpinner() ? SPACE[6] : SPACE[0], overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
           <DelayedSpinner active={busy()} class={sec() ? "border-foreground" : "border-primary-foreground"} />
         </View>
         <If when={confirmed() && !busy()}>
-          <Icon name="check" size={14} tone={fgTone()} style={{ marginRight: 5 }} />
+          <Icon name="check" size="sm" tone={fgTone()} style={{ marginRight: SPACE[4] }} />
         </If>
-        <Text style={{ fontSize: 13 }} class={fgClass()}>
+        <Text style={{ fontSize: FONT_SIZE.body }} class={fgClass()}>
           {confirmed() && !busy() ? t("export.exported") : t("export.pdf")}
         </Text>
       </View>

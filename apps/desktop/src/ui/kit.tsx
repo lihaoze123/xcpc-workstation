@@ -7,7 +7,8 @@ import { Tooltip } from "nsh/base";
 import { colorTransition, indicatorTransition, pressActiveStyle, pressTransition } from "./motion";
 import { cardShadow, EASE_STANDARD, ms, popoverShadow, tierColor, tierSoft } from "./theme";
 import { ratingTier } from "./logic";
-import { Icon, type IconName, type IconTone } from "./Icon";
+import { Icon, type IconName, type IconSize, type IconTone } from "./Icon";
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, inner, RADIUS, SPACE, type ControlSize } from "./tokens";
 
 export type TooltipSide = "top" | "bottom" | "left" | "right";
 
@@ -24,10 +25,17 @@ export function keyLabel(keystroke: string): string {
 export function Kbd(props: { keys: string; faint?: boolean }) {
   return (
     <View
-      style={{ height: 18, paddingLeft: 5, paddingRight: 5, borderRadius: 4, borderWidth: 1, justifyContent: "center" }}
+      style={{
+        height: 18, // token-exempt: compact inline keycap height
+        paddingLeft: SPACE[4],
+        paddingRight: SPACE[4],
+        borderRadius: RADIUS.xs,
+        borderWidth: 1,
+        justifyContent: "center",
+      }}
       class={props.faint ? "border-border" : "border-border bg-muted"}
     >
-      <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+      <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
         {keyLabel(props.keys)}
       </Text>
     </View>
@@ -43,17 +51,17 @@ export function tip(label: string, keys?: string, side?: TooltipSide): JSX.Eleme
       style={{
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        paddingLeft: 8,
-        paddingRight: 6,
-        height: 26,
-        borderRadius: 6,
+        gap: SPACE[8],
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[6],
+        height: CONTROL.sm,
+        borderRadius: RADIUS.sm,
         borderWidth: 1,
         boxShadow: popoverShadow(),
       }}
       class="bg-popover border-border"
     >
-      <Text style={{ fontSize: 12 }}>{label}</Text>
+      <Text style={{ fontSize: FONT_SIZE.caption }}>{label}</Text>
       {keys && <Kbd keys={keys} />}
     </Tooltip>
   );
@@ -93,13 +101,13 @@ const VARIANT_TONE: Record<Variant, IconTone> = {
   danger: "primary-foreground",
 };
 
-/** A button: 28 or 32 points tall, radius 6–8, color feedback on hover/press (§8.3). */
+/** A button: `sm` (24), `md` (28, default), or `lg` (32) points tall, radius 6, color feedback on hover/press (§8.3). */
 export function Btn(props: {
   label?: string;
   icon?: IconName;
   children?: JSX.Element;
   variant?: Variant;
-  size?: "sm" | "md";
+  size?: ControlSize;
   disabled?: boolean;
   onPress?: () => void;
   tooltip?: JSX.Element;
@@ -110,7 +118,11 @@ export function Btn(props: {
   const variant = props.variant ?? "outline";
   const v = VARIANT[variant];
   const isPrimary = variant === "primary";
-  const md = props.size === "md";
+  const size = props.size ?? "md";
+  const height = CONTROL[size];
+  const iconOnly = props.label === undefined && !props.children;
+  const padLeft = props.icon ? (size === "lg" ? SPACE[12] : SPACE[8]) : size === "sm" ? SPACE[8] : SPACE[12];
+  const padRight = size === "sm" ? SPACE[8] : SPACE[12];
   return (
     <View
       testID={props.testID}
@@ -123,25 +135,23 @@ export function Btn(props: {
       activeStyle={isPrimary ? pressActiveStyle(props.disabled) : undefined}
       style={[
         {
-          height: md ? 32 : 28,
+          height,
           // An icon alone makes a square.
-          ...(props.label === undefined && !props.children
-            ? { width: md ? 32 : 28 }
-            : { paddingLeft: props.icon ? (md ? 12 : 8) : md ? 14 : 10, paddingRight: md ? 14 : 10 }),
-          borderRadius: md ? 8 : 6,
+          ...(iconOnly ? { width: height } : { paddingLeft: padLeft, paddingRight: padRight }),
+          borderRadius: RADIUS.sm,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 6,
+          gap: SPACE[6],
           opacity: props.disabled ? 0.6 : 1,
           ...(isPrimary ? { transform: "scale(1)", ...pressTransition(140) } : colorTransition(140)),
         },
         props.style,
       ]}
     >
-      {props.icon && <Icon name={props.icon} size={md ? 16 : 15} tone={VARIANT_TONE[props.variant ?? "outline"]} />}
+      {props.icon && <Icon name={props.icon} size={size === "sm" ? "sm" : "md"} tone={VARIANT_TONE[variant]} />}
       {props.label !== undefined && (
-        <Text class={v.text} style={[{ fontSize: 13 }, props.textStyle]}>
+        <Text class={v.text} style={[{ fontSize: size === "sm" ? FONT_SIZE.caption : FONT_SIZE.body }, props.textStyle]}>
           {props.label}
         </Text>
       )}
@@ -154,15 +164,16 @@ export function Btn(props: {
 export function IconBtn(props: {
   icon: IconName;
   tone?: IconTone;
-  iconSize?: number;
+  iconSize?: IconSize;
   onPress?: () => void;
   tooltip?: JSX.Element;
   disabled?: boolean;
-  size?: number;
+  size?: ControlSize;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }) {
-  const size = props.size ?? 28;
+  const size = props.size ?? "md";
+  const px = CONTROL[size];
   return (
     <View
       testID={props.testID}
@@ -174,9 +185,9 @@ export function IconBtn(props: {
       class={props.disabled ? "" : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
       style={[
         {
-          width: size,
-          height: size,
-          borderRadius: 6,
+          width: px,
+          height: px,
+          borderRadius: RADIUS.sm,
           alignItems: "center",
           justifyContent: "center",
           opacity: props.disabled ? 0.4 : 1,
@@ -185,7 +196,7 @@ export function IconBtn(props: {
         props.style,
       ]}
     >
-      <Icon name={props.icon} size={props.iconSize ?? Math.round(size * 0.57)} tone={props.tone} />
+      <Icon name={props.icon} size={props.iconSize ?? (size === "sm" ? "sm" : "md")} tone={props.tone} />
     </View>
   );
 }
@@ -196,17 +207,17 @@ export function RatingBadge(props: { rating: number | null | undefined }) {
   return (
     <View
       style={{
-        height: 18,
+        height: 18, // token-exempt: compact inline rating badge height
         minWidth: 38,
-        paddingLeft: 5,
-        paddingRight: 5,
-        borderRadius: 4,
+        paddingLeft: SPACE[6],
+        paddingRight: SPACE[6],
+        borderRadius: RADIUS.xs,
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: props.rating == null ? "transparent" : tierSoft(tier()),
       }}
     >
-      <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], color: tierColor(tier()) }}>
+      <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], color: tierColor(tier()) }}>
         {props.rating == null ? "" : String(props.rating)}
       </Text>
     </View>
@@ -229,20 +240,20 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
       tooltip={props.tooltip}
       class={cls}
       style={{
-        height: 20,
+        height: 20, // token-exempt: compact inline tag chip height
         maxWidth: props.maxWidth ?? "100%",
         minWidth: 0,
         overflow: "hidden",
-        paddingLeft: 6,
-        paddingRight: 6,
-        borderRadius: 5,
+        paddingLeft: SPACE[6],
+        paddingRight: SPACE[6],
+        borderRadius: RADIUS.xs,
         flexDirection: "row",
         alignItems: "center",
         ...colorTransition(140),
       }}
     >
       <Text
-        style={{ fontSize: 11.5, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+        style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
         class={props.active ? "text-foreground" : "text-secondary-foreground"}
       >
         {props.label}
@@ -252,11 +263,11 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
 }
 
 /** The finalized lock (§6.5): the same line lock as everywhere, fading in when `closed` turns true. */
-export function Lock(props: { closed: boolean; size?: number }) {
+export function Lock(props: { closed: boolean; size?: IconSize }) {
   return (
     <Icon
       name="lock"
-      size={props.size ?? 14}
+      size={props.size ?? "sm"}
       tone="muted-foreground"
       style={{ opacity: props.closed ? 1 : 0, transitionProperty: "opacity", transitionDuration: ms(140), transitionTimingFunction: EASE_STANDARD }}
     />
@@ -283,9 +294,9 @@ export function Segmented<T extends string>(props: {
     : {
         flexDirection: "row",
         alignSelf: props.centered ? "center" : "flex-start",
-        height: 28,
-        padding: 2,
-        borderRadius: 8,
+        height: CONTROL.md,
+        padding: SPACE[2],
+        borderRadius: RADIUS.md,
         borderWidth: 1,
         alignItems: "stretch",
         opacity: props.disabled ? 0.5 : 1,
@@ -297,8 +308,8 @@ export function Segmented<T extends string>(props: {
           position: "absolute",
           width: w,
           ...(props.underline
-            ? { left: 0, bottom: 0, height: 2, borderRadius: 1 }
-            : { left: 2, top: 2, bottom: 2, borderRadius: 6, boxShadow: cardShadow() }),
+            ? { left: 0, bottom: 0, height: 2, borderRadius: 1 } // token-exempt: 2px underline tab indicator
+            : { left: SPACE[2], top: SPACE[2], bottom: SPACE[2], borderRadius: inner(RADIUS.md, SPACE[2]), boxShadow: cardShadow() }),
           transform: `translateX(${index() * w}px)`,
           ...indicatorTransition(),
         }}
@@ -335,7 +346,7 @@ export function Segmented<T extends string>(props: {
             >
               <Text
                 style={{
-                  fontSize: 13,
+                  fontSize: FONT_SIZE.body,
                   numberOfLines: 1,
                   transitionProperty: "colors",
                   transitionDuration: ms(120),
@@ -388,15 +399,15 @@ export function DelayedSpinner(props: { active: boolean; size?: number; class?: 
 /** A field label above a control in the inspector and dialogs. */
 export function FieldLabel(props: { label: string }) {
   return (
-    <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
       {props.label}
     </Text>
   );
 }
 
 /** A small downward chevron. */
-export function Chevron(props: { size?: number; tone?: IconTone }) {
-  return <Icon name="chevronDown" size={props.size ?? 14} tone={props.tone ?? "muted-foreground"} />;
+export function Chevron(props: { size?: IconSize; tone?: IconTone }) {
+  return <Icon name="chevronDown" size={props.size ?? "sm"} tone={props.tone ?? "muted-foreground"} />;
 }
 
 /**

@@ -14,6 +14,7 @@ import {
 } from "./buildLogic";
 import type { MatrixCellStore } from "./matrixStore";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export function MatrixCellView(props: {
   store: MatrixCellStore;
   testIndex: () => number;
@@ -42,14 +43,14 @@ export function MatrixCellView(props: {
         flex: 1,
         minWidth: 120,
         maxWidth: 180,
-        paddingRight: 10,
+        paddingRight: SPACE[12],
         justifyContent: "center",
       }}
     >
       <If
         when={cell()}
         else={
-          <Text style={{ fontSize: 12, paddingLeft: 6 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, paddingLeft: SPACE[6] }} class="text-muted-foreground">
             {"-"}
           </Text>
         }
@@ -67,22 +68,22 @@ export function MatrixCellView(props: {
                     : ""
               }`}
               style={{
-                height: 26,
-                paddingLeft: 7,
-                paddingRight: 7,
-                borderRadius: 5,
+                height: CONTROL.sm,
+                paddingLeft: SPACE[8],
+                paddingRight: SPACE[8],
+                borderRadius: RADIUS.xs,
                 opacity: c().stale ? 0.5 : 1,
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
-                gap: 6,
+                gap: SPACE[6],
                 ...colorTransition(160),
               }}
             >
               <Text
                 style={{
-                  fontSize: 12,
-                  fontWeight: isAnom() ? 600 : 400,
+                  fontSize: FONT_SIZE.caption,
+                  fontWeight: isAnom() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular,
                   fontVariant: ["tabular-nums"],
                 }}
                 class={st().textClass}
@@ -91,7 +92,7 @@ export function MatrixCellView(props: {
               </Text>
               <Text
                 style={{
-                  fontSize: 12,
+                  fontSize: FONT_SIZE.caption,
                   fontVariant: ["tabular-nums"],
                   textAlign: "right",
                 }}

@@ -33,6 +33,7 @@ import {
 import type { SnippetDetailPayload, SnippetVerifySpec, TrdDetailPayload, TrdSummaryItem } from "./types";
 import { runSnippetVerifyJob } from "./verifyJob";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 type SnippetTab = "code" | "notes" | "verify";
 type VerifyKindOption = "self" | "library_checker" | "problem";
 
@@ -328,7 +329,7 @@ export function SnippetStudio(props: { active: boolean }) {
     <View style={{ flex: 1, flexDirection: "column" }} class="bg-background">
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], minWidth: 0 }}>
             <Btn
               testID="snippet-studio-back"
               icon="arrowLeft"
@@ -337,7 +338,7 @@ export function SnippetStudio(props: { active: boolean }) {
               onPress={handleBack}
             />
             <Text
-              style={{ fontSize: 14, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
+              style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
               class="text-foreground"
             >
               {payload()?.detail.meta.title ?? slug()}
@@ -345,15 +346,15 @@ export function SnippetStudio(props: { active: boolean }) {
             <If when={!!statusInfo()}>
               <View
                 style={{
-                  height: 20,
-                  paddingLeft: 7,
-                  paddingRight: 7,
-                  borderRadius: 5,
+                  height: 20, // token-exempt: compact status badge height
+                  paddingLeft: SPACE[8],
+                  paddingRight: SPACE[8],
+                  borderRadius: RADIUS.xs,
                   justifyContent: "center",
                   backgroundColor: statusInfo()!.bg,
                 }}
               >
-                <Text style={{ fontSize: 12, color: statusInfo()!.fg }}>
+                <Text style={{ fontSize: FONT_SIZE.caption, color: statusInfo()!.fg }}>
                   {t(statusInfo()!.labelKey as MessageKey)}
                 </Text>
               </View>
@@ -361,7 +362,7 @@ export function SnippetStudio(props: { active: boolean }) {
           </View>
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
             <If when={hasCode()}>
               <Btn
                 variant="outline"
@@ -398,9 +399,9 @@ export function SnippetStudio(props: { active: boolean }) {
             <View style={{ flex: 1, flexDirection: "column", borderRightWidth: 1 }} class="border-border bg-card">
               <View
                 style={{
-                  height: 38,
-                  paddingLeft: 12,
-                  paddingRight: 12,
+                  height: ROW.table,
+                  paddingLeft: SPACE[12],
+                  paddingRight: SPACE[12],
                   flexDirection: "row",
                   alignItems: "center",
                   borderBottomWidth: 1,
@@ -475,9 +476,9 @@ export function SnippetStudio(props: { active: boolean }) {
                 <If when={tab() === "verify"}>
                   <Scroll
                     style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
-                    contentStyle={{ padding: 16, gap: 14 }}
+                    contentStyle={{ padding: SPACE[16], gap: SPACE[12] }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                       <Btn
                         variant="outline"
                         icon="shieldCheck"
@@ -487,11 +488,11 @@ export function SnippetStudio(props: { active: boolean }) {
                       />
                     </View>
 
-                    <View style={{ gap: 8 }}>
+                    <View style={{ gap: SPACE[8] }}>
                       <If
                         when={unifiedVerifyRows().length > 0}
                         else={
-                          <Text style={{ fontSize: 13 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
                             {t("snippets.studio.noVerifyCases")}
                           </Text>
                         }
@@ -503,37 +504,37 @@ export function SnippetStudio(props: { active: boolean }) {
                             return (
                               <View
                                 style={{
-                                  padding: 12,
-                                  borderRadius: 10,
+                                  padding: SPACE[12],
+                                  borderRadius: RADIUS.lg,
                                   borderWidth: 1,
-                                  gap: 8,
+                                  gap: SPACE[8],
                                   boxShadow: cardShadow(),
                                 }}
                                 class="border-border bg-background"
                               >
-                                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                                   <Chip label={verifyKindLabel(row().spec.kind as VerifyKindOption)} />
                                   <Text
-                                    style={{ fontSize: 13, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                    style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                                     class="text-foreground"
                                   >
                                     {row().adapter ? `${row().target} (${row().adapter})` : row().target}
                                   </Text>
                                   <If when={!!r()}>
-                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                                       <Icon
                                         name={r()!.passed ? "check" : "circleAlert"}
-                                        size={14}
+                                        size="sm"
                                         tone={r()!.passed ? "chart-2" : isUnavail() ? "chart-4" : "destructive"}
                                       />
                                       <Text
-                                        style={{ fontSize: 12.5, fontWeight: 500, fontFamily: MONO }}
+                                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
                                         class={r()!.passed ? "text-foreground" : isUnavail() ? "text-secondary-foreground" : "text-destructive"}
                                       >
                                         {isUnavail() ? t("snippets.verify.unavailable") : r()!.verdict}
                                       </Text>
                                       <If when={!isUnavail()}>
-                                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                           {`${r()!.passed_cases}/${r()!.total_cases}`}
                                         </Text>
                                       </If>
@@ -542,13 +543,13 @@ export function SnippetStudio(props: { active: boolean }) {
                                 </View>
 
                                 <If when={!!r()?.message}>
-                                  <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+                                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                                     {r()!.message!}
                                   </Text>
                                 </If>
 
                                 <If when={!!r()?.compile_stderr}>
-                                  <Text style={{ fontSize: 12, lineHeight: 17, fontFamily: MONO }} class="text-destructive">
+                                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }} class="text-destructive">
                                     {r()!.compile_stderr!}
                                   </Text>
                                 </If>
@@ -599,22 +600,22 @@ export function SnippetStudio(props: { active: boolean }) {
           >
             <View
               style={{
-                height: 38,
-                paddingLeft: 14,
-                paddingRight: 14,
+                height: ROW.table,
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[12],
                 justifyContent: "center",
                 borderBottomWidth: 1,
               }}
               class="border-border"
             >
-              <Text style={{ fontSize: 13.5, fontWeight: 500 }} class="text-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.propInfo")}
               </Text>
             </View>
 
-            <Scroll style={{ flex: 1 }} contentStyle={{ padding: 14, gap: 12 }}>
-              <View style={{ gap: 4 }}>
-                <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+            <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[12], gap: SPACE[12] }}>
+              <View style={{ gap: SPACE[4] }}>
+                <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                   {t("snippets.newModal.name")}
                 </Text>
                 <Input
@@ -625,12 +626,12 @@ export function SnippetStudio(props: { active: boolean }) {
                   onBlur={() => saveSnippetMeta()}
                   onSubmit={() => saveSnippetMeta()}
                   class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                  style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                  style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                 />
               </View>
 
-              <View style={{ gap: 4 }}>
-                <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <View style={{ gap: SPACE[4] }}>
+                <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                   {t("snippets.studio.description")}
                 </Text>
                 <Input
@@ -640,13 +641,13 @@ export function SnippetStudio(props: { active: boolean }) {
                   onBlur={() => saveSnippetMeta()}
                   onSubmit={() => saveSnippetMeta()}
                   class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                  style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                  style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                 />
               </View>
 
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+                <View style={{ flex: 1, gap: SPACE[4] }}>
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                     {t("snippets.newModal.timeComplexity")}
                   </Text>
                   <Input
@@ -657,11 +658,11 @@ export function SnippetStudio(props: { active: boolean }) {
                     onBlur={() => saveSnippetMeta()}
                     onSubmit={() => saveSnippetMeta()}
                     class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                    style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                   />
                 </View>
-                <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                <View style={{ flex: 1, gap: SPACE[4] }}>
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                     {t("snippets.newModal.spaceComplexity")}
                   </Text>
                   <Input
@@ -672,13 +673,13 @@ export function SnippetStudio(props: { active: boolean }) {
                     onBlur={() => saveSnippetMeta()}
                     onSubmit={() => saveSnippetMeta()}
                     class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                    style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                   />
                 </View>
               </View>
 
-              <View style={{ gap: 4 }}>
-                <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <View style={{ gap: SPACE[4] }}>
+                <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                   {t("snippets.newModal.tags")}
                 </Text>
                 <Input
@@ -690,14 +691,14 @@ export function SnippetStudio(props: { active: boolean }) {
                   onBlur={() => saveSnippetMeta()}
                   onSubmit={() => saveSnippetMeta()}
                   class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                  style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                  style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                 />
               </View>
 
               {/* Verify specs management ([[verify]]) */}
               <If when={hasCode()}>
-                <View style={{ paddingTop: 8, borderTopWidth: 1, gap: 8 }} class="border-border">
-                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                <View style={{ paddingTop: SPACE[8], borderTopWidth: 1, gap: SPACE[8] }} class="border-border">
+                  <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {t("snippets.studio.verifyCases")}
                   </Text>
 
@@ -705,18 +706,18 @@ export function SnippetStudio(props: { active: boolean }) {
                     {(spec, idx) => (
                       <View
                         style={{
-                          padding: 8,
-                          borderRadius: 8,
+                          padding: SPACE[8],
+                          borderRadius: RADIUS.md,
                           borderWidth: 1,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 6,
+                          gap: SPACE[6],
                         }}
                         class="border-border bg-card"
                       >
                         <Chip label={verifyKindLabel(spec().kind as VerifyKindOption)} />
                         <Text
-                          style={{ flex: 1, fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+                          style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
                           class="text-foreground"
                         >
                           {spec().kind === "self"
@@ -726,8 +727,7 @@ export function SnippetStudio(props: { active: boolean }) {
                         <If when={!info().readOnly}>
                           <IconBtn
                             icon="x"
-                            size={20}
-                            iconSize={12}
+                            size="sm"
                             tone="muted-foreground"
                             tooltip={tip(t("snippets.studio.verifyRemove"))}
                             onPress={() => removeVerifySpec(idx())}
@@ -738,7 +738,7 @@ export function SnippetStudio(props: { active: boolean }) {
                   </Each>
 
                   <If when={!info().readOnly}>
-                    <View style={{ gap: 6, paddingTop: 2 }}>
+                    <View style={{ gap: SPACE[6], paddingTop: SPACE[2] }}>
                       <AppMenu
                         entries={verifyKindEntries.map((e) => ({
                           ...e,
@@ -749,19 +749,19 @@ export function SnippetStudio(props: { active: boolean }) {
                           <View
                             class="bg-card border border-border hover:bg-muted"
                             style={{
-                              height: 30,
-                              paddingLeft: 10,
-                              paddingRight: 8,
-                              borderRadius: 6,
+                              height: CONTROL.md,
+                              paddingLeft: SPACE[12],
+                              paddingRight: SPACE[8],
+                              borderRadius: RADIUS.sm,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
                             }}
                           >
-                            <Text style={{ fontSize: 12.5 }} class="text-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
                               {verifyKindLabel(newVerifyKind())}
                             </Text>
-                            <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                            <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                           </View>
                         }
                       />
@@ -777,7 +777,7 @@ export function SnippetStudio(props: { active: boolean }) {
                         onChange={(e) => newVerifyTarget.set(e.value)}
                         onSubmit={addVerifySpec}
                         class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                        style={{ height: 30, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                        style={{ height: CONTROL.md, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                       />
                       <If when={newVerifyKind() !== "self"}>
                         <Input
@@ -786,7 +786,7 @@ export function SnippetStudio(props: { active: boolean }) {
                           onChange={(e) => newVerifyAdapter.set(e.value)}
                           onSubmit={addVerifySpec}
                           class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring placeholder:text-muted-foreground"
-                          style={{ height: 30, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                          style={{ height: CONTROL.md, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                         />
                       </If>
                       <Btn

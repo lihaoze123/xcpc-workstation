@@ -13,6 +13,7 @@ import { MONO, monoFont } from "../theme";
 import { parseJsonPayload } from "./snippetLogic";
 import type { BundleResult } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export function BundlerModal() {
   const mode = signal<"file" | "paste">("paste");
   const filePath = signal<string>("");
@@ -112,31 +113,31 @@ export function BundlerModal() {
       width={780}
       testID="bundler-modal"
     >
-      <View style={{ padding: 18, gap: 14 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <View
-            style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+            style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
             class="bg-muted"
           >
-            <Icon name="fileCode2" size={16} tone="foreground" />
+            <Icon name="fileCode2" size="md" tone="foreground" />
           </View>
-          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-            <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("snippets.bundler.title")}
             </Text>
-            <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
               {t("snippets.bundler.desc")}
             </Text>
           </View>
-          <IconBtn icon="x" size={26} iconSize={15} tone="muted-foreground" onPress={() => bundlerModalOpen.set(false)} />
+          <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={() => bundlerModalOpen.set(false)} />
         </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[8] }}>
           <Btn icon="folderOpen" label={t("snippets.bundler.pickFile")} onPress={() => void pickSourceFile()} />
           <Btn icon="folderPlus" label={t("snippets.bundler.addIncludeDir")} onPress={() => void addIncludeDir()} />
           <View style={{ flex: 1 }} />
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ fontSize: 12.5 }} class="text-secondary-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
               {t("snippets.bundler.compact")}
             </Text>
             <Switch
@@ -149,25 +150,25 @@ export function BundlerModal() {
         </View>
 
         <If when={includeDirs().length > 0}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: SPACE[6] }}>
             <Each of={includeDirs()} key={(d) => d}>
               {(dir) => (
                 <View
                   style={{
-                    height: 24,
-                    paddingLeft: 8,
-                    paddingRight: 4,
-                    borderRadius: 5,
+                    height: CONTROL.sm,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[4],
+                    borderRadius: RADIUS.xs,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 4,
+                    gap: SPACE[4],
                   }}
                   class="bg-muted"
                 >
-                  <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-secondary-foreground">
                     {dir()}
                   </Text>
-                  <IconBtn icon="x" size={16} iconSize={11} onPress={() => removeIncludeDir(dir())} />
+                  <IconBtn icon="x" size="sm" onPress={() => removeIncludeDir(dir())} />
                 </View>
               )}
             </Each>
@@ -177,28 +178,27 @@ export function BundlerModal() {
         <If when={mode() === "file" && !!filePath()}>
           <View
             style={{
-              height: 32,
-              paddingLeft: 10,
-              paddingRight: 6,
-              borderRadius: 6,
+              height: CONTROL.lg,
+              paddingLeft: SPACE[12],
+              paddingRight: SPACE[6],
+              borderRadius: RADIUS.sm,
               borderWidth: 1,
               flexDirection: "row",
               alignItems: "center",
-              gap: 8,
+              gap: SPACE[8],
             }}
             class="border-border bg-muted/50"
           >
-            <Icon name="fileText" size={14} tone="secondary-foreground" />
+            <Icon name="fileText" size="sm" tone="secondary-foreground" />
             <Text
-              style={{ flex: 1, fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+              style={{ flex: 1, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-foreground"
             >
               {filePath()}
             </Text>
             <IconBtn
               icon="x"
-              size={20}
-              iconSize={12}
+              size="sm"
               onPress={() => {
                 filePath.set("");
                 mode.set("paste");
@@ -207,9 +207,9 @@ export function BundlerModal() {
           </View>
         </If>
 
-        <View style={{ flexDirection: "row", gap: 12, height: 340 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[12], height: 340 }}>
           <If when={mode() === "paste"}>
-            <View style={{ flex: 1, borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+            <View style={{ flex: 1, borderRadius: RADIUS.md, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
               <Editor
                 style={{ flex: 1 }}
                 value={sourceText()}
@@ -225,14 +225,14 @@ export function BundlerModal() {
             </View>
           </If>
 
-          <View style={{ flex: 1, borderRadius: 8, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
+          <View style={{ flex: 1, borderRadius: RADIUS.md, borderWidth: 1, overflow: "hidden" }} class="border-border bg-card">
             <If
               when={!errorText()}
               else={
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12 }}>
-                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-                    <Icon name="circleAlert" size={15} tone="destructive" />
-                    <Text style={{ flex: 1, fontSize: 13, lineHeight: 19, fontFamily: MONO }} class="text-destructive">
+                <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[12] }}>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: SPACE[8] }}>
+                    <Icon name="circleAlert" size="md" tone="destructive" />
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontFamily: MONO }} class="text-destructive">
                       {errorText()}
                     </Text>
                   </View>
@@ -242,8 +242,8 @@ export function BundlerModal() {
               <If
                 when={Boolean(result()?.code)}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
-                    <Text style={{ fontSize: 13, textAlign: "center" }} class="text-muted-foreground">
+                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[16] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-muted-foreground">
                       {t("snippets.bundler.outputPlaceholder")}
                     </Text>
                   </View>
@@ -266,11 +266,11 @@ export function BundlerModal() {
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {result() ? t("snippets.bundler.inlinedCount", { count: (result()?.inlined_files ?? []).length }) : ""}
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <Btn
               variant="outline"
               icon={saved.active() ? "check" : "fileDown"}

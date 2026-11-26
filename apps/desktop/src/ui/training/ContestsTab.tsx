@@ -24,6 +24,7 @@ import {
   type ContestTimeGroup,
 } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 function groupLabel(group: ContestTimeGroup): string {
   switch (group) {
     case "today":
@@ -96,10 +97,10 @@ export function ContestsTab(props: {
       const rem = formatCountdown(item.end_time, now, en);
       return (
         <View
-          style={{ height: 20, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+          style={{ height: 20, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact countdown badge height
           class="bg-chart-2/15"
         >
-          <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-chart-2">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-chart-2">
             {en ? `Running  ${rem} left` : `进行中  剩 ${rem}`}
           </Text>
         </View>
@@ -114,10 +115,10 @@ export function ContestsTab(props: {
       return (
         <View
           testID={`contest-countdown-${item.platform}-${item.contest_id}`}
-          style={{ height: 20, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center", flexShrink: 0 }}
+          style={{ height: 20, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", flexShrink: 0 }} // token-exempt: compact countdown badge height
           class="bg-muted"
         >
-          <Text style={{ fontSize: 11, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
             {label}
           </Text>
         </View>
@@ -130,7 +131,7 @@ export function ContestsTab(props: {
     <Scroll
       testID="training-contests-scroll"
       style={{ flex: 1, minHeight: 0 }}
-      contentStyle={{ padding: 20, gap: 14, paddingBottom: 36 }}
+      contentStyle={{ padding: SPACE[20], gap: SPACE[12], paddingBottom: SPACE[32] }}
     >
       {/* Filter bar */}
       <View
@@ -139,19 +140,19 @@ export function ContestsTab(props: {
           alignItems: "center",
           justifyContent: showPlatformFilter() ? "space-between" : "flex-end",
           flexWrap: "wrap",
-          gap: 10,
+          gap: SPACE[8],
         }}
       >
         <If when={showPlatformFilter()}>
-          <View testID="contests-platform-bar" style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <View testID="contests-platform-bar" style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
             <View
               testID="contests-platform-all"
               onPress={() => props.onPlatformChange("")}
               class={props.platformFilter === "" ? "bg-accent border border-foreground/30" : "bg-card border border-border hover:bg-muted"}
-              style={{ height: 26, paddingLeft: 10, paddingRight: 10, borderRadius: 6, justifyContent: "center" }}
+              style={{ height: CONTROL.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], borderRadius: RADIUS.sm, justifyContent: "center" }}
             >
               <Text
-                style={{ fontSize: 12, fontWeight: 500 }}
+                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                 class={props.platformFilter === "" ? "text-foreground" : "text-secondary-foreground"}
               >
                 {t("training.contests.allPlatforms")}
@@ -165,10 +166,10 @@ export function ContestsTab(props: {
                     testID={`contests-platform-${plat()}`}
                     onPress={() => props.onPlatformChange(plat())}
                     class={active() ? "bg-accent border border-foreground/30" : "bg-card border border-border hover:bg-muted"}
-                    style={{ height: 26, paddingLeft: 10, paddingRight: 10, borderRadius: 6, justifyContent: "center" }}
+                    style={{ height: CONTROL.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], borderRadius: RADIUS.sm, justifyContent: "center" }}
                   >
                     <Text
-                      style={{ fontSize: 12, fontWeight: 500 }}
+                      style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                       class={active() ? "text-foreground" : "text-secondary-foreground"}
                     >
                       {platformDisplayName(plat())}
@@ -181,11 +182,11 @@ export function ContestsTab(props: {
         </If>
 
         <View
-          style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+          style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}
         >
           <Text
             onPress={() => props.onIncludeFinishedChange(!props.includeFinished)}
-            style={{ fontSize: 12 }}
+            style={{ fontSize: FONT_SIZE.caption }}
             class="text-secondary-foreground"
           >
             {t("training.contests.includeFinished")}
@@ -208,36 +209,36 @@ export function ContestsTab(props: {
             testID="training-contests-empty"
             class="bg-card border border-border"
             style={{
-              borderRadius: 10,
-              padding: 28,
+              borderRadius: RADIUS.lg,
+              padding: SPACE[32],
               alignItems: "center",
               justifyContent: "center",
-              gap: 6,
+              gap: SPACE[6],
               boxShadow: cardShadow(),
             }}
           >
-            <Text style={{ fontSize: 13.5, fontWeight: 500 }} class="text-foreground">
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("training.contests.emptyTitle")}
             </Text>
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("training.contests.emptyDesc")}
             </Text>
           </View>
         }
       >
-        <View testID="training-contests-list" style={{ gap: 16 }}>
+        <View testID="training-contests-list" style={{ gap: SPACE[16] }}>
           <Each of={grouped()} key={(g) => g.group}>
             {(section) => (
-              <View testID={`contests-group-${section().group}`} style={{ gap: 8 }}>
+              <View testID={`contests-group-${section().group}`} style={{ gap: SPACE[8] }}>
                 <Text
-                  style={{ fontSize: 12, fontWeight: 600, paddingLeft: 2 }}
+                  style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, paddingLeft: SPACE[2] }}
                   class="text-muted-foreground"
                 >
                   {groupLabel(section().group)}
                 </Text>
                 <View
                   class="bg-card border border-border"
-                  style={{ borderRadius: 10, overflow: "hidden", boxShadow: cardShadow() }}
+                  style={{ borderRadius: RADIUS.lg, overflow: "hidden", boxShadow: cardShadow() }}
                 >
                   <Each of={section().items} key={(c) => `${c.platform}:${c.contest_id}`}>
                     {(item, idx) => {
@@ -247,7 +248,7 @@ export function ContestsTab(props: {
                       return (
                         <View>
                           <If when={idx() > 0}>
-                            <View style={{ height: 1, marginLeft: 16, marginRight: 16 }} class="bg-border" />
+                            <View style={{ height: 1, marginLeft: SPACE[16], marginRight: SPACE[16] }} class="bg-border" />
                           </If>
                           <View
                             testID={`contest-row-${item().platform}-${item().contest_id}`}
@@ -259,36 +260,36 @@ export function ContestsTab(props: {
                             tooltip={clickable() ? tip(t("training.contests.openPage")) : undefined}
                             class={clickable() ? "hover:bg-muted/60 active:bg-accent/60" : undefined}
                             style={{
-                              paddingTop: 12,
-                              paddingBottom: 12,
-                              paddingLeft: 16,
-                              paddingRight: 16,
+                              paddingTop: SPACE[12],
+                              paddingBottom: SPACE[12],
+                              paddingLeft: SPACE[16],
+                              paddingRight: SPACE[16],
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 14,
+                              gap: SPACE[12],
                               ...colorTransition(120),
                             }}
                           >
-                            <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                            <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                                 <If when={showPlatformFilter()}>
                                   <View
                                     testID={`contest-platform-badge-${item().platform}-${item().contest_id}`}
                                     class="bg-muted"
                                     style={{
                                       width: 82,
-                                      height: 20,
-                                      borderRadius: 5,
-                                      paddingLeft: 6,
-                                      paddingRight: 6,
+                                      height: 20, // token-exempt: compact platform badge height
+                                      borderRadius: RADIUS.xs,
+                                      paddingLeft: SPACE[6],
+                                      paddingRight: SPACE[6],
                                       alignItems: "center",
                                       justifyContent: "center",
                                       flexShrink: 0,
                                     }}
                                   >
                                     <Text
-                                      style={{ fontSize: 11.5, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                      style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                                       class="text-secondary-foreground"
                                     >
                                       {platformDisplayName(item().platform)}
@@ -297,8 +298,8 @@ export function ContestsTab(props: {
                                 </If>
                                 <Text
                                   style={{
-                                    fontSize: 13.5,
-                                    fontWeight: 500,
+                                    fontSize: FONT_SIZE.body,
+                                    fontWeight: FONT_WEIGHT.semibold,
                                     flexShrink: 1,
                                     minWidth: 0,
                                     numberOfLines: 1,
@@ -309,30 +310,30 @@ export function ContestsTab(props: {
                                   {item().name}
                                 </Text>
                               </View>
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                                   {formatUnixDateTime(item().start_time)}
                                 </Text>
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                   {t("training.contests.duration", { duration: formatDuration(item().duration_sec, isEn()) })}
                                 </Text>
                               </View>
                             </View>
 
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
                               {statusBadge(item())}
                               {/* Subtle hover external-link icon (fixed slot, zero layout shift) */}
                               <View
                                 style={{
                                   width: 24,
-                                  height: 24,
+                                  height: CONTROL.sm,
                                   alignItems: "center",
                                   justifyContent: "center",
                                   flexShrink: 0,
                                   opacity: clickable() && isHovered() ? 1 : 0,
                                 }}
                               >
-                                <Icon name="link" size={14} tone="muted-foreground" />
+                                <Icon name="link" size="sm" tone="muted-foreground" />
                               </View>
                             </View>
                           </View>

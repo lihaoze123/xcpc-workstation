@@ -12,6 +12,7 @@ import { MONO } from "../theme";
 import { StatusMark } from "../studio/StatusSlot";
 import { markForPackageStatus } from "../studio/statusLogic";
 
+import { FONT_SIZE, RADIUS, SPACE } from "../tokens";
 export type LibraryRow = ProblemSummaryJs & {
   ratingText: string;
   tagsText: string;
@@ -40,15 +41,15 @@ export function TriCheckbox(props: {
       style={{
         width: 16,
         height: 16,
-        borderRadius: 4,
+        borderRadius: RADIUS.xs,
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
         ...colorTransition(120),
       }}
     >
-      {props.state === "all" && <Icon name="check" size={11} tone="primary-foreground" />}
-      {props.state === "partial" && <Icon name="minus" size={11} tone="primary-foreground" />}
+      {props.state === "all" && <Icon name="check" size="sm" tone="primary-foreground" />}
+      {props.state === "partial" && <Icon name="minus" size="sm" tone="primary-foreground" />}
     </View>
   );
 }
@@ -61,13 +62,13 @@ function StatusSlot(props: { children?: JSX.Element; tooltipText?: string; compa
       tooltip={props.tooltipText ? tip(props.tooltipText) : undefined}
       style={{
         width: size,
-        height: 18,
+        height: 18, // token-exempt: compact inline status cell
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
       }}
     >
-      {props.children ?? <View style={{ width: 3.5, height: 3.5, borderRadius: 2 }} class="bg-border" />}
+      {props.children ?? <View style={{ width: 3.5, height: 3.5, borderRadius: 2 }} class="bg-border" />} // token-exempt: 3.5px empty dot placeholder
     </View>
   );
 }
@@ -78,28 +79,28 @@ function TrainingStatusSlot(props: { status?: string | null }) {
   if (st === "ac") {
     return (
       <StatusSlot compact tooltipText={t("training.status.ac")}>
-        <Icon name="check" size={13} tone="chart-2" />
+        <Icon name="check" size="sm" tone="chart-2" />
       </StatusSlot>
     );
   }
   if (st === "upsolved") {
     return (
       <StatusSlot compact tooltipText={t("training.status.upsolved")}>
-        <Icon name="shieldCheck" size={13} tone="primary" />
+        <Icon name="shieldCheck" size="sm" tone="primary" />
       </StatusSlot>
     );
   }
   if (st === "attempted") {
     return (
       <StatusSlot compact tooltipText={t("training.status.attempted")}>
-        <Icon name="circleAlert" size={13} tone="chart-4" />
+        <Icon name="circleAlert" size="sm" tone="chart-4" />
       </StatusSlot>
     );
   }
   if (st === "todo") {
     return (
       <StatusSlot compact tooltipText={t("training.status.todo")}>
-        <View style={{ width: 9, height: 9, borderRadius: 4.5, borderWidth: 1.5 }} class="border-secondary-foreground" />
+        <View style={{ width: 9, height: 9, borderRadius: RADIUS.xs, borderWidth: 1.5 }} class="border-secondary-foreground" />
       </StatusSlot>
     );
   }
@@ -131,12 +132,12 @@ export function renderLibraryCellContent(
 
   if (key === "title") {
     return (
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0 }}>
         <Text
           style={{
             numberOfLines: 1,
             textOverflow: "ellipsis",
-            fontSize: 13.5,
+            fontSize: FONT_SIZE.body,
             lineHeight: ROW_LINE,
             flexShrink: 1,
             minWidth: 0,
@@ -150,7 +151,7 @@ export function renderLibraryCellContent(
             style={{
               numberOfLines: 1,
               textOverflow: "ellipsis",
-              fontSize: 11.5,
+              fontSize: FONT_SIZE.caption,
               lineHeight: ROW_LINE,
               fontFamily: MONO,
               maxWidth: 112,
@@ -188,24 +189,24 @@ export function renderLibraryCellContent(
     }
     const overflow = Math.max(0, row.tags.length - visible.length);
     return (
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: SPACE[4], minWidth: 0, overflow: "hidden" }}>
         <Each of={visible} key={(tag) => tag}>
           {(tag) => <Chip label={tag()} maxWidth={maxChipW} />}
         </Each>
         {overflow > 0 && (
           <View
             style={{
-              height: 20,
-              paddingLeft: 5,
-              paddingRight: 5,
-              borderRadius: 5,
+              height: 20, // token-exempt: compact inline chip height
+              paddingLeft: SPACE[4],
+              paddingRight: SPACE[4],
+              borderRadius: RADIUS.xs,
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
             }}
             class="bg-muted"
           >
-            <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
               {`+${overflow}`}
             </Text>
           </View>
@@ -239,9 +240,9 @@ export function renderLibraryCellContent(
     } else if (st) {
       primary = <StatusMark kind={markForPackageStatus(st)} />;
     } else if (row.hasEditorial) {
-      primary = <Icon name="filePenLine" size={13} tone="secondary-foreground" />;
+      primary = <Icon name="filePenLine" size="sm" tone="secondary-foreground" />;
     } else if (row.hasSolutions) {
-      primary = <Icon name="code" size={13} tone="secondary-foreground" />;
+      primary = <Icon name="code" size="sm" tone="secondary-foreground" />;
     }
 
     return (
@@ -257,7 +258,7 @@ export function renderLibraryCellContent(
         style={{
           numberOfLines: 1,
           textOverflow: "ellipsis",
-          fontSize: 12,
+          fontSize: FONT_SIZE.caption,
           lineHeight: ROW_LINE,
           fontFamily: MONO,
           flexShrink: 1,
@@ -274,11 +275,11 @@ export function renderLibraryCellContent(
 }
 
 export function cellPadding(key: string): { paddingLeft: number; paddingRight: number; justifyContent: "flex-start" | "center" | "flex-end" } {
-  if (key === "select") return { paddingLeft: 0, paddingRight: 0, justifyContent: "center" };
-  if (key === "ratingText") return { paddingLeft: 8, paddingRight: 12, justifyContent: "flex-end" };
-  if (key === "status") return { paddingLeft: 4, paddingRight: 4, justifyContent: "center" };
-  if (key === "title") return { paddingLeft: 8, paddingRight: 12, justifyContent: "flex-start" };
-  return { paddingLeft: 10, paddingRight: 10, justifyContent: "flex-start" };
+  if (key === "select") return { paddingLeft: SPACE[0], paddingRight: SPACE[0], justifyContent: "center" };
+  if (key === "ratingText") return { paddingLeft: SPACE[8], paddingRight: SPACE[12], justifyContent: "flex-end" };
+  if (key === "status") return { paddingLeft: SPACE[4], paddingRight: SPACE[4], justifyContent: "center" };
+  if (key === "title") return { paddingLeft: SPACE[8], paddingRight: SPACE[12], justifyContent: "flex-start" };
+  return { paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "flex-start" };
 }
 
 export function renderLibraryHeaderContent(props: {
@@ -313,7 +314,7 @@ export function renderLibraryHeaderContent(props: {
     !props.nativeSortIndicator && props.sortDir ? (
       <Icon
         name="chevronDown"
-        size={12}
+        size="sm"
         tone="secondary-foreground"
         style={{ transform: props.sortDir === "ascending" ? "rotate(180deg)" : "rotate(0deg)" }}
       />
@@ -330,12 +331,12 @@ export function renderLibraryHeaderContent(props: {
         justifyContent: pad.justifyContent,
         paddingLeft: pad.paddingLeft,
         paddingRight: props.nativeSortIndicator && sortable ? Math.max(pad.paddingRight, 20) : pad.paddingRight,
-        gap: 4,
+        gap: SPACE[4],
       }}
     >
       {isEnd && chevron}
       <Text
-        style={{ fontSize: 12, lineHeight: ROW_LINE, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
+        style={{ fontSize: FONT_SIZE.caption, lineHeight: ROW_LINE, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
         class={props.sortDir ? "text-foreground" : "text-muted-foreground"}
       >
         {props.title}

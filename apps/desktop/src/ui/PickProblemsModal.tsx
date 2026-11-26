@@ -28,6 +28,7 @@ import { DialogHeader } from "./Modal";
 import { EASE_STANDARD, MONO, ms } from "./theme";
 import { dialog, errorOf, info, preview, refresh, revision, type UiError } from "./store";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
 const PICK_ROW_HEIGHT = 38;
 const PICK_ROW_GAP = 2;
 const PICK_ROW_STRIDE = PICK_ROW_HEIGHT + PICK_ROW_GAP;
@@ -66,13 +67,13 @@ function PickerFilterMenu(props: {
         <View
           class={props.active ? "bg-accent border border-border" : "border border-border bg-card hover:bg-muted active:bg-accent"}
           style={{
-            height: 28,
-            paddingLeft: 9,
-            paddingRight: 7,
-            borderRadius: 6,
+            height: CONTROL.md,
+            paddingLeft: SPACE[8],
+            paddingRight: SPACE[8],
+            borderRadius: RADIUS.sm,
             flexDirection: "row",
             alignItems: "center",
-            gap: 5,
+            gap: SPACE[4],
             maxWidth: 112,
             minWidth: 0,
             overflow: "hidden",
@@ -82,12 +83,12 @@ function PickerFilterMenu(props: {
           }}
         >
           <Text
-            style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: 12.5 }}
+            style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0, fontSize: FONT_SIZE.caption }}
             class={props.active ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.label}
           </Text>
-          <Chevron size={12} tone="muted-foreground" />
+          <Chevron size="sm" tone="muted-foreground" />
         </View>
       }
     />
@@ -284,7 +285,7 @@ export function PickProblemsBody(props: { contestId: string }) {
       style={{ maxHeight: 560 }}
     >
       {/* Header */}
-      <View style={{ padding: 18, paddingBottom: 12, gap: 12, borderBottomWidth: 1 }} class="border-border">
+      <View style={{ padding: SPACE[16], paddingBottom: SPACE[12], gap: SPACE[12], borderBottomWidth: 1 }} class="border-border">
         <DialogHeader
           icon="listPlus"
           title={t("pickProblems.title")}
@@ -293,25 +294,25 @@ export function PickProblemsBody(props: { contestId: string }) {
 
         {/* Filter bar (hidden when library is completely empty) */}
         <If when={totalProblems() > 0}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: SPACE[6] }}>
             <View
               class="border border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring"
               style={{
                 flex: 1,
                 minWidth: 140,
-                height: 28,
-                paddingLeft: 8,
-                paddingRight: 6,
-                borderRadius: 6,
+                height: CONTROL.md,
+                paddingLeft: SPACE[8],
+                paddingRight: SPACE[6],
+                borderRadius: RADIUS.sm,
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 6,
+                gap: SPACE[6],
               }}
             >
-              <Icon name="search" size={13} tone="muted-foreground" />
+              <Icon name="search" size="sm" tone="muted-foreground" />
               <Input
                 ref={(r) => (searchInput = r)}
-                style={{ flex: 1, height: 24, fontSize: 12.5 }}
+                style={{ flex: 1, height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
                 value={inputText()}
                 placeholder={t("pickProblems.searchPlaceholder")}
                 autoCapitalize="none"
@@ -329,9 +330,9 @@ export function PickProblemsBody(props: { contestId: string }) {
                   }}
                   tooltip={tip(t("library.clearSearch"), "escape")}
                   class="hover:bg-muted active:bg-accent"
-                  style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }}
+                  style={{ width: 18, height: 18, borderRadius: RADIUS.xs, alignItems: "center", justifyContent: "center" }} // token-exempt: compact checkbox square
                 >
-                  <Icon name="x" size={11} tone="muted-foreground" />
+                  <Icon name="x" size="sm" tone="muted-foreground" />
                 </View>
               </If>
             </View>
@@ -401,7 +402,7 @@ export function PickProblemsBody(props: { contestId: string }) {
             onLayout={(e) => (listHeight = e.bounds.size.height)}
             onScroll={(e) => (listScrollY = e.offset.y)}
           >
-            <View style={{ padding: 6, gap: PICK_ROW_GAP }}>
+            <View style={{ padding: SPACE[6], gap: PICK_ROW_GAP }}>
               <Each of={rows()} key={(p) => p.id}>
                 {(p, idx) => {
                   const inContest = () => existingIds().has(p().id);
@@ -432,12 +433,12 @@ export function PickProblemsBody(props: { contestId: string }) {
                       }
                       style={{
                         height: PICK_ROW_HEIGHT,
-                        paddingLeft: 10,
-                        paddingRight: 10,
-                        borderRadius: 6,
+                        paddingLeft: SPACE[12],
+                        paddingRight: SPACE[12],
+                        borderRadius: RADIUS.sm,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 10,
+                        gap: SPACE[8],
                         opacity: disabled() ? 0.58 : 1,
                         transitionProperty: "colors",
                         transitionDuration: ms(100),
@@ -456,33 +457,33 @@ export function PickProblemsBody(props: { contestId: string }) {
                         style={{
                           width: 16,
                           height: 16,
-                          borderRadius: 4,
+                          borderRadius: RADIUS.xs,
                           alignItems: "center",
                           justifyContent: "center",
                           flexShrink: 0,
                         }}
                       >
                         <If when={checked() || inContest()}>
-                          <Icon name="check" size={11} tone={checked() ? "primary-foreground" : "muted-foreground"} />
+                          <Icon name="check" size="sm" tone={checked() ? "primary-foreground" : "muted-foreground"} />
                         </If>
                       </View>
                       {/* Monospace ID */}
                       <Text
-                        style={{ width: 108, fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 0 }}
+                        style={{ width: 108, fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 0 }}
                         class="text-muted-foreground"
                       >
                         {p().id}
                       </Text>
                       {/* Title */}
                       <Text
-                        style={{ flex: 1, minWidth: 0, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class={disabled() ? "text-muted-foreground" : "text-foreground"}
                       >
                         {p().title}
                       </Text>
                       {/* Compact tags (up to 2, single tag uses full 132pt without artificial 64pt clipping) */}
                       <If when={visibleTags().length > 0}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 136, overflow: "hidden", flexShrink: 0 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], maxWidth: 136, overflow: "hidden", flexShrink: 0 }}>
                           <Each of={visibleTags()} key={(t) => t}>
                             {(t) => (
                               <Chip
@@ -498,7 +499,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                       <RatingBadge rating={p().rating} />
                       {/* Already in contest indicator */}
                       <If when={inContest()}>
-                        <Text style={{ fontSize: 11.5, flexShrink: 0 }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, flexShrink: 0 }} class="text-muted-foreground">
                           {t("pickProblems.alreadyAdded")}
                         </Text>
                       </If>
@@ -513,7 +514,7 @@ export function PickProblemsBody(props: { contestId: string }) {
 
       {/* Error banner */}
       <If when={error()}>
-        <View style={{ paddingLeft: 18, paddingRight: 18, paddingTop: 8 }}>
+        <View style={{ paddingLeft: SPACE[16], paddingRight: SPACE[16], paddingTop: SPACE[8] }}>
           <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
         </View>
       </If>
@@ -521,14 +522,14 @@ export function PickProblemsBody(props: { contestId: string }) {
       {/* Footer */}
       <View
         style={{
-          paddingLeft: 18,
-          paddingRight: 18,
-          paddingTop: 12,
-          paddingBottom: 14,
+          paddingLeft: SPACE[16],
+          paddingRight: SPACE[16],
+          paddingTop: SPACE[12],
+          paddingBottom: SPACE[12],
           borderTopWidth: 1,
           flexDirection: "row",
           alignItems: "center",
-          gap: 10,
+          gap: SPACE[8],
         }}
         class="border-border bg-muted/30"
       >
@@ -536,18 +537,18 @@ export function PickProblemsBody(props: { contestId: string }) {
           when={picked().length > 0}
           else={
             <If when={remaining() === 0}>
-              <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {t("pickProblems.capReached")}
               </Text>
             </If>
           }
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
               {t("pickProblems.selectedCount", { count: picked().length })}
             </Text>
             <If when={remainingAfterPick() === 0}>
-              <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {t("pickProblems.capReached")}
               </Text>
             </If>

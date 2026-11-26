@@ -48,6 +48,7 @@ import type {
 } from "./types";
 import { runSnippetVerifyJob } from "./verifyJob";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 // Per review S-4: formula cards are a type (Σ icon), not a verification status.
 const STATUS_FILTERS: { id: SnippetStatusFilter; labelKey: MessageKey }[] = [
   { id: "all", labelKey: "snippets.filter.all" },
@@ -235,30 +236,30 @@ export function SnippetsView(props: { active: boolean }) {
           <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
             {/* Left list column */}
             <View style={{ width: LIST_PANE_WIDTH, borderRightWidth: 1, flexDirection: "column" }} class="border-border">
-              <View style={{ padding: 10, gap: 8, borderBottomWidth: 1 }} class="border-border">
+              <View style={{ padding: SPACE[12], gap: SPACE[8], borderBottomWidth: 1 }} class="border-border">
                 <View
                   class="bg-muted border border-border focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring"
                   style={{
-                    height: 32,
-                    borderRadius: 7,
-                    paddingLeft: 8,
-                    paddingRight: 6,
+                    height: CONTROL.lg,
+                    borderRadius: RADIUS.sm,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[6],
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 6,
+                    gap: SPACE[6],
                   }}
                 >
-                  <Icon name="search" size={14} tone="muted-foreground" />
+                  <Icon name="search" size="sm" tone="muted-foreground" />
                   <Input
                     value={query()}
                     placeholder={t("snippets.searchPlaceholder")}
                     onChange={(e) => query.set(e.value)}
                     class="bg-transparent placeholder:text-muted-foreground"
-                    style={{ flex: 1, height: 28, fontSize: 13 }}
+                    style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body }}
                   />
                 </View>
 
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                   <AppMenu
                     entries={STATUS_FILTERS.map((f) => ({
                       id: f.id,
@@ -270,19 +271,19 @@ export function SnippetsView(props: { active: boolean }) {
                       <View
                         class="bg-card border border-border hover:bg-muted"
                         style={{
-                          height: 26,
-                          paddingLeft: 8,
-                          paddingRight: 6,
-                          borderRadius: 6,
+                          height: CONTROL.sm,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[6],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 4,
+                          gap: SPACE[4],
                         }}
                       >
-                        <Text style={{ fontSize: 12.5 }} class="text-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
                           {t(STATUS_FILTERS.find((f) => f.id === statusFilter())!.labelKey)}
                         </Text>
-                        <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                        <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                       </View>
                     }
                   />
@@ -298,25 +299,25 @@ export function SnippetsView(props: { active: boolean }) {
                         <View
                           class="bg-card border border-border hover:bg-muted"
                           style={{
-                            height: 26,
-                            paddingLeft: 8,
-                            paddingRight: 6,
-                            borderRadius: 6,
+                            height: CONTROL.sm,
+                            paddingLeft: SPACE[8],
+                            paddingRight: SPACE[6],
+                            borderRadius: RADIUS.sm,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 4,
+                            gap: SPACE[4],
                           }}
                         >
-                          <Text style={{ fontSize: 12.5 }} class="text-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
                             {tagFilter() || t("snippets.newModal.tags")}
                           </Text>
-                          <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                          <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                         </View>
                       }
                     />
                   </If>
                   <Spacer />
-                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                     {t("snippets.count", { count: filteredSnippets().length })}
                   </Text>
                 </View>
@@ -343,7 +344,7 @@ export function SnippetsView(props: { active: boolean }) {
                   />
                 }
               >
-                <Scroll style={{ flex: 1 }} contentStyle={{ padding: 8, gap: 2 }}>
+                <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[2] }}>
                   <Each of={filteredSnippets()} key={(s) => s.slug}>
                     {(s) => {
                       const selected = () => s().slug === selectedSnippetSlug();
@@ -358,31 +359,31 @@ export function SnippetsView(props: { active: boolean }) {
                           class={selected() ? "bg-accent" : "hover:bg-muted active:bg-accent"}
                           style={{
                             height: 54,
-                            paddingLeft: 10,
-                            paddingRight: 10,
-                            borderRadius: 8,
+                            paddingLeft: SPACE[12],
+                            paddingRight: SPACE[12],
+                            borderRadius: RADIUS.md,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 8,
+                            gap: SPACE[8],
                             transitionProperty: "colors",
                             transitionDuration: ms(120),
                             transitionTimingFunction: EASE_STANDARD,
                           }}
                         >
-                          <Icon name={s().has_code ? "code" : "sigma"} size={14.5} tone="secondary-foreground" />
-                          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                          <Icon name={s().has_code ? "code" : "sigma"} size="sm" tone="secondary-foreground" />
+                          <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
                             <Text
-                              style={{ fontSize: 13.5, lineHeight: 19, numberOfLines: 1, textOverflow: "ellipsis" }}
+                              style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                               class="text-foreground"
                             >
                               {s().title}
                             </Text>
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-muted-foreground">
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                              <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-muted-foreground">
                                 {s().slug}
                               </Text>
                               <If when={s().has_code}>
-                                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                                   {t("snippets.lines", { count: s().code_lines })}
                                 </Text>
                               </If>
@@ -390,15 +391,15 @@ export function SnippetsView(props: { active: boolean }) {
                           </View>
                           <View
                             style={{
-                              height: 20,
-                              paddingLeft: 6,
-                              paddingRight: 6,
-                              borderRadius: 5,
+                              height: 20, // token-exempt: compact status badge height
+                              paddingLeft: SPACE[6],
+                              paddingRight: SPACE[6],
+                              borderRadius: RADIUS.xs,
                               justifyContent: "center",
                               backgroundColor: st().bg,
                             }}
                           >
-                            <Text style={{ fontSize: 11.5, color: st().fg }}>
+                            <Text style={{ fontSize: FONT_SIZE.caption, color: st().fg }}>
                               {t(st().labelKey as MessageKey)}
                             </Text>
                           </View>
@@ -449,7 +450,7 @@ export function SnippetsView(props: { active: boolean }) {
         >
           <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
             <View style={{ width: LIST_PANE_WIDTH, borderRightWidth: 1, flexDirection: "column" }} class="border-border">
-              <Scroll style={{ flex: 1 }} contentStyle={{ padding: 8, gap: 2 }}>
+              <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[8], gap: SPACE[2] }}>
                 <Each of={trdParts().active} key={(trd) => trd.id}>
                   {(trd) => (
                     <TrdRow
@@ -462,34 +463,34 @@ export function SnippetsView(props: { active: boolean }) {
                 </Each>
 
                 <If when={trdParts().archived.length > 0}>
-                  <View style={{ marginTop: 10 }}>
+                  <View style={{ marginTop: SPACE[8] }}>
                     <View
                       onPress={() => archivedOpen.set(!archivedOpen())}
                       style={{
-                        height: 30,
-                        paddingLeft: 8,
-                        paddingRight: 8,
-                        borderRadius: 6,
+                        height: CONTROL.md,
+                        paddingLeft: SPACE[8],
+                        paddingRight: SPACE[8],
+                        borderRadius: RADIUS.sm,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 6,
+                        gap: SPACE[6],
                       }}
                       class="hover:bg-muted"
                     >
                       <Icon
                         name={archivedOpen() ? "chevronDown" : "chevronRight"}
-                        size={13}
+                        size="sm"
                         tone="muted-foreground"
                       />
-                      <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                         {t("snippets.trd.archived")}
                       </Text>
-                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                         {String(trdParts().archived.length)}
                       </Text>
                     </View>
                     <If when={archivedOpen()}>
-                      <View style={{ gap: 2, marginTop: 2 }}>
+                      <View style={{ gap: SPACE[2], marginTop: SPACE[2] }}>
                         <Each of={trdParts().archived} key={(trd) => trd.id}>
                           {(trd) => (
                             <TrdRow
@@ -528,24 +529,24 @@ export function SnippetsView(props: { active: boolean }) {
         onClose={() => deleteSnippetTarget.set(undefined)}
         width={420}
       >
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
-              style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
               class="bg-muted"
             >
-              <Icon name="trash" size={16} tone="destructive" />
+              <Icon name="trash" size="md" tone="destructive" />
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+            <View style={{ flex: 1, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.deleteTitle")}
               </Text>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {deleteSnippetTarget() ? t("snippets.deleteDesc", { title: deleteSnippetTarget()!.title }) : ""}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn variant="outline" label={t("common.cancel")} onPress={() => deleteSnippetTarget.set(undefined)} />
             <Btn variant="danger" label={t("common.delete")} onPress={confirmDeleteSnippet} />
           </View>
@@ -554,24 +555,24 @@ export function SnippetsView(props: { active: boolean }) {
 
       {/* Delete TRD confirm modal */}
       <Modal open={deleteTrdTarget() !== undefined} onClose={() => deleteTrdTarget.set(undefined)} width={420}>
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
-              style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
               class="bg-muted"
             >
-              <Icon name="trash" size={16} tone="destructive" />
+              <Icon name="trash" size="md" tone="destructive" />
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+            <View style={{ flex: 1, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.deleteTitle")}
               </Text>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {deleteTrdTarget() ? t("snippets.trd.deleteDesc", { name: deleteTrdTarget()!.name }) : ""}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn variant="outline" label={t("common.cancel")} onPress={() => deleteTrdTarget.set(undefined)} />
             <Btn variant="danger" label={t("common.delete")} onPress={confirmDeleteTrd} />
           </View>
@@ -708,15 +709,15 @@ function SnippetDetailPane(props: {
             statusInfo() ? (
               <View
                 style={{
-                  height: 20,
-                  paddingLeft: 7,
-                  paddingRight: 7,
-                  borderRadius: 5,
+                  height: 20, // token-exempt: compact status badge height
+                  paddingLeft: SPACE[8],
+                  paddingRight: SPACE[8],
+                  borderRadius: RADIUS.xs,
                   justifyContent: "center",
                   backgroundColor: statusInfo()!.bg,
                 }}
               >
-                <Text style={{ fontSize: 12, color: statusInfo()!.fg }}>
+                <Text style={{ fontSize: FONT_SIZE.caption, color: statusInfo()!.fg }}>
                   {t(statusInfo()!.labelKey as MessageKey)}
                 </Text>
               </View>
@@ -795,16 +796,16 @@ function SnippetDetailPane(props: {
             style={{
               paddingLeft: GUTTER,
               paddingRight: GUTTER,
-              paddingBottom: 10,
+              paddingBottom: SPACE[12],
               flexDirection: "row",
               flexWrap: "wrap",
               alignItems: "center",
-              gap: 12,
+              gap: SPACE[12],
             }}
           >
             <If when={deps().length > 0}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("snippets.section.deps")}
                 </Text>
                 <Each of={deps()} key={(id) => id}>
@@ -813,8 +814,8 @@ function SnippetDetailPane(props: {
               </View>
             </If>
             <If when={reverseDeps().length > 0}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("snippets.section.reverseDeps")}
                 </Text>
                 <Each of={reverseDeps()} key={(id) => id}>
@@ -823,8 +824,8 @@ function SnippetDetailPane(props: {
               </View>
             </If>
             <If when={relatedProblems().length > 0}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("snippets.section.relatedProblems")}
                 </Text>
                 <Each of={relatedProblems()} key={(id) => id}>
@@ -855,10 +856,10 @@ function SnippetDetailPane(props: {
               top: 12,
               left: 16,
               right: 16,
-              padding: 10,
-              borderRadius: 10,
+              padding: SPACE[12],
+              borderRadius: RADIUS.lg,
               borderWidth: 1,
-              gap: 6,
+              gap: SPACE[6],
               boxShadow: cardShadow(),
             }}
             class="border-border bg-popover"
@@ -867,20 +868,20 @@ function SnippetDetailPane(props: {
               {(c) => {
                 const isUnavail = () => c().verdict === "UNAVAILABLE";
                 return (
-                  <View style={{ gap: 4 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <View style={{ gap: SPACE[4] }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                       <Icon
                         name="circleAlert"
-                        size={14}
+                        size="sm"
                         tone={isUnavail() ? "chart-4" : "destructive"}
                       />
                       <Text
-                        style={{ fontSize: 13, fontWeight: 500, fontFamily: MONO }}
+                        style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
                         class={isUnavail() ? "text-foreground" : "text-destructive"}
                       >
                         {isUnavail() ? t("snippets.verify.unavailable") : c().verdict}
                       </Text>
-                      <Text style={{ fontSize: 13, fontFamily: MONO, flex: 1 }} class="text-secondary-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, flex: 1 }} class="text-secondary-foreground">
                         {c().target}
                       </Text>
                       <If when={isUnavail()}>
@@ -892,7 +893,7 @@ function SnippetDetailPane(props: {
                       </If>
                     </View>
                     <If when={!!c().message}>
-                      <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                         {c().message!}
                       </Text>
                     </If>
@@ -924,40 +925,40 @@ function TrdRow(props: {
       class={props.selected ? "bg-accent" : "hover:bg-muted active:bg-accent"}
       style={{
         height: 54,
-        paddingLeft: 10,
-        paddingRight: 10,
-        borderRadius: 8,
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[12],
+        borderRadius: RADIUS.md,
         flexDirection: "row",
         alignItems: "center",
-        gap: 10,
+        gap: SPACE[8],
         opacity: props.muted && !props.selected ? 0.78 : 1,
         transitionProperty: "colors",
         transitionDuration: ms(120),
         transitionTimingFunction: EASE_STANDARD,
       }}
     >
-      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
         <Text
-          style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, lineHeight: 19 }}
+          style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }}
           class="text-foreground"
         >
           {props.item.name}
         </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ fontSize: 12.5, lineHeight: 17, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {t("snippets.trd.chapterCount", {
               chapters: props.item.chapter_count,
               items: props.item.item_count,
             })}
           </Text>
           <If when={props.item.frozen}>
-            <Text style={{ fontSize: 12.5, lineHeight: 17 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("snippets.trd.finalized")}
             </Text>
           </If>
         </View>
       </View>
-      <Lock closed={props.item.frozen} size={14} />
+      <Lock closed={props.item.frozen} size="sm" />
     </View>
   );
 }
@@ -1017,9 +1018,9 @@ function TrdDetailPane(props: {
           title={detail()?.meta.name ?? props.id}
           badge={
             frozen() ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <Lock closed size={13} />
-                <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+                <Lock closed size="sm" />
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("snippets.trd.finalized")}
                 </Text>
               </View>
@@ -1027,14 +1028,14 @@ function TrdDetailPane(props: {
           }
           second={
             detail() && (detail()!.meta.author || detail()!.meta.date) ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
                 <If when={!!detail()!.meta.author}>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                     {detail()!.meta.author!}
                   </Text>
                 </If>
                 <If when={!!detail()!.meta.date}>
-                  <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                     {detail()!.meta.date!}
                   </Text>
                 </If>
@@ -1076,17 +1077,17 @@ function TrdDetailPane(props: {
         />
       </View>
 
-      <Scroll style={{ flex: 1 }} contentStyle={{ padding: GUTTER, gap: 12 }}>
+      <Scroll style={{ flex: 1 }} contentStyle={{ padding: GUTTER, gap: SPACE[12] }}>
         <Each of={chapters()} key={(c) => c.title}>
           {(ch) => (
             <View
-              style={{ borderRadius: 10, borderWidth: 1, padding: 14, gap: 10, boxShadow: cardShadow() }}
+              style={{ borderRadius: RADIUS.lg, borderWidth: 1, padding: SPACE[12], gap: SPACE[8], boxShadow: cardShadow() }}
               class="border-border bg-card"
             >
-              <Text style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {ch().title}
               </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
                 <Each of={ch().items ?? []} key={(slug) => slug}>
                   {(slug) => {
                     const meta = () => props.allSnippets.find((s) => s.slug === slug());
@@ -1096,18 +1097,18 @@ function TrdDetailPane(props: {
                         else={
                           <View
                             style={{
-                              height: 22,
-                              paddingLeft: 8,
-                              paddingRight: 8,
-                              borderRadius: 5,
+                              height: 22, // token-exempt: compact status badge height
+                              paddingLeft: SPACE[8],
+                              paddingRight: SPACE[8],
+                              borderRadius: RADIUS.xs,
                               flexDirection: "row",
                               alignItems: "center",
-                              gap: 4,
+                              gap: SPACE[4],
                               backgroundColor: "rgba(244,63,94,0.12)",
                             }}
                           >
-                            <Icon name="circleAlert" size={12} tone="destructive" />
-                            <Text style={{ fontSize: 12 }} class="text-destructive">
+                            <Icon name="circleAlert" size="sm" tone="destructive" />
+                            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
                               {slug()}
                             </Text>
                           </View>

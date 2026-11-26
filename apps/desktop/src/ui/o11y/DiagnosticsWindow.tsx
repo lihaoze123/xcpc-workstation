@@ -66,6 +66,7 @@ import {
   type TimeWindowPreset,
 } from "./telemetry";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 type DiagTab = "metrics" | "traces" | "logs";
 type TraceFilter = "all" | "slow" | "inp" | "error";
 type TracePaneMode = "waterfall" | "compare";
@@ -191,25 +192,25 @@ function MetricsTab() {
     flex: 1,
     minWidth: 320,
     minHeight: 220,
-    borderRadius: 10,
-    padding: 12,
+    borderRadius: RADIUS.lg,
+    padding: SPACE[12],
     flexDirection: "column" as const,
-    gap: 6,
+    gap: SPACE[6],
   };
 
   return (
-    <View style={{ flex: 1, padding: 12, gap: 10, flexDirection: "column", minHeight: 0 }}>
+    <View style={{ flex: 1, padding: SPACE[12], gap: SPACE[8], flexDirection: "column", minHeight: 0 }}>
       {/* Row 1 */}
-      <View style={{ flex: 1, flexDirection: "row", gap: 10, minHeight: 220 }}>
+      <View style={{ flex: 1, flexDirection: "row", gap: SPACE[8], minHeight: 220 }}>
         <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("o11y.chart.frame")}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
               <If when={metricSummaries().framePeakMs !== null}>
                 <Text
-                  style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                  style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
                   class="text-destructive"
                 >
                   {`↑ ${t("o11y.metrics.peak")} ${metricSummaries().framePeakMs?.toFixed(1)} ms`}
@@ -242,15 +243,15 @@ function MetricsTab() {
         </View>
 
         <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("o11y.chart.pipeline")}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("compile", metricSummaries().buildDoc)}
               </Text>
-              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("raster", metricSummaries().rasterize)}
               </Text>
             </View>
@@ -273,17 +274,17 @@ function MetricsTab() {
       </View>
 
       {/* Row 2 */}
-      <View style={{ flex: 1, flexDirection: "row", gap: 10, minHeight: 220 }}>
+      <View style={{ flex: 1, flexDirection: "row", gap: SPACE[8], minHeight: 220 }}>
         <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("o11y.chart.latency")}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("IPC", metricSummaries().ipc)}
               </Text>
-              <Text style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {formatStatReadout("INP", metricSummaries().inp)}
               </Text>
             </View>
@@ -305,8 +306,8 @@ function MetricsTab() {
         </View>
 
         <View class={cardClass} style={cardStyle} tooltip={tip(t("o11y.metrics.hint"))}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <Text style={{ fontSize: 12.5, fontWeight: 600 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("o11y.chart.cache")}
             </Text>
           </View>
@@ -408,7 +409,7 @@ function TracesTab(props: {
         class="border-r border-border bg-card"
         style={{ width: 292, flexDirection: "column", minHeight: 0 }}
       >
-        <View class="border-b border-border" style={{ padding: 10, gap: 8 }}>
+        <View class="border-b border-border" style={{ padding: SPACE[12], gap: SPACE[8] }}>
           <Segmented
             value={filter()}
             onChange={(v) => filter.set(v as TraceFilter)}
@@ -425,14 +426,14 @@ function TracesTab(props: {
               onPress={flushPendingTraces}
               class="bg-primary/10 hover:bg-primary/20 border border-primary/30"
               style={{
-                borderRadius: 6,
-                paddingHorizontal: 10,
-                paddingVertical: 5,
+                borderRadius: RADIUS.sm,
+                paddingHorizontal: SPACE[12],
+                paddingVertical: SPACE[4],
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
-              <Text style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-primary">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-primary">
                 {t("o11y.traces.newRecords", { count: pendingTraces().length })}
               </Text>
             </View>
@@ -440,10 +441,10 @@ function TracesTab(props: {
         </View>
 
         <Scroll style={{ flex: 1 }}>
-          <View style={{ padding: 6, gap: 3 }}>
+          <View style={{ padding: SPACE[6], gap: SPACE[2] }}>
             <If when={filteredTraces().length === 0}>
-              <View style={{ padding: 16, alignItems: "center" }}>
-                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+              <View style={{ padding: SPACE[16], alignItems: "center" }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("o11y.traces.empty")}
                 </Text>
               </View>
@@ -457,32 +458,32 @@ function TracesTab(props: {
                     onPress={() => props.onSelectTrace(tr().id)}
                     class={active() ? "bg-accent" : "hover:bg-muted"}
                     style={{
-                      paddingHorizontal: 9,
-                      paddingVertical: 7,
-                      borderRadius: 6,
-                      gap: 2,
+                      paddingHorizontal: SPACE[8],
+                      paddingVertical: SPACE[8],
+                      borderRadius: RADIUS.sm,
+                      gap: SPACE[2],
                     }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[6] }}>
                       <Text
-                        style={{ fontSize: 12, fontWeight: 500, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class={tr().hasError ? "text-destructive" : "text-foreground"}
                       >
                         {tr().name}
                       </Text>
                       <Text
-                        style={{ fontSize: 11, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
+                        style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }}
                         class={tr().durationMs >= 50 ? "text-destructive" : "text-muted-foreground"}
                       >
                         {tr().durationMs.toFixed(1)} ms
                       </Text>
                     </View>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                      <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                         {formatSpanCount(tr().spans.length)}
                       </Text>
                       <If when={tr().inpMs !== undefined}>
-                        <Text style={{ fontSize: 10.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-primary">
+                        <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-primary">
                           INP {tr().inpMs?.toFixed(1)} ms
                         </Text>
                       </If>
@@ -495,16 +496,16 @@ function TracesTab(props: {
         </Scroll>
 
         {/* Named baselines section */}
-        <View class="border-t border-border" style={{ maxHeight: 190, padding: 8, gap: 6 }}>
+        <View class="border-t border-border" style={{ maxHeight: 190, padding: SPACE[8], gap: SPACE[6] }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ fontSize: 11, fontWeight: 600 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
               {t("o11y.traces.baselines")} ({namedBaselines().length})
             </Text>
           </View>
           <Scroll style={{ maxHeight: 140 }}>
-            <View style={{ gap: 3 }}>
+            <View style={{ gap: SPACE[2] }}>
               <If when={namedBaselines().length === 0}>
-                <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                   {t("o11y.traces.noBaselines")}
                 </Text>
               </If>
@@ -522,14 +523,14 @@ function TracesTab(props: {
                         flexDirection: "row",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        paddingHorizontal: 8,
-                        paddingVertical: 5,
-                        borderRadius: 5,
-                        gap: 6,
+                        paddingHorizontal: SPACE[8],
+                        paddingVertical: SPACE[4],
+                        borderRadius: RADIUS.xs,
+                        gap: SPACE[6],
                       }}
                     >
                       <Text
-                        style={{ fontSize: 11.5, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ fontSize: FONT_SIZE.caption, flex: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {b().label}
@@ -537,9 +538,9 @@ function TracesTab(props: {
                       <View
                         onPress={() => removeBaseline(b().id)}
                         class="hover:bg-background"
-                        style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }}
+                        style={{ width: 18, height: 18, borderRadius: RADIUS.xs, alignItems: "center", justifyContent: "center" }} // token-exempt: compact inline icon box
                       >
-                        <Icon name="x" size={11} tone="muted-foreground" />
+                        <Icon name="x" size="sm" tone="muted-foreground" />
                       </View>
                     </View>
                   );
@@ -555,12 +556,12 @@ function TracesTab(props: {
         <View
           class="border-b border-border bg-card"
           style={{
-            paddingHorizontal: 12,
-            paddingVertical: 8,
+            paddingHorizontal: SPACE[12],
+            paddingVertical: SPACE[8],
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 8,
+            gap: SPACE[8],
           }}
         >
           <Segmented
@@ -586,7 +587,7 @@ function TracesTab(props: {
               />
             }
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
               <Input
                 testID="o11y-baseline-name-input"
                 value={baselineDraft()}
@@ -594,7 +595,7 @@ function TracesTab(props: {
                 onSubmit={confirmSaveBaseline}
                 placeholder={t("o11y.traces.baselinePlaceholder")}
                 autoFocus
-                style={{ width: 210, height: 28 }}
+                style={{ width: 210, height: CONTROL.md }}
               />
               <Btn
                 testID="o11y-baseline-confirm"
@@ -614,12 +615,12 @@ function TracesTab(props: {
         </View>
 
         <If when={mode() === "waterfall"}>
-          <View style={{ flex: 1, flexDirection: "column", minHeight: 0, padding: 10, gap: 8 }}>
+          <View style={{ flex: 1, flexDirection: "column", minHeight: 0, padding: SPACE[12], gap: SPACE[8] }}>
             <If
               when={selectedTrace() !== null}
               else={
                 <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-                  <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                     {t("o11y.traces.selectHint")}
                   </Text>
                 </View>
@@ -638,21 +639,21 @@ function TracesTab(props: {
             <If when={selectedSpan() !== null}>
               <View
                 class="bg-card border border-border"
-                style={{ borderRadius: 8, padding: 10, gap: 4 }}
+                style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[4] }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  <Text style={{ fontSize: 12, fontWeight: 600 }} class="text-foreground">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {selectedSpan()!.name}
                   </Text>
-                  <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-primary">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-primary">
                     {selectedSpan()!.service}
                   </Text>
-                  <Text style={{ fontSize: 11.5, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                     {selectedSpan()!.duration.toFixed(2)} ms
                   </Text>
                 </View>
                 <If when={selectedSpan()!.attributes !== undefined}>
-                  <Text style={{ fontSize: 11, fontFamily: MONO }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO }} class="text-secondary-foreground">
                     {JSON.stringify(selectedSpan()!.attributes)}
                   </Text>
                 </If>
@@ -662,18 +663,18 @@ function TracesTab(props: {
         </If>
 
         <If when={mode() === "compare"}>
-          <View style={{ flex: 1, padding: 10, minHeight: 0 }}>
+          <View style={{ flex: 1, padding: SPACE[12], minHeight: 0 }}>
             <If
               when={activeBaseline() !== null && selectedTrace() !== null && !compareMismatch()}
               else={
-                <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 6, padding: 24 }}>
-                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: SPACE[6], padding: SPACE[24] }}>
+                  <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {compareMismatch()
                       ? t("o11y.traces.compareMismatchTitle")
                       : t("o11y.traces.compareHint")}
                   </Text>
                   <If when={compareMismatch()}>
-                    <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                       {t("o11y.traces.compareMismatchDesc", {
                         baseline: activeBaseline()!.scenarioKey,
                         current: selectedTrace()!.scenarioKey,
@@ -749,16 +750,16 @@ function LogsTab() {
       <View
         class="border-b border-border bg-card"
         style={{
-          paddingHorizontal: 12,
-          paddingVertical: 8,
+          paddingHorizontal: SPACE[12],
+          paddingVertical: SPACE[8],
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 8,
+          gap: SPACE[8],
           flexWrap: "wrap",
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flexWrap: "wrap" }}>
           {(["all", ...O11Y_SUBSYSTEMS] as const).map((sub) => {
             const active = () => subsystem() === sub;
             return (
@@ -767,13 +768,13 @@ function LogsTab() {
                 onPress={() => subsystem.set(sub)}
                 class={active() ? "bg-primary" : "hover:bg-muted border border-border"}
                 style={{
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                  borderRadius: 5,
+                  paddingHorizontal: SPACE[8],
+                  paddingVertical: SPACE[4],
+                  borderRadius: RADIUS.xs,
                 }}
               >
                 <Text
-                  style={{ fontSize: 11.5, fontWeight: 500 }}
+                  style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                   class={active() ? "text-primary-foreground" : "text-secondary-foreground"}
                 >
                   {sub === "all" ? t("o11y.logs.allSubsystems") : sub}
@@ -794,7 +795,7 @@ function LogsTab() {
         />
       </View>
 
-      <View style={{ flex: 1, padding: 10, minHeight: 0 }}>
+      <View style={{ flex: 1, padding: SPACE[12], minHeight: 0 }}>
         <LogView
           testID="o11y-log-view"
           data={logData()}
@@ -842,16 +843,16 @@ export function DiagnosticsWindowContent() {
       {/* Unified 44pt TitleBar with native window controls and live locale title */}
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
               style={{
                 width: 8,
                 height: 8,
-                borderRadius: 4,
+                borderRadius: RADIUS.xs,
                 backgroundColor: diagnosticsPaused() ? "#eda100" : "#1baf7a",
               }}
             />
-            <Text style={{ fontSize: 13, fontWeight: 600 }} class="text-foreground">
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("o11y.windowTitle")}
             </Text>
           </View>
@@ -868,7 +869,7 @@ export function DiagnosticsWindowContent() {
           />
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
             <Segmented
               value={String(diagnosticsWindowMs())}
               onChange={(v) => diagnosticsWindowMs.set(Number(v) as TimeWindowPreset)}

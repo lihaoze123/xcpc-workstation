@@ -16,6 +16,7 @@ import {
   type RatingPoint,
 } from "./types";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 function formatUnixDateShort(sec: number): string {
   const d = new Date(sec * 1000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -127,14 +128,14 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
       style={{
         flex: 1,
         minWidth: 320,
-        borderRadius: 10,
-        padding: 16,
-        gap: 10,
+        borderRadius: RADIUS.lg,
+        padding: SPACE[16],
+        gap: SPACE[8],
         boxShadow: cardShadow(),
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+        <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
           {t("training.rating.title")}
         </Text>
         <If when={props.series.length > 1}>
@@ -155,7 +156,7 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
         when={points().length > 0}
         else={
           <View style={{ height: CHART_H, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("training.rating.empty")}
             </Text>
           </View>
@@ -278,24 +279,24 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
             return (
               <View
                 testID="training-rating-detail"
-                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}
+                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}
               >
                 <Text
-                  style={{ fontSize: 12, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                  style={{ fontSize: FONT_SIZE.caption, flex: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                   class="text-secondary-foreground"
                 >
                   {pt().contest_name}
                 </Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
                   <If when={pt().rank != null}>
-                    <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                       {`#${pt().rank}`}
                     </Text>
                   </If>
                   <Text
                     style={{
-                      fontSize: 12.5,
-                      fontWeight: 600,
+                      fontSize: FONT_SIZE.caption,
+                      fontWeight: FONT_WEIGHT.semibold,
                       fontVariant: ["tabular-nums"],
                       color: tierColor(ratingTier(pt().rating_after)),
                     }}
@@ -304,7 +305,7 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
                   </Text>
                   <If when={delta() != null}>
                     <Text
-                      style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                      style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
                       class={delta()! >= 0 ? "text-chart-2" : "text-destructive"}
                     >
                       {delta()! >= 0 ? `+${delta()}` : String(delta())}

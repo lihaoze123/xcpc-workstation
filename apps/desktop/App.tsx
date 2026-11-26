@@ -57,6 +57,7 @@ import {
   workspaceVersion,
 } from "./src/ui/store";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./src/ui/tokens";
 // The shell: the title bar, the 3 spaces behind the nav rail, and the studio that
 // takes the whole window when a problem or contest is open (the rail folds away). The
 // spaces and the studio stay mounted once shown, so switching back is instant and
@@ -269,7 +270,7 @@ function App() {
     >
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0, maxWidth: 224 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0, maxWidth: 224 }}>
             <AppMenu
               entries={workspaceEntries()}
               onSelect={onWorkspaceAction}
@@ -280,14 +281,14 @@ function App() {
                   tooltip={tip(info().root)}
                   class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                   style={{
-                    height: 28,
+                    height: CONTROL.md,
                     maxWidth: info().readOnly ? 168 : 220,
-                    paddingLeft: 8,
-                    paddingRight: 6,
-                    borderRadius: 6,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[6],
+                    borderRadius: RADIUS.sm,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 5,
+                    gap: SPACE[4],
                     flexShrink: 1,
                     minWidth: 0,
                     transitionProperty: "colors",
@@ -295,14 +296,14 @@ function App() {
                     transitionTimingFunction: EASE_STANDARD,
                   }}
                 >
-                  <Icon name="folder" size={14} tone="secondary-foreground" />
+                  <Icon name="folder" size="sm" tone="secondary-foreground" />
                   <Text
-                    style={{ fontSize: 12.5, lineHeight: 18, fontWeight: 500, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+                    style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
                     class="text-foreground"
                   >
                     {pathBase(info().root)}
                   </Text>
-                  <Chevron size={13} tone="muted-foreground" />
+                  <Chevron size="sm" tone="muted-foreground" />
                 </View>
               }
             />
@@ -311,18 +312,18 @@ function App() {
                 tooltip={tip(t("common.readOnlyWorkspaceDisabled"))}
                 class="bg-muted border border-border"
                 style={{
-                  height: 22,
-                  paddingLeft: 6,
-                  paddingRight: 6,
-                  borderRadius: 5,
+                  height: 22, // token-exempt: compact inline status badge height
+                  paddingLeft: SPACE[6],
+                  paddingRight: SPACE[6],
+                  borderRadius: RADIUS.xs,
                   flexDirection: "row",
                   alignItems: "center",
-                  gap: 4,
+                  gap: SPACE[4],
                   flexShrink: 0,
                 }}
               >
-                <Icon name="lock" size={11} tone="muted-foreground" />
-                <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
+                <Icon name="lock" size="sm" tone="muted-foreground" />
+                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                   {t("common.readOnly")}
                 </Text>
               </View>
@@ -336,20 +337,20 @@ function App() {
             class="border border-border bg-card hover:bg-muted active:bg-accent"
             style={{
               width: 320,
-              height: 30,
-              borderRadius: 8,
-              paddingLeft: 10,
-              paddingRight: 5,
+              height: CONTROL.md,
+              borderRadius: RADIUS.md,
+              paddingLeft: SPACE[12],
+              paddingRight: SPACE[4],
               flexDirection: "row",
               alignItems: "center",
-              gap: 8,
+              gap: SPACE[8],
               transitionProperty: "colors",
               transitionDuration: ms(120),
               transitionTimingFunction: EASE_STANDARD,
             }}
           >
-            <Icon name="search" size={14} tone="muted-foreground" />
-            <Text style={{ flex: 1, fontSize: 12.5, lineHeight: 18 }} class="text-muted-foreground">
+            <Icon name="search" size="sm" tone="muted-foreground" />
+            <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
               {t("shell.paletteTrigger")}
             </Text>
             <Kbd keys="mod+k" faint />
@@ -468,11 +469,11 @@ function App() {
                 top: TITLE_BAR + 8,
                 right: 16,
                 maxWidth: 420,
-                paddingLeft: 12,
-                paddingRight: 10,
-                paddingTop: 8,
-                paddingBottom: 8,
-                borderRadius: 8,
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[12],
+                paddingTop: SPACE[8],
+                paddingBottom: SPACE[8],
+                borderRadius: RADIUS.md,
                 boxShadow: popoverShadow(),
               }}
             >
@@ -489,18 +490,18 @@ function App() {
                   top: TITLE_BAR + 8,
                   right: 16,
                   maxWidth: 420,
-                  paddingLeft: 12,
-                  paddingRight: 10,
-                  paddingTop: 8,
-                  paddingBottom: 8,
-                  borderRadius: 8,
-                  gap: 4,
+                  paddingLeft: SPACE[12],
+                  paddingRight: SPACE[12],
+                  paddingTop: SPACE[8],
+                  paddingBottom: SPACE[8],
+                  borderRadius: RADIUS.md,
+                  gap: SPACE[4],
                   boxShadow: popoverShadow(),
                 }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Icon name="triangleAlert" size={14} tone="chart-4" />
-                  <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                  <Icon name="triangleAlert" size="sm" tone="chart-4" />
+                  <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {iw().warnings.length === 1
                       ? t("packages.importWarningsOne", { title: iw().title })
                       : t("packages.importWarningsMany", { title: iw().title, count: iw().warnings.length })}
@@ -511,8 +512,8 @@ function App() {
                     class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                     style={{
                       width: 18,
-                      height: 18,
-                      borderRadius: 4,
+                      height: 18, // token-exempt: compact inline icon badge box
+                      borderRadius: RADIUS.xs,
                       alignItems: "center",
                       justifyContent: "center",
                       transitionProperty: "colors",
@@ -520,12 +521,12 @@ function App() {
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Icon name="x" size={12} tone="muted-foreground" />
+                    <Icon name="x" size="sm" tone="muted-foreground" />
                   </View>
                 </View>
                 <Each of={iw().warnings.slice(0, 3)} key={(w, i) => `${i}:${w.code}:${w.path ?? ""}`}>
                   {(w) => (
-                    <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                       {w().message}
                     </Text>
                   )}

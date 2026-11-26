@@ -10,6 +10,7 @@ import { AppMenu, type MenuEntry } from "../Menu";
 import { overlayTransition } from "../motion";
 import { modalShadow, token } from "../theme";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export function BatchFloatingBar(props: {
   count: number;
   tableWidth: number;
@@ -61,12 +62,12 @@ export function BatchFloatingBar(props: {
         class="bg-card border border-border"
         style={{
           height: 44,
-          borderRadius: 12,
-          paddingLeft: 12,
-          paddingRight: 8,
+          borderRadius: RADIUS.lg,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[8],
           flexDirection: "row",
           alignItems: "center",
-          gap: 4,
+          gap: SPACE[4],
           boxShadow: modalShadow(),
           opacity: 1,
           transform: reduceMotion() ? undefined : "translateY(0px) scale(1)",
@@ -75,10 +76,10 @@ export function BatchFloatingBar(props: {
       >
         <Text
           style={{
-            fontSize: 13,
-            fontWeight: 500,
+            fontSize: FONT_SIZE.body,
+            fontWeight: FONT_WEIGHT.semibold,
             fontVariant: ["tabular-nums"],
-            paddingRight: 10,
+            paddingRight: SPACE[12],
             flexShrink: 0,
           }}
           class="text-foreground"
@@ -163,14 +164,14 @@ export function BatchFloatingBar(props: {
           onPress={props.onDelete}
           style={
             showLabels()
-              ? { paddingLeft: 8, paddingRight: 10 }
-              : { width: 28, paddingLeft: 0, paddingRight: 0 }
+              ? { paddingLeft: SPACE[8], paddingRight: SPACE[12] }
+              : { width: 28, paddingLeft: SPACE[0], paddingRight: SPACE[0] }
           }
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Icon name="trash" size={15} tone="destructive" />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+            <Icon name="trash" size="md" tone="destructive" />
             <If when={showLabels()}>
-              <Text style={{ fontSize: 13, color: token("destructive") }}>
+              <Text style={{ fontSize: FONT_SIZE.body, color: token("destructive") }}>
                 {t("library.batch.delete")}
               </Text>
             </If>
@@ -179,9 +180,8 @@ export function BatchFloatingBar(props: {
 
         <IconBtn
           icon="x"
-          size={28}
-          iconSize={15}
-          style={{ marginLeft: 4 }}
+          size="md"
+          style={{ marginLeft: SPACE[4] }}
           tooltip={tip(t("library.batch.clearSelection"), "escape")}
           onPress={props.onClear}
         />

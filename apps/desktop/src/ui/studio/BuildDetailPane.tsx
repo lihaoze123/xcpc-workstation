@@ -21,6 +21,7 @@ import {
 } from "./buildLogic";
 import { cellHeadline, groupTranscriptByRun } from "./statusLogic";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 /** No-ligature monospace font stack so `!=`, `<=`, `>=` never render as ligatures in code/TOML editors (P2). */
 function codeNoLigatureFont(): string {
   const base = editorMono();
@@ -131,68 +132,68 @@ export function InlineFileEditor(props: {
       <View
         style={{
           minHeight: props.title ? 52 : 38,
-          paddingLeft: 20,
-          paddingRight: 16,
-          paddingTop: 8,
-          paddingBottom: 8,
+          paddingLeft: SPACE[20],
+          paddingRight: SPACE[16],
+          paddingTop: SPACE[8],
+          paddingBottom: SPACE[8],
           borderBottomWidth: 1,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 12,
+          gap: SPACE[12],
         }}
         class="border-border bg-background/30"
       >
-        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
           <If when={!!props.title}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
               <If when={!!props.icon}>
-                <Icon name={props.icon!} size={14.5} tone="secondary-foreground" />
+                <Icon name={props.icon!} size="sm" tone="secondary-foreground" />
               </If>
               <Text
-                style={{ fontSize: 13, fontWeight: 600, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
+                style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
                 class="text-foreground"
               >
                 {props.title!}
               </Text>
               <If when={!!props.badge}>
                 <View
-                  style={{ height: 19, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                  style={{ height: 19, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact status badge height
                   class="bg-muted"
                 >
-                  <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
                     {props.badge!}
                   </Text>
                 </View>
               </If>
               <If when={dirty()}>
-                <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
+                <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-chart-4" />
               </If>
               <If when={savedFeedback.active() && !dirty()}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                  <Icon name="check" size={11.5} tone="secondary-foreground" />
-                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2], flexShrink: 0 }}>
+                  <Icon name="check" size="sm" tone="secondary-foreground" />
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                     {t("build.quickEdit.saved")}
                   </Text>
                 </View>
               </If>
             </View>
           </If>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
             <Text
               testID="inline-editor-target-path"
-              style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+              style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
               class="text-muted-foreground"
             >
               {props.relPath}
             </Text>
             <If when={!props.title && dirty()}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0 }} class="bg-chart-4" />
+              <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs, flexShrink: 0 }} class="bg-chart-4" />
             </If>
             <If when={!props.title && savedFeedback.active() && !dirty()}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                <Icon name="check" size={11.5} tone="secondary-foreground" />
-                <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2], flexShrink: 0 }}>
+                <Icon name="check" size="sm" tone="secondary-foreground" />
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                   {t("build.quickEdit.saved")}
                 </Text>
               </View>
@@ -200,7 +201,7 @@ export function InlineFileEditor(props: {
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
           {props.extraActions}
           <Btn
             label={t("build.quickEdit.openExternal")}
@@ -226,25 +227,25 @@ export function InlineFileEditor(props: {
         <View
           testID="inline-editor-conflict-bar"
           style={{
-            paddingLeft: 20,
-            paddingRight: 16,
-            paddingTop: 8,
-            paddingBottom: 8,
+            paddingLeft: SPACE[20],
+            paddingRight: SPACE[16],
+            paddingTop: SPACE[8],
+            paddingBottom: SPACE[8],
             borderBottomWidth: 1,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 10,
+            gap: SPACE[8],
           }}
           class="border-b-border bg-muted/40"
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1, minWidth: 0 }}>
-            <Icon name="triangleAlert" size={14} tone="chart-4" />
-            <Text style={{ fontSize: 12, flex: 1 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flex: 1, minWidth: 0 }}>
+            <Icon name="triangleAlert" size="sm" tone="chart-4" />
+            <Text style={{ fontSize: FONT_SIZE.caption, flex: 1 }} class="text-foreground">
               {t("build.quickEdit.conflictNotice")}
             </Text>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
             <Btn
               label={t("build.quickEdit.loadExternal")}
               variant="outline"
@@ -260,7 +261,7 @@ export function InlineFileEditor(props: {
       </If>
 
       <If when={err()}>
-        <View style={{ padding: 12, borderBottomWidth: 1 }} class="border-border bg-muted/30">
+        <View style={{ padding: SPACE[12], borderBottomWidth: 1 }} class="border-border bg-muted/30">
           <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
         </View>
       </If>
@@ -268,9 +269,9 @@ export function InlineFileEditor(props: {
       <If
         when={!tooLarge()}
         else={
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 28, gap: 12 }}>
-            <Icon name="fileText" size={22} tone="muted-foreground" />
-            <Text style={{ fontSize: 13, textAlign: "center" }} class="text-secondary-foreground">
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[12] }}>
+            <Icon name="fileText" size="lg" tone="muted-foreground" />
+            <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-secondary-foreground">
               {`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
             </Text>
             <Btn
@@ -405,13 +406,13 @@ export function CellDiagnosticDrawer(props: {
     const toSolution = entry.direction === "interactor_to_solution";
     return (
       <View
-        style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, paddingLeft: 8, borderLeftWidth: 2 }}
+        style={{ flexDirection: "row", alignItems: "flex-start", gap: SPACE[8], paddingLeft: SPACE[8], borderLeftWidth: 2 }}
         class={toSolution ? "border-primary" : "border-chart-4"}
       >
-        <Text style={{ fontSize: 12, fontWeight: 600, width: 12, flexShrink: 0 }} class={toSolution ? "text-primary" : "text-chart-4"}>
+        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, width: 12, flexShrink: 0 }} class={toSolution ? "text-primary" : "text-chart-4"}>
           {toSolution ? "→" : "←"}
         </Text>
-        <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18, flex: 1 }} class="text-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body, flex: 1 }} class="text-foreground">
           {entry.text}
         </Text>
       </View>
@@ -420,9 +421,9 @@ export function CellDiagnosticDrawer(props: {
 
   const renderGroups = (groups: { run: number | null; entries: TranscriptEntryData[] }[]) =>
     groups.map((g) => (
-      <View style={{ gap: 3 }}>
+      <View style={{ gap: SPACE[2] }}>
         <If when={multiRun() && g.run != null}>
-          <Text style={{ fontSize: 12, paddingTop: 6 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, paddingTop: SPACE[6] }} class="text-muted-foreground">
             {t("build.diag.run", { run: g.run ?? 1 })}
           </Text>
         </If>
@@ -431,8 +432,8 @@ export function CellDiagnosticDrawer(props: {
     ));
 
   const block = (label: string, body: JSX.Element) => (
-    <View style={{ gap: 6 }}>
-      <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+    <View style={{ gap: SPACE[6] }}>
+      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
         {label}
       </Text>
       {body}
@@ -440,8 +441,8 @@ export function CellDiagnosticDrawer(props: {
   );
 
   const mono = (text: string, maxHeight?: number) => (
-    <Scroll style={{ borderRadius: 6, maxHeight }} contentStyle={{ padding: 8 }} class="bg-muted">
-      <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-foreground">
+    <Scroll style={{ borderRadius: RADIUS.sm, maxHeight }} contentStyle={{ padding: SPACE[8] }} class="bg-muted">
+      <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
         {text}
       </Text>
     </Scroll>
@@ -462,36 +463,36 @@ export function CellDiagnosticDrawer(props: {
       class="bg-card border-border"
     >
       {/* Header: the verdict in words (or 「应 AC，实际 WA」), then where it happened */}
-      <View style={{ paddingLeft: 16, paddingRight: 10, paddingTop: 12, paddingBottom: 12, borderBottomWidth: 1, gap: 6 }} class="border-border">
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <View style={{ paddingLeft: SPACE[16], paddingRight: SPACE[12], paddingTop: SPACE[12], paddingBottom: SPACE[12], borderBottomWidth: 1, gap: SPACE[6] }} class="border-border">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
           <Text
             testID="diag-conclusion-headline"
-            style={{ fontSize: 14, fontWeight: 600, flex: 1, numberOfLines: 2 }}
+            style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, flex: 1, numberOfLines: 2 }}
             class={headline().mismatch ? "text-destructive" : "text-foreground"}
           >
             {headline().text}
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2], flexShrink: 0 }}>
             <If when={props.solutionRelPath}>
               {(rel) => (
                 <Btn testID="diag-open-solution-btn" label={t("build.diag.openSolution")} variant="ghost" onPress={() => props.onOpenSolution(rel())} />
               )}
             </If>
             <Btn testID="diag-open-test-btn" label={t("build.diag.editTest")} variant="ghost" onPress={() => props.onOpenTest(props.cell.test_index)} />
-            <IconBtn icon="x" size={26} iconSize={14} onPress={props.onClose} />
+            <IconBtn icon="x" size="sm" onPress={props.onClose} />
           </View>
         </View>
-        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }} class="text-secondary-foreground">
           {meta()}
         </Text>
       </View>
 
-      <View style={{ flex: 1, minHeight: 0, padding: 16, gap: 14 }}>
+      <View style={{ flex: 1, minHeight: 0, padding: SPACE[16], gap: SPACE[12] }}>
         {/* Only a mismatch gets an explanation */}
         <If when={headline().explain}>
           {(ex) => (
-            <View testID="diag-explain" style={{ padding: 10, borderRadius: 6 }} class="bg-destructive/12">
-              <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-foreground">
+            <View testID="diag-explain" style={{ padding: SPACE[12], borderRadius: RADIUS.sm }} class="bg-destructive/12">
+              <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
                 {ex()}
               </Text>
             </View>
@@ -501,7 +502,7 @@ export function CellDiagnosticDrawer(props: {
         <If when={verdictNotes().length > 0}>
           {block(
             t("build.diag.verdictNote"),
-            <View style={{ gap: 6 }}>{verdictNotes().map((n) => mono(n, 96))}</View>,
+            <View style={{ gap: SPACE[6] }}>{verdictNotes().map((n) => mono(n, 96))}</View>,
           )}
         </If>
 
@@ -510,19 +511,19 @@ export function CellDiagnosticDrawer(props: {
         {/* Interactive: the transcript fills the rest */}
         <If when={transcript()}>
           {(tr) => (
-            <View testID="diag-interaction-transcript" style={{ flex: 1, minHeight: 120, gap: 6 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <View testID="diag-interaction-transcript" style={{ flex: 1, minHeight: 120, gap: SPACE[6] }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("build.diag.transcript")}
                 </Text>
-                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("build.diag.transcriptLegend")}
                 </Text>
               </View>
-              <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ gap: 3, paddingBottom: 8 }}>
+              <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ gap: SPACE[2], paddingBottom: SPACE[8] }}>
                 {renderGroups(transcriptGroups().head)}
                 <If when={tr().omitted_entries > 0}>
-                  <Text style={{ fontSize: 12, paddingTop: 4, paddingBottom: 4, textAlign: "center", fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, paddingTop: SPACE[4], paddingBottom: SPACE[4], textAlign: "center", fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                     {t("build.diag.transcriptOmitted", { count: tr().omitted_entries })}
                   </Text>
                 </If>
@@ -534,8 +535,8 @@ export function CellDiagnosticDrawer(props: {
 
         {/* Standard: input / answer / output, then how to reproduce */}
         <If when={!transcript()}>
-          <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ gap: 14 }}>
-            <View style={{ flexDirection: "row", gap: 8 }}>
+          <Scroll style={{ flex: 1, minHeight: 0 }} contentStyle={{ gap: SPACE[12] }}>
+            <View style={{ flexDirection: "row", gap: SPACE[8] }}>
               <View style={{ flex: 1, minWidth: 0 }}>{block(t("build.diag.input"), mono(inputSnippet(), 168))}</View>
               <View style={{ flex: 1, minWidth: 0 }}>{block(t("build.diag.expected"), mono(expectedSnippet(), 168))}</View>
               <View style={{ flex: 1, minWidth: 0 }}>{block(t("build.diag.actual"), mono(actualSnippet(), 168))}</View>
@@ -546,9 +547,9 @@ export function CellDiagnosticDrawer(props: {
         <If when={!!props.cell.stderr}>{block(t("build.diag.stderr"), mono(props.cell.stderr ?? "", 120))}</If>
 
         <If when={!!props.cell.repro_cmd}>
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                 {t("build.diag.reproCmd")}
               </Text>
               <Btn

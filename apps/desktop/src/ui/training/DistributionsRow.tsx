@@ -10,6 +10,7 @@ import { cardShadow, tierColor } from "../theme";
 import { isEn, zhEn } from "./locale";
 import { formatTagLabel, type DifficultyBucket, type TagStat } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 const TAG_MIN_OPTIONS: readonly { value: number | null; labelKey: "all" | "1600" | "1900" | "2200" }[] = [
   { value: null, labelKey: "all" },
   { value: 1600, labelKey: "1600" },
@@ -22,9 +23,9 @@ function WindowBadge(props: { label?: string }) {
     <If when={props.label}>
       <View
         class="bg-muted"
-        style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+        style={{ height: 18, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact legend badge height
       >
-        <Text style={{ fontSize: 10.5 }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
           {props.label!}
         </Text>
       </View>
@@ -46,7 +47,7 @@ export function DistributionsRow(props: {
   const maxTagAc = computed(() => Math.max(1, ...visibleTags().map((x) => x.ac_count)));
 
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[12] }}>
       {/* Left: Difficulty buckets (restrained cohesive primary opacity ramp, no rainbow wall) */}
       <View
         testID="training-buckets-card"
@@ -54,25 +55,25 @@ export function DistributionsRow(props: {
         style={{
           flex: 1,
           minWidth: 320,
-          borderRadius: 10,
-          padding: 16,
-          gap: 12,
+          borderRadius: RADIUS.lg,
+          padding: SPACE[16],
+          gap: SPACE[12],
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("training.buckets.title")}
             </Text>
             <WindowBadge label={props.windowLabel} />
           </View>
-          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
             {t("training.buckets.clickHint")}
           </Text>
         </View>
 
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: SPACE[6] }}>
           <Each of={props.buckets} key={(b) => b.label}>
             {(bucket, idx) => {
               const pct = () => Math.max(bucket().ac_count > 0 ? 4 : 0, Math.round((bucket().ac_count / maxBucketAc()) * 100));
@@ -90,32 +91,32 @@ export function DistributionsRow(props: {
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 10,
-                    paddingLeft: 6,
-                    paddingRight: 6,
-                    height: 24,
+                    gap: SPACE[8],
+                    paddingLeft: SPACE[6],
+                    paddingRight: SPACE[6],
+                    height: CONTROL.sm,
                     opacity: bucket().ac_count > 0 ? 1 : 0.45,
                   }}
                 >
                   <Text
-                    style={{ width: 78, fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                    style={{ width: 78, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
                     class="text-secondary-foreground"
                   >
                     {bucket().label}
                   </Text>
-                  <View style={{ flex: 1, height: 10, borderRadius: 4, overflow: "hidden" }} class="bg-muted">
+                  <View style={{ flex: 1, height: 10, borderRadius: RADIUS.xs, overflow: "hidden" }} class="bg-muted">
                     <View
                       style={{
                         width: `${pct()}%`,
                         height: 10,
-                        borderRadius: 4,
+                        borderRadius: RADIUS.xs,
                         opacity: barOpacity(),
                       }}
                       class="bg-primary"
                     />
                   </View>
                   <Text
-                    style={{ width: 36, textAlign: "right", fontSize: 12, fontVariant: ["tabular-nums"] }}
+                    style={{ width: 36, textAlign: "right", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
                     class="text-secondary-foreground"
                   >
                     {String(bucket().ac_count)}
@@ -134,20 +135,20 @@ export function DistributionsRow(props: {
         style={{
           flex: 1,
           minWidth: 320,
-          borderRadius: 10,
-          padding: 16,
-          gap: 12,
+          borderRadius: RADIUS.lg,
+          padding: SPACE[16],
+          gap: SPACE[12],
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: SPACE[8] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("training.tags.title")}
             </Text>
             <WindowBadge label={props.windowLabel} />
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
             <Each of={TAG_MIN_OPTIONS} key={(o) => o.labelKey}>
               {(opt) => {
                 const active = () => props.tagMinRating === opt().value;
@@ -156,10 +157,10 @@ export function DistributionsRow(props: {
                     testID={`training-tag-min-${opt().labelKey}`}
                     onPress={() => props.onTagMinRatingChange(opt().value)}
                     class={active() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
-                    style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+                    style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center" }}
                   >
                     <Text
-                      style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], fontWeight: 500 }}
+                      style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], fontWeight: FONT_WEIGHT.semibold }}
                       class={active() ? "text-foreground" : "text-secondary-foreground"}
                     >
                       {opt().value === null ? t("training.tags.filterAll") : `≥${opt().value}`}
@@ -175,33 +176,33 @@ export function DistributionsRow(props: {
           when={visibleTags().length > 0}
           else={
             <View style={{ minHeight: 140, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                 {t("training.tags.empty")}
               </Text>
             </View>
           }
         >
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
             {/* Subtle column header row so right colored numbers are immediately understood as average difficulty */}
             <View
               testID="training-tags-header"
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 10,
-                paddingLeft: 6,
-                paddingRight: 6,
-                height: 18,
+                gap: SPACE[8],
+                paddingLeft: SPACE[6],
+                paddingRight: SPACE[6],
+                height: 18, // token-exempt: compact chart bar height
               }}
             >
-              <Text style={{ width: 112, fontSize: 11 }} class="text-muted-foreground">
+              <Text style={{ width: 112, fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                 {zhEn("标签", "Tag")}
               </Text>
               <View style={{ flex: 1 }} />
-              <Text style={{ width: 32, textAlign: "right", fontSize: 11 }} class="text-muted-foreground">
+              <Text style={{ width: 32, textAlign: "right", fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                 {zhEn("过题", "Solved")}
               </Text>
-              <Text style={{ width: 42, textAlign: "right", fontSize: 11 }} class="text-muted-foreground">
+              <Text style={{ width: 42, textAlign: "right", fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                 {zhEn("均难", "Avg")}
               </Text>
             </View>
@@ -217,16 +218,16 @@ export function DistributionsRow(props: {
                     style={{
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 10,
-                      paddingLeft: 6,
-                      paddingRight: 6,
-                      height: 24,
+                      gap: SPACE[8],
+                      paddingLeft: SPACE[6],
+                      paddingRight: SPACE[6],
+                      height: CONTROL.sm,
                     }}
                   >
                     <Text
                       style={{
                         width: 112,
-                        fontSize: 12,
+                        fontSize: FONT_SIZE.caption,
                         numberOfLines: 1,
                         textOverflow: "ellipsis",
                       }}
@@ -234,18 +235,18 @@ export function DistributionsRow(props: {
                     >
                       {formatTagLabel(item().tag, isEn())}
                     </Text>
-                    <View style={{ flex: 1, height: 10, borderRadius: 4, overflow: "hidden" }} class="bg-muted">
+                    <View style={{ flex: 1, height: 10, borderRadius: RADIUS.xs, overflow: "hidden" }} class="bg-muted">
                       <View
                         style={{
                           width: `${pct()}%`,
                           height: 10,
-                          borderRadius: 4,
+                          borderRadius: RADIUS.xs,
                         }}
                         class="bg-primary"
                       />
                     </View>
                     <Text
-                      style={{ width: 32, textAlign: "right", fontSize: 12, fontVariant: ["tabular-nums"] }}
+                      style={{ width: 32, textAlign: "right", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
                       class="text-secondary-foreground"
                     >
                       {String(item().ac_count)}
@@ -254,7 +255,7 @@ export function DistributionsRow(props: {
                       style={{
                         width: 42,
                         textAlign: "right",
-                        fontSize: 11.5,
+                        fontSize: FONT_SIZE.caption,
                         fontVariant: ["tabular-nums"],
                         color: item().avg_rating != null ? avgColor() : undefined,
                       }}

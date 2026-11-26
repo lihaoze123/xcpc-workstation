@@ -17,6 +17,7 @@ import { showToast } from "./Toast";
 import { formatPluginError } from "./tools/pluginErrors";
 import { zhEn } from "./training/locale";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 const DEFAULT_OFFICIAL_REPO_URL =
   "https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/index.json";
 
@@ -309,8 +310,8 @@ export function PluginRepoBrowserModal(props: {
         width={560}
         testID="plugin-repo-browser-modal"
       >
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: SPACE[12] }}>
             <View style={{ flex: 1 }}>
               <DialogHeader
                 icon="squareCode"
@@ -325,7 +326,7 @@ export function PluginRepoBrowserModal(props: {
                 )}
               />
             </View>
-            <View style={{ flexDirection: "row", gap: 6, flexShrink: 0 }}>
+            <View style={{ flexDirection: "row", gap: SPACE[6], flexShrink: 0 }}>
               <Btn
                 testID="repo-browser-toggle-sources"
                 variant={showRepoMgr() ? "primary" : "outline"}
@@ -348,9 +349,9 @@ export function PluginRepoBrowserModal(props: {
             <View
               testID="repo-manager-panel"
               class="bg-muted/50 border border-border"
-              style={{ borderRadius: 8, padding: 10, gap: 8 }}
+              style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[8] }}
             >
-              <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+              <View style={{ flexDirection: "row", gap: SPACE[6], alignItems: "center" }}>
                 <Input
                   testID="repo-url-input"
                   value={newRepoUrl()}
@@ -378,11 +379,11 @@ export function PluginRepoBrowserModal(props: {
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    gap: 8,
-                    paddingTop: 2,
+                    gap: SPACE[8],
+                    paddingTop: SPACE[2],
                   }}
                 >
-                  <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                     {zhEn("官方插件仓库未订阅", "Official plugin repository is not subscribed")}
                   </Text>
                   <Btn
@@ -397,7 +398,7 @@ export function PluginRepoBrowserModal(props: {
               </If>
 
               <If when={repos().length > 0}>
-                <View style={{ gap: 4 }}>
+                <View style={{ gap: SPACE[4] }}>
                   <Each of={repos()} key={(r) => r.url}>
                     {(repo) => {
                       const displayName = () => resolvedRepoName(repo());
@@ -409,17 +410,17 @@ export function PluginRepoBrowserModal(props: {
                             flexDirection: "row",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            gap: 8,
-                            paddingTop: 3,
-                            paddingBottom: 3,
+                            gap: SPACE[8],
+                            paddingTop: SPACE[4],
+                            paddingBottom: SPACE[4],
                           }}
                         >
-                          <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+                          <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
                             <If
                               when={Boolean(displayName())}
                               else={
                                 <Text
-                                  style={{ fontSize: 12, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                  style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
                                   class="text-foreground"
                                 >
                                   {repo().url}
@@ -427,13 +428,13 @@ export function PluginRepoBrowserModal(props: {
                               }
                             >
                               <Text
-                                style={{ fontSize: 12, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                                 class="text-foreground"
                               >
                                 {displayName()}
                               </Text>
                               <Text
-                                style={{ fontSize: 11, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                style={{ fontSize: FONT_SIZE.micro, fontFamily: MONO, numberOfLines: 1, textOverflow: "ellipsis" }}
                                 class="text-muted-foreground"
                               >
                                 {repo().url}
@@ -448,7 +449,7 @@ export function PluginRepoBrowserModal(props: {
                             >
                               {(msg) => (
                                 <Text
-                                  style={{ fontSize: 11, numberOfLines: 2, textOverflow: "ellipsis" }}
+                                  style={{ fontSize: FONT_SIZE.micro, numberOfLines: 2, textOverflow: "ellipsis" }}
                                   class="text-destructive"
                                 >
                                   {msg()}
@@ -477,11 +478,11 @@ export function PluginRepoBrowserModal(props: {
             <View
               testID="repo-errors-banner"
               class="bg-muted/60 border border-border"
-              style={{ borderRadius: 8, padding: 10, gap: 4 }}
+              style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[4] }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Icon name="triangleAlert" size={14} tone="destructive" />
-                <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Icon name="triangleAlert" size="sm" tone="destructive" />
+                <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                   {zhEn(
                     `有 ${bannerErrors().length} 个仓库拉取失败`,
                     `${bannerErrors().length} repository source(s) failed to load`,
@@ -491,7 +492,7 @@ export function PluginRepoBrowserModal(props: {
               <Each of={bannerErrors()} key={(e) => `${e.repoUrl}:${e.message}`}>
                 {(err) => (
                   <Text
-                    style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 2, textOverflow: "ellipsis" }}
+                    style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 2, textOverflow: "ellipsis" }}
                     class="text-secondary-foreground"
                   >
                     {err().repoLabel}：{err().message}
@@ -502,19 +503,19 @@ export function PluginRepoBrowserModal(props: {
           </If>
 
           {/* Fixed-height scroll body so switching from loading to list never jumps modal height (Polish 15) */}
-          <Scroll style={{ height: 340 }} contentStyle={{ gap: 8, minHeight: 320 }}>
+          <Scroll style={{ height: 340 }} contentStyle={{ gap: SPACE[8], minHeight: 320 }}>
             <If when={loading() && items().length === 0}>
               <View style={{ flex: 1, minHeight: 300, alignItems: "center", justifyContent: "center" }}>
-                <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {zhEn("正在获取插件目录…", "Loading plugin catalog…")}
                 </Text>
               </View>
             </If>
 
             <If when={!loading() && items().length === 0}>
-              <View style={{ flex: 1, minHeight: 300, padding: 24, alignItems: "center", justifyContent: "center", gap: 10 }}>
-                <Icon name="circleAlert" size={20} tone="muted-foreground" />
-                <Text style={{ fontSize: 12.5, textAlign: "center", maxWidth: 380, lineHeight: 18 }} class="text-secondary-foreground">
+              <View style={{ flex: 1, minHeight: 300, padding: SPACE[24], alignItems: "center", justifyContent: "center", gap: SPACE[8] }}>
+                <Icon name="circleAlert" size="lg" tone="muted-foreground" />
+                <Text style={{ fontSize: FONT_SIZE.caption, textAlign: "center", maxWidth: 380, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                   {repoErrors().length > 0
                     ? showRepoMgr()
                       ? zhEn(
@@ -566,20 +567,20 @@ export function PluginRepoBrowserModal(props: {
                     testID={`repo-plugin-row-${item().entry.id}`}
                     class="bg-card border border-border"
                     style={{
-                      borderRadius: 9,
-                      padding: 12,
+                      borderRadius: RADIUS.md,
+                      padding: SPACE[12],
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      gap: SPACE[12],
                     }}
                   >
-                    <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-                      <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+                    <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {item().entry.name}
                       </Text>
                       <If when={Boolean(item().entry.description)}>
-                        <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                           {item().entry.description}
                         </Text>
                       </If>
@@ -608,7 +609,7 @@ export function PluginRepoBrowserModal(props: {
                           }
                         >
                           <View style={{ width: 84, alignItems: "center", flexShrink: 0 }}>
-                            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-muted-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
                               {zhEn("已安装", "Installed")}
                             </Text>
                           </View>
@@ -619,15 +620,15 @@ export function PluginRepoBrowserModal(props: {
                         testID={`repo-other-source-${item().entry.id}`}
                         class="bg-muted border border-border"
                         style={{
-                          paddingLeft: 8,
-                          paddingRight: 8,
-                          paddingTop: 4,
-                          paddingBottom: 4,
-                          borderRadius: 6,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[8],
+                          paddingTop: SPACE[4],
+                          paddingBottom: SPACE[4],
+                          borderRadius: RADIUS.sm,
                           flexShrink: 0,
                         }}
                       >
-                        <Text style={{ fontSize: 11.5, fontWeight: 500 }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
                           {zhEn("其他来源已安装", "Other source")}
                         </Text>
                       </View>
@@ -653,7 +654,7 @@ export function PluginRepoBrowserModal(props: {
       >
         <If when={pendingRemoveRepo()}>
           {(repo) => (
-            <View style={{ padding: 20, gap: 16 }}>
+            <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
               <DialogHeader
                 icon="trash"
                 tone="destructive"
@@ -670,7 +671,7 @@ export function PluginRepoBrowserModal(props: {
                       )
                 }
               />
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
                 <Btn
                   testID="repo-remove-cancel"
                   variant="outline"

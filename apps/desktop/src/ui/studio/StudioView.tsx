@@ -78,6 +78,7 @@ import { Outline } from "./Outline";
 import { PreviewCanvas, type CanvasController } from "./PreviewCanvas";
 import { Samples } from "./Samples";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 type StudioMode = "statement" | "authoring";
 type Tab = "statement" | "samples" | "editorial";
 const lastStudioModeByProblem = new Map<string, "statement" | "authoring">();
@@ -1284,18 +1285,18 @@ export function StudioView(props: { active: boolean }) {
     <View style={{ flex: 1 }} class="bg-background">
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
             <IconBtn icon="arrowLeft" tooltip={tip(t("common.back"), "escape")} onPress={closeStudio} testID="studio-back" />
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>
               <Text
-                style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13.5, fontWeight: 500, flexShrink: 1, minWidth: 0 }}
+                style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, minWidth: 0 }}
                 class="text-foreground"
               >
                 {headerTitle()}
               </Text>
               <If when={!!headerSubtitle() && (windowSize().width === 0 || windowSize().width >= 1120)}>
                 <Text
-                  style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, flexShrink: 2, minWidth: 0 }}
+                  style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, flexShrink: 2, minWidth: 0 }}
                   class="text-muted-foreground"
                 >
                   {headerSubtitle()}
@@ -1303,7 +1304,7 @@ export function StudioView(props: { active: boolean }) {
               </If>
             </View>
             <If when={target()?.target === "problem" || (target()?.target === "contest" && !coverActive() && !!item() && !item()!.missing)}>
-              <View testID="studio-mode-switch" style={{ marginLeft: 4, flexShrink: 0 }}>
+              <View testID="studio-mode-switch" style={{ marginLeft: SPACE[4], flexShrink: 0 }}>
                 <Segmented
                   items={modeItems()}
                   value={isAuthoring() ? "authoring" : "statement"}
@@ -1314,7 +1315,7 @@ export function StudioView(props: { active: boolean }) {
             </If>
             <If when={target()?.target === "contest" ? target()!.id : undefined}>
               {(cid) => (
-                <View style={{ marginLeft: 2, flexShrink: 0 }}>
+                <View style={{ marginLeft: SPACE[2], flexShrink: 0 }}>
                   <ContestCheckBar
                     part="status"
                     contestId={cid()}
@@ -1326,16 +1327,16 @@ export function StudioView(props: { active: boolean }) {
             </If>
             <If when={target()?.target === "contest" && frozen()}>
               <View style={{ flexShrink: 0 }}>
-                <Lock closed size={13} />
+                <Lock closed size="sm" />
               </View>
             </If>
             <If when={target()?.target === "contest" && archived()}>
               <View
                 testID="studio-archived-badge"
                 class="bg-muted"
-                style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 5, justifyContent: "center", flexShrink: 0 }}
+                style={{ height: 20, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center", flexShrink: 0 }} // token-exempt: compact status badge height
               >
-                <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("contests.archived")}
                 </Text>
               </View>
@@ -1343,7 +1344,7 @@ export function StudioView(props: { active: boolean }) {
           </View>
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
             <If when={target()?.target === "contest" ? target()!.id : undefined}>
               {(cid) => (
                 <ContestCheckBar
@@ -1467,13 +1468,13 @@ export function StudioView(props: { active: boolean }) {
                 <If when={!isFullConsole()}>
                   <View
                     style={{
-                      height: 38,
+                      height: ROW.table,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      paddingLeft: 6,
-                      paddingRight: 6,
-                      gap: 4,
+                      paddingLeft: SPACE[6],
+                      paddingRight: SPACE[6],
+                      gap: SPACE[4],
                       borderBottomWidth: 1,
                     }}
                     class="border-border"
@@ -1483,23 +1484,23 @@ export function StudioView(props: { active: boolean }) {
                       when={readOnly()}
                       else={
                         <If when={isMarkdownTab() && !!file()}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2], flexShrink: 0 }}>
                             <If when={vimMode()}>
                               {(m) => (
                                 <View
                                   testID="vim-mode-badge"
                                   class={m() === "insert" ? "bg-primary/15" : "bg-muted"}
                                   style={{
-                                    height: 20,
-                                    paddingLeft: 6,
-                                    paddingRight: 6,
-                                    marginRight: 4,
-                                    borderRadius: 4,
+                                    height: 20, // token-exempt: compact vim mode badge height
+                                    paddingLeft: SPACE[6],
+                                    paddingRight: SPACE[6],
+                                    marginRight: SPACE[4],
+                                    borderRadius: RADIUS.xs,
                                     justifyContent: "center",
                                   }}
                                 >
                                   <Text
-                                    style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: 0.4 }}
+                                    style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, letterSpacing: 0.4 }}
                                     class={m() === "insert" ? "text-primary" : "text-secondary-foreground"}
                                   >
                                     {m() === "visual-line" ? "V-LINE" : m().toUpperCase()}
@@ -1509,29 +1510,25 @@ export function StudioView(props: { active: boolean }) {
                             </If>
                             <IconBtn
                               icon="sigma"
-                              size={26}
-                              iconSize={14.5}
+                              size="sm"
                               tooltip={tip(t("studio.toolbar.inlineMath"), "mod+m")}
                               onPress={() => editorActions?.inlineMath()}
                             />
                             <IconBtn
                               icon="squareCode"
-                              size={26}
-                              iconSize={14.5}
+                              size="sm"
                               tooltip={tip(t("studio.toolbar.displayMath"), "mod+shift+m")}
                               onPress={() => editorActions?.displayMath()}
                             />
                             <IconBtn
                               icon="table"
-                              size={26}
-                              iconSize={14.5}
+                              size="sm"
                               tooltip={tip(t("studio.toolbar.table"))}
                               onPress={() => editorActions?.table()}
                             />
                             <IconBtn
                               icon="image"
-                              size={26}
-                              iconSize={14.5}
+                              size="sm"
                               tooltip={tip(t("studio.toolbar.insertImage"))}
                               onPress={openAssets}
                             />
@@ -1542,9 +1539,9 @@ export function StudioView(props: { active: boolean }) {
                       <View
                         testID="studio-readonly-badge"
                         class="bg-muted"
-                        style={{ height: 22, paddingLeft: 7, paddingRight: 7, borderRadius: 5, justifyContent: "center" }}
+                        style={{ height: 22, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact readonly badge height
                       >
-                        <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                           {archived() ? t("contests.archived") : frozen() ? t("contests.finalized") : t("common.readOnlyWorkspace")}
                         </Text>
                       </View>
@@ -1557,17 +1554,17 @@ export function StudioView(props: { active: boolean }) {
                   <View
                     testID="conflict-bar"
                     style={{
-                      height: 38,
-                      paddingLeft: 12,
-                      paddingRight: 8,
+                      height: ROW.table,
+                      paddingLeft: SPACE[12],
+                      paddingRight: SPACE[8],
                       borderBottomWidth: 1,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 6,
+                      gap: SPACE[6],
                     }}
                     class="bg-muted/60 border-border"
                   >
-                    <Text style={{ flex: 1, fontSize: 12.5 }} class="text-secondary-foreground">
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                       {t("studio.conflict.message")}
                     </Text>
                     <Btn label={t("studio.conflict.takeTheirs")} variant="ghost" onPress={takeTheirs} />
@@ -1686,7 +1683,7 @@ export function StudioView(props: { active: boolean }) {
                         title={t("contests.emptyProblemsTitle")}
                         hint={t("studio.emptyContestHint")}
                         action={
-                          <View style={{ flexDirection: "row", gap: 8 }}>
+                          <View style={{ flexDirection: "row", gap: SPACE[8] }}>
                             <Btn label={t("studio.goLibrary")} icon="libraryBig" onPress={() => goSpace("problems")} />
                             <Btn
                               label={t("library.newProblem")}
@@ -1760,8 +1757,8 @@ export function StudioView(props: { active: boolean }) {
                       left: 12,
                       right: 12,
                       bottom: 12,
-                      padding: 10,
-                      borderRadius: 8,
+                      padding: SPACE[12],
+                      borderRadius: RADIUS.md,
                       borderWidth: 1,
                       boxShadow: popoverShadow(),
                     }}

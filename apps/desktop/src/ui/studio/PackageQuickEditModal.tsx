@@ -13,6 +13,7 @@ import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO } from "../theme";
 import { formatBytesCompact } from "./buildLogic";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export function PackageQuickEditModal(props: {
   open: boolean;
   problemId: string;
@@ -114,34 +115,34 @@ export function PackageQuickEditModal(props: {
         <View
           style={{
             height: 44,
-            paddingLeft: 14,
-            paddingRight: 10,
+            paddingLeft: SPACE[12],
+            paddingRight: SPACE[12],
             borderBottomWidth: 1,
             flexDirection: "row",
             alignItems: "center",
-            gap: 8,
+            gap: SPACE[8],
           }}
           class="border-border bg-background/50"
         >
-          <Icon name="code" size={15} tone="secondary-foreground" />
+          <Icon name="code" size="md" tone="secondary-foreground" />
           <Text
-            style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: 13, fontWeight: 500, fontFamily: MONO }}
+            style={{ flex: 1, numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, fontFamily: MONO }}
             class="text-foreground"
           >
             {props.relPath ?? ""}
           </Text>
           <If when={dirty()}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3 }} class="bg-chart-4" />
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+              <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class="bg-chart-4" />
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("build.quickEdit.unsaved")}
               </Text>
             </View>
           </If>
           <If when={savedFeedback.active() && !dirty()}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-              <Icon name="check" size={12} tone="secondary-foreground" />
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+              <Icon name="check" size="sm" tone="secondary-foreground" />
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("build.quickEdit.saved")}
               </Text>
             </View>
@@ -168,7 +169,7 @@ export function PackageQuickEditModal(props: {
               onPress={() => saveFile(false)}
             />
           </If>
-          <IconBtn icon="x" size={26} iconSize={14} onPress={props.onClose} />
+          <IconBtn icon="x" size="sm" onPress={props.onClose} />
         </View>
 
         {/* Fix A-3: Inline external-edit conflict bar */}
@@ -176,26 +177,26 @@ export function PackageQuickEditModal(props: {
           <View
             testID="quick-edit-conflict-bar"
             style={{
-              paddingLeft: 14,
-              paddingRight: 12,
-              paddingTop: 8,
-              paddingBottom: 8,
+              paddingLeft: SPACE[12],
+              paddingRight: SPACE[12],
+              paddingTop: SPACE[8],
+              paddingBottom: SPACE[8],
               borderBottomWidth: 1,
               borderLeftWidth: 3,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "space-between",
-              gap: 10,
+              gap: SPACE[8],
             }}
             class="border-b-border border-l-chart-4 bg-muted/40"
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1, minWidth: 0 }}>
-              <Icon name="triangleAlert" size={14} tone="chart-4" />
-              <Text style={{ fontSize: 12, flex: 1 }} class="text-foreground">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flex: 1, minWidth: 0 }}>
+              <Icon name="triangleAlert" size="sm" tone="chart-4" />
+              <Text style={{ fontSize: FONT_SIZE.caption, flex: 1 }} class="text-foreground">
                 {t("build.quickEdit.conflictNotice")}
               </Text>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
               <Btn
                 testID="quick-edit-reload-btn"
                 label={t("build.quickEdit.loadExternal")}
@@ -216,7 +217,7 @@ export function PackageQuickEditModal(props: {
         </If>
 
         <If when={err()}>
-          <View style={{ padding: 12, borderBottomWidth: 1 }} class="border-border bg-muted/30">
+          <View style={{ padding: SPACE[12], borderBottomWidth: 1 }} class="border-border bg-muted/30">
             <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
           </View>
         </If>
@@ -225,9 +226,9 @@ export function PackageQuickEditModal(props: {
         <If
           when={!tooLarge()}
           else={
-            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 28, gap: 12 }}>
-              <Icon name="fileText" size={24} tone="muted-foreground" />
-              <Text style={{ fontSize: 13, textAlign: "center" }} class="text-secondary-foreground">
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[12] }}>
+              <Icon name="fileText" size="lg" tone="muted-foreground" />
+              <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-secondary-foreground">
                 {`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
               </Text>
               <If when={props.relPath}>

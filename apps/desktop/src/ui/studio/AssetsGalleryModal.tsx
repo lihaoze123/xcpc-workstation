@@ -32,6 +32,7 @@ import { colorTransition, overlayTransition, panelTransition } from "../motion";
 import { errorOf, preview, revision, type UiError } from "../store";
 import { MONO, ms, token } from "../theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE, TOOLBAR } from "../tokens";
 type DeleteConfirm = { kind: "single"; asset: ProblemAssetJs } | { kind: "unused" };
 
 const WIDTH_PRESETS = [50, 75, 100] as const;
@@ -429,13 +430,13 @@ export function AssetsGalleryModal(props: {
         <View
           style={{
             height: 48,
-            paddingLeft: 16,
-            paddingRight: 10,
+            paddingLeft: SPACE[16],
+            paddingRight: SPACE[12],
             borderBottomWidth: 1,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 10,
+            gap: SPACE[8],
             flexShrink: 0,
           }}
           class="border-border"
@@ -443,17 +444,17 @@ export function AssetsGalleryModal(props: {
           <If
             when={mode() === "lightbox" && !!currentAsset()}
             else={
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                   {t("assets.title")}
                 </Text>
-                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                   {String(assets().length)}
                 </Text>
               </View>
             }
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flex: 1, minWidth: 0 }}>
               <Btn
                 label={t("common.back")}
                 icon="arrowLeft"
@@ -468,8 +469,8 @@ export function AssetsGalleryModal(props: {
                   <Text
                     style={{
                       flex: 1,
-                      fontSize: 13,
-                      fontWeight: 500,
+                      fontSize: FONT_SIZE.body,
+                      fontWeight: FONT_WEIGHT.semibold,
                       numberOfLines: 1,
                       textOverflow: "ellipsis",
                     }}
@@ -479,7 +480,7 @@ export function AssetsGalleryModal(props: {
                   </Text>
                 }
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flex: 1, maxWidth: 320 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], flex: 1, maxWidth: 320 }}>
                   <Input
                     ref={(r) => (renameInput = r)}
                     value={renameDraft()}
@@ -496,23 +497,22 @@ export function AssetsGalleryModal(props: {
                   />
                   <IconBtn
                     icon="check"
-                    size={24}
-                    iconSize={13}
+                    size="sm"
                     tooltip={tip(t("assets.confirmRename"))}
                     onPress={() => currentAsset() && commitRename(currentAsset()!.name)}
                   />
-                  <IconBtn icon="x" size={24} iconSize={13} tooltip={tip(t("common.cancel"))} onPress={cancelRename} />
+                  <IconBtn icon="x" size="sm" tooltip={tip(t("common.cancel"))} onPress={cancelRename} />
                 </View>
               </If>
             </View>
           </If>
 
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
             <If when={mode() === "grid"}>
               <If when={cleanedFeedback.value() != null}>
-                <View testID="assets-cleaned-feedback" style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 4 }}>
-                  <Icon name="check" size={12.5} tone="secondary-foreground" />
-                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                <View testID="assets-cleaned-feedback" style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], paddingRight: SPACE[4] }}>
+                  <Icon name="check" size="sm" tone="secondary-foreground" />
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                     {t("assets.cleanedUnused", { count: cleanedFeedback.value()! })}
                   </Text>
                 </View>
@@ -542,28 +542,26 @@ export function AssetsGalleryModal(props: {
             <If when={mode() === "lightbox" && !!currentAsset() && renaming() !== currentAsset()?.name}>
               <IconBtn
                 icon="pencil"
-                size={26}
-                iconSize={13.5}
+                size="sm"
                 disabled={props.readOnly}
                 tooltip={tip(t("assets.rename"), "f2")}
                 onPress={() => currentAsset() && startRename(currentAsset()!)}
               />
               <IconBtn
                 icon="trash"
-                size={26}
-                iconSize={13.5}
+                size="sm"
                 disabled={props.readOnly}
                 tooltip={tip(t("assets.deleteAsset"), "delete")}
                 onPress={() => currentAsset() && askDelete(currentAsset()!)}
               />
             </If>
-            <IconBtn icon="x" size={26} iconSize={14} tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
+            <IconBtn icon="x" size="sm" tooltip={tip(t("common.close"), "escape")} onPress={props.onClose} />
           </View>
         </View>
 
         {/* Error banner */}
         <If when={error()}>
-          <View style={{ paddingLeft: 16, paddingRight: 16, paddingTop: 10, flexShrink: 0 }}>
+          <View style={{ paddingLeft: SPACE[16], paddingRight: SPACE[16], paddingTop: SPACE[12], flexShrink: 0 }}>
             <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
           </View>
         </If>
@@ -575,18 +573,18 @@ export function AssetsGalleryModal(props: {
               testID="assets-delete-confirm"
               class="bg-muted/70 border-b border-border"
               style={{
-                paddingLeft: 16,
-                paddingRight: 12,
-                paddingTop: 8,
-                paddingBottom: 8,
+                paddingLeft: SPACE[16],
+                paddingRight: SPACE[12],
+                paddingTop: SPACE[8],
+                paddingBottom: SPACE[8],
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
-                gap: 12,
+                gap: SPACE[12],
                 flexShrink: 0,
               }}
             >
-              <Text style={{ flex: 1, fontSize: 12.5, lineHeight: 18 }} class="text-foreground">
+              <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-foreground">
                 {(() => {
                   const cur = del();
                   if (cur.kind === "single") {
@@ -599,7 +597,7 @@ export function AssetsGalleryModal(props: {
                     : t("assets.confirmDeleteUnused", { count: unusedCount(), size: formatBytes(unusedBytes()) });
                 })()}
               </Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
                 <Btn
                   testID="assets-delete-cancel-btn"
                   label={t("common.cancel")}
@@ -642,17 +640,17 @@ export function AssetsGalleryModal(props: {
                     minHeight: 320,
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: 10,
-                    padding: 32,
+                    gap: SPACE[8],
+                    padding: SPACE[32],
                   }}
                 >
                   <View
                     class="bg-muted"
-                    style={{ width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" }}
+                    style={{ width: 44, height: 44, borderRadius: RADIUS.lg, alignItems: "center", justifyContent: "center" }}
                   >
-                    <Icon name="image" size={20} tone="muted-foreground" />
+                    <Icon name="image" size="lg" tone="muted-foreground" />
                   </View>
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                     {t("assets.empty")}
                   </Text>
                   <If when={!props.readOnly}>
@@ -664,7 +662,7 @@ export function AssetsGalleryModal(props: {
               <View
                 testID="assets-grid"
                 style={{
-                  padding: 16,
+                  padding: SPACE[16],
                   flexDirection: "row",
                   flexWrap: "wrap",
                   gap: TILE_GAP,
@@ -733,7 +731,7 @@ export function AssetsGalleryModal(props: {
                   <View
                     style={{
                       flex: 1,
-                      padding: 20,
+                      padding: SPACE[20],
                       alignItems: "center",
                       justifyContent: "center",
                       position: "relative",
@@ -745,20 +743,20 @@ export function AssetsGalleryModal(props: {
                       style={{
                         width: "100%",
                         height: "100%",
-                        borderRadius: 10,
+                        borderRadius: RADIUS.lg,
                         overflow: "hidden",
                         ...checkerboardBg(),
                         alignItems: "center",
                         justifyContent: "center",
-                        padding: 12,
+                        padding: SPACE[12],
                       }}
                     >
                       <If
                         when={!showFallback}
                         else={
-                          <View style={{ alignItems: "center", gap: 8 }}>
-                            <Icon name="fileText" size={32} tone="muted-foreground" />
-                            <Text style={{ fontSize: 12.5 }} class="text-muted-foreground">
+                          <View style={{ alignItems: "center", gap: SPACE[8] }}>
+                            <Icon name="fileText" size="lg" tone="muted-foreground" />
+                            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                               {asset.name}
                             </Text>
                           </View>
@@ -783,21 +781,19 @@ export function AssetsGalleryModal(props: {
                       <View style={{ position: "absolute", left: 28, top: 0, bottom: 0, justifyContent: "center", pointerEvents: "box-none" }}>
                         <IconBtn
                           icon="chevronLeft"
-                          size={30}
-                          iconSize={16}
+                          size="lg"
                           tooltip={tip(t("assets.prevImage"), "left")}
                           onPress={() => stepSelection(-1)}
-                          style={{ borderRadius: 9999 }}
+                          style={{ borderRadius: RADIUS.full }}
                         />
                       </View>
                       <View style={{ position: "absolute", right: 28, top: 0, bottom: 0, justifyContent: "center", pointerEvents: "box-none" }}>
                         <IconBtn
                           icon="chevronRight"
-                          size={30}
-                          iconSize={16}
+                          size="lg"
                           tooltip={tip(t("assets.nextImage"), "right")}
                           onPress={() => stepSelection(1)}
-                          style={{ borderRadius: 9999 }}
+                          style={{ borderRadius: RADIUS.full }}
                         />
                       </View>
                     </If>
@@ -806,31 +802,31 @@ export function AssetsGalleryModal(props: {
                   {/* Bottom info & actions bar (spacing-separated, no middle-dot separators) */}
                   <View
                     style={{
-                      height: 52,
-                      paddingLeft: 16,
-                      paddingRight: 16,
+                      height: TOOLBAR,
+                      paddingLeft: SPACE[16],
+                      paddingRight: SPACE[16],
                       borderTopWidth: 1,
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      gap: SPACE[12],
                       flexShrink: 0,
                     }}
                     class="border-border"
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12], flex: 1, minWidth: 0 }}>
                       <If when={asset.width != null && asset.height != null}>
-                        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                           {`${asset.width}×${asset.height}`}
                         </Text>
                       </If>
-                      <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                         {formatBytes(asset.bytes)}
                       </Text>
                       <If
                         when={!!ref0}
                         else={
-                          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                             {t("assets.unreferenced")}
                           </Text>
                         }
@@ -844,16 +840,16 @@ export function AssetsGalleryModal(props: {
                           tooltip={tip(t("assets.jumpToReference"))}
                           class="hover:bg-muted active:bg-accent"
                           style={{
-                            paddingLeft: 6,
-                            paddingRight: 6,
-                            height: 24,
-                            borderRadius: 5,
+                            paddingLeft: SPACE[6],
+                            paddingRight: SPACE[6],
+                            height: CONTROL.sm,
+                            borderRadius: RADIUS.xs,
                             justifyContent: "center",
                             ...colorTransition(120),
                           }}
                         >
                           <Text
-                            style={{ fontSize: 12, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
+                            style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-primary"
                           >
                             {ref0 ? referenceLabel(ref0.file, ref0.line, asset.references.length) : ""}
@@ -862,9 +858,9 @@ export function AssetsGalleryModal(props: {
                       </If>
                     </View>
 
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
                       <If when={asset.referenced && !props.readOnly}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
                           <Each of={WIDTH_PRESETS} key={(w) => String(w)}>
                             {(w) => {
                               const active = () => ref0?.widthPct != null && Math.round(ref0.widthPct) === w();
@@ -878,17 +874,17 @@ export function AssetsGalleryModal(props: {
                                       : "bg-muted hover:bg-accent active:bg-accent"
                                   }
                                   style={{
-                                    height: 26,
-                                    paddingLeft: 8,
-                                    paddingRight: 8,
-                                    borderRadius: 6,
+                                    height: CONTROL.sm,
+                                    paddingLeft: SPACE[8],
+                                    paddingRight: SPACE[8],
+                                    borderRadius: RADIUS.sm,
                                     alignItems: "center",
                                     justifyContent: "center",
                                     ...colorTransition(120),
                                   }}
                                 >
                                   <Text
-                                    style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], fontWeight: active() ? 600 : 400 }}
+                                    style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], fontWeight: active() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular }}
                                     class={active() ? "text-foreground" : "text-secondary-foreground"}
                                   >
                                     {`${w()}%`}
@@ -949,7 +945,7 @@ function AssetTile(props: {
       testID={`asset-tile-${props.asset.name}`}
       onMouseEnter={() => hovered.set(true)}
       onMouseLeave={() => hovered.set(false)}
-      style={{ width: TILE_WIDTH, gap: 6 }}
+      style={{ width: TILE_WIDTH, gap: SPACE[6] }}
     >
       {/* Thumbnail box with hover-only floating actions (absolute, zero reflow) */}
       <View
@@ -957,7 +953,7 @@ function AssetTile(props: {
         style={{
           width: TILE_WIDTH,
           height: 126,
-          borderRadius: 8,
+          borderRadius: RADIUS.md,
           borderWidth: 1,
           overflow: "hidden",
           position: "relative",
@@ -972,12 +968,12 @@ function AssetTile(props: {
             height: "100%",
             alignItems: "center",
             justifyContent: "center",
-            padding: 8,
+            padding: SPACE[8],
           }}
         >
           <If
             when={!showFallback()}
-            else={<Icon name="fileText" size={24} tone="muted-foreground" />}
+            else={<Icon name="fileText" size="lg" tone="muted-foreground" />}
           >
             <Image
               src={imgSrc()}
@@ -1003,17 +999,17 @@ function AssetTile(props: {
               right: 6,
               flexDirection: "row",
               alignItems: "center",
-              gap: 2,
-              padding: 2,
-              borderRadius: 6,
+              gap: SPACE[2],
+              padding: SPACE[2],
+              borderRadius: RADIUS.sm,
               opacity: hovered() ? 1 : 0,
               pointerEvents: hovered() ? "auto" : "none",
               ...panelTransition(),
             }}
           >
-            <IconBtn icon="plus" size={22} iconSize={13} tooltip={tip(t("assets.insertAtCaret"))} onPress={props.onInsert} />
-            <IconBtn icon="pencil" size={22} iconSize={12.5} tooltip={tip(t("assets.rename"), "f2")} onPress={props.onStartRename} />
-            <IconBtn icon="trash" size={22} iconSize={12.5} tooltip={tip(t("assets.deleteAsset"), "delete")} onPress={props.onAskDelete} />
+            <IconBtn icon="plus" size="sm" tooltip={tip(t("assets.insertAtCaret"))} onPress={props.onInsert} />
+            <IconBtn icon="pencil" size="sm" tooltip={tip(t("assets.rename"), "f2")} onPress={props.onStartRename} />
+            <IconBtn icon="trash" size="sm" tooltip={tip(t("assets.deleteAsset"), "delete")} onPress={props.onAskDelete} />
           </View>
         </If>
       </View>
@@ -1022,14 +1018,14 @@ function AssetTile(props: {
       <If
         when={props.isRenaming}
         else={
-          <View onPress={props.onSelect} style={{ gap: 2, paddingLeft: 2, paddingRight: 2 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <View onPress={props.onSelect} style={{ gap: SPACE[2], paddingLeft: SPACE[2], paddingRight: SPACE[2] }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[6] }}>
               <Text
                 style={{
                   flex: 1,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  lineHeight: 16,
+                  fontSize: FONT_SIZE.caption,
+                  fontWeight: FONT_WEIGHT.semibold,
+                  lineHeight: LINE_HEIGHT.caption,
                   numberOfLines: 1,
                   textOverflow: "ellipsis",
                 }}
@@ -1038,21 +1034,21 @@ function AssetTile(props: {
                 {middleEllipsis(props.asset.name, 16)}
               </Text>
               <Text
-                style={{ fontSize: 11, lineHeight: 16, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                 class="text-muted-foreground"
               >
                 {formatBytes(props.asset.bytes)}
               </Text>
             </View>
             <If when={!props.asset.referenced}>
-              <Text style={{ fontSize: 10.5, lineHeight: 14 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro }} class="text-muted-foreground">
                 {t("assets.unreferenced")}
               </Text>
             </If>
           </View>
         }
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[2] }}>
           <Input
             ref={props.onRenameInputRef}
             value={props.renameDraft}
@@ -1067,8 +1063,8 @@ function AssetTile(props: {
             class="flex-1 h-6 px-1.5 rounded border border-primary bg-background text-[11.5px] text-foreground"
             style={{ fontFamily: MONO }}
           />
-          <IconBtn icon="check" size={20} iconSize={12} tooltip={tip(t("common.confirm"))} onPress={props.onCommitRename} />
-          <IconBtn icon="x" size={20} iconSize={12} tooltip={tip(t("common.cancel"))} onPress={props.onCancelRename} />
+          <IconBtn icon="check" size="sm" tooltip={tip(t("common.confirm"))} onPress={props.onCommitRename} />
+          <IconBtn icon="x" size="sm" tooltip={tip(t("common.cancel"))} onPress={props.onCancelRename} />
         </View>
       </If>
     </View>

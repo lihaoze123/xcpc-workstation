@@ -82,6 +82,7 @@ import {
   normalizeCxxOverrideInput,
 } from "./studio/buildLogic";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "./tokens";
 const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: IconName }[] = [
   { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
   { id: "layout", labelKey: "settings.nav.layout", icon: "fileText" },
@@ -163,7 +164,7 @@ function formatDiagnostics(about: AboutInfoJs): string {
 
 function Card(props: { children?: JSX.Element }) {
   return (
-    <View style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden", boxShadow: cardShadow() }} class="bg-card border-border">
+    <View style={{ borderRadius: RADIUS.lg, borderWidth: 1, overflow: "hidden", boxShadow: cardShadow() }} class="bg-card border-border">
       {props.children}
     </View>
   );
@@ -180,20 +181,20 @@ function isDevShell(): boolean {
 /** A folder: its name over its path, with the full path on hover. */
 function Folder(props: { path: string; note?: string }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }} tooltip={tip(props.path)}>
-      <Icon name="folder" size={18} />
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 13.5, lineHeight: 18, fontWeight: 500 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }} tooltip={tip(props.path)}>
+      <Icon name="folder" size="lg" />
+      <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }}>
             {pathBase(props.path)}
           </Text>
           {props.note && (
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {props.note}
             </Text>
           )}
         </View>
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, lineHeight: 16, fontFamily: MONO }} class="text-muted-foreground">
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }} class="text-muted-foreground">
           {abbreviateHome(props.path)}
         </Text>
       </View>
@@ -213,22 +214,21 @@ function Stepper(props: {
   return (
     <View
       style={{
-        height: 28,
-        borderRadius: 7,
+        height: CONTROL.md,
+        borderRadius: RADIUS.sm,
         borderWidth: 1,
         flexDirection: "row",
         alignItems: "center",
-        paddingLeft: 2,
-        paddingRight: 2,
-        gap: 2,
+        paddingLeft: SPACE[2],
+        paddingRight: SPACE[2],
+        gap: SPACE[2],
       }}
       class="border-border bg-muted/50"
     >
       <IconBtn
         testID={props.testIDPrefix ? `${props.testIDPrefix}-dec` : undefined}
         icon="minus"
-        size={22}
-        iconSize={13}
+        size="sm"
         disabled={!props.canDec}
         onPress={props.onDec}
       />
@@ -236,8 +236,8 @@ function Stepper(props: {
         style={{
           minWidth: 54,
           textAlign: "center",
-          fontSize: 12.5,
-          lineHeight: 16,
+          fontSize: FONT_SIZE.caption,
+          lineHeight: LINE_HEIGHT.caption,
           fontVariant: ["tabular-nums"],
         }}
         class="text-foreground"
@@ -247,8 +247,7 @@ function Stepper(props: {
       <IconBtn
         testID={props.testIDPrefix ? `${props.testIDPrefix}-inc` : undefined}
         icon="plus"
-        size={22}
-        iconSize={13}
+        size="sm"
         disabled={!props.canInc}
         onPress={props.onInc}
       />
@@ -300,18 +299,18 @@ function WorkspacePane(props: { active: boolean }) {
   };
 
   return (
-    <View style={{ gap: 24 }}>
+    <View style={{ gap: SPACE[24] }}>
       <Section title={t("settings.workspace.title")} description={t("settings.workspace.desc")}>
         <SectionRow first trailing={<Btn label={t("common.revealInFolder")} icon="folderOpen" onPress={() => void reveal()} />}>
           <Folder path={info().root} note={info().readOnly ? t("common.readOnly") : undefined} />
         </SectionRow>
         <If when={recent().length > 0}>
-          <View style={{ paddingLeft: 14, paddingTop: 10, paddingBottom: 2, borderTopWidth: 1 }} class="border-border">
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+          <View style={{ paddingLeft: SPACE[12], paddingTop: SPACE[12], paddingBottom: SPACE[2], borderTopWidth: 1 }} class="border-border">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("settings.workspace.recent")}
             </Text>
           </View>
-          <View style={{ padding: 4, paddingTop: 2 }}>
+          <View style={{ padding: SPACE[4], paddingTop: SPACE[2] }}>
             <Each of={recent()} key={(p) => p}>
               {(path) => (
                 <View
@@ -319,30 +318,30 @@ function WorkspacePane(props: { active: boolean }) {
                   class="hover:bg-muted active:bg-accent"
                   style={{
                     height: 48,
-                    paddingLeft: 10,
-                    paddingRight: 10,
-                    borderRadius: 8,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[12],
+                    borderRadius: RADIUS.md,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 8,
+                    gap: SPACE[8],
                     ...colorTransition(120),
                   }}
                 >
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Folder path={path()} />
                   </View>
-                  <Icon name="arrowRight" size={15} tone="muted-foreground" />
+                  <Icon name="arrowRight" size="md" tone="muted-foreground" />
                 </View>
               )}
             </Each>
           </View>
         </If>
         <If when={sectionError()}>
-          <View style={{ paddingLeft: 14, paddingRight: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 1 }} class="border-border bg-muted/40">
+          <View style={{ paddingLeft: SPACE[12], paddingRight: SPACE[12], paddingTop: SPACE[12], paddingBottom: SPACE[12], borderTopWidth: 1 }} class="border-border bg-muted/40">
             <ErrorDisplay error={sectionError()} onDismiss={clearErrors} />
           </View>
         </If>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: 12, borderTopWidth: 1 }} class="border-border bg-muted/40">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: SPACE[8], padding: SPACE[12], borderTopWidth: 1 }} class="border-border bg-muted/40">
           <Btn label={t("settings.workspace.openExisting")} icon="folderOpen" onPress={() => void pickWorkspace()} />
           <Btn label={t("settings.workspace.newWorkspace")} icon="folderPlus" onPress={() => requestNewWorkspace()} />
         </View>
@@ -368,27 +367,27 @@ function WorkspacePane(props: { active: boolean }) {
             />
           }
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <Icon name="bot" size={18} />
-            <Text style={{ fontSize: 13, lineHeight: 18 }}>{t("settings.mcp.hint")}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <Icon name="bot" size="lg" />
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }}>{t("settings.mcp.hint")}</Text>
           </View>
         </SectionRow>
         <View
           onPress={() => showJson.set(!showJson())}
           class="hover:bg-muted active:bg-accent border-border"
           style={{
-            height: 36,
-            paddingLeft: 14,
+            height: ROW.table,
+            paddingLeft: SPACE[12],
             flexDirection: "row",
             alignItems: "center",
-            gap: 6,
+            gap: SPACE[6],
             borderTopWidth: 1,
             ...colorTransition(120),
           }}
         >
           <Icon
             name="chevronDown"
-            size={14}
+            size="sm"
             tone="muted-foreground"
             style={{
               transform: showJson() ? "rotate(0deg)" : "rotate(-90deg)",
@@ -397,15 +396,15 @@ function WorkspacePane(props: { active: boolean }) {
               transitionTimingFunction: EASE_STANDARD,
             }}
           />
-          <Text style={{ fontSize: 12.5 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {showJson() ? t("settings.mcp.hideConfig") : t("settings.mcp.showConfig")}
           </Text>
         </View>
         <If when={showJson()}>
           <View style={{ borderTopWidth: 1 }} class="border-border bg-muted/40">
             <Scroll horizontal style={{ maxWidth: "100%" }}>
-              <View style={{ padding: 14 }}>
-                <Text style={{ fontSize: 12, fontFamily: MONO, lineHeight: 18 }} class="text-secondary-foreground">
+              <View style={{ padding: SPACE[12] }}>
+                <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                   {snippet()}
                 </Text>
               </View>
@@ -454,12 +453,12 @@ function LayoutPane(props: { active: boolean }) {
   };
 
   return (
-    <View style={{ gap: 24 }}>
+    <View style={{ gap: SPACE[24] }}>
       <Section
         title={t("settings.layout.defaultTemplateTitle")}
         description={t("settings.layout.defaultTemplateDesc")}
       >
-        <View style={{ padding: 14, gap: 12 }}>
+        <View style={{ padding: SPACE[12], gap: SPACE[12] }}>
           <TemplatePicker
             templates={catalog().templates}
             value={tplId()}
@@ -468,18 +467,18 @@ function LayoutPane(props: { active: boolean }) {
             onAddFromPreset={!wsReadOnly() ? () => presetOpen.set(true) : undefined}
           />
           <If when={!tplInfo()}>
-            <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Icon name="triangleAlert" size={14} tone="destructive" />
-                <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+            <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Icon name="triangleAlert" size="sm" tone="destructive" />
+                <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                   {t("settings.layout.missingTemplateTitle", { id: tplId() })}
                 </Text>
               </View>
-              <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                 {t("settings.layout.missingTemplateDesc")}
               </Text>
               <If when={!wsReadOnly()}>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
                   <If
                     when={canInstallMissingPreset()}
                     else={
@@ -503,7 +502,7 @@ function LayoutPane(props: { active: boolean }) {
             </View>
           </If>
           <If when={!wsReadOnly()}>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingTop: 2 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[8], paddingTop: SPACE[2] }}>
               <Btn label={t("settings.layout.addFromPreset")} icon="plus" onPress={() => presetOpen.set(true)} />
               <If when={!!tplInfo()}>
                 <Btn
@@ -540,7 +539,7 @@ function LayoutPane(props: { active: boolean }) {
             </If>
           }
         >
-          <View style={{ padding: 14 }}>
+          <View style={{ padding: SPACE[12] }}>
             <TemplateOptionsEditor
               ownerKey={`workspace:${info().root}:${tplId()}`}
               template={tplInfo()}
@@ -676,7 +675,7 @@ function ToolchainPane() {
   const dirtyDraft = () => (normalizeCxxOverrideInput(draft()) ?? "") !== currentCustomVal();
 
   return (
-    <View testID="settings-toolchain-pane" style={{ gap: 24 }}>
+    <View testID="settings-toolchain-pane" style={{ gap: SPACE[24] }}>
       <Section
         title={t("settings.toolchain.title")}
         description={t("settings.toolchain.desc")}
@@ -694,11 +693,11 @@ function ToolchainPane() {
           when={compilers().length > 0}
           else={
             <SectionRow first>
-              <View style={{ gap: 2 }}>
-                <Text testID="toolchain-not-found" style={{ fontSize: 14, fontWeight: 500 }} class="text-foreground">
+              <View style={{ gap: SPACE[2] }}>
+                <Text testID="toolchain-not-found" style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                   {t("settings.toolchain.notFound")}
                 </Text>
-                <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                   {t("settings.toolchain.noDetected")}
                 </Text>
               </View>
@@ -713,9 +712,9 @@ function ToolchainPane() {
                   first={idx() === 0}
                   trailing={
                     isActive() ? (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Icon name="check" size={14} tone="secondary-foreground" />
-                        <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                        <Icon name="check" size="sm" tone="secondary-foreground" />
+                        <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                           {t("settings.toolchain.active")}
                         </Text>
                         <If when={Boolean(status().overridePath) && idx() > 0}>
@@ -731,20 +730,20 @@ function ToolchainPane() {
                     )
                   }
                 >
-                  <View style={{ minWidth: 0, gap: 2 }}>
+                  <View style={{ minWidth: 0, gap: SPACE[2] }}>
                     <Text
                       testID={isActive() ? "toolchain-active-name" : undefined}
-                      style={{ fontSize: 14, fontWeight: isActive() ? 600 : 500 }}
+                      style={{ fontSize: FONT_SIZE.strong, fontWeight: isActive() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular }}
                       class="text-foreground"
                     >
                       {compiler().name}
                     </Text>
-                    <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                       {compiler().version}
                     </Text>
                     <Text
                       tooltip={tip(compiler().path)}
-                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12, lineHeight: 16, fontFamily: MONO }}
+                      style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }}
                       class="text-muted-foreground"
                     >
                       {middleTruncatePath(compiler().path, 42)}
@@ -757,16 +756,16 @@ function ToolchainPane() {
         </If>
 
         <SectionRow>
-          <View style={{ gap: 8 }}>
-            <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[8] }}>
+            <View style={{ gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("settings.toolchain.customPathLabel")}
               </Text>
-              <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
                 {t("settings.toolchain.overrideDesc")}
               </Text>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
               <Input
                 testID="toolchain-override-input"
                 value={draft()}
@@ -792,7 +791,7 @@ function ToolchainPane() {
               </If>
             </View>
             <If when={Boolean(status().error) || invalidOverride()}>
-              <Text testID="toolchain-override-invalid" style={{ fontSize: 12, lineHeight: 16 }} class="text-destructive">
+              <Text testID="toolchain-override-invalid" style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-destructive">
                 {status().error ?? t("settings.toolchain.overrideInvalid", { path: status().overridePath ?? "" })}
               </Text>
             </If>
@@ -805,8 +804,8 @@ function ToolchainPane() {
           <Each of={status().installCommands} key={(c) => c.label}>
             {(c, idx) => (
               <SectionRow first={idx() === 0}>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                <View style={{ gap: SPACE[6] }}>
+                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                     {c().label}
                   </Text>
                   <CopyableCommand command={c().command} />
@@ -817,23 +816,23 @@ function ToolchainPane() {
         </Section>
       </If>
 
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: SPACE[8] }}>
         <View
           testID="toolchain-advanced-toggle"
           onPress={() => toolchainAdvancedOpen.set(!toolchainAdvancedOpen())}
-          style={{ flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" }}
+          style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], alignSelf: "flex-start" }}
         >
-          <Icon name={toolchainAdvancedOpen() ? "chevronDown" : "chevronRight"} size={13} tone="muted-foreground" />
-          <Text style={{ fontSize: 13 }} class="text-secondary-foreground hover:text-foreground">
+          <Icon name={toolchainAdvancedOpen() ? "chevronDown" : "chevronRight"} size="sm" tone="muted-foreground" />
+          <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground hover:text-foreground">
             {t("settings.toolchain.advanced")}
           </Text>
         </View>
         <If when={toolchainAdvancedOpen()}>
-          <View testID="toolchain-advanced" style={{ gap: 14 }}>
+          <View testID="toolchain-advanced" style={{ gap: SPACE[12] }}>
             <Section title={t("settings.lc.title")} description={t("settings.lc.desc")}>
               <SectionRow first>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                <View style={{ gap: SPACE[6] }}>
+                  <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {t("settings.lc.mirrorLabel")}
                   </Text>
                   <Input
@@ -842,23 +841,23 @@ function ToolchainPane() {
                     placeholder={t("settings.lc.mirrorPlaceholder")}
                     onChange={(e) => lcMirror.set(e.value)}
                     class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                    style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                   />
                 </View>
               </SectionRow>
               <SectionRow>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                <View style={{ gap: SPACE[6] }}>
+                  <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                     {t("settings.lc.localRepoLabel")}
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
                     <Input
                       testID="lc-repo-input"
                       value={lcLocalRepo()}
                       placeholder={t("settings.lc.localRepoPlaceholder")}
                       onChange={(e) => lcLocalRepo.set(e.value)}
                       class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                      style={{ flex: 1, height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 12.5, fontFamily: MONO }}
+                      style={{ flex: 1, height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.caption, fontFamily: MONO }}
                     />
                     <Btn variant="outline" icon="folderOpen" label={t("settings.lc.pickDir")} onPress={() => void pickLcDir()} />
                   </View>
@@ -879,18 +878,18 @@ function ToolchainPane() {
               </SectionRow>
             </Section>
 
-            <View style={{ paddingLeft: 17, gap: 6 }}>
-              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+            <View style={{ paddingLeft: SPACE[16], gap: SPACE[6] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
                 {t("settings.toolchain.advancedPath")}
               </Text>
-              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
                 {t("settings.toolchain.advancedEnv")}
               </Text>
-              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
                 {t("settings.toolchain.advancedFlags")}
               </Text>
               <If when={Boolean(status().envOverride)}>
-                <Text style={{ fontSize: 12, lineHeight: 18, fontFamily: MONO }} class="text-secondary-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, fontFamily: MONO }} class="text-secondary-foreground">
                   {t("settings.toolchain.envNotice", { path: status().envOverride ?? "" })}
                 </Text>
               </If>
@@ -910,21 +909,21 @@ function CopyableCommand(props: { command: string }) {
       style={{
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        paddingLeft: 10,
-        paddingRight: 4,
-        paddingTop: 6,
-        paddingBottom: 6,
-        borderRadius: 6,
+        gap: SPACE[8],
+        paddingLeft: SPACE[12],
+        paddingRight: SPACE[4],
+        paddingTop: SPACE[6],
+        paddingBottom: SPACE[6],
+        borderRadius: RADIUS.sm,
       }}
       class="bg-muted"
     >
-      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 20, fontFamily: MONO }} class="text-foreground">
+      <Text style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.strong, fontFamily: MONO }} class="text-foreground">
         {props.command}
       </Text>
       <IconBtn
         icon={copied.active() ? "check" : "copy"}
-        size={26}
+        size="sm"
         tone="secondary-foreground"
         tooltip={tip(copied.active() ? t("common.copied") : t("settings.toolchain.copyCommand"))}
         onPress={() => {
@@ -954,7 +953,7 @@ function AppearancePane() {
   );
 
   return (
-    <View style={{ gap: 24 }}>
+    <View style={{ gap: SPACE[24] }}>
       <Card>
         <SectionRow
           first
@@ -967,11 +966,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.appearance.themeMode")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.appearance.themeModeDesc")}
             </Text>
           </View>
@@ -986,11 +985,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.appearance.language")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.appearance.languageDesc")}
             </Text>
           </View>
@@ -1005,11 +1004,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.appearance.themeCustom")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.appearance.themeCustomDesc")}
             </Text>
           </View>
@@ -1038,11 +1037,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.editor.fontSize")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.editor.fontSizeDesc")}
             </Text>
           </View>
@@ -1060,11 +1059,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.editor.lineHeight")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.editor.lineHeightDesc")}
             </Text>
           </View>
@@ -1081,11 +1080,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.editor.ligatures")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.editor.ligaturesDesc")}
             </Text>
           </View>
@@ -1102,11 +1101,11 @@ function AppearancePane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.editor.vimMode")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.editor.vimModeDesc")}
             </Text>
           </View>
@@ -1144,22 +1143,22 @@ export function AboutPane() {
   };
 
   return (
-    <View style={{ gap: 24 }}>
+    <View style={{ gap: SPACE[24] }}>
       {/* Centered brand mark, wordmark, and version subtitle */}
-      <View style={{ alignItems: "center", paddingTop: 12, paddingBottom: 4, gap: 12 }}>
+      <View style={{ alignItems: "center", paddingTop: SPACE[12], paddingBottom: SPACE[4], gap: SPACE[12] }}>
         <BrandIcon testID="about-brand-icon" size={88} replayOnPress />
-        <View style={{ alignItems: "center", gap: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
-            <Text style={{ fontSize: 22, lineHeight: 28, fontWeight: 700, letterSpacing: -0.35 }} class="text-foreground">
+        <View style={{ alignItems: "center", gap: SPACE[4] }}>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[6] }}>
+            <Text style={{ fontSize: FONT_SIZE.display, lineHeight: LINE_HEIGHT.display, fontWeight: FONT_WEIGHT.semibold, letterSpacing: -0.35 }} class="text-foreground">
               XCPC
             </Text>
-            <Text style={{ fontSize: 22, lineHeight: 28, fontWeight: 400, letterSpacing: -0.25 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.display, lineHeight: LINE_HEIGHT.display, fontWeight: FONT_WEIGHT.regular, letterSpacing: -0.25 }} class="text-secondary-foreground">
               Workstation
             </Text>
           </View>
           <Text
             testID="about-version"
-            style={{ fontSize: 13, lineHeight: 18, fontVariant: ["tabular-nums"] }}
+            style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontVariant: ["tabular-nums"] }}
             class="text-muted-foreground"
           >
             {formatAppVersion(about)}
@@ -1182,14 +1181,14 @@ export function AboutPane() {
             )
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.about.checkUpdate")}
             </Text>
             <If when={devShell}>
               <Text
                 testID="update-summary"
-                style={{ fontSize: 12, lineHeight: 16 }}
+                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }}
                 class="text-secondary-foreground"
               >
                 {t("update.devBuild")}
@@ -1207,7 +1206,7 @@ export function AboutPane() {
             />
           }
         >
-          <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("settings.about.replayIntro")}
           </Text>
         </SectionRow>
@@ -1223,11 +1222,11 @@ export function AboutPane() {
             />
           }
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[2] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.about.diagnostics")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 16 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
               {t("settings.about.diagnosticsDesc")}
             </Text>
           </View>
@@ -1237,36 +1236,36 @@ export function AboutPane() {
       {/* Credits & licenses */}
       <Section title={t("settings.about.creditsTitle")}>
         <SectionRow first>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.about.openSource")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
               olymp.sty (GassaFM/olymp.sty), fuzzy-cnoi-statement (Wallbreaker5th), Typst, NSH, MiTeX, CeTZ (LGPL-3.0), oxifmt, Pinit, Mannot, Tiptoe
             </Text>
           </View>
         </SectionRow>
         <SectionRow>
-          <View style={{ gap: 6 }}>
-            <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[6] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.about.fontLicense")}
             </Text>
-            <View style={{ gap: 3 }}>
-              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+            <View style={{ gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                 Latin Modern (GUST Font License)
               </Text>
-              <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                 JetBrains Mono (SIL Open Font License, OFL)
               </Text>
             </View>
           </View>
         </SectionRow>
         <SectionRow>
-          <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
+          <View style={{ gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("settings.about.license")}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
               Apache-2.0 License
             </Text>
           </View>
@@ -1274,8 +1273,8 @@ export function AboutPane() {
       </Section>
 
       {/* Quiet dedication footer */}
-      <View style={{ alignItems: "center", paddingTop: 4, paddingBottom: 12 }}>
-        <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+      <View style={{ alignItems: "center", paddingTop: SPACE[4], paddingBottom: SPACE[12] }}>
+        <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
           {t("settings.about.dedication")}
         </Text>
       </View>
@@ -1330,10 +1329,10 @@ export function SettingsView(props: { active?: boolean } = {}) {
         style={{
           width: 196,
           borderRightWidth: 1,
-          paddingTop: 20,
-          paddingBottom: 20,
-          paddingLeft: 12,
-          paddingRight: 12,
+          paddingTop: SPACE[20],
+          paddingBottom: SPACE[20],
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[12],
           flexShrink: 0,
         }}
         class="border-border bg-background"
@@ -1347,7 +1346,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
               right: 0,
               top: 0,
               height: NAV_ITEM_HEIGHT,
-              borderRadius: 7,
+              borderRadius: RADIUS.sm,
               transform: `translateY(${activeIndex() * (NAV_ITEM_HEIGHT + NAV_ITEM_GAP)}px)`,
               ...indicatorTransition(),
             }}
@@ -1362,25 +1361,25 @@ export function SettingsView(props: { active?: boolean } = {}) {
                   class={selected() ? "" : "hover:bg-muted active:bg-accent"}
                   style={{
                     height: NAV_ITEM_HEIGHT,
-                    paddingLeft: 10,
-                    paddingRight: 10,
-                    borderRadius: 7,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[12],
+                    borderRadius: RADIUS.sm,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 9,
+                    gap: SPACE[8],
                     ...colorTransition(120),
                   }}
                 >
                   <Icon
                     name={item().icon}
-                    size={15}
+                    size="md"
                     tone={selected() ? "foreground" : "muted-foreground"}
                   />
                   <Text
                     style={{
-                      fontSize: 13,
-                      lineHeight: 18,
-                      fontWeight: selected() ? 500 : 400,
+                      fontSize: FONT_SIZE.body,
+                      lineHeight: LINE_HEIGHT.body,
+                      fontWeight: selected() ? FONT_WEIGHT.semibold : FONT_WEIGHT.regular,
                     }}
                     class={selected() ? "text-foreground" : "text-secondary-foreground"}
                   >
@@ -1400,10 +1399,10 @@ export function SettingsView(props: { active?: boolean } = {}) {
             width: 640,
             maxWidth: "100%",
             alignSelf: "center",
-            paddingTop: 28,
-            paddingBottom: 36,
-            paddingLeft: 28,
-            paddingRight: 28,
+            paddingTop: SPACE[32],
+            paddingBottom: SPACE[32],
+            paddingLeft: SPACE[32],
+            paddingRight: SPACE[32],
             opacity: paneOpacity,
             transform: [{ translateY: paneY }],
           }}

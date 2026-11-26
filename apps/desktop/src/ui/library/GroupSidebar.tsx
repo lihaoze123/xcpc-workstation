@@ -11,6 +11,7 @@ import { Btn, tip } from "../kit";
 import { colorTransition } from "../motion";
 import { EASE_STANDARD, ms } from "../theme";
 
+import { CONTROL, FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export type SidebarGroupSelection =
   | { kind: "all" }
   | { kind: "ungrouped" }
@@ -36,13 +37,13 @@ function SidebarRow(props: {
           : "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       }
       style={{
-        height: 30,
-        paddingLeft: 8,
-        paddingRight: 8,
-        borderRadius: 6,
+        height: CONTROL.md,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
         flexDirection: "row",
         alignItems: "center",
-        gap: 7,
+        gap: SPACE[8],
         minWidth: 0,
         ...colorTransition(120),
       }}
@@ -50,7 +51,7 @@ function SidebarRow(props: {
       {props.icon && (
         <Icon
           name={props.icon}
-          size={14}
+          size="sm"
           tone={props.active ? "foreground" : "muted-foreground"}
         />
       )}
@@ -58,8 +59,8 @@ function SidebarRow(props: {
         style={{
           flex: 1,
           minWidth: 0,
-          fontSize: 13,
-          lineHeight: 18,
+          fontSize: FONT_SIZE.body,
+          lineHeight: LINE_HEIGHT.body,
           numberOfLines: 1,
           textOverflow: "ellipsis",
         }}
@@ -68,7 +69,7 @@ function SidebarRow(props: {
         {props.label}
       </Text>
       <Text
-        style={{ fontSize: 11.5, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+        style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }}
         class={props.active ? "text-foreground" : "text-muted-foreground"}
       >
         {String(props.count)}
@@ -132,8 +133,8 @@ export function GroupSidebar(props: {
       <View
         style={{
           flex: 1,
-          padding: 8,
-          gap: 2,
+          padding: SPACE[8],
+          gap: SPACE[2],
           opacity: revealed() ? 1 : 0,
           transform: reduceMotion() ? undefined : revealed() ? "translateX(0px)" : "translateX(-4px)",
           transitionProperty: "opacity, transform",
@@ -157,9 +158,9 @@ export function GroupSidebar(props: {
           active={props.selection.kind === "ungrouped"}
           onPress={() => props.onSelect({ kind: "ungrouped" })}
         />
-        <View style={{ height: 1, marginTop: 6, marginBottom: 6 }} class="bg-border" />
+        <View style={{ height: 1, marginTop: SPACE[6], marginBottom: SPACE[6] }} class="bg-border" />
         <Scroll style={{ flex: 1 }}>
-          <View style={{ gap: 2 }}>
+          <View style={{ gap: SPACE[2] }}>
             <Each of={props.groups} key={(g) => g.name}>
               {(g) => (
                 <SidebarRow
@@ -173,7 +174,7 @@ export function GroupSidebar(props: {
             </Each>
           </View>
         </Scroll>
-        <View style={{ paddingTop: 6, borderTopWidth: 1 }} class="border-border">
+        <View style={{ paddingTop: SPACE[6], borderTopWidth: 1 }} class="border-border">
           <Btn
             testID="group-sidebar-new"
             variant="ghost"
@@ -182,7 +183,7 @@ export function GroupSidebar(props: {
             disabled={props.readOnly}
             tooltip={tip(props.readOnly ? t("library.readOnlyCannotCreate") : t("library.sidebar.newGroup"))}
             onPress={props.onNewGroup}
-            style={{ justifyContent: "flex-start", paddingLeft: 8 }}
+            style={{ justifyContent: "flex-start", paddingLeft: SPACE[8] }}
           />
         </View>
       </View>

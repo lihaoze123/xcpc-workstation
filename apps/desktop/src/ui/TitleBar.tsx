@@ -6,6 +6,7 @@ import { effect, View, type JSX } from "nsh";
 import { TitleBar as BaseTitleBar } from "nsh/base";
 import { currentWindow } from "nsh/desktop";
 
+import { SPACE } from "./tokens";
 export const TITLE_BAR = 44;
 
 /** Keeps the window's title at `title()`. Call while rendering (it takes `currentWindow()`). */
@@ -40,10 +41,10 @@ export function TitleBar(props: { leading?: JSX.Element; center?: JSX.Element; t
       <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "box-none" }}>
         {props.center}
       </View>
-      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: pad, paddingRight: pad }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>{props.leading}</View>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: SPACE[8], paddingLeft: pad, paddingRight: pad }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 1, minWidth: 0, overflow: "hidden" }}>{props.leading}</View>
         <View style={{ flex: 1, minWidth: 4 }} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.trailing}</View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>{props.trailing}</View>
       </View>
     </BaseTitleBar>
   );

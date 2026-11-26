@@ -53,6 +53,7 @@ import {
   type SlashCommand,
 } from "./SlashPopover";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 /** Returns true when `pos` falls inside an inline/display math or inline/fenced code span. */
 function isInMathOrCodeContext(spans: readonly MarkdownSpanJs[], pos: EditorPosition): boolean {
   for (const s of spans) {
@@ -1333,14 +1334,13 @@ export function MarkdownEditor(props: {
         <View
           testID="find-bar"
           class="bg-muted/50 border-b border-border"
-          style={{ paddingLeft: 10, paddingRight: 8, paddingTop: 6, paddingBottom: 6, gap: 6 }}
+          style={{ paddingLeft: SPACE[12], paddingRight: SPACE[8], paddingTop: SPACE[6], paddingBottom: SPACE[6], gap: SPACE[6] }}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
             <If when={!props.readOnly}>
               <IconBtn
                 icon={replaceOpen() ? "chevronDown" : "chevronRight"}
-                size={24}
-                iconSize={13}
+                size="sm"
                 tooltip={tip(replaceOpen() ? t("editor.find.collapseReplace") : t("editor.find.expandReplace"))}
                 onPress={() => replaceOpen.set(!replaceOpen())}
               />
@@ -1361,7 +1361,7 @@ export function MarkdownEditor(props: {
               style={{ fontFamily: EDITOR_MONO }}
             />
             <Text
-              style={{ minWidth: 46, textAlign: "right", fontSize: 11.5, fontVariant: ["tabular-nums"] }}
+              style={{ minWidth: 46, textAlign: "right", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
               class={findQuery() && searchResult().count === 0 ? "text-destructive" : "text-muted-foreground"}
             >
               {matchLabel()}
@@ -1372,8 +1372,8 @@ export function MarkdownEditor(props: {
               class={caseSensitive() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
               style={{
                 width: 24,
-                height: 24,
-                borderRadius: 5,
+                height: CONTROL.sm,
+                borderRadius: RADIUS.xs,
                 alignItems: "center",
                 justifyContent: "center",
                 transitionProperty: "colors",
@@ -1381,30 +1381,28 @@ export function MarkdownEditor(props: {
                 transitionTimingFunction: EASE_STANDARD,
               }}
             >
-              <Text style={{ fontSize: 11, fontWeight: 600 }} class={caseSensitive() ? "text-foreground" : "text-secondary-foreground"}>
+              <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class={caseSensitive() ? "text-foreground" : "text-secondary-foreground"}>
                 Aa
               </Text>
             </View>
             <IconBtn
               icon="chevronLeft"
-              size={24}
-              iconSize={14}
+              size="sm"
               disabled={!findQuery() || searchResult().count === 0}
               tooltip={tip(t("editor.find.prevMatch"))}
               onPress={() => editor?.run("findPrevious")}
             />
             <IconBtn
               icon="chevronRight"
-              size={24}
-              iconSize={14}
+              size="sm"
               disabled={!findQuery() || searchResult().count === 0}
               tooltip={tip(t("editor.find.nextMatch"))}
               onPress={() => editor?.run("findNext")}
             />
-            <IconBtn icon="x" size={24} iconSize={13} tooltip={tip(t("common.close"), "escape")} onPress={closeFind} />
+            <IconBtn icon="x" size="sm" tooltip={tip(t("common.close"), "escape")} onPress={closeFind} />
           </View>
           <If when={replaceOpen() && !props.readOnly}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 30 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], paddingLeft: SPACE[32] }}>
               <Input
                 value={replaceQuery()}
                 placeholder={t("editor.find.replacePlaceholder")}
@@ -1423,15 +1421,15 @@ export function MarkdownEditor(props: {
                 label={t("editor.find.replace")}
                 disabled={!findQuery() || searchResult().count === 0}
                 onPress={() => editor?.replace(replaceQuery())}
-                style={{ height: 26, paddingLeft: 8, paddingRight: 8 }}
-                textStyle={{ fontSize: 12 }}
+                style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8] }}
+                textStyle={{ fontSize: FONT_SIZE.caption }}
               />
               <Btn
                 label={t("editor.find.replaceAll")}
                 disabled={!findQuery() || searchResult().count === 0}
                 onPress={() => void editor?.replaceAll(replaceQuery())}
-                style={{ height: 26, paddingLeft: 8, paddingRight: 8 }}
-                textStyle={{ fontSize: 12 }}
+                style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8] }}
+                textStyle={{ fontSize: FONT_SIZE.caption }}
               />
             </View>
           </If>
@@ -1474,12 +1472,12 @@ export function MarkdownEditor(props: {
                 : "bg-primary",
           }}
           styles={{
-            lineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
-            activeLineNumber: { fontSize: 12, fontVariant: ["tabular-nums"] },
+            lineNumber: { fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] },
+            activeLineNumber: { fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] },
             caret:
               vimActive() && vimState().mode === "normal"
-                ? { width: vimNormalCaretWidth(), borderRadius: 1.5 }
-                : { width: 2, borderRadius: 1 },
+                ? { width: vimNormalCaretWidth(), borderRadius: 1.5 } // token-exempt: vim block caret radius
+                : { width: 2, borderRadius: 1 }, // token-exempt: 2px vim line caret radius
           }}
           scrollBeyondLastLine={120}
           onFocus={() => {
@@ -1611,11 +1609,11 @@ export function MarkdownEditor(props: {
             class="bg-popover border border-border"
             style={{
               maxWidth: 480,
-              paddingTop: 4,
-              paddingBottom: 4,
-              paddingLeft: 6,
-              paddingRight: 6,
-              borderRadius: 8,
+              paddingTop: SPACE[4],
+              paddingBottom: SPACE[4],
+              paddingLeft: SPACE[6],
+              paddingRight: SPACE[6],
+              borderRadius: RADIUS.md,
               boxShadow: popoverShadow(),
               pointerEvents: "none",
             }}
@@ -1623,7 +1621,7 @@ export function MarkdownEditor(props: {
             <If
               when={!!mathPreview()!.key}
               else={
-                <Text style={{ fontSize: 11.5, lineHeight: 16 }} class="text-destructive">
+                <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-destructive">
                   {mathPreview()!.error ?? t("editor.mathSyntaxError")}
                 </Text>
               }
@@ -1645,24 +1643,24 @@ export function MarkdownEditor(props: {
               class="bg-popover border border-border"
               style={{
                 maxWidth: 340,
-                paddingTop: 6,
-                paddingBottom: 6,
-                paddingLeft: 10,
-                paddingRight: 10,
-                borderRadius: 8,
-                gap: 4,
+                paddingTop: SPACE[6],
+                paddingBottom: SPACE[6],
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[12],
+                borderRadius: RADIUS.md,
+                gap: SPACE[4],
                 boxShadow: popoverShadow(),
                 pointerEvents: "none",
               }}
             >
               <Each of={h().diagnostics} key={(_, i) => String(i)}>
                 {(d) => (
-                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: SPACE[6] }}>
                     <View
-                      style={{ width: 6, height: 6, borderRadius: 3, marginTop: 6 }}
+                      style={{ width: 6, height: 6, borderRadius: RADIUS.xs, marginTop: SPACE[6] }}
                       class={d().severity === "error" ? "bg-destructive" : "bg-chart-4"}
                     />
-                    <Text style={{ flex: 1, fontSize: 12, lineHeight: 17 }} class="text-foreground">
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-foreground">
                       {d().message}
                     </Text>
                   </View>

@@ -58,6 +58,7 @@ import {
   workspaceVersion,
 } from "./store";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 let cachedPluginCmdsRev = -1;
 const cachedPluginCmdsByContext = new Map<string, RegisteredPluginCommand[]>();
 
@@ -353,7 +354,7 @@ export function CommandPalette() {
               width: PALETTE_WIDTH,
               maxWidth: "90%",
               maxHeight: "85%",
-              borderRadius: 12,
+              borderRadius: RADIUS.lg,
               borderWidth: 1,
               overflow: "hidden",
               boxShadow: modalShadow(),
@@ -519,19 +520,20 @@ function PaletteBody() {
   const lead = (id: string) => {
     const sh = snipHitOf(id);
     if (sh) {
-      return <Icon name={sh.kind === "trd" ? "bookOpen" : sh.hasCode === false ? "sigma" : "code"} size={16} />;
+      return <Icon name={sh.kind === "trd" ? "bookOpen" : sh.hasCode === false ? "sigma" : "code"} size="md" />;
     }
-    if (id.startsWith("a:")) return <Icon name={actionById().get(id)?.icon ?? "arrowRight"} size={16} />;
+    if (id.startsWith("a:")) return <Icon name={actionById().get(id)?.icon ?? "arrowRight"} size="md" />;
     const hit = hitOf(id);
     if (hit?.kind === "contest_item")
       return (
-        <View style={{ width: 18, height: 18, borderRadius: 4, alignItems: "center", justifyContent: "center" }} class="bg-muted">
-          <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+        // token-exempt: compact inline icon box
+        <View style={{ width: 18, height: 18, borderRadius: RADIUS.xs, alignItems: "center", justifyContent: "center" }} class="bg-muted">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
             {hit.label ?? ""}
           </Text>
         </View>
       );
-    return <Icon name={hit?.kind === "contest" ? "trophy" : "fileText"} size={16} />;
+    return <Icon name={hit?.kind === "contest" ? "trophy" : "fileText"} size="md" />;
   };
 
   return (
@@ -550,30 +552,31 @@ function PaletteBody() {
       onCancel={close}
       autoFocus
       placeholder={!studio() && space() === "snippets" ? t("palette.placeholderSnippets") : t("palette.placeholder")}
-      searchPrefix={<Icon name="search" size={16} tone={actionMode() ? "primary" : "muted-foreground"} />}
+      searchPrefix={<Icon name="search" size="md" tone={actionMode() ? "primary" : "muted-foreground"} />}
       searchSuffix={<Kbd keys="escape" faint />}
       searchBarClass="px-3.5 flex-row items-center gap-2.5 border-b border-border"
       searchBarStyle={{ height: 44 }}
       searchClass="flex-1 text-[14px] bg-transparent placeholder:text-muted-foreground"
-      searchStyle={{ height: SEARCH_ROW, fontSize: 14 }}
+      searchStyle={{ height: SEARCH_ROW, fontSize: FONT_SIZE.strong }}
       listClass="max-h-[440px] px-1.5 py-1.5"
       itemClass="h-9 px-2.5 rounded-[6px] flex-row items-center focus:bg-accent hover:bg-muted transition-colors"
       groupClass="px-2.5 pt-2.5 pb-1 text-[11.5px] text-muted-foreground"
       separatorClass="h-px mx-1 my-1 bg-border"
       renderItem={(entry: CommandEntry) => (
-        <View style={{ width: rowWidth(), flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ width: rowWidth(), flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <View style={{ width: 18, alignItems: "center", flexShrink: 0 }}>{lead(entry.id)}</View>
-          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 13.5, lineHeight: 20 }}>
+          <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.strong }}>
             {entry.label}
           </Text>
           {meta(entry.id) && (
-            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: 11.5, lineHeight: 20, fontFamily: MONO }} class="text-muted-foreground">
+            <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.strong, fontFamily: MONO }} class="text-muted-foreground">
               {meta(entry.id)!}
             </Text>
           )}
           {hitOf(entry.id)?.archived && (
-            <View style={{ height: 18, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center", flexShrink: 0 }} class="bg-muted">
-              <Text style={{ fontSize: 11 }} class="text-muted-foreground">
+            // token-exempt: compact inline badge height
+            <View style={{ height: 18, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center", flexShrink: 0 }} class="bg-muted">
+              <Text style={{ fontSize: FONT_SIZE.micro }} class="text-muted-foreground">
                 {t("contests.archived")}
               </Text>
             </View>
@@ -583,9 +586,9 @@ function PaletteBody() {
         </View>
       )}
       empty={
-        <View style={{ height: 72, alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <Icon name="searchX" size={18} tone="muted-foreground" />
-          <Text style={{ fontSize: 13 }} class="text-muted-foreground">
+        <View style={{ height: 72, alignItems: "center", justifyContent: "center", gap: SPACE[6] }}>
+          <Icon name="searchX" size="lg" tone="muted-foreground" />
+          <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
             {t("common.searchNotFound", { query: built().query || query().trim() })}
           </Text>
         </View>

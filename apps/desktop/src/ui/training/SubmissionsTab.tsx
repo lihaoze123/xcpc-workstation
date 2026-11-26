@@ -28,6 +28,7 @@ import {
   type SubmissionViewRow,
 } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 type SubmissionMode = "raw" | "byProblem" | "unsolved";
 
 const CORE_VERDICTS = ["", "AC", "WA", "TLE"] as const;
@@ -67,10 +68,10 @@ function FilterChip(props: {
           : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
       }
       style={{
-        height: 22,
-        paddingLeft: 8,
-        paddingRight: 8,
-        borderRadius: 6,
+        height: CONTROL.sm,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
@@ -79,8 +80,8 @@ function FilterChip(props: {
     >
       <Text
         style={{
-          fontSize: 11.5,
-          fontWeight: 500,
+          fontSize: FONT_SIZE.caption,
+          fontWeight: FONT_WEIGHT.semibold,
           fontVariant: ["tabular-nums"],
         }}
         class={props.active ? "text-foreground" : "text-muted-foreground"}
@@ -280,34 +281,34 @@ export function SubmissionsTab(props: {
       <View
         class="border-b border-border bg-card/50"
         style={{
-          paddingTop: 10,
-          paddingBottom: 10,
-          paddingLeft: 20,
-          paddingRight: 20,
-          gap: 8,
+          paddingTop: SPACE[12],
+          paddingBottom: SPACE[12],
+          paddingLeft: SPACE[20],
+          paddingRight: SPACE[20],
+          gap: SPACE[8],
           flexShrink: 0,
         }}
       >
         {/* Row 1: Search + 3-way mode Segmented (Raw | By Problem | Unsolved Only) + clear */}
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[8] }}>
           <View
             class="bg-card border border-border focus-within:border-input"
             style={{
               width: 240,
-              height: 28,
-              borderRadius: 6,
-              paddingLeft: 8,
-              paddingRight: 6,
+              height: CONTROL.md,
+              borderRadius: RADIUS.sm,
+              paddingLeft: SPACE[8],
+              paddingRight: SPACE[6],
               flexDirection: "row",
               alignItems: "center",
-              gap: 6,
+              gap: SPACE[6],
             }}
           >
-            <Icon name="search" size={13} tone="muted-foreground" />
+            <Icon name="search" size="sm" tone="muted-foreground" />
             <Input
               testID="submissions-search"
               class="bg-transparent placeholder:text-muted-foreground"
-              style={{ flex: 1, height: 24, fontSize: 12.5 }}
+              style={{ flex: 1, height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
               value={props.filter.search}
               placeholder={t("training.submissions.searchPlaceholder")}
               autoCapitalize="none"
@@ -315,7 +316,7 @@ export function SubmissionsTab(props: {
               onChange={(e) => patch({ search: e.value })}
             />
             <If when={props.filter.search.length > 0}>
-              <IconBtn icon="x" size={18} iconSize={11} tone="muted-foreground" onPress={() => patch({ search: "" })} />
+              <IconBtn icon="x" size="sm" tone="muted-foreground" onPress={() => patch({ search: "" })} />
             </If>
           </View>
 
@@ -340,7 +341,7 @@ export function SubmissionsTab(props: {
         </View>
 
         {/* Row 2: Platform chips (only when >1) + Core Verdict chips + Difficulty filter + active drilldown pills */}
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
           {/* Platforms (hidden when only 1 platform) */}
           <If when={effectivePlatforms().length > 1}>
             <FilterChip
@@ -414,20 +415,20 @@ export function SubmissionsTab(props: {
                     : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
                 }
                 style={{
-                  height: 22,
-                  paddingLeft: 8,
-                  paddingRight: 6,
-                  borderRadius: 6,
+                  height: CONTROL.sm,
+                  paddingLeft: SPACE[8],
+                  paddingRight: SPACE[6],
+                  borderRadius: RADIUS.sm,
                   flexDirection: "row",
                   alignItems: "center",
-                  gap: 4,
+                  gap: SPACE[4],
                   ...colorTransition(120),
                 }}
               >
                 <Text
                   style={{
-                    fontSize: 11.5,
-                    fontWeight: 500,
+                    fontSize: FONT_SIZE.caption,
+                    fontWeight: FONT_WEIGHT.semibold,
                     fontVariant: ["tabular-nums"],
                   }}
                   class={hasDifficultyFilter() ? "text-foreground" : "text-muted-foreground"}
@@ -436,7 +437,7 @@ export function SubmissionsTab(props: {
                 </Text>
                 <Icon
                   name="chevronDown"
-                  size={11}
+                  size="sm"
                   tone={hasDifficultyFilter() ? "foreground" : "muted-foreground"}
                 />
               </View>
@@ -449,27 +450,27 @@ export function SubmissionsTab(props: {
               onPress={() => patch({ tag: "" })}
               class="bg-accent border border-foreground/40 active:opacity-90"
               style={{
-                height: 22,
-                paddingLeft: 8,
-                paddingRight: 6,
-                borderRadius: 6,
+                height: CONTROL.sm,
+                paddingLeft: SPACE[8],
+                paddingRight: SPACE[6],
+                borderRadius: RADIUS.sm,
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 4,
+                gap: SPACE[4],
                 ...colorTransition(120),
               }}
             >
               <Text
                 style={{
-                  fontSize: 11.5,
-                  fontWeight: 500,
+                  fontSize: FONT_SIZE.caption,
+                  fontWeight: FONT_WEIGHT.semibold,
                   fontVariant: ["tabular-nums"],
                 }}
                 class="text-foreground"
               >
                 {`#${formatTagLabel(props.filter.tag, isEn())}`}
               </Text>
-              <Icon name="x" size={11} tone="foreground" />
+              <Icon name="x" size="sm" tone="foreground" />
             </View>
           </If>
         </View>
@@ -479,7 +480,7 @@ export function SubmissionsTab(props: {
       <Scroll
         testID="training-submissions-scroll"
         style={{ flex: 1, minHeight: 0 }}
-        contentStyle={{ padding: 20, gap: 12, paddingBottom: 36 }}
+        contentStyle={{ padding: SPACE[20], gap: SPACE[12], paddingBottom: SPACE[32] }}
       >
         <If
           when={props.page.items.length > 0}
@@ -488,18 +489,18 @@ export function SubmissionsTab(props: {
               testID="training-submissions-empty"
               class="bg-card border border-border"
               style={{
-                borderRadius: 10,
-                padding: 28,
+                borderRadius: RADIUS.lg,
+                padding: SPACE[32],
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 6,
+                gap: SPACE[6],
                 boxShadow: cardShadow(),
               }}
             >
-              <Text style={{ fontSize: 13.5, fontWeight: 500 }} class="text-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("training.submissions.emptyTitle")}
               </Text>
-              <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                 {t("training.submissions.emptyDesc")}
               </Text>
             </View>
@@ -508,7 +509,7 @@ export function SubmissionsTab(props: {
           <View
             testID="training-submissions-table"
             class="bg-card border border-border"
-            style={{ borderRadius: 10, overflow: "hidden", boxShadow: cardShadow() }}
+            style={{ borderRadius: RADIUS.lg, overflow: "hidden", boxShadow: cardShadow() }}
           >
             <Each of={props.page.items} key={(r) => `${r.platform}:${r.submission_id}:${r.problem_key}`}>
               {(row, idx) => {
@@ -520,7 +521,7 @@ export function SubmissionsTab(props: {
                 return (
                   <View>
                     <If when={idx() > 0}>
-                      <View style={{ height: 1, marginLeft: 14, marginRight: 14 }} class="bg-border" />
+                      <View style={{ height: 1, marginLeft: SPACE[12], marginRight: SPACE[12] }} class="bg-border" />
                     </If>
                     <View
                       testID={`submission-row-${row().platform}-${row().problem_key}`}
@@ -531,30 +532,30 @@ export function SubmissionsTab(props: {
                       class="hover:bg-muted/40"
                       style={{
                         minHeight: 42,
-                        paddingTop: 8,
-                        paddingBottom: 8,
-                        paddingLeft: 14,
-                        paddingRight: 14,
+                        paddingTop: SPACE[8],
+                        paddingBottom: SPACE[8],
+                        paddingLeft: SPACE[12],
+                        paddingRight: SPACE[12],
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 10,
+                        gap: SPACE[8],
                         ...colorTransition(100),
                       }}
                     >
                       {/* Platform (hidden when only 1 platform exists) */}
                       <If when={showPlatformCol()}>
                         <View style={{ width: 76, flexShrink: 0 }}>
-                          <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                             {platformDisplayName(row().platform, isEn())}
                           </Text>
                         </View>
                       </If>
 
                       {/* Problem key + title */}
-                      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0 }}>
                           <Text
-                            style={{ fontSize: 12, fontFamily: MONO, fontWeight: 500, flexShrink: 0 }}
+                            style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, fontWeight: FONT_WEIGHT.semibold, flexShrink: 0 }}
                             class="text-secondary-foreground"
                           >
                             {row().problem_key}
@@ -562,8 +563,8 @@ export function SubmissionsTab(props: {
                           <Text
                             onPress={row().problem_url ? () => openExternal(row().problem_url) : undefined}
                             style={{
-                              fontSize: 13,
-                              fontWeight: 500,
+                              fontSize: FONT_SIZE.body,
+                              fontWeight: FONT_WEIGHT.semibold,
                               flexShrink: 1,
                               minWidth: 0,
                               numberOfLines: 1,
@@ -576,7 +577,7 @@ export function SubmissionsTab(props: {
                         </View>
                         <If when={row().tags.length > 0}>
                           <Text
-                            style={{ fontSize: 11, numberOfLines: 1, textOverflow: "ellipsis" }}
+                            style={{ fontSize: FONT_SIZE.micro, numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-muted-foreground"
                           >
                             {row().tags.slice(0, 4).map((tag) => formatTagLabel(tag, isEn())).join("  ")}
@@ -592,21 +593,21 @@ export function SubmissionsTab(props: {
                       {/* Verdict + fixed-width attempt-count slot so verdict column stays 100% aligned */}
                       <View
                         tooltip={row().language ? tip(row().language!) : undefined}
-                        style={{ width: 92, flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}
+                        style={{ width: 92, flexDirection: "row", alignItems: "center", gap: SPACE[4], flexShrink: 0 }}
                       >
                         <View style={{ flex: 1, flexDirection: "row", justifyContent: "flex-end" }}>
                           <View
                             class={verdictBadgeClass(row().verdict)}
-                            style={{ height: 20, paddingLeft: 6, paddingRight: 6, borderRadius: 4, justifyContent: "center" }}
+                            style={{ height: 20, paddingLeft: SPACE[6], paddingRight: SPACE[6], borderRadius: RADIUS.xs, justifyContent: "center" }} // token-exempt: compact verdict badge height
                           >
-                            <Text style={{ fontSize: 11, fontWeight: 600, fontVariant: ["tabular-nums"] }}>
+                            <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}>
                               {verdictDisplayLabel(row().verdict, isEn())}
                             </Text>
                           </View>
                         </View>
                         <View style={{ width: 28, alignItems: "flex-start", flexShrink: 0 }}>
                           <If when={props.filter.byProblem && row().attempt_count > 1}>
-                            <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                               {`×${row().attempt_count}`}
                             </Text>
                           </If>
@@ -615,21 +616,20 @@ export function SubmissionsTab(props: {
 
                       {/* Submitted time */}
                       <View style={{ width: 116, flexShrink: 0 }}>
-                        <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                           {formatUnixDateTime(row().submitted_at)}
                         </Text>
                       </View>
 
                       {/* Subtle ingest / already-in-library action slot (no outlined button wall) */}
-                      <View style={{ width: 96, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, flexShrink: 0 }}>
+                      <View style={{ width: 96, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: SPACE[6], flexShrink: 0 }}>
                         <If
                           when={libId()}
                           else={
                             <IconBtn
                               testID={`submission-ingest-${row().problem_key}`}
                               icon="plus"
-                              size={26}
-                              iconSize={14}
+                              size="sm"
                               tone={isHovered() ? "foreground" : "muted-foreground"}
                               disabled={readOnly() || ingestingKey() === probKey()}
                               tooltip={tip(t("training.submissions.ingest"))}
@@ -639,14 +639,14 @@ export function SubmissionsTab(props: {
                           }
                         >
                           {(pid) => (
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground">
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                                 {zhEn("已在题库", "In library")}
                               </Text>
                               <Text
                                 testID={`submission-open-${row().problem_key}`}
                                 onPress={() => openProblemEditorial(pid())}
-                                style={{ fontSize: 12, fontWeight: 500 }}
+                                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                                 class="text-primary hover:opacity-80"
                               >
                                 {t("training.submissions.open")}
@@ -664,14 +664,14 @@ export function SubmissionsTab(props: {
 
           {/* Pagination bar */}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
               {t("training.submissions.pageSummary", {
                 start: rangeStart(),
                 end: rangeEnd(),
                 total: props.page.total,
               })}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
               <Btn
                 testID="submissions-prev-page"
                 label={t("training.submissions.prevPage")}

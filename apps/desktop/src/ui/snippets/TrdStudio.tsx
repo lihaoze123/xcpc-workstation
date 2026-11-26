@@ -41,6 +41,7 @@ import type {
   TrdUnfreezeDiff,
 } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE } from "../tokens";
 export function TrdStudio(props: { active: boolean }) {
   const trdId = () => activeTrdStudio() ?? "";
   const payload = signal<TrdDetailPayload | undefined>(undefined);
@@ -355,7 +356,7 @@ export function TrdStudio(props: { active: boolean }) {
     <View style={{ flex: 1, flexDirection: "column" }} class="bg-background">
       <TitleBar
         leading={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], minWidth: 0 }}>
             <Btn
               testID="trd-studio-back"
               icon="arrowLeft"
@@ -364,18 +365,18 @@ export function TrdStudio(props: { active: boolean }) {
               onPress={closeTrdStudio}
             />
             <Text
-              style={{ fontSize: 14, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
+              style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1 }}
               class="text-foreground"
             >
               {detail()?.meta.name ?? trdId()}
             </Text>
             <If when={frozen()}>
-              <Lock closed size={13} />
+              <Lock closed size="sm" />
             </If>
           </View>
         }
         trailing={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
             <If when={!archived() && !info().readOnly}>
               <If
                 when={!frozen()}
@@ -405,7 +406,7 @@ export function TrdStudio(props: { active: boolean }) {
                 label={exportedFlag.active() ? t("snippets.trd.exported") : t("snippets.trd.exportPdf")}
                 disabled={exporting() || info().readOnly}
                 onPress={() => void exportPdf()}
-                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0, width: 108 }}
+                style={{ borderTopRightRadius: RADIUS.none, borderBottomRightRadius: RADIUS.none, width: 108 }}
               >
                 <DelayedSpinner active={exporting()} size={13} />
               </Btn>
@@ -416,9 +417,9 @@ export function TrdStudio(props: { active: boolean }) {
                     class="bg-primary"
                     style={{
                       width: 24,
-                      height: 28,
-                      borderTopRightRadius: 6,
-                      borderBottomRightRadius: 6,
+                      height: CONTROL.md,
+                      borderTopRightRadius: RADIUS.sm,
+                      borderBottomRightRadius: RADIUS.sm,
                       borderLeftWidth: 1,
                       borderLeftColor: "rgba(255,255,255,0.18)",
                       alignItems: "center",
@@ -426,7 +427,7 @@ export function TrdStudio(props: { active: boolean }) {
                       opacity: 0.6,
                     }}
                   >
-                    <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                    <Icon name="chevronDown" size="sm" tone="primary-foreground" />
                   </View>
                 }
               >
@@ -445,16 +446,16 @@ export function TrdStudio(props: { active: boolean }) {
                       class="bg-primary hover:bg-sidebar-primary focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                       style={{
                         width: 24,
-                        height: 28,
-                        borderTopRightRadius: 6,
-                        borderBottomRightRadius: 6,
+                        height: CONTROL.md,
+                        borderTopRightRadius: RADIUS.sm,
+                        borderBottomRightRadius: RADIUS.sm,
                         borderLeftWidth: 1,
                         borderLeftColor: "rgba(255,255,255,0.18)",
                         alignItems: "center",
                         justifyContent: "center",
                       }}
                     >
-                      <Icon name="chevronDown" size={13} tone="primary-foreground" />
+                      <Icon name="chevronDown" size="sm" tone="primary-foreground" />
                     </View>
                   }
                 />
@@ -477,21 +478,21 @@ export function TrdStudio(props: { active: boolean }) {
           <If when={missingDeps().length > 0 && !locked()}>
             <View
               style={{
-                margin: 10,
-                padding: 10,
-                borderRadius: 8,
+                margin: SPACE[8],
+                padding: SPACE[12],
+                borderRadius: RADIUS.md,
                 borderWidth: 1,
-                gap: 8,
+                gap: SPACE[8],
               }}
               class="border-border bg-muted/60"
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Icon name="triangleAlert" size={14} tone="chart-4" />
-                <Text style={{ fontSize: 13, fontWeight: 500, flex: 1, fontVariant: ["tabular-nums"] }} class="text-foreground">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Icon name="triangleAlert" size="sm" tone="chart-4" />
+                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flex: 1, fontVariant: ["tabular-nums"] }} class="text-foreground">
                   {t("snippets.trd.missingDepsBanner", { count: missingDeps().length })}
                 </Text>
               </View>
-              <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-secondary-foreground">
                 {missingDeps().join("  ")}
               </Text>
               <Btn
@@ -503,7 +504,7 @@ export function TrdStudio(props: { active: boolean }) {
             </View>
           </If>
 
-          <Scroll style={{ flex: 1 }} contentStyle={{ padding: 10, gap: 10 }}>
+          <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[12], gap: SPACE[8] }}>
             <Each of={chapters()} key={(c) => c.title}>
               {(ch, chIdx) => {
                 const availableToAdd = computed<MenuEntry[]>(() => {
@@ -535,12 +536,12 @@ export function TrdStudio(props: { active: boolean }) {
                 ]);
                 return (
                   <View
-                    style={{ borderRadius: 10, borderWidth: 1, padding: 10, gap: 6 }}
+                    style={{ borderRadius: RADIUS.lg, borderWidth: 1, padding: SPACE[12], gap: SPACE[6] }}
                     class="border-border bg-card"
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                       <Text
-                        style={{ flex: 1, fontSize: 13.5, fontWeight: 500, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-foreground"
                       >
                         {ch().title}
@@ -560,21 +561,21 @@ export function TrdStudio(props: { active: boolean }) {
                             <View
                               style={{
                                 width: 24,
-                                height: 24,
-                                borderRadius: 5,
+                                height: CONTROL.sm,
+                                borderRadius: RADIUS.xs,
                                 alignItems: "center",
                                 justifyContent: "center",
                               }}
                               class="hover:bg-muted"
                             >
-                              <Icon name="ellipsis" size={14} tone="muted-foreground" />
+                              <Icon name="ellipsis" size="sm" tone="muted-foreground" />
                             </View>
                           }
                         />
                       </If>
                     </View>
 
-                    <View style={{ gap: 2 }}>
+                    <View style={{ gap: SPACE[2] }}>
                       <Each of={ch().items ?? []} key={(slug) => slug}>
                         {(itemSlug, itemIdx) => {
                           const meta = () => allSnippets().find((s) => s.slug === itemSlug());
@@ -603,24 +604,24 @@ export function TrdStudio(props: { active: boolean }) {
                           return (
                             <View
                               style={{
-                                height: 34,
-                                paddingLeft: 8,
-                                paddingRight: 4,
-                                borderRadius: 6,
+                                height: CONTROL.lg,
+                                paddingLeft: SPACE[8],
+                                paddingRight: SPACE[4],
+                                borderRadius: RADIUS.sm,
                                 flexDirection: "row",
                                 alignItems: "center",
-                                gap: 8,
+                                gap: SPACE[8],
                               }}
                               class="hover:bg-muted"
                             >
                               <Icon
                                 name={isMissing() ? "circleAlert" : meta()?.has_code === false ? "sigma" : "code"}
-                                size={13.5}
+                                size="sm"
                                 tone={isMissing() ? "destructive" : "muted-foreground"}
                               />
                               <View style={{ flex: 1, minWidth: 0 }}>
                                 <Text
-                                  style={{ fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis" }}
+                                  style={{ fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                                   class={isMissing() ? "text-destructive" : "text-foreground"}
                                 >
                                   {meta()?.title ?? itemSlug()}
@@ -639,14 +640,14 @@ export function TrdStudio(props: { active: boolean }) {
                                     <View
                                       style={{
                                         width: 22,
-                                        height: 22,
-                                        borderRadius: 5,
+                                        height: 22, // token-exempt: compact inline icon box
+                                        borderRadius: RADIUS.xs,
                                         alignItems: "center",
                                         justifyContent: "center",
                                       }}
                                       class="hover:bg-accent"
                                     >
-                                      <Icon name="ellipsis" size={13} tone="muted-foreground" />
+                                      <Icon name="ellipsis" size="sm" tone="muted-foreground" />
                                     </View>
                                   }
                                 />
@@ -664,17 +665,17 @@ export function TrdStudio(props: { active: boolean }) {
                         trigger={
                           <View
                             style={{
-                              height: 28,
-                              borderRadius: 6,
+                              height: CONTROL.md,
+                              borderRadius: RADIUS.sm,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "center",
-                              gap: 5,
+                              gap: SPACE[4],
                             }}
                             class="hover:bg-muted"
                           >
-                            <Icon name="plus" size={13} tone="secondary-foreground" />
-                            <Text style={{ fontSize: 12.5 }} class="text-secondary-foreground">
+                            <Icon name="plus" size="sm" tone="secondary-foreground" />
+                            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                               {t("snippets.trd.addSnippet")}
                             </Text>
                           </View>
@@ -689,7 +690,7 @@ export function TrdStudio(props: { active: boolean }) {
 
           <If when={!locked()}>
             <View
-              style={{ padding: 10, borderTopWidth: 1, flexDirection: "row", alignItems: "center", gap: 6 }}
+              style={{ padding: SPACE[12], borderTopWidth: 1, flexDirection: "row", alignItems: "center", gap: SPACE[6] }}
               class="border-border"
             >
               <Input
@@ -698,7 +699,7 @@ export function TrdStudio(props: { active: boolean }) {
                 onChange={(e) => newChapterTitle.set(e.value)}
                 onSubmit={addChapter}
                 class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                style={{ flex: 1, height: 30, borderRadius: 6, paddingLeft: 8, paddingRight: 8, fontSize: 13 }}
+                style={{ flex: 1, height: CONTROL.md, borderRadius: RADIUS.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], fontSize: FONT_SIZE.body }}
               />
               <Btn icon="plus" onPress={addChapter} disabled={!newChapterTitle().trim()} />
             </View>
@@ -729,9 +730,9 @@ export function TrdStudio(props: { active: boolean }) {
           <View style={{ width: 320, borderLeftWidth: 1, flexDirection: "column" }} class="border-border bg-background">
             <View
               style={{
-                height: 38,
-                paddingLeft: 12,
-                paddingRight: 12,
+                height: ROW.table,
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[12],
                 justifyContent: "center",
                 borderBottomWidth: 1,
               }}
@@ -749,18 +750,18 @@ export function TrdStudio(props: { active: boolean }) {
               />
             </View>
 
-            <Scroll style={{ flex: 1 }} contentStyle={{ padding: 14, gap: 14 }}>
+            <Scroll style={{ flex: 1 }} contentStyle={{ padding: SPACE[12], gap: SPACE[12] }}>
               <If when={propTab() === "info"}>
-                <View style={{ gap: 12 }}>
-                  <View style={{ gap: 4 }}>
-                    <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                <View style={{ gap: SPACE[12] }}>
+                  <View style={{ gap: SPACE[4] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                       {t("snippets.trd.nameLabel")}
                     </Text>
                     <If
                       when={!locked()}
                       else={
-                        <View style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }} class="bg-muted/50 border border-border">
-                          <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{metaName()}</Text>
+                        <View style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }} class="bg-muted/50 border border-border">
+                          <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">{metaName()}</Text>
                         </View>
                       }
                     >
@@ -770,19 +771,19 @@ export function TrdStudio(props: { active: boolean }) {
                         onBlur={saveMetaInfo}
                         onSubmit={saveMetaInfo}
                         class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                        style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                       />
                     </If>
                   </View>
-                  <View style={{ gap: 4 }}>
-                    <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                  <View style={{ gap: SPACE[4] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                       {t("snippets.trd.authorLabel")}
                     </Text>
                     <If
                       when={!locked()}
                       else={
-                        <View style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }} class="bg-muted/50 border border-border">
-                          <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{metaAuthor() || "—"}</Text>
+                        <View style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }} class="bg-muted/50 border border-border">
+                          <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">{metaAuthor() || "—"}</Text>
                         </View>
                       }
                     >
@@ -792,19 +793,19 @@ export function TrdStudio(props: { active: boolean }) {
                         onBlur={saveMetaInfo}
                         onSubmit={saveMetaInfo}
                         class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                        style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                       />
                     </If>
                   </View>
-                  <View style={{ gap: 4 }}>
-                    <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                  <View style={{ gap: SPACE[4] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                       {t("snippets.trd.dateLabel")}
                     </Text>
                     <If
                       when={!locked()}
                       else={
-                        <View style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, justifyContent: "center" }} class="bg-muted/50 border border-border">
-                          <Text style={{ fontSize: 13 }} class="text-secondary-foreground">{metaDate() || "—"}</Text>
+                        <View style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "center" }} class="bg-muted/50 border border-border">
+                          <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">{metaDate() || "—"}</Text>
                         </View>
                       }
                     >
@@ -814,7 +815,7 @@ export function TrdStudio(props: { active: boolean }) {
                         onBlur={saveMetaInfo}
                         onSubmit={saveMetaInfo}
                         class="bg-muted border border-border focus:ring-1 focus:ring-inset focus:ring-ring"
-                        style={{ height: 32, borderRadius: 6, paddingLeft: 10, paddingRight: 10, fontSize: 13 }}
+                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], fontSize: FONT_SIZE.body }}
                       />
                     </If>
                   </View>
@@ -822,7 +823,7 @@ export function TrdStudio(props: { active: boolean }) {
               </If>
 
               <If when={propTab() === "layout"}>
-                <View style={{ gap: 14 }}>
+                <View style={{ gap: SPACE[12] }}>
                   <TemplatePicker
                     templates={catalog().templates}
                     value={effectiveTemplateId()}
@@ -855,26 +856,26 @@ export function TrdStudio(props: { active: boolean }) {
         width={420}
         testID="trd-delete-chapter-modal"
       >
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
-              style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
               class="bg-muted"
             >
-              <Icon name="trash" size={16} tone="destructive" />
+              <Icon name="trash" size="md" tone="destructive" />
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+            <View style={{ flex: 1, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.deleteChapterTitle")}
               </Text>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {deleteChapterTarget()
                   ? t("snippets.trd.deleteChapterDesc", { title: deleteChapterTarget()!.title })
                   : ""}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn variant="outline" label={t("common.cancel")} onPress={() => deleteChapterTarget.set(undefined)} />
             <Btn variant="danger" label={t("common.delete")} onPress={confirmRemoveChapter} />
           </View>
@@ -883,32 +884,32 @@ export function TrdStudio(props: { active: boolean }) {
 
       {/* Finalize modal (S-1: no strict toggle in GUI) */}
       <Modal open={finalizeOpen()} onClose={() => finalizeOpen.set(false)} width={460} testID="trd-finalize-modal">
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
-              style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
               class="bg-muted"
             >
-              <Icon name="stamp" size={16} tone="foreground" />
+              <Icon name="stamp" size="md" tone="foreground" />
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+            <View style={{ flex: 1, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.finalizeConfirmTitle")}
               </Text>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {t("snippets.trd.finalizeConfirmDesc")}
               </Text>
             </View>
           </View>
 
           <If when={blockingErrors().length > 0}>
-            <View style={{ padding: 10, borderRadius: 8, borderWidth: 1, gap: 6 }} class="border-destructive/40 bg-destructive/5">
-              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-destructive">
+            <View style={{ padding: SPACE[12], borderRadius: RADIUS.md, borderWidth: 1, gap: SPACE[6] }} class="border-destructive/40 bg-destructive/5">
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
                 {t("snippets.trd.finalizeBlocking")}
               </Text>
               <Each of={blockingErrors().slice(0, 8)} key={(e, i) => `${i}:${e.snippet}:${e.kind}`}>
                 {(e) => (
-                  <Text style={{ fontSize: 13 }} class="text-destructive">
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-destructive">
                     {e().message}
                   </Text>
                 )}
@@ -917,13 +918,13 @@ export function TrdStudio(props: { active: boolean }) {
           </If>
 
           <If when={verifyWarnings().length > 0}>
-            <View style={{ padding: 10, borderRadius: 8, borderWidth: 1, gap: 6 }} class="border-border bg-muted/50">
-              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+            <View style={{ padding: SPACE[12], borderRadius: RADIUS.md, borderWidth: 1, gap: SPACE[6] }} class="border-border bg-muted/50">
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.finalizeWarnings")}
               </Text>
               <Each of={verifyWarnings().slice(0, 8)} key={(w, i) => `${i}:${w.snippet}`}>
                 {(w) => (
-                  <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                     {w().message}
                   </Text>
                 )}
@@ -931,7 +932,7 @@ export function TrdStudio(props: { active: boolean }) {
             </View>
           </If>
 
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn variant="outline" label={t("common.cancel")} onPress={() => finalizeOpen.set(false)} />
             <Btn
               variant="primary"
@@ -945,19 +946,19 @@ export function TrdStudio(props: { active: boolean }) {
 
       {/* Reopen modal (2.10: icon-square header + subtitle aligned with Finalize modal) */}
       <Modal open={reopenOpen()} onClose={() => reopenOpen.set(false)} width={460} testID="trd-reopen-modal">
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
             <View
-              style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}
               class="bg-muted"
             >
-              <Icon name="lockOpen" size={16} tone="foreground" />
+              <Icon name="lockOpen" size="md" tone="foreground" />
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+            <View style={{ flex: 1, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("snippets.trd.reopenTitle")}
               </Text>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {t("snippets.trd.reopenDesc")}
               </Text>
             </View>
@@ -966,23 +967,23 @@ export function TrdStudio(props: { active: boolean }) {
           <If
             when={Boolean(reopenDiff()?.has_changes)}
             else={
-              <Text style={{ fontSize: 13, lineHeight: 19 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
                 {t("snippets.trd.reopenNoDiff")}
               </Text>
             }
           >
-            <View style={{ gap: 8 }}>
-              <Text style={{ fontSize: 13 }} class="text-secondary-foreground">
+            <View style={{ gap: SPACE[8] }}>
+              <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
                 {t("snippets.trd.reopenDiffDesc")}
               </Text>
-              <View style={{ padding: 10, borderRadius: 8, borderWidth: 1, gap: 6 }} class="border-border bg-muted/50">
+              <View style={{ padding: SPACE[12], borderRadius: RADIUS.md, borderWidth: 1, gap: SPACE[6] }} class="border-border bg-muted/50">
                 <Each of={reopenDiff()?.diffs ?? []} key={(d) => d.slug}>
                   {(d) => (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <Text style={{ fontSize: 13, fontFamily: MONO, fontWeight: 500 }} class="text-foreground">
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+                      <Text style={{ fontSize: FONT_SIZE.body, fontFamily: MONO, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {d().slug}
                       </Text>
-                      <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                         {(d().changed_files ?? []).join("  ")}
                       </Text>
                     </View>
@@ -992,7 +993,7 @@ export function TrdStudio(props: { active: boolean }) {
             </View>
           </If>
 
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn variant="outline" label={t("common.cancel")} onPress={() => reopenOpen.set(false)} />
             <Btn variant="primary" label={t("snippets.trd.reopen")} onPress={confirmReopen} />
           </View>

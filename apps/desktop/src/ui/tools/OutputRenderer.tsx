@@ -11,6 +11,7 @@ import { cardShadow, MONO, token } from "../theme";
 import { showToast } from "../Toast";
 import type { GraphEdge, GraphNode, ToolOutputBlock } from "./types";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 function BlockCard(props: {
   title?: string | null;
   actions?: JSX.Element;
@@ -20,7 +21,7 @@ function BlockCard(props: {
     <View
       class="bg-card border border-border"
       style={{
-        borderRadius: 10,
+        borderRadius: RADIUS.lg,
         overflow: "hidden",
         boxShadow: cardShadow(),
       }}
@@ -30,18 +31,18 @@ function BlockCard(props: {
           class="bg-muted/50 border-b border-border"
           style={{
             minHeight: 34,
-            paddingLeft: 12,
-            paddingRight: 10,
-            paddingTop: 6,
-            paddingBottom: 6,
+            paddingLeft: SPACE[12],
+            paddingRight: SPACE[12],
+            paddingTop: SPACE[6],
+            paddingBottom: SPACE[6],
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 8,
+            gap: SPACE[8],
           }}
         >
           <Text
-            style={{ fontSize: 12.5, fontWeight: 600, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flexShrink: 1, numberOfLines: 1, textOverflow: "ellipsis" }}
             class="text-foreground"
           >
             {props.title ?? ""}
@@ -66,11 +67,11 @@ function TextBlockView(props: { block: Extract<ToolOutputBlock, { type: "text" }
         <Btn size="sm" variant="ghost" icon="copy" label={t("common.copy")} onPress={copy} />
       }
     >
-      <View style={{ padding: 12 }}>
+      <View style={{ padding: SPACE[12] }}>
         <Text
           style={{
-            fontSize: 12.5,
-            lineHeight: 19,
+            fontSize: FONT_SIZE.caption,
+            lineHeight: LINE_HEIGHT.body,
             fontFamily: props.block.monospace ? MONO : undefined,
             fontVariant: ["tabular-nums"],
           }}
@@ -96,27 +97,27 @@ function MarkdownBlockView(props: { block: Extract<ToolOutputBlock, { type: "mar
         <Btn size="sm" variant="ghost" icon="copy" label={t("common.copy")} onPress={copy} />
       }
     >
-      <View style={{ padding: 12, gap: 4 }}>
+      <View style={{ padding: SPACE[12], gap: SPACE[4] }}>
         <Each of={lines()} key="index">
           {(line) => {
             const raw = line();
             if (raw.startsWith("### ")) {
               return (
-                <Text style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }} class="text-foreground">
+                <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, marginTop: SPACE[4] }} class="text-foreground">
                   {raw.slice(4)}
                 </Text>
               );
             }
             if (raw.startsWith("## ")) {
               return (
-                <Text style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }} class="text-foreground">
+                <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, marginTop: SPACE[6] }} class="text-foreground">
                   {raw.slice(3)}
                 </Text>
               );
             }
             if (raw.startsWith("# ")) {
               return (
-                <Text style={{ fontSize: 15, fontWeight: 700, marginTop: 6 }} class="text-foreground">
+                <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold, marginTop: SPACE[6] }} class="text-foreground">
                   {raw.slice(2)}
                 </Text>
               );
@@ -126,7 +127,7 @@ function MarkdownBlockView(props: { block: Extract<ToolOutputBlock, { type: "mar
             }
             return (
               <Text
-                style={{ fontSize: 12.5, lineHeight: 19, fontVariant: ["tabular-nums"] }}
+                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, fontVariant: ["tabular-nums"] }}
                 class="text-foreground"
               >
                 {raw}
@@ -265,11 +266,11 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
           style={{
             flexDirection: "row",
             width: "100%",
-            paddingLeft: 12,
-            paddingRight: 12,
-            paddingTop: 7,
-            paddingBottom: 7,
-            gap: wide ? 6 : 16,
+            paddingLeft: SPACE[12],
+            paddingRight: SPACE[12],
+            paddingTop: SPACE[8],
+            paddingBottom: SPACE[8],
+            gap: wide ? SPACE[6] : SPACE[16],
           }}
         >
           <Each of={props.block.headers} key="index">
@@ -283,8 +284,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                         ? {
                             width: firstW,
                             flexShrink: 0,
-                            fontSize: 11.5,
-                            fontWeight: 600,
+                            fontSize: FONT_SIZE.caption,
+                            fontWeight: FONT_WEIGHT.semibold,
                             textAlign: "left",
                             numberOfLines: 1,
                           }
@@ -292,8 +293,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                             flexGrow: 1,
                             flexShrink: 0,
                             minWidth: 32,
-                            fontSize: 11.5,
-                            fontWeight: 600,
+                            fontSize: FONT_SIZE.caption,
+                            fontWeight: FONT_WEIGHT.semibold,
                             textAlign: "center",
                             fontVariant: ["tabular-nums"],
                             numberOfLines: 1,
@@ -313,8 +314,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                       ? { width: spec.fixedWidth, flexShrink: 0 }
                       : { flex: spec.flexWeight, minWidth: 0 }),
                     paddingRight: spec.extraRightPad || undefined,
-                    fontSize: 11.5,
-                    fontWeight: 600,
+                    fontSize: FONT_SIZE.caption,
+                    fontWeight: FONT_WEIGHT.semibold,
                     textAlign: spec.align,
                     numberOfLines: 1,
                   }}
@@ -333,11 +334,11 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
               style={{
                 flexDirection: "row",
                 width: "100%",
-                paddingLeft: 12,
-                paddingRight: 12,
-                paddingTop: 7,
-                paddingBottom: 7,
-                gap: wide ? 6 : 16,
+                paddingLeft: SPACE[12],
+                paddingRight: SPACE[12],
+                paddingTop: SPACE[8],
+                paddingBottom: SPACE[8],
+                gap: wide ? SPACE[6] : SPACE[16],
               }}
             >
               <Each of={row()} key="index">
@@ -353,8 +354,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                             ? {
                                 width: firstW,
                                 flexShrink: 0,
-                                fontSize: 12,
-                                lineHeight: 17,
+                                fontSize: FONT_SIZE.caption,
+                                lineHeight: LINE_HEIGHT.caption,
                                 fontFamily: useMono ? MONO : undefined,
                                 fontVariant: ["tabular-nums"],
                                 textAlign: "left",
@@ -364,8 +365,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                                 flexGrow: 1,
                                 flexShrink: 0,
                                 minWidth: 32,
-                                fontSize: 12,
-                                lineHeight: 17,
+                                fontSize: FONT_SIZE.caption,
+                                lineHeight: LINE_HEIGHT.caption,
                                 fontFamily: useMono ? MONO : undefined,
                                 fontVariant: ["tabular-nums"],
                                 textAlign: "center",
@@ -386,8 +387,8 @@ function TableBlockView(props: { block: Extract<ToolOutputBlock, { type: "table"
                           ? { width: spec.fixedWidth, flexShrink: 0 }
                           : { flex: spec.flexWeight, minWidth: 0 }),
                         paddingRight: spec.extraRightPad || undefined,
-                        fontSize: 12,
-                        lineHeight: 17,
+                        fontSize: FONT_SIZE.caption,
+                        lineHeight: LINE_HEIGHT.caption,
                         fontFamily: useMono ? MONO : undefined,
                         fontVariant: ["tabular-nums"],
                         textAlign: spec.align,
@@ -448,7 +449,7 @@ function SvgBlockView(props: { block: Extract<ToolOutputBlock, { type: "svg" }> 
     <BlockCard
       title={props.block.title ?? "SVG"}
       actions={
-        <View style={{ flexDirection: "row", gap: 4 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[4] }}>
           <Btn size="sm" variant="ghost" icon="copy" label={t("tools.copySvg")} onPress={copySvg} />
           <Btn
             size="sm"
@@ -461,11 +462,11 @@ function SvgBlockView(props: { block: Extract<ToolOutputBlock, { type: "svg" }> 
         </View>
       }
     >
-      <View style={{ padding: 12, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <View style={{ padding: SPACE[12], alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <If
           when={rendered().ok && rendered().pngBase64}
           else={
-            <Text style={{ fontSize: 12 }} class="text-destructive">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
               {rendered().error ?? t("tools.svgRenderFailed")}
             </Text>
           }
@@ -509,7 +510,7 @@ function ImageBlockView(props: { block: Extract<ToolOutputBlock, { type: "image"
         <Btn size="sm" variant="outline" icon="fileDown" label={t("tools.savePng")} onPress={() => void savePng()} />
       }
     >
-      <View style={{ padding: 12, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <View style={{ padding: SPACE[12], alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <Image
           src={`data:image/png;base64,${props.block.png_base64}`}
           style={{
@@ -587,12 +588,12 @@ function GraphBlockView(props: {
         ) : undefined
       }
     >
-      <View style={{ padding: 12, gap: 6 }}>
+      <View style={{ padding: SPACE[12], gap: SPACE[6] }}>
         <Canvas
           style={{
             width: "100%",
             height: 260,
-            borderRadius: 6,
+            borderRadius: RADIUS.sm,
             borderWidth: 1,
             borderColor: token("border"),
           }}
@@ -697,7 +698,7 @@ function GraphBlockView(props: {
             }
           }}
         />
-        <Text style={{ fontSize: 11.5, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
           {t("tools.graphStats", { nodes: props.block.nodes.length, edges: props.block.edges.length })}
         </Text>
       </View>
@@ -720,9 +721,9 @@ export function OutputRenderer(props: {
   };
 
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: SPACE[12] }}>
       <If when={Boolean(props.summary)}>
-        <Text style={{ fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
           {props.summary ?? ""}
         </Text>
       </If>

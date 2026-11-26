@@ -28,6 +28,7 @@ import {
 } from "../templates";
 import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "../TemplateOptionsEditor";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export const INSPECTOR_WIDTH = 332;
 type InspectorTab = "info" | "layout";
 
@@ -157,9 +158,9 @@ export function Inspector(props: {
           height: 42,
           flexDirection: "row",
           alignItems: "center",
-          paddingLeft: 12,
-          paddingRight: 8,
-          gap: 8,
+          paddingLeft: SPACE[12],
+          paddingRight: SPACE[8],
+          gap: SPACE[8],
           borderBottomWidth: 1,
         }}
         class="border-border"
@@ -201,27 +202,27 @@ export function Inspector(props: {
                         onPress={() => props.onInitPackage?.()}
                         class="border border-border bg-card hover:bg-muted active:bg-accent"
                         style={{
-                          paddingLeft: 10,
-                          paddingRight: 8,
-                          paddingTop: 8,
-                          paddingBottom: 8,
-                          borderRadius: 7,
+                          paddingLeft: SPACE[12],
+                          paddingRight: SPACE[8],
+                          paddingTop: SPACE[8],
+                          paddingBottom: SPACE[8],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 8,
+                          gap: SPACE[8],
                           ...colorTransition(140),
                         }}
                       >
-                        <Icon name="code" size={15} tone="secondary-foreground" />
-                        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
-                          <Text style={{ fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+                        <Icon name="code" size="md" tone="secondary-foreground" />
+                        <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                             {t("inspector.package.init")}
                           </Text>
-                          <Text style={{ fontSize: 11.5, lineHeight: 15 }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
                             {t("inspector.package.initHint")}
                           </Text>
                         </View>
-                        <Icon name="plus" size={14} tone="muted-foreground" />
+                        <Icon name="plus" size="sm" tone="muted-foreground" />
                       </View>
                     }
                   >
@@ -230,22 +231,22 @@ export function Inspector(props: {
                       onPress={() => props.onOpenBuild?.()}
                       class="border border-border bg-card hover:bg-muted active:bg-accent"
                       style={{
-                        height: 34,
-                        paddingLeft: 10,
-                        paddingRight: 8,
-                        borderRadius: 7,
+                        height: CONTROL.lg,
+                        paddingLeft: SPACE[12],
+                        paddingRight: SPACE[8],
+                        borderRadius: RADIUS.sm,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 8,
+                        gap: SPACE[8],
                         ...colorTransition(140),
                       }}
                     >
-                      <Icon name="code" size={15} tone="secondary-foreground" />
-                      <Text style={{ flex: 1, fontSize: 12.5 }} class="text-foreground">
+                      <Icon name="code" size="md" tone="secondary-foreground" />
+                      <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-foreground">
                         {t("inspector.package.openBuild")}
                       </Text>
                       <Text
-                        style={{ fontSize: 11.5 }}
+                        style={{ fontSize: FONT_SIZE.caption }}
                         class={
                           props.packageFreshness === "failed"
                             ? "text-destructive"
@@ -262,7 +263,7 @@ export function Inspector(props: {
                               ? t("inspector.package.failed")
                               : t("inspector.package.unverified")}
                       </Text>
-                      <Icon name="chevronRight" size={14} tone="muted-foreground" />
+                      <Icon name="chevronRight" size="sm" tone="muted-foreground" />
                     </View>
                   </If>
                 </Section>
@@ -270,27 +271,27 @@ export function Inspector(props: {
               <ProblemInfoTab id={props.id} rev={rev} done={done} hasFollowingSection={showAssets()} />
             </If>
             <If when={showAssets()}>
-              <View style={{ padding: 14 }}>
+              <View style={{ padding: SPACE[12] }}>
                 <View
                   testID="inspector-assets-btn"
                   onPress={() => props.onOpenAssets?.()}
                   class="border border-border bg-card hover:bg-muted active:bg-accent"
                   style={{
-                    height: 34,
-                    paddingLeft: 10,
-                    paddingRight: 8,
-                    borderRadius: 7,
+                    height: CONTROL.lg,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[8],
+                    borderRadius: RADIUS.sm,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 8,
+                    gap: SPACE[8],
                     ...colorTransition(140),
                   }}
                 >
-                  <Icon name="image" size={15} tone="secondary-foreground" />
-                  <Text style={{ flex: 1, fontSize: 12.5, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                  <Icon name="image" size="md" tone="secondary-foreground" />
+                  <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-foreground">
                     {t("inspector.assetsCount", { count: assetCount() })}
                   </Text>
-                  <Icon name="chevronRight" size={14} tone="muted-foreground" />
+                  <Icon name="chevronRight" size="sm" tone="muted-foreground" />
                 </View>
               </View>
             </If>
@@ -313,7 +314,7 @@ export function Inspector(props: {
           </If>
 
           <If when={error()}>
-            <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14 }}>
+            <View style={{ paddingLeft: SPACE[12], paddingRight: SPACE[12], paddingBottom: SPACE[12] }}>
               <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
             </View>
           </If>
@@ -364,9 +365,9 @@ export function Inspector(props: {
 
 function Section(props: { title?: string; children?: JSX.Element; last?: boolean }) {
   return (
-    <View style={{ padding: 14, gap: 10, borderBottomWidth: props.last ? 0 : 1 }} class="border-border">
+    <View style={{ padding: SPACE[12], gap: SPACE[8], borderBottomWidth: props.last ? 0 : 1 }} class="border-border">
       {props.title && (
-        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: 12.5, fontWeight: 600, lineHeight: 17 }} class="text-foreground">
+        <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.caption }} class="text-foreground">
           {props.title}
         </Text>
       )}
@@ -444,16 +445,17 @@ function Field(props: {
   });
 
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: SPACE[4] }}>
       <View style={{ flexDirection: "row", alignItems: "center", height: 16 }}>
-        <Text style={{ flex: 1, fontSize: 12 }} class="text-secondary-foreground">
+        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
           {props.label}
         </Text>
         <If when={props.overridden && !props.readOnly}>
-          <IconBtn icon="rotateCcw" size={20} iconSize={12.5} tooltip={tip(t("common.restoreLibraryValue"))} onPress={() => props.onRestore?.()} />
+          <IconBtn icon="rotateCcw" size="sm" tooltip={tip(t("common.restoreLibraryValue"))} onPress={() => props.onRestore?.()} />
         </If>
       </View>
       <View style={{ flexDirection: "row" }}>
+        {/* token-exempt: 2px override indicator bar */}
         <View style={{ position: "absolute", left: -7, top: 4, bottom: 4, width: 2, borderRadius: 1, opacity: props.overridden ? 1 : 0 }} class="bg-primary" />
         <Input
           readonly={props.readOnly}
@@ -542,7 +544,7 @@ function ProblemInfoTab(props: {
         placeholder="dp, greedy"
         onCommit={(v) => write({ tags: v.split(/[,，\s]+/).filter(Boolean) })}
       />
-      <View style={{ flexDirection: "row", gap: 8 }}>
+      <View style={{ flexDirection: "row", gap: SPACE[8] }}>
         <View style={{ flex: 1 }}>
           <Field ownerKey={owner()} label={t("inspector.field.timeLimit")} readOnly={wsReadOnly()} value={d().limits.time ?? ""} placeholder="1 s" onCommit={(v) => write({ time: nul(v) })} />
         </View>
@@ -550,7 +552,7 @@ function ProblemInfoTab(props: {
           <Field ownerKey={owner()} label={t("inspector.field.memoryLimit")} readOnly={wsReadOnly()} value={d().limits.memory ?? ""} placeholder="256 MB" onCommit={(v) => write({ memory: nul(v) })} />
         </View>
       </View>
-      <View style={{ flexDirection: "row", gap: 8 }}>
+      <View style={{ flexDirection: "row", gap: SPACE[8] }}>
         <View style={{ flex: 1 }}>
           <Field ownerKey={owner()} label={t("inspector.field.inputFile")} readOnly={wsReadOnly()} value={d().limits.input ?? ""} placeholder={t("inspector.field.stdin")} onCommit={(v) => write({ input: nul(v) })} />
         </View>
@@ -592,10 +594,10 @@ function ContestInfoTab(props: {
   return (
     <View>
       <Section>
-        <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Icon name={archived() ? "folder" : frozen() ? "lock" : "stamp"} size={14} tone={archived() || frozen() ? "secondary-foreground" : "foreground"} />
-            <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }}>
+        <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+            <Icon name={archived() ? "folder" : frozen() ? "lock" : "stamp"} size="sm" tone={archived() || frozen() ? "secondary-foreground" : "foreground"} />
+            <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}>
               {archived() ? (frozen() ? t("contests.archivedAndFinalized") : t("contests.archived")) : frozen() ? t("contests.finalized") : t("contests.unfinalized")}
             </Text>
             <If
@@ -611,11 +613,11 @@ function ContestInfoTab(props: {
                       style={{ minWidth: 74 }}
                     >
                       <View style={{ width: 15, height: 15, alignItems: "center", justifyContent: "center" }}>
-                        <If when={f.busyVisible()} else={<Icon name="stamp" size={15} tone="foreground" />}>
+                        <If when={f.busyVisible()} else={<Icon name="stamp" size="md" tone="foreground" />}>
                           <DelayedSpinner active={f.busy()} size={13} />
                         </If>
                       </View>
-                      <Text class="text-foreground" style={{ fontSize: 13 }}>
+                      <Text class="text-foreground" style={{ fontSize: FONT_SIZE.body }}>
                         {t("contests.finalize")}
                       </Text>
                     </Btn>
@@ -642,7 +644,7 @@ function ContestInfoTab(props: {
               />
             </If>
           </View>
-          <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
             {archived()
               ? t("inspector.status.archivedHint")
               : frozen()
@@ -658,7 +660,7 @@ function ContestInfoTab(props: {
           }))}
           action={
             f.findings().length > 0 ? (
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {freezeBlockedCopy(f.findings().length)}
               </Text>
             ) : undefined
@@ -677,7 +679,7 @@ function ContestInfoTab(props: {
             meta({ name: v });
           }}
         />
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[8] }}>
           <View style={{ flex: 1 }}>
             <Field ownerKey={contestOwner()} label={t("inspector.field.date")} readOnly={locked()} value={c().date ?? ""} placeholder="2026-04-12" onCommit={(v) => meta({ date: nul(v) })} />
           </View>
@@ -686,8 +688,8 @@ function ContestInfoTab(props: {
           </View>
         </View>
         <Field ownerKey={contestOwner()} label={t("inspector.field.signature")} readOnly={locked()} value={c().author ?? ""} onCommit={(v) => meta({ author: nul(v) })} />
-        <View style={{ flexDirection: "row", alignItems: "center", height: 28 }}>
-          <Text style={{ flex: 1, fontSize: 13 }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
+        <View style={{ flexDirection: "row", alignItems: "center", height: CONTROL.md }}>
+          <Text style={{ flex: 1, fontSize: FONT_SIZE.body }} class={locked() ? "text-secondary-foreground" : "text-foreground"}>
             {t("inspector.field.language")}
           </Text>
           <Segmented
@@ -718,7 +720,7 @@ function ContestInfoTab(props: {
                 onCommit={(v) => over({ title: v || null })}
                 onRestore={() => over({ title: null })}
               />
-              <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={{ flexDirection: "row", gap: SPACE[8] }}>
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
@@ -744,7 +746,7 @@ function ContestInfoTab(props: {
                   />
                 </View>
               </View>
-              <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={{ flexDirection: "row", gap: SPACE[8] }}>
                 <View style={{ flex: 1 }}>
                   <Field
                     ownerKey={itemOwner()}
@@ -842,7 +844,7 @@ function ContestLayoutTab(props: {
             <If
               when={isMissingTemplate()}
               else={
-                <View style={{ gap: 8 }}>
+                <View style={{ gap: SPACE[8] }}>
                   <TemplatePicker
                     templates={props.catalog.templates}
                     value={effTemplateId()}
@@ -854,7 +856,7 @@ function ContestLayoutTab(props: {
                     onAddFromPreset={!locked() ? props.onRequestPreset : undefined}
                   />
                   <If when={!locked()}>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
                       <Btn
                         label={t("settings.layout.editTemplate")}
                         icon="filePenLine"
@@ -872,19 +874,19 @@ function ContestLayoutTab(props: {
                 </View>
               }
             >
-              <View style={{ gap: 8 }}>
-                <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Icon name="triangleAlert" size={14} tone="destructive" />
-                    <Text style={{ flex: 1, fontSize: 12.5, fontWeight: 500 }} class="text-foreground">
+              <View style={{ gap: SPACE[8] }}>
+                <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                    <Icon name="triangleAlert" size="sm" tone="destructive" />
+                    <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                       {t("inspector.layout.missingTitle", { id: effTemplateId() })}
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
                     {t("inspector.layout.missingDesc")}
                   </Text>
                   <If when={!locked()}>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
                       <If when={canInstallMissingPreset()}>
                         <Btn
                           variant="primary"
@@ -918,20 +920,20 @@ function ContestLayoutTab(props: {
             </If>
           }
         >
-          <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 8 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Icon name="fileText" size={14} tone="primary" />
-              <Text style={{ flex: 1, fontSize: 13, fontWeight: 600 }} class="text-foreground">
+          <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[8] }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+              <Icon name="fileText" size="sm" tone="primary" />
+              <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("inspector.layout.localTitle")}
               </Text>
             </View>
-            <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
               {localTplInfo()?.name
                 ? t("inspector.layout.localDescNamed", { name: resolveLocalized(localTplInfo()!.name) })
                 : t("inspector.layout.localDesc")}
             </Text>
             <If when={!locked()}>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
                 <Btn
                   label={t("inspector.layout.editLocal")}
                   icon="filePenLine"
@@ -994,7 +996,7 @@ function ContestLayoutTab(props: {
 
       <If when={!locked()}>
         <Section title={t("inspector.layout.advanced")} last>
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
             <If when={!hasLocal() && !!tplInfo()}>
               <Btn
                 label={t("inspector.layout.forkCurrent")}
@@ -1014,21 +1016,21 @@ function ContestLayoutTab(props: {
       </If>
 
       <Modal open={confirmRestoreOpen()} onClose={() => confirmRestoreOpen.set(false)} width={380}>
-        <View style={{ padding: 18, gap: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <View class="bg-muted border border-border" style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }}>
-              <Icon name="rotateCcw" size={15} tone="foreground" />
+        <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+            <View class="bg-muted border border-border" style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }}>
+              <Icon name="rotateCcw" size="md" tone="foreground" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+              <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("inspector.layout.restoreConfirmTitle")}
               </Text>
-              <Text style={{ fontSize: 12, lineHeight: 17 }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-muted-foreground">
                 {t("inspector.layout.restoreConfirmDesc")}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
             <Btn label={t("common.cancel")} onPress={() => confirmRestoreOpen.set(false)} />
             <Btn
               label={t("inspector.layout.restoreConfirmAction")}
@@ -1067,19 +1069,19 @@ function ProblemLayoutTab(props: {
   return (
     <View>
       <Section title={t("inspector.layout.currentTemplate")} last={!hasProblemFields() && wsReadOnly()}>
-        <View class="border border-border bg-muted/40" style={{ borderRadius: 8, padding: 10, gap: 6 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Icon name={tplInfo() ? "fileText" : "triangleAlert"} size={14} tone={tplInfo() ? "secondary-foreground" : "destructive"} />
-            <Text style={{ flex: 1, fontSize: 13, fontWeight: 500 }} class="text-foreground">
+        <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+            <Icon name={tplInfo() ? "fileText" : "triangleAlert"} size="sm" tone={tplInfo() ? "secondary-foreground" : "destructive"} />
+            <Text style={{ flex: 1, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {tplInfo() ? resolveLocalized(tplInfo()!.name) || tplId() : t("contests.missingSuffix", { title: tplId() })}
             </Text>
           </View>
-          <Text style={{ fontSize: 12, lineHeight: 16.5 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
             {tplInfo()
               ? t("inspector.layout.problemFollowsDefault")
               : t("inspector.layout.problemMissingTemplate")}
           </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
             <If when={!wsReadOnly() && canInstallPreset()}>
               <Btn
                 variant="primary"

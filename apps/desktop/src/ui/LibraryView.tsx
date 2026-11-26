@@ -72,6 +72,7 @@ import { GroupedProblemList } from "./library/GroupedProblemList";
 import { BatchFloatingBar } from "./library/BatchFloatingBar";
 import { BatchInspector } from "./library/BatchInspector";
 
+import { CONTROL, FONT_SIZE, RADIUS, ROW, SPACE } from "./tokens";
 const SEARCH_DEBOUNCE_MS = 120;
 const AUTO_COLLAPSE_WIDTH = 1040;
 
@@ -89,14 +90,14 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
               : "border border-transparent hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           }
           style={{
-            height: 28,
+            height: CONTROL.md,
             maxWidth: 96,
-            paddingLeft: 6,
-            paddingRight: 4,
-            borderRadius: 6,
+            paddingLeft: SPACE[6],
+            paddingRight: SPACE[4],
+            borderRadius: RADIUS.sm,
             flexDirection: "row",
             alignItems: "center",
-            gap: 2,
+            gap: SPACE[2],
             flexShrink: 0,
             transitionProperty: "colors",
             transitionDuration: ms(120),
@@ -104,12 +105,12 @@ function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[
           }}
         >
           <Text
-            style={{ fontSize: 12.5, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.caption, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={props.active ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.label}
           </Text>
-          <Chevron size={12} tone={props.active ? "foreground" : "muted-foreground"} />
+          <Chevron size="sm" tone={props.active ? "foreground" : "muted-foreground"} />
         </View>
       }
     />
@@ -770,14 +771,14 @@ export function LibraryView(props: { active: boolean }) {
                     flexBasis: 168,
                     flexShrink: 1,
                     minWidth: 80,
-                    height: 28,
-                    borderRadius: 6,
+                    height: CONTROL.md,
+                    borderRadius: RADIUS.sm,
                     borderWidth: 1,
                     flexDirection: "row",
                     alignItems: "center",
-                    paddingLeft: 8,
-                    paddingRight: 4,
-                    gap: 6,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[4],
+                    gap: SPACE[6],
                   }}
                   class="border-border bg-card focus-within:border-primary focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring transition-colors"
                   captureKeys={["up", "down", "enter", "escape"]}
@@ -791,12 +792,12 @@ export function LibraryView(props: { active: boolean }) {
                     }
                   }}
                 >
-                  <Icon name="search" size={14} tone="muted-foreground" />
+                  <Icon name="search" size="sm" tone="muted-foreground" />
                   <Input
                     ref={(r) => (search = r)}
                     testID="library-search"
                     class="bg-transparent placeholder:text-muted-foreground"
-                    style={{ flex: 1, height: 26, fontSize: 13 }}
+                    style={{ flex: 1, height: CONTROL.sm, fontSize: FONT_SIZE.body }}
                     value={inputText()}
                     placeholder={t("library.searchPlaceholder")}
                     autoCapitalize="none"
@@ -815,8 +816,8 @@ export function LibraryView(props: { active: boolean }) {
                       class="hover:bg-muted active:bg-accent"
                       style={{
                         width: 20,
-                        height: 20,
-                        borderRadius: 4,
+                        height: 20, // token-exempt: compact inline icon box
+                        borderRadius: RADIUS.xs,
                         alignItems: "center",
                         justifyContent: "center",
                         flexShrink: 0,
@@ -825,7 +826,7 @@ export function LibraryView(props: { active: boolean }) {
                         transitionTimingFunction: EASE_STANDARD,
                       }}
                     >
-                      <Icon name="x" size={12} tone="muted-foreground" />
+                      <Icon name="x" size="sm" tone="muted-foreground" />
                     </View>
                   </If>
                 </View>
@@ -879,7 +880,7 @@ export function LibraryView(props: { active: boolean }) {
                 </If>
                 <Spacer />
                 <If when={totalCount() > 0 && width() >= 540}>
-                  <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
                     {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
                   </Text>
                 </If>
@@ -1251,22 +1252,22 @@ function ProblemInspector(props: {
                   {(g) => (
                     <View
                       style={{
-                        height: 20,
+                        height: 20, // token-exempt: compact inline tag chip height
                         maxWidth: 160,
                         minWidth: 0,
                         overflow: "hidden",
-                        paddingLeft: 6,
-                        paddingRight: 6,
-                        borderRadius: 5,
+                        paddingLeft: SPACE[6],
+                        paddingRight: SPACE[6],
+                        borderRadius: RADIUS.xs,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 4,
+                        gap: SPACE[4],
                       }}
                       class="bg-muted"
                     >
-                      <Icon name="folder" size={11} tone="muted-foreground" />
+                      <Icon name="folder" size="sm" tone="muted-foreground" />
                       <Text
-                        style={{ fontSize: 11.5, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
+                        style={{ fontSize: FONT_SIZE.caption, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
                         class="text-secondary-foreground"
                       >
                         {g()}
@@ -1282,23 +1283,23 @@ function ProblemInspector(props: {
                     <View
                       tooltip={tip(`${s().platform} ${s().id}`)}
                       style={{
-                        height: 20,
+                        height: 20, // token-exempt: compact inline source chip height
                         maxWidth: 180,
                         minWidth: 0,
                         overflow: "hidden",
-                        paddingLeft: 6,
-                        paddingRight: 6,
-                        borderRadius: 5,
+                        paddingLeft: SPACE[6],
+                        paddingRight: SPACE[6],
+                        borderRadius: RADIUS.xs,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 4,
+                        gap: SPACE[4],
                       }}
                       class="bg-muted"
                     >
-                      <Icon name="link" size={11} tone="muted-foreground" />
+                      <Icon name="link" size="sm" tone="muted-foreground" />
                       <Text
                         style={{
-                          fontSize: 11.5,
+                          fontSize: FONT_SIZE.caption,
                           fontFamily: MONO,
                           flexShrink: 1,
                           minWidth: 0,
@@ -1319,25 +1320,25 @@ function ProblemInspector(props: {
                       tooltip={tip(t("library.inspector.jumpContest", { name: c().name }))}
                       class="bg-muted hover:bg-accent active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                       style={{
-                        height: 20,
+                        height: 20, // token-exempt: compact inline tag chip height
                         maxWidth: 168,
                         minWidth: 0,
                         overflow: "hidden",
-                        paddingLeft: 6,
-                        paddingRight: 6,
-                        borderRadius: 5,
+                        paddingLeft: SPACE[6],
+                        paddingRight: SPACE[6],
+                        borderRadius: RADIUS.xs,
                         flexDirection: "row",
                         alignItems: "center",
-                        gap: 4,
+                        gap: SPACE[4],
                         transitionProperty: "colors",
                         transitionDuration: ms(120),
                         transitionTimingFunction: EASE_STANDARD,
                       }}
                     >
-                      <Icon name="trophy" size={11} tone="muted-foreground" />
+                      <Icon name="trophy" size="sm" tone="muted-foreground" />
                       <Text
                         style={{
-                          fontSize: 11.5,
+                          fontSize: FONT_SIZE.caption,
                           flexShrink: 1,
                           minWidth: 0,
                           numberOfLines: 1,
@@ -1401,7 +1402,7 @@ function ProblemInspector(props: {
         />
       </View>
       <If when={tabs().length > 1}>
-        <View style={{ height: 38, flexDirection: "row", alignItems: "stretch", paddingLeft: 20, paddingRight: 20, gap: 8, borderBottomWidth: 1 }} class="border-border">
+        <View style={{ height: ROW.table, flexDirection: "row", alignItems: "stretch", paddingLeft: SPACE[20], paddingRight: SPACE[20], gap: SPACE[8], borderBottomWidth: 1 }} class="border-border">
           <Segmented items={tabs()} value={tab()} onChange={(v) => tab.set(v)} itemWidth={72} underline />
           <View style={{ flex: 1 }} />
           <If when={tab() === "code" && info().snippetsEnabled && !info().readOnly}>
@@ -1431,22 +1432,22 @@ function ProblemInspector(props: {
                   <View
                     class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                     style={{
-                      height: 26,
-                      paddingLeft: 8,
-                      paddingRight: 6,
-                      borderRadius: 6,
+                      height: CONTROL.sm,
+                      paddingLeft: SPACE[8],
+                      paddingRight: SPACE[6],
+                      borderRadius: RADIUS.sm,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 4,
+                      gap: SPACE[4],
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                   >
-                    <Text style={{ fontSize: 12, fontFamily: MONO }} class="text-secondary-foreground">
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-secondary-foreground">
                       {currentSolution() ?? ""}
                     </Text>
-                    <Chevron size={13} />
+                    <Chevron size="sm" />
                   </View>
                 }
               />

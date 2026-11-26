@@ -8,6 +8,7 @@ import { TITLE_BAR } from "./TitleBar";
 import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
 import { modalBackdrop, modalShadow, ms } from "./theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export function Modal(props: {
   open: boolean;
   onClose: () => void;
@@ -96,7 +97,7 @@ export function Modal(props: {
               width: props.width ?? 420,
               maxWidth: "90%",
               maxHeight: "85%",
-              borderRadius: 12,
+              borderRadius: RADIUS.lg,
               borderWidth: 1,
               overflow: "hidden",
               boxShadow: modalShadow(),
@@ -118,14 +119,14 @@ export function Modal(props: {
 /** A dialog's head: an icon in a soft square, the title, and one line on what it does. */
 export function DialogHeader(props: { icon: IconName; tone?: IconTone; title: string; description?: string }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: props.description ? "flex-start" : "center", gap: 12 }}>
-      <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }} class="bg-muted">
-        <Icon name={props.icon} size={17} tone={props.tone ?? "foreground"} />
+    <View style={{ flexDirection: "row", alignItems: props.description ? "flex-start" : "center", gap: SPACE[12] }}>
+      <View style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" }} class="bg-muted">
+        <Icon name={props.icon} size="md" tone={props.tone ?? "foreground"} />
       </View>
-      <View style={{ flex: 1, gap: 3, paddingTop: props.description ? 1 : 0 }}>
-        <Text style={{ fontSize: 15, lineHeight: 20, fontWeight: 600 }}>{props.title}</Text>
+      <View style={{ flex: 1, gap: SPACE[2], paddingTop: props.description ? SPACE[2] : SPACE[0] }}>
+        <Text style={{ fontSize: FONT_SIZE.strong, lineHeight: LINE_HEIGHT.strong, fontWeight: FONT_WEIGHT.semibold }}>{props.title}</Text>
         {props.description && (
-          <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-secondary-foreground">
             {props.description}
           </Text>
         )}

@@ -12,6 +12,7 @@ import { errorCopy, errorDetails } from "./logic";
 import { EASE_STANDARD, ms } from "./theme";
 import type { UiError } from "./store";
 
+import { FONT_SIZE, RADIUS, SPACE } from "./tokens";
 export function ErrorDisplay(props: {
   error: UiError | undefined;
   /** Where to look: a label to press (a file and line, a page, a contest). */
@@ -46,33 +47,33 @@ export function ErrorDisplay(props: {
         flexWrap: "wrap",
         alignItems: "center",
         justifyContent: props.align === "center" ? "center" : "flex-start",
-        columnGap: 8,
-        rowGap: 2,
+        columnGap: SPACE[8],
+        rowGap: SPACE[2],
       }}
     >
       <If when={words()}>
         {(w) => (
           <>
-            <Text style={{ fontSize: 12 }} class={w().rule ? "text-secondary-foreground" : "text-destructive"}>
+            <Text style={{ fontSize: FONT_SIZE.caption }} class={w().rule ? "text-secondary-foreground" : "text-destructive"}>
               {props.error?.context && !w().rule
                 ? t("error.contextJoin", { context: props.error.context, message: w().message })
                 : w().message}
             </Text>
             <Each of={props.locate ?? []} key={(l, i) => `${i}:${l.label}`}>
               {(l) => (
-                <Text style={{ fontSize: 12, textDecorationLine: "underline" }} class="text-primary" onPress={() => l().onPress()}>
+                <Text style={{ fontSize: FONT_SIZE.caption, textDecorationLine: "underline" }} class="text-primary" onPress={() => l().onPress()}>
                   {l().label}
                 </Text>
               )}
             </Each>
             {w().next && (
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {w().next}
               </Text>
             )}
             {props.action}
             {(props.error?.code || props.error?.error) && (
-              <Text style={{ fontSize: 11.5 }} class="text-muted-foreground hover:text-secondary-foreground" onPress={copy}>
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground hover:text-secondary-foreground" onPress={copy}>
                 {copied() ? t("common.copied") : t("common.copyDetails")}
               </Text>
             )}
@@ -82,8 +83,8 @@ export function ErrorDisplay(props: {
                 class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                 style={{
                   width: 18,
-                  height: 18,
-                  borderRadius: 4,
+                  height: 18, // token-exempt: compact inline icon badge box
+                  borderRadius: RADIUS.xs,
                   alignItems: "center",
                   justifyContent: "center",
                   transitionProperty: "colors",
@@ -91,7 +92,7 @@ export function ErrorDisplay(props: {
                   transitionTimingFunction: EASE_STANDARD,
                 }}
               >
-                <Icon name="x" size={12} tone="muted-foreground" />
+                <Icon name="x" size="sm" tone="muted-foreground" />
               </View>
             )}
           </>

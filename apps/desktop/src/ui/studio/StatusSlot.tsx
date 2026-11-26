@@ -14,6 +14,7 @@ import { DelayedSpinner } from "../kit";
 import { colorTransition, overlayTransform, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export type StatusMarkKind = "unchecked" | "issues" | "passed" | "running" | "none";
 
 export interface StatusItem {
@@ -46,15 +47,15 @@ export function StatusMark(props: { kind: StatusMarkKind; emphasis?: "slot" | "l
       style={{ width: 14, height: 14, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
     >
       <If when={props.kind === "unchecked"}>
-        <View style={{ width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 }} class="border-muted-foreground" />
+        <View style={{ width: 8, height: 8, borderRadius: RADIUS.xs, borderWidth: 1.5 }} class="border-muted-foreground" />
       </If>
       <If when={props.kind === "issues"}>
-        <View style={{ width: 7, height: 7, borderRadius: 3.5 }} class="bg-destructive" />
+        <View style={{ width: 7, height: 7, borderRadius: RADIUS.xs }} class="bg-destructive" />
       </If>
       <If when={props.kind === "passed"}>
         <Icon
           name="check"
-          size={13}
+          size="sm"
           tone={props.emphasis === "slot" ? "chart-2" : "muted-foreground"}
           style={props.emphasis === "slot" ? undefined : { opacity: 0.6 }}
         />
@@ -106,7 +107,7 @@ export function StatusSlot(props: {
       popupStyle={{
         width: 340,
         maxHeight: 380,
-        borderRadius: 10,
+        borderRadius: RADIUS.lg,
         boxShadow: popoverShadow(),
         opacity: 1,
         transform: overlayTransform(true),
@@ -119,13 +120,13 @@ export function StatusSlot(props: {
           testID={props.testID ?? "status-slot"}
           style={{
             width: props.width ?? 168,
-            height: 26,
-            paddingLeft: 6,
-            paddingRight: 8,
-            borderRadius: 6,
+            height: CONTROL.sm,
+            paddingLeft: SPACE[6],
+            paddingRight: SPACE[8],
+            borderRadius: RADIUS.sm,
             flexDirection: "row",
             alignItems: "center",
-            gap: 6,
+            gap: SPACE[6],
             flexShrink: 0,
             ...colorTransition(120),
           }}
@@ -137,7 +138,7 @@ export function StatusSlot(props: {
         >
           <StatusMark kind={props.model.mark} emphasis="slot" />
           <Text
-            style={{ flex: 1, minWidth: 0, fontSize: 13, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
+            style={{ flex: 1, minWidth: 0, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis", fontVariant: ["tabular-nums"] }}
             class={props.model.mark === "issues" ? "text-foreground" : "text-secondary-foreground"}
           >
             {props.model.label}
@@ -145,13 +146,13 @@ export function StatusSlot(props: {
         </View>
       }
     >
-      <Scroll style={{ maxHeight: 378 }} contentStyle={{ padding: 6, gap: 2 }}>
+      <Scroll style={{ maxHeight: 378 }} contentStyle={{ padding: SPACE[6], gap: SPACE[2] }}>
         <Each of={props.model.items} key={(it) => it.id}>
           {(it) => <StatusRow item={it()} tone="issue" onGo={() => setOpen(false)} />}
         </Each>
         <If when={props.model.reminders.length > 0}>
           <Text
-            style={{ fontSize: 12, paddingLeft: 8, paddingTop: props.model.items.length > 0 ? 8 : 4, paddingBottom: 2 }}
+            style={{ fontSize: FONT_SIZE.caption, paddingLeft: SPACE[8], paddingTop: props.model.items.length > 0 ? SPACE[8] : SPACE[4], paddingBottom: SPACE[2] }}
             class="text-muted-foreground"
           >
             {t("status.reminders")}
@@ -166,11 +167,11 @@ export function StatusSlot(props: {
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "space-between",
-              gap: 8,
-              paddingLeft: 8,
-              paddingRight: 8,
-              paddingTop: 8,
-              paddingBottom: 4,
+              gap: SPACE[8],
+              paddingLeft: SPACE[8],
+              paddingRight: SPACE[8],
+              paddingTop: SPACE[8],
+              paddingBottom: SPACE[4],
             }}
           >
             <If when={props.model.action} else={<View />}>
@@ -181,7 +182,7 @@ export function StatusSlot(props: {
                     setOpen(false);
                     a().run();
                   }}
-                  style={{ fontSize: 13, fontWeight: 500 }}
+                  style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }}
                   class="text-primary"
                 >
                   {a().label}
@@ -189,7 +190,7 @@ export function StatusSlot(props: {
               )}
             </If>
             <If when={props.model.details}>
-              <Text testID="status-copy-details" onPress={copy} style={{ fontSize: 12 }} class="text-muted-foreground hover:text-secondary-foreground">
+              <Text testID="status-copy-details" onPress={copy} style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground hover:text-secondary-foreground">
                 {copied() ? t("common.copied") : t("common.copyDetails")}
               </Text>
             </If>
@@ -206,26 +207,26 @@ function StatusRow(props: { item: StatusItem; tone: "issue" | "reminder"; onGo: 
       style={{
         flexDirection: "row",
         alignItems: "flex-start",
-        gap: 8,
-        paddingTop: 6,
-        paddingBottom: 6,
-        paddingLeft: 8,
-        paddingRight: 8,
-        borderRadius: 6,
+        gap: SPACE[8],
+        paddingTop: SPACE[6],
+        paddingBottom: SPACE[6],
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
       }}
     >
-      <View style={{ paddingTop: 5 }}>
+      <View style={{ paddingTop: SPACE[4] }}>
         <View
-          style={{ width: 6, height: 6, borderRadius: 3 }}
+          style={{ width: 6, height: 6, borderRadius: RADIUS.xs }}
           class={props.tone === "issue" ? "bg-destructive" : "bg-muted-foreground"}
         />
       </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text style={{ fontSize: 13, lineHeight: 18 }} class={props.tone === "issue" ? "text-foreground" : "text-secondary-foreground"}>
+      <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+        <Text style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }} class={props.tone === "issue" ? "text-foreground" : "text-secondary-foreground"}>
           {props.item.text}
         </Text>
         <If when={props.item.where}>
-          <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
             {props.item.where}
           </Text>
         </If>
@@ -237,7 +238,7 @@ function StatusRow(props: { item: StatusItem; tone: "issue" | "reminder"; onGo: 
               props.onGo();
               go()();
             }}
-            style={{ fontSize: 12, fontWeight: 500, paddingTop: 1 }}
+            style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, paddingTop: SPACE[2] }}
             class="text-primary"
           >
             {t("status.go")}

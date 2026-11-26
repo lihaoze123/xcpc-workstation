@@ -10,6 +10,7 @@ import { shortcutForSpace, spaceName, visibleSpaces, type Space } from "./logic"
 import { colorTransition, indicatorTransition } from "./motion";
 import { EASE_STANDARD, ms } from "./theme";
 
+import { FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export const RAIL_WIDTH = 68;
 const ITEM_SIZE = 52;
 const ITEM_GAP = 4;
@@ -24,10 +25,10 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
       style={{
         width: ITEM_SIZE,
         height: ITEM_SIZE,
-        borderRadius: 8,
+        borderRadius: RADIUS.md,
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
+        gap: SPACE[4],
         ...colorTransition(120),
       }}
       class={
@@ -36,8 +37,8 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
           : "hover:bg-muted/70 active:bg-accent/60 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       }
     >
-      <Icon name={props.icon} size={18} tone={on() ? "foreground" : "secondary-foreground"} />
-      <Text style={{ fontSize: 11, lineHeight: 14 }} class={on() ? "text-foreground" : "text-secondary-foreground"}>
+      <Icon name={props.icon} size="lg" tone={on() ? "foreground" : "secondary-foreground"} />
+      <Text style={{ fontSize: FONT_SIZE.micro, lineHeight: LINE_HEIGHT.micro }} class={on() ? "text-foreground" : "text-secondary-foreground"}>
         {spaceName(props.space)}
       </Text>
     </View>
@@ -105,7 +106,7 @@ export function NavRail(props: {
   );
   return (
     <View
-      style={{ width: RAIL_WIDTH, paddingTop: 8, paddingBottom: 8, alignItems: "center", borderRightWidth: 1 }}
+      style={{ width: RAIL_WIDTH, paddingTop: SPACE[8], paddingBottom: SPACE[8], alignItems: "center", borderRightWidth: 1 }}
       class="border-border bg-background"
     >
       <View style={{ flex: 1, width: ITEM_SIZE, gap: ITEM_GAP }}>
@@ -117,7 +118,7 @@ export function NavRail(props: {
             top: 0,
             width: ITEM_SIZE,
             height: ITEM_SIZE,
-            borderRadius: 8,
+            borderRadius: RADIUS.md,
             opacity: inTopGroup() ? 1 : 0,
             transform: `translateY(${topIndicatorY()}px)`,
             ...(slideTop() && !reduceMotion() ? indicatorTransition() : fadeTransition()),
@@ -132,7 +133,7 @@ export function NavRail(props: {
             bottom: 0,
             width: ITEM_SIZE,
             height: ITEM_SIZE,
-            borderRadius: 8,
+            borderRadius: RADIUS.md,
             opacity: props.space === "settings" ? 1 : 0,
             ...fadeTransition(),
           }}

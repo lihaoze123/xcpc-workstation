@@ -13,6 +13,7 @@ import { cardShadow, MONO } from "../theme";
 import { zhEn } from "./locale";
 import { platformDisplayName } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export interface OnboardingOjSource {
   id: string;
   name: string;
@@ -86,10 +87,10 @@ function HandleInputRow(props: {
     state().kind === "error" ? (state() as { kind: "error"; message: string }).message : "";
 
   return (
-    <View style={{ gap: 3 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+    <View style={{ gap: SPACE[2] }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>
         <Text
-          style={{ width: 92, fontSize: 13, fontWeight: 500, flexShrink: 0 }}
+          style={{ width: 92, fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, flexShrink: 0 }}
           class="text-foreground"
         >
           {platformDisplayName(props.source.id) || props.source.name}
@@ -98,19 +99,19 @@ function HandleInputRow(props: {
           class="bg-background border border-border focus-within:border-input"
           style={{
             flex: 1,
-            height: 34,
-            borderRadius: 7,
-            paddingLeft: 10,
-            paddingRight: 8,
+            height: CONTROL.lg,
+            borderRadius: RADIUS.sm,
+            paddingLeft: SPACE[12],
+            paddingRight: SPACE[8],
             flexDirection: "row",
             alignItems: "center",
-            gap: 6,
+            gap: SPACE[6],
           }}
         >
           <Input
             testID={`training-onboarding-input-${props.source.id}`}
             class="bg-transparent placeholder:text-muted-foreground"
-            style={{ flex: 1, height: 28, fontSize: 13, fontFamily: MONO }}
+            style={{ flex: 1, height: CONTROL.md, fontSize: FONT_SIZE.body, fontFamily: MONO }}
             value={draft()}
             placeholder={zhEn("输入用户名，回车验证", "Enter handle, press Enter")}
             autoCapitalize="none"
@@ -129,7 +130,7 @@ function HandleInputRow(props: {
           {/* Fixed-width status slot inside the input: zero layout shift */}
           <View
             testID={`training-onboarding-status-${props.source.id}`}
-            style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+            style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center", flexShrink: 0 }} // token-exempt: compact inline icon box
             tooltip={
               state().kind === "ok"
                 ? tip((state() as { kind: "ok"; message: string }).message)
@@ -140,19 +141,20 @@ function HandleInputRow(props: {
               <DelayedSpinner active size={12} />
             </If>
             <If when={state().kind === "ok"}>
-              <Icon name="check" size={14} tone="chart-2" />
+              <Icon name="check" size="sm" tone="chart-2" />
             </If>
             <If when={state().kind === "error"}>
-              <Icon name="circleAlert" size={14} tone="destructive" />
+              <Icon name="circleAlert" size="sm" tone="destructive" />
             </If>
           </View>
         </View>
       </View>
       {/* Fixed single-line body-font error slot directly under the input: zero shift, no monospace */}
+      {/* token-exempt: aligned with 104px form label column */}
       <View style={{ marginLeft: 104, height: 16, justifyContent: "center" }}>
         <Text
           testID={`training-onboarding-error-${props.source.id}`}
-          style={{ fontSize: 11.5, lineHeight: 16, numberOfLines: 1, textOverflow: "ellipsis" }}
+          style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
           class="text-destructive"
         >
           {errorMessage()}
@@ -182,8 +184,8 @@ export function OnboardingEmptyState(props: {
         maxWidth: 560,
         width: "100%",
         alignSelf: "center",
-        marginTop: 24,
-        gap: 16,
+        marginTop: SPACE[24],
+        gap: SPACE[16],
       }}
     >
       {/* Path A: Manual local training log */}
@@ -191,18 +193,18 @@ export function OnboardingEmptyState(props: {
         testID="training-onboarding-manual-card"
         class="bg-card border border-border"
         style={{
-          borderRadius: 12,
-          padding: 24,
-          gap: 14,
+          borderRadius: RADIUS.lg,
+          padding: SPACE[24],
+          gap: SPACE[12],
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-          <View style={{ flex: 1, gap: 5 }}>
-            <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+        <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: SPACE[16] }}>
+          <View style={{ flex: 1, gap: SPACE[4] }}>
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("training.onboarding.manualTitle")}
             </Text>
-            <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
               {t("training.onboarding.manualDesc")}
             </Text>
           </View>
@@ -222,22 +224,22 @@ export function OnboardingEmptyState(props: {
         testID="training-onboarding-oj-card"
         class="bg-card border border-border"
         style={{
-          borderRadius: 12,
-          padding: 24,
-          gap: 16,
+          borderRadius: RADIUS.lg,
+          padding: SPACE[24],
+          gap: SPACE[16],
           boxShadow: cardShadow(),
         }}
       >
-        <View style={{ gap: 5 }}>
-          <Text style={{ fontSize: 15, fontWeight: 600 }} class="text-foreground">
+        <View style={{ gap: SPACE[4] }}>
+          <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("training.onboarding.ojTitle")}
           </Text>
-          <Text style={{ fontSize: 12.5, lineHeight: 18 }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
             {t("training.onboarding.ojDesc")}
           </Text>
         </View>
 
-        <View style={{ gap: 4 }}>
+        <View style={{ gap: SPACE[4] }}>
           <Each of={effectiveSources()} key={(s) => s.id}>
             {(src) => (
               <HandleInputRow

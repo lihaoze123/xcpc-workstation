@@ -12,6 +12,7 @@ import { diffKind, TIER_RANGES } from "./logic";
 import { MONO, tierColor, type Tier } from "./theme";
 import { activeRevision, errorOf, info, preview, refresh, unfreezeFor, type UiError } from "./store";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 const TIER_RANGE_LABEL: Record<string, string> = Object.fromEntries(
   TIER_RANGES.map((r) => [r.tier, r.label]),
 );
@@ -30,31 +31,32 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
   });
   const total = () => Math.max(1, stats().problemCount);
   const label = (text: string) => (
-    <Text style={{ width: 56, fontSize: 12, lineHeight: 18 }} class="text-muted-foreground">
+    <Text style={{ width: 56, fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body }} class="text-muted-foreground">
       {text}
     </Text>
   );
   const bar = (
-    <View style={props.compact ? { gap: 8, minWidth: 0 } : { gap: 8, flex: 1, minWidth: 0 }}>
-      <View style={{ height: 8, flexDirection: "row", borderRadius: 4, overflow: "hidden", gap: 2 }} class="bg-muted">
+    <View style={props.compact ? { gap: SPACE[8], minWidth: 0 } : { gap: SPACE[8], flex: 1, minWidth: 0 }}>
+      <View style={{ height: 8, flexDirection: "row", borderRadius: RADIUS.xs, overflow: "hidden", gap: SPACE[2] }} class="bg-muted">
         <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
           {(b) => <View style={{ flexGrow: b().count / total(), flexBasis: 0, backgroundColor: tierColor(b().tier as Tier) }} />}
         </Each>
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 14, rowGap: 4 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: SPACE[12], rowGap: SPACE[4] }}>
         <Each of={stats().ratingDistribution.filter((b) => b.count > 0)} key={(b) => b.tier}>
           {(b) => (
             <View
               tooltip={props.compact ? tip(tierLabel(b().tier)) : undefined}
-              style={{ flexDirection: "row", alignItems: "center", gap: 5 }}
+              style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}
             >
+              {/* token-exempt: 7px chart legend swatch radius */}
               <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: tierColor(b().tier as Tier) }} />
               <If when={!props.compact}>
-                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                   {tierLabel(b().tier)}
                 </Text>
               </If>
-              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], fontWeight: 500 }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], fontWeight: FONT_WEIGHT.semibold }}>
                 {t("contests.problemCount", { count: b().count })}
               </Text>
             </View>
@@ -67,8 +69,8 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
     <View
       style={
         props.compact
-          ? { flexDirection: "row", flexWrap: "wrap", gap: 4, minWidth: 0 }
-          : { flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", gap: 4 }
+          ? { flexDirection: "row", flexWrap: "wrap", gap: SPACE[4], minWidth: 0 }
+          : { flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }
       }
     >
       <Each of={stats().tagCounts.slice(0, props.compact ? 8 : 24)} key={(t) => t.tag}>
@@ -78,20 +80,20 @@ export function ContestStats(props: { id: string; compact?: boolean; active?: bo
   );
   if (props.compact) {
     return (
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: SPACE[8] }}>
         {bar}
         <If when={stats().tagCounts.length > 0}>{tags}</If>
       </View>
     );
   }
   return (
-    <View style={{ gap: 14 }}>
-      <View style={{ flexDirection: "row", gap: 12 }}>
+    <View style={{ gap: SPACE[12] }}>
+      <View style={{ flexDirection: "row", gap: SPACE[12] }}>
         {label(t("contests.stats.difficulty"))}
         {bar}
       </View>
       <If when={stats().tagCounts.length > 0}>
-        <View style={{ flexDirection: "row", gap: 12 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[12] }}>
           {label(t("contests.stats.tags"))}
           {tags}
         </View>
@@ -177,7 +179,7 @@ export function UnfreezeDialog() {
   const displayedError = () => error() ?? (diffFailed() ? { code: diff()!.code, error: diff()!.error } : undefined);
   return (
     <Modal open={unfreezeFor() !== undefined} onClose={close} width={460} testID="dialog-unfreeze">
-      <View style={{ padding: 20, gap: 16 }}>
+      <View style={{ padding: SPACE[20], gap: SPACE[16] }}>
         <DialogHeader
           icon="lockOpen"
           title={t("contests.unfreeze.title", { name: name() })}
@@ -190,20 +192,21 @@ export function UnfreezeDialog() {
           }
         />
         <If when={!diffFailed() && (diff()?.diffs.length ?? 0) > 0}>
-          <View style={{ marginLeft: 44, borderRadius: 8, overflow: "hidden" }} class="bg-muted">
+          {/* token-exempt: aligned with 32px icon + 12px gap */}
+          <View style={{ marginLeft: 44, borderRadius: RADIUS.md, overflow: "hidden" }} class="bg-muted">
             <Scroll style={{ maxHeight: 220 }}>
-              <View style={{ gap: 8, padding: 10 }}>
+              <View style={{ gap: SPACE[8], padding: SPACE[12] }}>
                 <Each of={diff()?.diffs ?? []} key={(d) => d.label}>
                   {(d) => (
-                    <View style={{ gap: 2 }}>
-                      <View style={{ flexDirection: "row", gap: 8 }}>
-                        <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"], width: 16, fontWeight: 600 }}>{d().label}</Text>
-                        <Text style={{ fontSize: 13, flex: 1 }}>{d().kinds.map(diffKind).join(t("diff.listSeparator"))}</Text>
+                    <View style={{ gap: SPACE[2] }}>
+                      <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+                        <Text style={{ fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"], width: 16, fontWeight: FONT_WEIGHT.semibold }}>{d().label}</Text>
+                        <Text style={{ fontSize: FONT_SIZE.body, flex: 1 }}>{d().kinds.map(diffKind).join(t("diff.listSeparator"))}</Text>
                       </View>
                       <Each of={d().changedFiles.slice(0, 6)} key={(f) => f}>
                         {(f) => (
                           <Text
-                            style={{ fontSize: 12, fontFamily: MONO, marginLeft: 24, numberOfLines: 1, textOverflow: "ellipsis" }}
+                            style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO, marginLeft: SPACE[24], numberOfLines: 1, textOverflow: "ellipsis" }}
                             class="text-muted-foreground"
                           >
                             {f()}
@@ -211,7 +214,7 @@ export function UnfreezeDialog() {
                         )}
                       </Each>
                       <If when={d().changedFiles.length > 6}>
-                        <Text style={{ fontSize: 11.5, marginLeft: 24, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                        <Text style={{ fontSize: FONT_SIZE.caption, marginLeft: SPACE[24], fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                           {t("contests.unfreeze.moreFiles", { count: d().changedFiles.length })}
                         </Text>
                       </If>
@@ -225,7 +228,7 @@ export function UnfreezeDialog() {
         <If when={displayedError()}>
           <ErrorDisplay error={displayedError()} />
         </If>
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
           <Btn label={t("common.cancel")} variant="ghost" onPress={close} />
           <Btn label={t("contests.reopen")} variant="primary" disabled={diffFailed() || info().readOnly} onPress={confirm} testID="confirm-unfreeze" />
         </View>

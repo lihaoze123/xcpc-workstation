@@ -14,6 +14,7 @@ import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
 import { StatusMark, type StatusMarkKind } from "./StatusSlot";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export const OUTLINE_WIDTH = 232;
 const ROW_GAP = 1;
 
@@ -73,7 +74,7 @@ export function Outline(props: {
       onMouseLeave={(e) => r.leave(e)}
     >
       <Scroll style={{ flex: 1 }}>
-        <View ref={(v) => r.container(v)} style={{ paddingTop: 8, paddingBottom: 8, paddingLeft: 6, paddingRight: 6, gap: ROW_GAP }}>
+        <View ref={(v) => r.container(v)} style={{ paddingTop: SPACE[8], paddingBottom: SPACE[8], paddingLeft: SPACE[6], paddingRight: SPACE[6], gap: ROW_GAP }}>
           <If when={props.detail.hasCover}>
             <Row
               isCover
@@ -98,7 +99,7 @@ export function Outline(props: {
                     zIndex: dragging() ? 2 : 0,
                     transform: dragging() ? `translateY(${r.offset()}px)` : "none",
                     boxShadow: dragging() ? popoverShadow() : "none",
-                    borderRadius: 6,
+                    borderRadius: RADIUS.sm,
                     cursor: canDrag() ? "grab" : "default",
                   }}
                   class={dragging() ? "bg-card border border-border" : "border border-transparent"}
@@ -116,37 +117,38 @@ export function Outline(props: {
             }}
           </Each>
           <If when={r.line() !== undefined}>
+            {/* token-exempt: 2px drag-drop insertion line */}
             <View style={{ position: "absolute", left: 8, right: 8, top: r.line()!, height: 2, borderRadius: 1 }} class="bg-primary" />
           </If>
         </View>
       </Scroll>
       <If when={!locked() && !!props.onPickProblems}>
-        <View style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 6, paddingBottom: 8 }}>
+        <View style={{ paddingLeft: SPACE[8], paddingRight: SPACE[8], paddingTop: SPACE[6], paddingBottom: SPACE[8] }}>
           <View
             testID="outline-pick-problems"
             onPress={() => props.onPickProblems?.()}
             class="border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             style={{
-              height: 30,
-              borderRadius: 6,
+              height: CONTROL.md,
+              borderRadius: RADIUS.sm,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              gap: 6,
+              gap: SPACE[6],
               transitionProperty: "colors",
               transitionDuration: ms(120),
               transitionTimingFunction: EASE_STANDARD,
             }}
           >
-            <Icon name="listPlus" size={14} tone="secondary-foreground" />
-            <Text style={{ fontSize: 12.5 }} class="text-foreground">
+            <Icon name="listPlus" size="sm" tone="secondary-foreground" />
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
               {t("contests.pickProblems")}
             </Text>
           </View>
         </View>
       </If>
       <If when={props.detail.items.length > 0}>
-        <View style={{ padding: 12, borderTopWidth: 1, overflow: "hidden" }} class="border-border">
+        <View style={{ padding: SPACE[12], borderTopWidth: 1, overflow: "hidden" }} class="border-border">
           <ContestStats id={props.detail.id} compact />
         </View>
       </If>
@@ -169,13 +171,13 @@ function Row(props: {
       onPress={props.onPress ? () => props.onPress!() : undefined}
       class={props.active ? "bg-accent" : "hover:bg-muted active:bg-accent/70"}
       style={{
-        height: 32,
-        paddingLeft: 8,
-        paddingRight: 8,
-        borderRadius: 6,
+        height: CONTROL.lg,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
+        gap: SPACE[8],
         transitionProperty: "colors",
         transitionDuration: ms(120),
         transitionTimingFunction: EASE_STANDARD,
@@ -186,30 +188,30 @@ function Row(props: {
           when={props.isCover}
           else={
             <Text
-              style={{ fontSize: 12.5, fontWeight: 600, fontVariant: ["tabular-nums"] }}
+              style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
               class={props.active ? "text-foreground" : "text-secondary-foreground"}
             >
               {props.label}
             </Text>
           }
         >
-          <Icon name="fileText" size={13} tone={props.active ? "foreground" : "muted-foreground"} />
+          <Icon name="fileText" size="sm" tone={props.active ? "foreground" : "muted-foreground"} />
         </If>
       </View>
       <Text
-        style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: 13 }}
+        style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }}
         class={props.missing ? "text-destructive" : props.isCover ? "text-secondary-foreground" : "text-foreground"}
       >
         {props.title}
       </Text>
       <If when={props.missing}>
-        <Icon name="triangleAlert" size={13} tone="destructive" />
+        <Icon name="triangleAlert" size="sm" tone="destructive" />
       </If>
       <If when={!props.isCover && !props.missing}>
         <StatusMark kind={props.mark ?? "none"} />
       </If>
       <If when={props.page !== undefined}>
-        <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"], minWidth: 24, textAlign: "right" }} class="text-muted-foreground">
+        <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], minWidth: 24, textAlign: "right" }} class="text-muted-foreground">
           {`p.${props.page}`}
         </Text>
       </If>

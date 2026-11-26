@@ -9,6 +9,7 @@ import { Kbd } from "./kit";
 import { colorTransition, overlayTransform, overlayTransition } from "./motion";
 import { popoverShadow } from "./theme";
 
+import { CONTROL, FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export type MenuEntry =
   | {
       id: string;
@@ -43,8 +44,8 @@ export function AppMenu(props: {
       popupClass="bg-popover border border-border"
       popupStyle={{
         minWidth: props.minWidth ?? 180,
-        padding: 4,
-        borderRadius: 10,
+        padding: SPACE[4],
+        borderRadius: RADIUS.lg,
         boxShadow: popoverShadow(),
         opacity: 1,
         transform: overlayTransform(true),
@@ -62,7 +63,7 @@ export function AppMenu(props: {
       <Each of={props.entries} key={(e) => e.id}>
         {(e) => {
           if ("separator" in e()) {
-            return <MenuSeparator style={{ height: 1, marginTop: 4, marginBottom: 4, marginLeft: 4, marginRight: 4 }} class="bg-border" />;
+            return <MenuSeparator style={{ height: 1, marginTop: SPACE[4], marginBottom: SPACE[4], marginLeft: SPACE[4], marginRight: SPACE[4] }} class="bg-border" />;
           }
           const item = () => e() as Exclude<MenuEntry, { separator: true }>;
           return (
@@ -73,13 +74,13 @@ export function AppMenu(props: {
               class={item().disabled ? "" : "hover:bg-muted focus:bg-muted active:bg-accent"}
               style={
                 {
-                  height: 32,
-                  paddingLeft: 8,
-                  paddingRight: 8,
-                  borderRadius: 6,
+                  height: CONTROL.lg,
+                  paddingLeft: SPACE[8],
+                  paddingRight: SPACE[8],
+                  borderRadius: RADIUS.sm,
                   flexDirection: "row",
                   alignItems: "center",
-                  gap: 8,
+                  gap: SPACE[8],
                   opacity: item().disabled ? 0.5 : 1,
                   ...colorTransition(140),
                 } as StyleProp<ViewStyle>
@@ -89,24 +90,24 @@ export function AppMenu(props: {
               <If when={column()}>
                 <View style={{ width: 16, alignItems: "center" }}>
                   {item().checked !== undefined ? (
-                    <Icon name="check" size={14} tone={item().disabled ? "muted-foreground" : "foreground"} style={{ opacity: item().checked ? 1 : 0 }} />
+                    <Icon name="check" size="sm" tone={item().disabled ? "muted-foreground" : "foreground"} style={{ opacity: item().checked ? 1 : 0 }} />
                   ) : item().icon ? (
                     <Icon
                       name={item().icon!}
-                      size={15}
+                      size="md"
                       tone={item().disabled ? "muted-foreground" : item().destructive ? "destructive" : "secondary-foreground"}
                     />
                   ) : null}
                 </View>
               </If>
               <Text
-                style={{ flex: 1, fontSize: 13, lineHeight: 18, numberOfLines: 1, textOverflow: "ellipsis" }}
+                style={{ flex: 1, fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body, numberOfLines: 1, textOverflow: "ellipsis" }}
                 class={item().disabled ? "text-muted-foreground" : item().destructive ? "text-destructive" : "text-foreground"}
               >
                 {item().label}
               </Text>
               {item().note && (
-                <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                   {item().note}
                 </Text>
               )}
@@ -127,14 +128,14 @@ export function MoreTrigger(props: { testID?: string }) {
       class="border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       style={{
         width: 28,
-        height: 28,
-        borderRadius: 6,
+        height: CONTROL.md,
+        borderRadius: RADIUS.sm,
         alignItems: "center",
         justifyContent: "center",
         ...colorTransition(140),
       }}
     >
-      <Icon name="ellipsis" size={16} tone="foreground" />
+      <Icon name="ellipsis" size="md" tone="foreground" />
     </View>
   );
 }

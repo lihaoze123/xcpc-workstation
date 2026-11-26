@@ -2,6 +2,7 @@
 
 import { type ColorValue, type StyleProp, type ViewStyle } from "nsh";
 import { Icon as NshIcon } from "nsh-icon";
+import { ICON_SIZE, iconStrokeWidth, type IconSize } from "./tokens";
 import {
   Activity,
   ArrowLeft,
@@ -156,22 +157,24 @@ const TONE_CLASS: Record<IconTone, string> = {
   "chart-4": "text-chart-4",
 };
 
-/** A vector line icon, 16 points by default, in the secondary text color unless told. */
+export type { IconSize };
+
+/** A vector line icon (`sm` 14 / `md` 16 / `lg` 20, constant 1.5px visual stroke). */
 export function Icon(props: {
   name: IconName;
-  size?: number;
+  size?: IconSize;
   tone?: IconTone;
   /** Explicit color override when an icon uses a custom palette instead of a theme tone. */
   color?: ColorValue;
-  strokeWidth?: number;
   label?: string;
   style?: StyleProp<ViewStyle>;
 }) {
+  const size = props.size ?? "md";
   return (
     <NshIcon
       icon={ICONS[props.name]}
-      size={props.size ?? 16}
-      strokeWidth={props.strokeWidth}
+      size={ICON_SIZE[size]}
+      strokeWidth={iconStrokeWidth(size)}
       label={props.label}
       class={props.color !== undefined ? undefined : TONE_CLASS[props.tone ?? "secondary-foreground"]}
       style={props.color !== undefined ? [{ color: props.color } as ViewStyle, props.style] : props.style}

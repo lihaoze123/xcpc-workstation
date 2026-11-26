@@ -24,6 +24,7 @@ import { showToast, type ToastTone } from "../Toast";
 import { zhEn } from "../training/locale";
 import { classifyPluginUiError, formatPluginError, type PluginUiErrorInfo } from "./pluginErrors";
 
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export const PLUGIN_WEBVIEW_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';";
 
@@ -376,7 +377,7 @@ export function injectPluginHtml(
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${PLUGIN_WEBVIEW_CSP}">
-<style>html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;display:block;overflow:hidden;background:transparent;}</style>
+<style>html,body,iframe{margin: SPACE[0];padding: SPACE[0];width:100%;height:100%;border:0;display:block;overflow:hidden;background:transparent;}</style>
 </head>
 <body>
 <iframe id="xcpc-plugin-frame" sandbox="allow-scripts"></iframe>
@@ -750,25 +751,25 @@ export function PluginWebView(props: {
               flex: 1,
               alignItems: "center",
               justifyContent: "center",
-              padding: 32,
-              gap: 12,
+              padding: SPACE[32],
+              gap: SPACE[12],
             }}
           >
             <Icon
               name={err().untrusted ? "lock" : "triangleAlert"}
-              size={24}
+              size="lg"
               tone={err().untrusted ? "muted-foreground" : "destructive"}
             />
-            <Text style={{ fontSize: 14.5, fontWeight: 600 }} class="text-foreground">
+            <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {err().title}
             </Text>
             <Text
-              style={{ fontSize: 12.5, lineHeight: 18, textAlign: "center", maxWidth: 420 }}
+              style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, textAlign: "center", maxWidth: 420 }}
               class="text-secondary-foreground"
             >
               {err().summary}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 2 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], paddingTop: SPACE[2] }}>
               <If when={Boolean(err().untrusted)}>
                 <Btn
                   testID="plugin-webview-open-settings"
@@ -807,12 +808,12 @@ export function PluginWebView(props: {
                 style={{
                   maxWidth: 520,
                   width: "100%",
-                  borderRadius: 8,
-                  padding: 10,
+                  borderRadius: RADIUS.md,
+                  padding: SPACE[12],
                 }}
               >
                 <Text
-                  style={{ fontSize: 11.5, lineHeight: 16, fontFamily: MONO }}
+                  style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontFamily: MONO }}
                   class="text-secondary-foreground"
                 >
                   {err().details}

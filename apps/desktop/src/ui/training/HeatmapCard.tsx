@@ -17,6 +17,7 @@ import {
   type HeatmapMode,
 } from "./types";
 
+import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 const MONTH_LABELS_ZH = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 const MONTH_LABELS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_LABELS_ZH = [
@@ -99,23 +100,23 @@ export function HeatmapCard(props: {
       testID="training-heatmap-card"
       class="bg-card border border-border"
       style={{
-        borderRadius: 10,
-        padding: 16,
-        gap: 12,
+        borderRadius: RADIUS.lg,
+        padding: SPACE[16],
+        gap: SPACE[12],
         boxShadow: cardShadow(),
       }}
     >
       {/* Header: title + year summary + host Segmented mode & year switchers */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-          <Text style={{ fontSize: 13.5, fontWeight: 600 }} class="text-foreground">
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: SPACE[8] }}>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE[8] }}>
+          <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
             {t("training.heatmap.title")}
           </Text>
-          <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {t("training.heatmap.yearSummary", { ac: totalAcYear(), days: activeDaysYear() })}
           </Text>
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <Segmented
             items={modeItems()}
             value={mode()}
@@ -209,31 +210,31 @@ export function HeatmapCard(props: {
       />
 
       {/* Bottom detail strip (hovered/pinned day readout + compact legend) */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, minHeight: 20 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12], minHeight: 20 }}>
         <If
           when={activeDay()}
           else={
-            <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
               {t("training.heatmap.hoverHint")}
             </Text>
           }
         >
           {(day) => (
-            <View testID="training-heatmap-detail" style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+            <View testID="training-heatmap-detail" style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
+              <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                 {day().date}
               </Text>
-              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                 {t("training.heatmap.dayAc", { count: day().acCount })}
               </Text>
-              <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                 {t("training.heatmap.daySubs", { count: day().submissionCount })}
               </Text>
               <If when={day().maxRating != null}>
                 <Text
                   style={{
-                    fontSize: 12,
-                    fontWeight: 500,
+                    fontSize: FONT_SIZE.caption,
+                    fontWeight: FONT_WEIGHT.semibold,
                     fontVariant: ["tabular-nums"],
                     color: tierColor(ratingTier(day().maxRating)),
                   }}
@@ -246,8 +247,8 @@ export function HeatmapCard(props: {
         </If>
 
         {/* Legend */}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4] }}>
+          <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {mode() === "count" ? t("training.heatmap.less") : "800"}
           </Text>
           <Each
@@ -273,14 +274,14 @@ export function HeatmapCard(props: {
                   style={{
                     width: 10,
                     height: 10,
-                    borderRadius: 2.5,
+                    borderRadius: 2.5, // token-exempt: heatmap cell corner radius
                     backgroundColor: heatmapCellColor(fakeDay, mode(), colorScheme() === "dark"),
                   }}
                 />
               );
             }}
           </Each>
-          <Text style={{ fontSize: 11, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+          <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
             {mode() === "count" ? t("training.heatmap.more") : "2400+"}
           </Text>
         </View>

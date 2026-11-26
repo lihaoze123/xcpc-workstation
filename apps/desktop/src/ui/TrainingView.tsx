@@ -42,6 +42,7 @@ import {
   type TrainingTab,
 } from "./training/types";
 
+import { FONT_SIZE, SPACE } from "./tokens";
 const PAGE_LIMIT = 50;
 
 const EMPTY_SUBMISSIONS_PAGE: SubmissionsPage = {
@@ -444,14 +445,14 @@ export function TrainingView(props: TrainingViewProps) {
         class="border-b border-border bg-background"
         style={{
           minHeight: 50,
-          paddingTop: 10,
-          paddingBottom: 10,
-          paddingLeft: 20,
-          paddingRight: 20,
+          paddingTop: SPACE[12],
+          paddingBottom: SPACE[12],
+          paddingLeft: SPACE[20],
+          paddingRight: SPACE[20],
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 12,
+          gap: SPACE[12],
           flexShrink: 0,
         }}
       >
@@ -462,11 +463,11 @@ export function TrainingView(props: TrainingViewProps) {
           itemWidth={80}
         />
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
           <If when={hasConfiguredAccounts()}>
             <Text
               testID="training-last-synced"
-              style={{ fontSize: 12, fontVariant: ["tabular-nums"] }}
+              style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }}
               class="text-muted-foreground"
             >
               {t("settings.plugins.lastSyncedAt", {

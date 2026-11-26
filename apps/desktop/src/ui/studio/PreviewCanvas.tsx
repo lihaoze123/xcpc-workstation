@@ -52,6 +52,7 @@ import { panelTransition } from "../motion";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { traceInteraction } from "../trace";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 type ViewportMemory = { zoom: number; scrollY: number; panX: number; autoFit: boolean; pageSizes: PageSize[] };
 
 // Kept across studio sessions: going back to a contest finds it where it was left.
@@ -1361,13 +1362,13 @@ export function PreviewCanvas(props: {
       {/* Typesetting failure overlay */}
       <If when={pages().length === 0 ? failure() : undefined}>
         {(f) => (
-          <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: 32, gap: 8 }}>
-            <Text style={{ fontSize: 13, fontWeight: 500, lineHeight: 20 }} class="text-secondary-foreground">
+          <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[8] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.strong }} class="text-secondary-foreground">
               {t("preview.typesetFailed")}
             </Text>
             <If when={!!f().message}>
               <Text
-                style={{ fontSize: 12, lineHeight: 18, textAlign: "center", maxWidth: 420, numberOfLines: 3, textOverflow: "ellipsis" }}
+                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, textAlign: "center", maxWidth: 420, numberOfLines: 3, textOverflow: "ellipsis" }}
                 class="text-muted-foreground"
               >
                 {f().message}
@@ -1375,7 +1376,7 @@ export function PreviewCanvas(props: {
             </If>
             <If when={f().file}>
               <Text
-                style={{ fontSize: 12, lineHeight: 18, textDecorationLine: props.onDiagnostic ? "underline" : "none" }}
+                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, textDecorationLine: props.onDiagnostic ? "underline" : "none" }}
                 class={props.onDiagnostic ? "text-primary" : "text-muted-foreground"}
                 onPress={() => props.onDiagnostic?.(f())}
               >
@@ -1403,13 +1404,13 @@ export function PreviewCanvas(props: {
         >
           <View
             style={{
-              height: 32,
+              height: CONTROL.lg,
               flexDirection: "row",
               alignItems: "center",
-              borderRadius: 9999,
+              borderRadius: RADIUS.full,
               borderWidth: 1,
-              paddingLeft: 4,
-              paddingRight: 4,
+              paddingLeft: SPACE[4],
+              paddingRight: SPACE[4],
               backdropFilter: "blur(12px)",
               boxShadow: popoverShadow(),
             }}
@@ -1429,11 +1430,11 @@ export function PreviewCanvas(props: {
               tooltip={tip(t("preview.fitWidth"), "mod+0")}
               class={zoom() > 0 ? "hover:bg-muted active:bg-accent" : ""}
               style={{
-                height: 24,
+                height: CONTROL.sm,
                 minWidth: 42,
-                paddingLeft: 6,
-                paddingRight: 6,
-                borderRadius: 9999,
+                paddingLeft: SPACE[6],
+                paddingRight: SPACE[6],
+                borderRadius: RADIUS.full,
                 alignItems: "center",
                 justifyContent: "center",
                 transitionProperty: "colors",
@@ -1441,7 +1442,7 @@ export function PreviewCanvas(props: {
                 transitionTimingFunction: EASE_STANDARD,
               }}
             >
-              <Text style={{ textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+              <Text style={{ textAlign: "center", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
                 {zoom() > 0 ? `${Math.round(zoom() * live().k * resizeTransform().k * 100)}%` : "–"}
               </Text>
             </View>
@@ -1454,7 +1455,7 @@ export function PreviewCanvas(props: {
               />
             </If>
 
-            <View style={{ width: 1, height: 14, marginLeft: 4, marginRight: 4 }} class="bg-border" />
+            <View style={{ width: 1, height: 14, marginLeft: SPACE[4], marginRight: SPACE[4] }} class="bg-border" />
 
             {/* Page group */}
             <HudButton
@@ -1463,7 +1464,7 @@ export function PreviewCanvas(props: {
               onPress={() => goPage(currentPage() - 1)}
               tooltip={tip(t("preview.prevPage"))}
             />
-            <Text style={{ minWidth: 44, textAlign: "center", fontSize: 12, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
+            <Text style={{ minWidth: 44, textAlign: "center", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
               {pages().length > 0 ? `${currentPage() + 1} / ${pages().length}` : "–"}
             </Text>
             <HudButton
@@ -1475,7 +1476,7 @@ export function PreviewCanvas(props: {
 
             {/* Preflight diagnostics */}
             <If when={flagged().length > 0}>
-              <View style={{ width: 1, height: 14, marginLeft: 4, marginRight: 4 }} class="bg-border" />
+              <View style={{ width: 1, height: 14, marginLeft: SPACE[4], marginRight: SPACE[4] }} class="bg-border" />
               <Popover
                 open={hudOpen()}
                 onOpenChange={(e) => hudOpen.set(e.open)}
@@ -1487,21 +1488,21 @@ export function PreviewCanvas(props: {
                   <View
                     testID="preflight-badge"
                     style={{
-                      height: 24,
-                      paddingLeft: 8,
-                      paddingRight: 8,
-                      borderRadius: 9999,
+                      height: CONTROL.sm,
+                      paddingLeft: SPACE[8],
+                      paddingRight: SPACE[8],
+                      borderRadius: RADIUS.full,
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 5,
+                      gap: SPACE[4],
                       transitionProperty: "colors",
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
                     class="hover:bg-muted active:bg-accent"
                   >
-                    <View style={{ width: 6, height: 6, borderRadius: 3 }} class={counts().errors > 0 ? "bg-destructive" : "bg-chart-4"} />
-                    <Text style={{ fontSize: 12, fontVariant: ["tabular-nums"] }} class={counts().errors > 0 ? "text-destructive" : "text-chart-4"}>
+                    <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class={counts().errors > 0 ? "bg-destructive" : "bg-chart-4"} />
+                    <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class={counts().errors > 0 ? "text-destructive" : "text-chart-4"}>
                       {preflightLabel()}
                     </Text>
                   </View>
@@ -1518,16 +1519,16 @@ export function PreviewCanvas(props: {
                           else props.onDiagnostic?.(x);
                         }}
                         class="hover:bg-muted active:bg-accent"
-                        style={{ paddingTop: 6, paddingBottom: 6, paddingLeft: 8, paddingRight: 8, borderRadius: 6, gap: 2 }}
+                        style={{ paddingTop: SPACE[6], paddingBottom: SPACE[6], paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, gap: SPACE[2] }}
                       >
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <View style={{ width: 6, height: 6, borderRadius: 3 }} class={d().severity === "error" ? "bg-destructive" : "bg-chart-4"} />
-                          <Text style={{ numberOfLines: 2, textOverflow: "ellipsis", flex: 1, fontSize: 12.5 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                          <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class={d().severity === "error" ? "bg-destructive" : "bg-chart-4"} />
+                          <Text style={{ numberOfLines: 2, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.caption }}>
                             {d().message}
                           </Text>
                         </View>
                         <If when={Boolean(d().file || d().page != null)}>
-                          <Text style={{ fontSize: 11.5, marginLeft: 12, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
+                          <Text style={{ fontSize: FONT_SIZE.caption, marginLeft: SPACE[12], fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
                             {d().file ? `${d().file}${d().line ? `:${d().line}` : ""}` : t("preview.pageNumber", { page: d().page! + 1 })}
                           </Text>
                         </If>
@@ -1553,8 +1554,8 @@ function HudButton(props: { icon: IconName; onPress: () => void; disabled?: bool
       class={props.disabled ? "" : "hover:bg-muted active:bg-accent"}
       style={{
         width: 24,
-        height: 24,
-        borderRadius: 9999,
+        height: CONTROL.sm,
+        borderRadius: RADIUS.full,
         alignItems: "center",
         justifyContent: "center",
         opacity: props.disabled ? 0.35 : 1,
@@ -1563,7 +1564,7 @@ function HudButton(props: { icon: IconName; onPress: () => void; disabled?: bool
         transitionTimingFunction: EASE_STANDARD,
       }}
     >
-      <Icon name={props.icon} size={14} />
+      <Icon name={props.icon} size="sm" />
     </View>
   );
 }

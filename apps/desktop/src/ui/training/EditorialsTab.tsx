@@ -24,6 +24,7 @@ import {
   type EditorialSummaryItem,
 } from "./types";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 interface DifficultyPreset {
   id: string;
   labelZh: string;
@@ -159,7 +160,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
         else={
           <View
             testID="training-editorials-empty"
-            style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 32 }}
+            style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32] }}
           >
             <EmptyState
               icon="fileText"
@@ -193,31 +194,31 @@ export function EditorialsTab(props: EditorialsTabProps) {
               <View
                 class="border-b border-border bg-card/50"
                 style={{
-                  paddingTop: 10,
-                  paddingBottom: 10,
-                  paddingLeft: 14,
-                  paddingRight: 14,
-                  gap: 8,
+                  paddingTop: SPACE[12],
+                  paddingBottom: SPACE[12],
+                  paddingLeft: SPACE[12],
+                  paddingRight: SPACE[12],
+                  gap: SPACE[8],
                   flexShrink: 0,
                 }}
               >
                 <View
                   class="bg-card border border-border focus-within:border-input"
                   style={{
-                    height: 30,
-                    borderRadius: 6,
-                    paddingLeft: 8,
-                    paddingRight: 6,
+                    height: CONTROL.md,
+                    borderRadius: RADIUS.sm,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[6],
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 6,
+                    gap: SPACE[6],
                   }}
                 >
-                  <Icon name="search" size={13} tone="muted-foreground" />
+                  <Icon name="search" size="sm" tone="muted-foreground" />
                   <Input
                     testID="editorials-search"
                     class="bg-transparent placeholder:text-muted-foreground"
-                    style={{ flex: 1, height: 24, fontSize: 12.5 }}
+                    style={{ flex: 1, height: CONTROL.sm, fontSize: FONT_SIZE.caption }}
                     value={props.filter.search}
                     placeholder={t("training.editorials.searchPlaceholder")}
                     autoCapitalize="none"
@@ -227,15 +228,14 @@ export function EditorialsTab(props: EditorialsTabProps) {
                   <If when={props.filter.search.length > 0}>
                     <IconBtn
                       icon="x"
-                      size={18}
-                      iconSize={11}
+                      size="sm"
                       tone="muted-foreground"
                       onPress={() => patch({ search: "" })}
                     />
                   </If>
                 </View>
 
-                <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACE[6] }}>
                   <AppMenu
                     entries={tagMenuEntries()}
                     onSelect={(id) => patch({ tag: id === "__all__" ? "" : id })}
@@ -249,25 +249,25 @@ export function EditorialsTab(props: EditorialsTabProps) {
                             : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
                         }
                         style={{
-                          height: 22,
-                          paddingLeft: 8,
-                          paddingRight: 6,
-                          borderRadius: 6,
+                          height: CONTROL.sm,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[6],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 4,
+                          gap: SPACE[4],
                           ...colorTransition(120),
                         }}
                       >
                         <Text
-                          style={{ fontSize: 11.5, fontWeight: 500 }}
+                          style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                           class={props.filter.tag !== "" ? "text-foreground" : "text-muted-foreground"}
                         >
                           {tagChipLabel()}
                         </Text>
                         <Icon
                           name="chevronDown"
-                          size={11}
+                          size="sm"
                           tone={props.filter.tag !== "" ? "foreground" : "muted-foreground"}
                         />
                       </View>
@@ -290,25 +290,25 @@ export function EditorialsTab(props: EditorialsTabProps) {
                             : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
                         }
                         style={{
-                          height: 22,
-                          paddingLeft: 8,
-                          paddingRight: 6,
-                          borderRadius: 6,
+                          height: CONTROL.sm,
+                          paddingLeft: SPACE[8],
+                          paddingRight: SPACE[6],
+                          borderRadius: RADIUS.sm,
                           flexDirection: "row",
                           alignItems: "center",
-                          gap: 4,
+                          gap: SPACE[4],
                           ...colorTransition(120),
                         }}
                       >
                         <Text
-                          style={{ fontSize: 11.5, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                          style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
                           class={hasDifficultyFilter() ? "text-foreground" : "text-muted-foreground"}
                         >
                           {difficultyChipLabel()}
                         </Text>
                         <Icon
                           name="chevronDown"
-                          size={11}
+                          size="sm"
                           tone={hasDifficultyFilter() ? "foreground" : "muted-foreground"}
                         />
                       </View>
@@ -334,19 +334,19 @@ export function EditorialsTab(props: EditorialsTabProps) {
               <Scroll
                 testID="training-editorials-scroll"
                 style={{ flex: 1, minHeight: 0 }}
-                contentStyle={{ padding: 10, gap: 6, paddingBottom: 24 }}
+                contentStyle={{ padding: SPACE[12], gap: SPACE[6], paddingBottom: SPACE[24] }}
               >
                 <If
                   when={props.items.length > 0}
                   else={
                     <View
                       testID="training-editorials-no-match"
-                      style={{ padding: 24, alignItems: "center", gap: 4 }}
+                      style={{ padding: SPACE[24], alignItems: "center", gap: SPACE[4] }}
                     >
-                      <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                         {t("training.editorials.noMatchTitle")}
                       </Text>
-                      <Text style={{ fontSize: 12 }} class="text-muted-foreground">
+                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
                         {t("training.editorials.noMatchDesc")}
                       </Text>
                     </View>
@@ -366,20 +366,20 @@ export function EditorialsTab(props: EditorialsTabProps) {
                               : "bg-card border border-border hover:bg-muted/60"
                           }
                           style={{
-                            borderRadius: 8,
-                            paddingTop: 10,
-                            paddingBottom: 10,
-                            paddingLeft: 12,
-                            paddingRight: 12,
-                            gap: 5,
+                            borderRadius: RADIUS.md,
+                            paddingTop: SPACE[12],
+                            paddingBottom: SPACE[12],
+                            paddingLeft: SPACE[12],
+                            paddingRight: SPACE[12],
+                            gap: SPACE[4],
                             ...colorTransition(100),
                           }}
                         >
-                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
                             <Text
                               style={{
-                                fontSize: 13.5,
-                                fontWeight: 600,
+                                fontSize: FONT_SIZE.body,
+                                fontWeight: FONT_WEIGHT.semibold,
                                 flex: 1,
                                 minWidth: 0,
                                 numberOfLines: 1,
@@ -394,10 +394,10 @@ export function EditorialsTab(props: EditorialsTabProps) {
                             </If>
                           </View>
 
-                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
                             <Text
                               style={{
-                                fontSize: 11.5,
+                                fontSize: FONT_SIZE.caption,
                                 fontFamily: MONO,
                                 flex: 1,
                                 minWidth: 0,
@@ -411,7 +411,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                                 : item().problemId}
                             </Text>
                             <Text
-                              style={{ fontSize: 11, fontVariant: ["tabular-nums"], flexShrink: 0 }}
+                              style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"], flexShrink: 0 }}
                               class="text-muted-foreground"
                             >
                               {formatIsoDateShort(item().updatedAt)}
@@ -421,8 +421,8 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           <If when={item().excerpt.length > 0}>
                             <Text
                               style={{
-                                fontSize: 12,
-                                lineHeight: 17,
+                                fontSize: FONT_SIZE.caption,
+                                lineHeight: LINE_HEIGHT.caption,
                                 numberOfLines: 2,
                                 textOverflow: "ellipsis",
                               }}
@@ -433,7 +433,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           </If>
 
                           <If when={item().tags.length > 0}>
-                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, paddingTop: 2 }}>
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4], paddingTop: SPACE[2] }}>
                               <Each of={item().tags.slice(0, 4)} key={(tg) => tg}>
                                 {(tg) => <Chip label={formatTagLabel(tg(), isEn())} />}
                               </Each>
@@ -458,8 +458,8 @@ export function EditorialsTab(props: EditorialsTabProps) {
               <If
                 when={selectedItem()}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-                    <Text style={{ fontSize: 13 }} class="text-muted-foreground">
+                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[24] }}>
+                    <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
                       {t("training.editorials.selectHint")}
                     </Text>
                   </View>
@@ -481,23 +481,23 @@ export function EditorialsTab(props: EditorialsTabProps) {
                                 {(s) => (
                                   <View
                                     style={{
-                                      height: 20,
+                                      height: 20, // token-exempt: compact tag chip height
                                       maxWidth: 180,
                                       minWidth: 0,
                                       overflow: "hidden",
-                                      paddingLeft: 6,
-                                      paddingRight: 6,
-                                      borderRadius: 5,
+                                      paddingLeft: SPACE[6],
+                                      paddingRight: SPACE[6],
+                                      borderRadius: RADIUS.xs,
                                       flexDirection: "row",
                                       alignItems: "center",
-                                      gap: 4,
+                                      gap: SPACE[4],
                                     }}
                                     class="bg-muted"
                                   >
-                                    <Icon name="link" size={11} tone="muted-foreground" />
+                                    <Icon name="link" size="sm" tone="muted-foreground" />
                                     <Text
                                       style={{
-                                        fontSize: 11.5,
+                                        fontSize: FONT_SIZE.caption,
                                         fontFamily: MONO,
                                         flexShrink: 1,
                                         minWidth: 0,

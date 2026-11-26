@@ -22,23 +22,24 @@ import {
   type SubtaskSummaryData,
 } from "./buildLogic";
 
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 const SAFE_STEM_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 function ModalHeader(props: { icon: IconName; title: string; subtitle?: string }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8] }}>
       <View
-        style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+        style={{ width: 32, height: CONTROL.lg, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
         class="bg-muted"
       >
-        <Icon name={props.icon} size={16} tone="foreground" />
+        <Icon name={props.icon} size="md" tone="foreground" />
       </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text style={{ fontSize: 14, fontWeight: 600 }} class="text-foreground">
+      <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+        <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
           {props.title}
         </Text>
         <If when={props.subtitle}>
-          <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
             {props.subtitle}
           </Text>
         </If>
@@ -84,7 +85,7 @@ export function CreateSourceModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={412} testID="create-source-modal">
-      <View style={{ padding: 18, gap: 14 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon={props.kind === "solution" ? "code" : "sparkles"}
           title={
@@ -99,7 +100,7 @@ export function CreateSourceModal(props: {
           }
         />
 
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: SPACE[6] }}>
           <FieldLabel label={t("build.programs.nameLabel")} />
           <Input
             testID="create-source-name-input"
@@ -126,14 +127,14 @@ export function CreateSourceModal(props: {
           />
           {/* Fixed single-slot constraint / error line — turns red in-place with zero dialog height jump */}
           <Text
-            style={{ fontSize: 12, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
           >
             {inlineError() ?? t("build.programs.nameHint")}
           </Text>
         </View>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="create-source-submit"
@@ -200,14 +201,14 @@ export function AddGeneratorBatchModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={440} testID="add-gen-batch-modal">
-      <View style={{ padding: 18, gap: 12 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon="sparkles"
           title={t("build.tests.genModalTitle")}
           subtitle={t("build.tests.genModalSubtitle")}
         />
 
-        <View style={{ gap: 5 }}>
+        <View style={{ gap: SPACE[4] }}>
           <FieldLabel label={t("build.tests.genModalGenerator")} />
           <AppMenu
             align="start"
@@ -225,25 +226,25 @@ export function AddGeneratorBatchModal(props: {
               <View
                 class="border border-border bg-card hover:bg-muted"
                 style={{
-                  height: 32,
-                  paddingLeft: 10,
-                  paddingRight: 8,
-                  borderRadius: 6,
+                  height: CONTROL.lg,
+                  paddingLeft: SPACE[12],
+                  paddingRight: SPACE[8],
+                  borderRadius: RADIUS.sm,
                   flexDirection: "row",
                   alignItems: "center",
                   justifyContent: "space-between",
                 }}
               >
-                <Text style={{ fontSize: 13 }} class="text-foreground">
+                <Text style={{ fontSize: FONT_SIZE.body }} class="text-foreground">
                   {selectedGen() || t("build.programs.generatorsEmpty")}
                 </Text>
-                <Icon name="chevronDown" size={14} tone="muted-foreground" />
+                <Icon name="chevronDown" size="sm" tone="muted-foreground" />
               </View>
             }
           />
         </View>
 
-        <View style={{ gap: 5 }}>
+        <View style={{ gap: SPACE[4] }}>
           <FieldLabel label={t("build.tests.genModalArgs")} />
           <Input
             value={args()}
@@ -256,8 +257,8 @@ export function AddGeneratorBatchModal(props: {
           />
         </View>
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1, gap: 5 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+          <View style={{ flex: 1, gap: SPACE[4] }}>
             <FieldLabel label={t("build.tests.genModalRepeat")} />
             <Input
               value={repeat()}
@@ -267,7 +268,7 @@ export function AddGeneratorBatchModal(props: {
               style={{ fontVariant: ["tabular-nums"] }}
             />
           </View>
-          <View style={{ flex: 2, gap: 5 }}>
+          <View style={{ flex: 2, gap: SPACE[4] }}>
             <FieldLabel label={t("build.tests.genModalTag")} />
             <Input
               value={tag()}
@@ -281,7 +282,7 @@ export function AddGeneratorBatchModal(props: {
         </View>
 
         <If when={(props.subtasks?.length ?? 0) > 0}>
-          <View style={{ gap: 5 }}>
+          <View style={{ gap: SPACE[4] }}>
             <FieldLabel label={t("build.subtasks.assignLabel")} />
             <AppMenu
               align="start"
@@ -299,21 +300,21 @@ export function AddGeneratorBatchModal(props: {
                 <View
                   class="border border-border bg-card hover:bg-muted"
                   style={{
-                    height: 32,
-                    paddingLeft: 10,
-                    paddingRight: 8,
-                    borderRadius: 6,
+                    height: CONTROL.lg,
+                    paddingLeft: SPACE[12],
+                    paddingRight: SPACE[8],
+                    borderRadius: RADIUS.sm,
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
                   }}
                 >
-                  <Text style={{ fontSize: 13 }} class="text-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-foreground">
                     {selectedSubtask()
                       ? t("build.table.subtaskHeader", { id: selectedSubtask()! })
                       : t("build.subtasks.assignNone")}
                   </Text>
-                  <Icon name="chevronDown" size={14} tone="muted-foreground" />
+                  <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                 </View>
               }
             />
@@ -321,13 +322,13 @@ export function AddGeneratorBatchModal(props: {
         </If>
 
         <Text
-          style={{ fontSize: 12, minHeight: 16 }}
+          style={{ fontSize: FONT_SIZE.caption, minHeight: 16 }}
           class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
         >
           {inlineError() ?? t("build.tests.genModalHint")}
         </Text>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[2] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="add-gen-batch-submit"
@@ -350,7 +351,7 @@ export function ConfirmDeleteRuleModal(props: {
 }) {
   return (
     <Modal open={props.open} onClose={props.onClose} width={390} testID="confirm-delete-rule-modal">
-      <View style={{ padding: 18, gap: 12 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon="trash"
           title={
@@ -360,7 +361,7 @@ export function ConfirmDeleteRuleModal(props: {
           }
           subtitle={t("build.tests.confirmDeleteDesc")}
         />
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[4] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="confirm-delete-rule-btn"
@@ -419,9 +420,9 @@ export function ConfirmPackageDeleteModal(props: {
 
   return (
     <Modal open={props.target !== undefined} onClose={props.onClose} width={400} testID="confirm-package-delete-modal">
-      <View style={{ padding: 18, gap: 14 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader icon="trash" title={title()} subtitle={subtitle()} />
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[2] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="confirm-package-delete-btn"
@@ -512,7 +513,7 @@ export function SubtaskModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={430} testID="subtask-modal">
-      <View style={{ padding: 18, gap: 13 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon="listOrdered"
           title={
@@ -522,8 +523,8 @@ export function SubtaskModal(props: {
           }
         />
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1, gap: 5 }}>
+        <View style={{ flexDirection: "row", gap: SPACE[8] }}>
+          <View style={{ flex: 1, gap: SPACE[4] }}>
             <FieldLabel label={t("build.subtasks.idLabel")} />
             <Input
               testID="subtask-id-input"
@@ -542,7 +543,7 @@ export function SubtaskModal(props: {
               style={{ fontFamily: MONO, opacity: props.editing ? 0.65 : 1 }}
             />
           </View>
-          <View style={{ width: 112, gap: 5 }}>
+          <View style={{ width: 112, gap: SPACE[4] }}>
             <FieldLabel label={t("build.subtasks.scoreLabel")} />
             <Input
               testID="subtask-score-input"
@@ -560,23 +561,23 @@ export function SubtaskModal(props: {
           </View>
         </View>
 
-        <View style={{ gap: 5 }}>
+        <View style={{ gap: SPACE[4] }}>
           <FieldLabel label={t("build.subtasks.scoringLabel")} />
-          <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flexDirection: "row", gap: SPACE[8] }}>
             {(["min", "sum"] as const).map((mode) => (
               <View
                 onPress={() => scoring.set(mode)}
                 class={scoring() === mode ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
                 style={{
                   flex: 1,
-                  height: 30,
-                  borderRadius: 6,
+                  height: CONTROL.md,
+                  borderRadius: RADIUS.sm,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
                 <Text
-                  style={{ fontSize: 12, fontWeight: 500 }}
+                  style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
                   class={scoring() === mode ? "text-foreground" : "text-secondary-foreground"}
                 >
                   {mode === "min" ? t("build.subtasks.scoringMin") : t("build.subtasks.scoringSum")}
@@ -587,9 +588,9 @@ export function SubtaskModal(props: {
         </View>
 
         <If when={depCandidates().length > 0}>
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
             <FieldLabel label={t("build.subtasks.dependsLabel")} />
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
               <Each of={depCandidates()} key={(s) => s.id}>
                 {(s) => {
                   const active = () => depends().includes(s().id);
@@ -597,10 +598,10 @@ export function SubtaskModal(props: {
                     <View
                       onPress={() => toggleDep(s().id)}
                       class={active() ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
-                      style={{ height: 26, paddingLeft: 8, paddingRight: 8, borderRadius: 6, justifyContent: "center" }}
+                      style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, justifyContent: "center" }}
                     >
                       <Text
-                        style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }}
+                        style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }}
                         class={active() ? "text-foreground" : "text-secondary-foreground"}
                       >
                         {t("build.table.subtaskHeader", { id: s().id })}
@@ -614,12 +615,12 @@ export function SubtaskModal(props: {
         </If>
 
         <If when={inlineError()}>
-          <Text style={{ fontSize: 12 }} class="text-destructive">
+          <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
             {inlineError()!}
           </Text>
         </If>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[2] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="subtask-modal-submit"
@@ -701,14 +702,14 @@ export function SolutionScoringModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={450} testID="solution-scoring-modal">
-      <View style={{ padding: 18, gap: 13 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon="scale"
           title={t("build.scoring.modalTitle", { name: props.solutionName })}
           subtitle={t("build.scoring.modalSubtitle")}
         />
 
-        <View style={{ gap: 5 }}>
+        <View style={{ gap: SPACE[4] }}>
           <FieldLabel label={t("build.scoring.scoreLabel")} />
           <Input
             testID="solution-score-expect-input"
@@ -730,7 +731,7 @@ export function SolutionScoringModal(props: {
             style={{ fontVariant: ["tabular-nums"] }}
           />
           <Text
-            style={{ fontSize: 12, numberOfLines: 1, textOverflow: "ellipsis" }}
+            style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
             class={inlineError() ? "text-destructive" : "text-secondary-foreground"}
           >
             {inlineError() ?? t("build.scoring.scoreHint")}
@@ -738,16 +739,16 @@ export function SolutionScoringModal(props: {
         </View>
 
         <If when={props.subtasks.length > 0}>
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: SPACE[6] }}>
             <FieldLabel label={t("build.scoring.subtasksLabel")} />
-            <View style={{ gap: 6 }}>
+            <View style={{ gap: SPACE[6] }}>
               <Each of={props.subtasks} key={(s) => s.id}>
                 {(s) => {
                   const cur = () => subMap()[s().id];
                   const curLabel = () => (cur() && cur()!.length > 0 ? cur()!.join(" / ") : t("build.scoring.anyVerdict"));
                   return (
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <Text style={{ fontSize: 13, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>
+                      <Text style={{ fontSize: FONT_SIZE.body, fontVariant: ["tabular-nums"] }} class="text-foreground">
                         {`${t("build.table.subtaskHeader", { id: s().id })}  (${s().score})`}
                       </Text>
                       <AppMenu
@@ -769,21 +770,21 @@ export function SolutionScoringModal(props: {
                           <View
                             class="border border-border bg-card hover:bg-muted"
                             style={{
-                              height: 28,
+                              height: CONTROL.md,
                               minWidth: 112,
-                              paddingLeft: 9,
-                              paddingRight: 7,
-                              borderRadius: 6,
+                              paddingLeft: SPACE[8],
+                              paddingRight: SPACE[8],
+                              borderRadius: RADIUS.sm,
                               flexDirection: "row",
                               alignItems: "center",
                               justifyContent: "space-between",
-                              gap: 6,
+                              gap: SPACE[6],
                             }}
                           >
-                            <Text style={{ fontSize: 12, fontWeight: 500 }} class="text-foreground">
+                            <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                               {curLabel()}
                             </Text>
-                            <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                            <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                           </View>
                         }
                       />
@@ -795,7 +796,7 @@ export function SolutionScoringModal(props: {
           </View>
         </If>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[2] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="solution-scoring-submit"
@@ -831,40 +832,40 @@ export function InitPackageModal(props: {
 
   return (
     <Modal open={props.open} onClose={props.onClose} width={430} testID="init-package-modal">
-      <View style={{ padding: 18, gap: 14 }}>
+      <View style={{ padding: SPACE[16], gap: SPACE[12] }}>
         <ModalHeader
           icon="database"
           title={t("build.initModal.title")}
           subtitle={t("build.initModal.subtitle")}
         />
 
-        <View style={{ gap: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+        <View style={{ gap: SPACE[8] }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+            <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("build.initModal.interactive")}
               </Text>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("build.initModal.interactiveDesc")}
               </Text>
             </View>
             <Switch checked={interactive()} onChange={(e) => interactive.set(e.checked)} />
           </View>
 
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-              <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+            <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
+              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
                 {t("build.initModal.subtasks")}
               </Text>
-              <Text style={{ fontSize: 12 }} class="text-secondary-foreground">
+              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
                 {t("build.initModal.subtasksDesc")}
               </Text>
             </View>
             <Switch checked={subtasks()} onChange={(e) => subtasks.set(e.checked)} />
           </View>
 
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <Text style={{ fontSize: 13, fontWeight: 500 }} class="text-foreground">
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[12] }}>
+            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
               {t("build.initModal.runs")}
             </Text>
             <AppMenu
@@ -880,26 +881,26 @@ export function InitPackageModal(props: {
                 <View
                   class="border border-border bg-card hover:bg-muted"
                   style={{
-                    height: 28,
-                    paddingLeft: 9,
-                    paddingRight: 7,
-                    borderRadius: 6,
+                    height: CONTROL.md,
+                    paddingLeft: SPACE[8],
+                    paddingRight: SPACE[8],
+                    borderRadius: RADIUS.sm,
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 6,
+                    gap: SPACE[6],
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: 500, fontVariant: ["tabular-nums"] }} class="text-foreground">
+                  <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, fontVariant: ["tabular-nums"] }} class="text-foreground">
                     {runs() === 1 ? t("build.interactor.runsSingle") : t("build.interactor.runsMulti", { count: runs() })}
                   </Text>
-                  <Icon name="chevronDown" size={12} tone="muted-foreground" />
+                  <Icon name="chevronDown" size="sm" tone="muted-foreground" />
                 </View>
               }
             />
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8], paddingTop: SPACE[2] }}>
           <Btn label={t("common.cancel")} onPress={props.onClose} />
           <Btn
             testID="init-package-modal-confirm"
