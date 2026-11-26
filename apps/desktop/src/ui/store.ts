@@ -223,6 +223,11 @@ export function loadPrefs(): AppPrefsJs {
   return prefs;
 }
 
+/** Updates the in-memory `prefs` cache for fields already persisted by dedicated native setters. */
+export function syncPrefsCache(patch: Partial<AppPrefsJs>) {
+  prefs = { ...prefs, ...patch };
+}
+
 export let splitRatio = clampRatio(prefs.splitRatio);
 export const splitRatioSignal = signal(splitRatio);
 

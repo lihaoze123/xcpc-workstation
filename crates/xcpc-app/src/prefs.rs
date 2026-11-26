@@ -78,7 +78,9 @@ impl StoredPrefs {
         self.app.recent_workspaces.first().map(PathBuf::from)
     }
 
-    /// Updates user-visible preferences while preserving persisted Frecency records.
+    /// Updates user-visible UI preferences while preserving persisted Frecency records
+    /// and fields owned by dedicated Rust setters (`cxx_override`, `library_checker_*`,
+    /// `recent_workspaces`) so stale frontend `savePrefs` snapshots can never clobber them.
     pub(crate) fn apply_app_prefs(&mut self, mut next: AppPrefsJs) {
         if !next.split_ratio.is_finite() {
             next.split_ratio = 0.5;
@@ -92,13 +94,17 @@ impl StoredPrefs {
             next.last_book = "statements".to_owned();
         }
         next.language = normalize_language_pref(next.language.as_deref());
-        next.cxx_override = normalize_cxx_override(next.cxx_override.as_deref());
         next.library_group_by = normalize_library_group_by(next.library_group_by.as_deref());
-        next.library_checker_mirror_url =
-            normalize_cxx_override(next.library_checker_mirror_url.as_deref());
-        next.library_checker_local_repo_path =
-            normalize_cxx_override(next.library_checker_local_repo_path.as_deref());
-        next.recent_workspaces = dedup_recent(next.recent_workspaces);
+        // Preserve fields mutated by dedicated Rust-side setters so debounced/stale
+        // frontend `savePrefs` snapshots cannot silently reset them.
+        next.cxx_override = self.app.cxx_override.clone();
+        next.library_checker_mirror_url = self.app.library_checker_mirror_url.clone();
+        next.library_checker_local_repo_path = self.app.library_checker_local_repo_path.clone();
+        next.recent_workspaces = if self.app.recent_workspaces.is_empty() {
+            dedup_recent(next.recent_workspaces)
+        } else {
+            self.app.recent_workspaces.clone()
+        };
         self.app = next;
     }
 

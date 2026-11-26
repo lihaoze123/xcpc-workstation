@@ -2534,6 +2534,64 @@ fn toolchain_override_persists_in_prefs_and_refreshes_status() {
 }
 
 #[test]
+fn save_prefs_preserves_dedicated_setter_fields() {
+    let data = TempDir::new("prefs-preserve-dedicated");
+    let ws_dir = TempDir::new("prefs-preserve-ws");
+    xcpc_storage::init_workspace(&ws_dir.0).unwrap();
+
+    let state =
+        crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
+
+    // Capture a stale snapshot like the desktop frontend does at cold start.
+    let mut stale_snapshot = state.load_prefs();
+    assert!(stale_snapshot.cxx_override.is_none());
+    assert!(stale_snapshot.library_checker_mirror_url.is_none());
+    assert!(stale_snapshot.library_checker_local_repo_path.is_none());
+
+    // Mutate dedicated-setter fields on the Rust side.
+    let lc_res = state.set_library_checker_config(
+        Some("https://mirror.example/".into()),
+        Some("/tmp/library-checker-problems".into()),
+    );
+    assert!(lc_res.ok);
+
+    let detected_compiler = state.toolchain_status().compilers.into_iter().next();
+    if let Some(ref valid) = detected_compiler {
+        let updated = state.set_cxx_override(Some(valid.path.clone()));
+        assert!(updated.error.is_none());
+        assert_eq!(updated.override_path.as_deref(), Some(valid.path.as_str()));
+    }
+
+    // Frontend navigates away and flushes a stale `savePrefs` snapshot with `cxxOverride: None`.
+    stale_snapshot.last_space = "problems".into();
+    stale_snapshot.split_ratio = 0.6;
+    stale_snapshot.cxx_override = None;
+    stale_snapshot.library_checker_mirror_url = None;
+    stale_snapshot.library_checker_local_repo_path = None;
+    stale_snapshot.recent_workspaces.clear();
+    state.save_prefs(stale_snapshot);
+
+    // Reload from disk and verify UI prefs updated while dedicated fields survived intact.
+    let reloaded =
+        crate::state::State::new_with_sources(Some(data.0.clone()), Some(&ws_dir.0), &ws_dir.0);
+    let loaded = reloaded.load_prefs();
+    assert!((loaded.split_ratio - 0.6).abs() < 1e-9);
+    assert_eq!(loaded.last_space, "problems");
+    assert_eq!(
+        loaded.library_checker_mirror_url.as_deref(),
+        Some("https://mirror.example/")
+    );
+    assert_eq!(
+        loaded.library_checker_local_repo_path.as_deref(),
+        Some("/tmp/library-checker-problems")
+    );
+    assert!(!loaded.recent_workspaces.is_empty());
+    if let Some(ref valid) = detected_compiler {
+        assert_eq!(loaded.cxx_override.as_deref(), Some(valid.path.as_str()));
+    }
+}
+
+#[test]
 fn package_inspect_init_and_sandboxed_file_resolution() {
     let ws_dir = TempDir::new("pkg-ops");
     xcpc_storage::init_workspace(&ws_dir.0).unwrap();

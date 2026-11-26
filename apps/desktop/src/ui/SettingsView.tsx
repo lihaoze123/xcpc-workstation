@@ -44,6 +44,7 @@ import {
   requestNewWorkspace,
   resetEditorTypography,
   settingsSection,
+  syncPrefsCache,
   toolchainAdvancedOpen,
   toolchainState,
   updateAppearanceMode,
@@ -625,6 +626,10 @@ function ToolchainPane() {
     if (res.ok) {
       savedLcMirror.set(mirror);
       savedLcRepo.set(repo);
+      syncPrefsCache({
+        libraryCheckerMirrorUrl: mirror || null,
+        libraryCheckerLocalRepoPath: repo || null,
+      });
       lcSaved.trigger();
     }
   };
@@ -641,6 +646,7 @@ function ToolchainPane() {
   const syncFromStatus = (next: ToolchainStatusJs) => {
     status.set(next);
     toolchainState.set(next);
+    syncPrefsCache({ cxxOverride: next.overridePath ?? null });
     const deduped = dedupDetectedCompilers(next.compilers, next.active);
     draft.set(customOverrideInputValue(next.overridePath, deduped));
   };
