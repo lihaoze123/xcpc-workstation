@@ -1,8 +1,9 @@
-// The 44-point title bar the app draws (`nsh.json` `titleBar: hidden, 44`): the window
-// controls' safe areas from `titleBar()`, the empty parts drag the window, and the
-// window's title follows what is open (§6.4).
+// The 44-point title bar the app draws (`nsh.json` `titleBar: hidden, 44`): backed by
+// `nsh/base`'s `TitleBar` for window-control safe areas and drag/double-click, while
+// keeping the window's title in sync with what is open (§6.4).
 
 import { effect, View, type JSX } from "nsh";
+import { TitleBar as BaseTitleBar } from "nsh/base";
 import { currentWindow } from "nsh/desktop";
 
 export const TITLE_BAR = 44;
@@ -25,25 +26,11 @@ export function useWindowTitle(title: () => string) {
 }
 
 export function TitleBar(props: { leading?: JSX.Element; center?: JSX.Element; trailing?: JSX.Element; inset?: number; borderless?: boolean }) {
-  let area = { height: TITLE_BAR, left: 0, right: 0 };
-  let win: ReturnType<typeof currentWindow> | undefined;
-  try {
-    win = currentWindow();
-  } catch {
-    win = undefined;
-  }
-  const safe = () => (win ? win.titleBar() : area);
   const pad = props.inset ?? 12;
   return (
-    <View
-      desktop={{ windowDrag: true }}
+    <BaseTitleBar
       style={{
         height: TITLE_BAR,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-        paddingLeft: Math.max(safe().left, 0) + pad,
-        paddingRight: Math.max(safe().right, 0) + pad,
         borderBottomWidth: props.borderless ? 0 : 1,
       }}
       class={props.borderless ? "bg-background" : "border-border bg-background"}
@@ -53,9 +40,11 @@ export function TitleBar(props: { leading?: JSX.Element; center?: JSX.Element; t
       <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "box-none" }}>
         {props.center}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>{props.leading}</View>
-      <View style={{ flex: 1, minWidth: 4 }} />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.trailing}</View>
-    </View>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: pad, paddingRight: pad }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, overflow: "hidden" }}>{props.leading}</View>
+        <View style={{ flex: 1, minWidth: 4 }} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>{props.trailing}</View>
+      </View>
+    </BaseTitleBar>
   );
 }

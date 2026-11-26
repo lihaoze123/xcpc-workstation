@@ -171,7 +171,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                       flexShrink: 0,
                     }}
                   >
-                    <Icon name={opt().icon} size={17} style={{ tintColor: iconFg() }} />
+                    <Icon name={opt().icon} size={17} color={iconFg()} />
                   </View>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Text style={{ fontSize: 13.5, fontWeight: 500, lineHeight: 18 }} class="text-foreground">

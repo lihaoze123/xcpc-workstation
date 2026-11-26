@@ -1,23 +1,47 @@
-// Solved problem difficulty trend: weekly / monthly AC difficulty P75 & P90 dual-line chart.
-// Shares visual language with RatingChartCard (round Y ticks, intermediate X ticks, hover-only dots)
-// and matches bottom numeric label colors to legend colors (P90 primary blue, P75 chart-2 green).
+// Solved problem difficulty trend: weekly / monthly AC difficulty P75 & P90 dual-line chart
+// built on nsh-o11y <TimeSeriesChart>. Matches bottom numeric label colors to legend colors
+// (P90 primary blue, P75 chart-2 green).
 
-import { Canvas, computed, signal, Text, View } from "nsh";
+import { computed, signal, Text, View } from "nsh";
+import {
+  TimeSeriesChart,
+  type ArrayData,
+  type ChartColors,
+  type SeriesOptions,
+} from "nsh-o11y";
 import { t } from "../i18n";
 import { cardShadow, token } from "../theme";
 import { zhEn } from "./locale";
-import { niceRatingTicks, niceXTickIndices, type DifficultyTrendPoint } from "./types";
+import type { DifficultyTrendPoint } from "./types";
 
 const CHART_H = 210;
-const PAD_L = 44;
-const PAD_R = 14;
-const PAD_T = 12;
-const PAD_B = 22;
+
+/** Converts a trend period (`YYYY-MM`, `YYYY-Www`, or `YYYY-MM-DD`) into a local ms timestamp. */
+function periodToTimestampMs(period: string, fallbackIndex: number): number {
+  const weekMatch = /^(\d{4})-W(\d{2})$/.exec(period);
+  if (weekMatch) {
+    const year = Number(weekMatch[1]);
+    const week = Number(weekMatch[2]);
+    // ISO week 1 always contains Jan 4; compute Monday of that week in local time.
+    const jan4 = new Date(year, 0, 4);
+    const dow = (jan4.getDay() + 6) % 7; // Mon = 0 .. Sun = 6
+    return new Date(year, 0, 4 - dow + (week - 1) * 7).getTime();
+  }
+  const ymMatch = /^(\d{4})-(\d{2})$/.exec(period);
+  if (ymMatch) {
+    return new Date(Number(ymMatch[1]), Number(ymMatch[2]) - 1, 1).getTime();
+  }
+  const ymdMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(period);
+  if (ymdMatch) {
+    return new Date(Number(ymdMatch[1]), Number(ymdMatch[2]) - 1, Number(ymdMatch[3])).getTime();
+  }
+  const parsed = Date.parse(period);
+  if (Number.isFinite(parsed)) return parsed;
+  return Date.UTC(2020, 0, 1) + fallbackIndex * 86_400_000;
+}
 
 export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoint[] }) {
   const hoveredIdx = signal<number | undefined>(undefined);
-  const pinnedIdx = signal<number | undefined>(undefined);
-  const chartW = signal(500);
 
   const ratedPoints = computed(() => props.points.filter((p) => p.p75 != null || p.p90 != null));
 
@@ -41,47 +65,48 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
     return { minY, maxY };
   });
 
-  const inspectedIndex = () => {
+  const chartData = computed<ArrayData>(() => {
     const pts = ratedPoints();
-    if (pts.length === 0) return undefined;
-    const idx = hoveredIdx() ?? pinnedIdx();
-    if (idx !== undefined && idx >= 0 && idx < pts.length) return idx;
-    return undefined;
-  };
+    return {
+      x: pts.map((p, i) => periodToTimestampMs(p.period, i)),
+      ys: [
+        pts.map((p) => (p.p90 != null ? p.p90 : NaN)),
+        pts.map((p) => (p.p75 != null ? p.p75 : NaN)),
+      ],
+    };
+  });
+
+  const chartSeries = computed<SeriesOptions[]>(() => [
+    {
+      label: "P90",
+      color: token("primary"),
+      width: 2,
+      spanGaps: true,
+    },
+    {
+      label: "P75",
+      color: token("chart-2"),
+      width: 2,
+      spanGaps: true,
+    },
+  ]);
+
+  const chartColors = computed<ChartColors>(() => ({
+    background: token("card"),
+    text: token("foreground"),
+    muted: token("muted-foreground"),
+    grid: token("border"),
+    cursor: token("muted-foreground"),
+    selection: token("primary"),
+    error: token("destructive"),
+  }));
 
   const activePoint = () => {
     const pts = ratedPoints();
     if (pts.length === 0) return undefined;
-    const idx = inspectedIndex() ?? pts.length - 1;
-    return pts[idx];
-  };
-
-  const xOfIndex = (idx: number, count: number, width: number): number => {
-    const plotW = Math.max(1, width - PAD_L - PAD_R);
-    if (count <= 1) return PAD_L + plotW / 2;
-    return PAD_L + (idx / (count - 1)) * plotW;
-  };
-
-  const yOfVal = (v: number, minY: number, maxY: number): number => {
-    const plotH = CHART_H - PAD_T - PAD_B;
-    const ratio = (v - minY) / Math.max(1, maxY - minY);
-    return PAD_T + plotH * (1 - Math.max(0, Math.min(1, ratio)));
-  };
-
-  const nearestIndex = (x: number): number | undefined => {
-    const pts = ratedPoints();
-    if (pts.length === 0) return undefined;
-    const w = chartW();
-    let best = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < pts.length; i++) {
-      const d = Math.abs(xOfIndex(i, pts.length, w) - x);
-      if (d < bestDist) {
-        bestDist = d;
-        best = i;
-      }
-    }
-    return best;
+    const idx = hoveredIdx();
+    if (idx !== undefined && idx >= 0 && idx < pts.length) return pts[idx];
+    return pts[pts.length - 1];
   };
 
   return (
@@ -132,112 +157,18 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
           </View>
         }
       >
-        <Canvas
+        <TimeSeriesChart
           testID="training-trend-canvas"
+          data={chartData()}
+          series={chartSeries()}
+          unit="none"
+          yMin={bounds().minY}
+          yMax={bounds().maxY}
+          colors={chartColors()}
+          fontSize={10.5}
+          legend={false}
+          onCursor={(info) => hoveredIdx.set(info ? info.index : undefined)}
           style={{ width: "100%", height: CHART_H }}
-          onLayout={(e) => {
-            if (e.bounds.size.width > 0) chartW.set(e.bounds.size.width);
-          }}
-          onMouseMove={(e) => hoveredIdx.set(nearestIndex(e.position.x))}
-          onMouseLeave={() => hoveredIdx.set(undefined)}
-          onPress={(e) => {
-            const idx = nearestIndex(e.position.x);
-            if (idx !== undefined) pinnedIdx.set(pinnedIdx() === idx ? undefined : idx);
-          }}
-          draw={(cx, size) => {
-            const pts = ratedPoints();
-            const { minY, maxY } = bounds();
-            const plotW = Math.max(1, size.width - PAD_L - PAD_R);
-            const plotH = CHART_H - PAD_T - PAD_B;
-            const borderCol = token("border");
-            const mutedText = token("muted-foreground");
-            const p90Col = token("primary");
-            const p75Col = token("chart-2");
-            const cardBg = token("card");
-
-            cx.clearRect(0, 0, size.width, size.height);
-
-            // Clean round horizontal gridlines matching RatingChartCard
-            cx.strokeStyle = borderCol;
-            cx.lineWidth = 1;
-            cx.font = "10.5px system-ui, sans-serif";
-            cx.fillStyle = mutedText;
-            cx.textAlign = "right";
-            cx.textBaseline = "middle";
-            const ticks = niceRatingTicks(minY, maxY);
-            for (const v of ticks) {
-              const y = yOfVal(v, minY, maxY);
-              cx.beginPath();
-              cx.moveTo(PAD_L, y);
-              cx.lineTo(PAD_L + plotW, y);
-              cx.stroke();
-              cx.fillText(String(v), PAD_L - 6, y);
-            }
-
-            const sel = inspectedIndex() ?? (pts.length === 1 ? 0 : undefined);
-
-            const drawSeries = (pick: (p: DifficultyTrendPoint) => number | null | undefined, color: string) => {
-              cx.strokeStyle = color;
-              cx.lineWidth = 2;
-              cx.lineJoin = "round";
-              cx.beginPath();
-              let started = false;
-              pts.forEach((p, i) => {
-                const v = pick(p);
-                if (v == null) return;
-                const x = xOfIndex(i, pts.length, size.width);
-                const y = yOfVal(v, minY, maxY);
-                if (!started) {
-                  cx.moveTo(x, y);
-                  started = true;
-                } else {
-                  cx.lineTo(x, y);
-                }
-              });
-              cx.stroke();
-
-              // Dot only on hover/pin (or single-point chart)
-              if (sel !== undefined && sel < pts.length) {
-                const v = pick(pts[sel]);
-                if (v != null) {
-                  const x = xOfIndex(sel, pts.length, size.width);
-                  const y = yOfVal(v, minY, maxY);
-                  cx.fillStyle = color;
-                  cx.beginPath();
-                  cx.arc(x, y, 4, 0, Math.PI * 2);
-                  cx.fill();
-                  cx.strokeStyle = cardBg;
-                  cx.lineWidth = 1.5;
-                  cx.stroke();
-                }
-              }
-            };
-
-            if (sel !== undefined && sel < pts.length) {
-              const x = xOfIndex(sel, pts.length, size.width);
-              cx.strokeStyle = borderCol;
-              cx.lineWidth = 1;
-              cx.beginPath();
-              cx.moveTo(x, PAD_T);
-              cx.lineTo(x, PAD_T + plotH);
-              cx.stroke();
-            }
-
-            drawSeries((p) => p.p75, p75Col);
-            drawSeries((p) => p.p90, p90Col);
-
-            // Intermediate X-axis ticks matching RatingChartCard
-            const maxXTicks = Math.max(2, Math.min(5, Math.floor(plotW / 85)));
-            const xIndices = niceXTickIndices(pts.length, maxXTicks);
-            cx.fillStyle = mutedText;
-            cx.textBaseline = "top";
-            xIndices.forEach((idx, pos) => {
-              const x = xOfIndex(idx, pts.length, size.width);
-              cx.textAlign =
-                pos === 0 ? "left" : pos === xIndices.length - 1 ? "right" : "center";
-              cx.fillText(pts[idx].period, x, CHART_H - 16);
-            });
-          }}
         />
 
         <If when={activePoint()}>

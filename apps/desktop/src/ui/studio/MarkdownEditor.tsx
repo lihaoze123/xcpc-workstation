@@ -18,7 +18,7 @@ import {
   type EditorSearchResult,
   type EditorSelection,
 } from "nsh/base";
-import { PageImage, Preview, VimKeyBridge, type MarkdownSpanJs } from "xcpc-workstation/native";
+import { PageImage, Preview, type MarkdownSpanJs } from "xcpc-workstation/native";
 import { preview } from "../store";
 import { t } from "../i18n";
 import { Btn, IconBtn, tip } from "../kit";
@@ -1231,9 +1231,9 @@ export function MarkdownEditor(props: {
   });
 
   // Vim keymap bindings: intercept printable/editing keys BEFORE `<Editor>`'s hidden text
-  // input sink via `when: "always", forFocus: true`. (`Escape` and `Ctrl+[` are intercepted
-  // by the Rust-side `<VimKeyBridge>` so they beat `<Editor>`'s built-in `mod+[` and
-  // `SingleSelection` Rust bindings.)
+  // input sink via `when: "always", forFocus: true`. (`Escape` and `Ctrl+[` are bound
+  // separately below with `overFocused: true` so they stay active in Insert mode too and
+  // take precedence over `<Editor>`'s built-in `mod+[` and `SingleSelection` bindings.)
   effect(() => {
     if (!props.active() || !vimActive() || !focused()) return;
     const mode = vimState().mode;
@@ -1252,6 +1252,21 @@ export function MarkdownEditor(props: {
       cancelled = true;
       for (const fn of unbinds) fn();
     });
+  });
+
+  // Intercept `Escape` and `Ctrl+[` across all Vim modes (Insert, Normal, Visual) ahead of
+  // `<Editor>`'s built-in Rust bindings (`SingleSelection` on non-empty selections and
+  // `mod+[` Outdent) via NSH 0.7's `overFocused: true`.
+  effect(() => {
+    if (!props.active() || !vimActive() || !focused()) return;
+    const unbind = keymap.bind(
+      {
+        escape: () => dispatchVimKey("Escape", false, true),
+        "ctrl+[": () => dispatchVimKey("Escape", false, false),
+      },
+      { when: "always", overFocused: true, repeat: false },
+    );
+    cleanup(unbind);
   });
 
   // Intercept arrow/Tab/Escape navigation whenever the slash popover is open.
@@ -1531,12 +1546,6 @@ export function MarkdownEditor(props: {
             textRev.set(untracked(textRev) + 1);
             props.onChange(e.value);
           }}
-        />
-        <VimKeyBridge
-          active={props.active() && vimActive() && focused()}
-          mode={vimState().mode}
-          onEscape={() => dispatchVimKey("Escape", false, true)}
-          onCtrlBracket={() => dispatchVimKey("Escape", false, false)}
         />
         <If when={emptyLineHint()}>
           {(hint) => (

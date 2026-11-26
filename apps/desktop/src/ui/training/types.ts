@@ -492,20 +492,6 @@ export function formatUnixDateTime(unixSec: number): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-export function formatUnixDateShort(unixSec: number): string {
-  if (!Number.isFinite(unixSec) || unixSec <= 0) return "";
-  const d = new Date(unixSec * 1000);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-export function formatUnixYearMonth(unixSec: number): string {
-  if (!Number.isFinite(unixSec) || unixSec <= 0) return "";
-  const d = new Date(unixSec * 1000);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
-}
-
 const WEEKDAYS_ZH = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
 const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 

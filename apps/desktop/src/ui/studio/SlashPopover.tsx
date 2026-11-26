@@ -481,7 +481,7 @@ export function SlashPopover(props: {
 
   const renderGlyph = (cmd: SlashCommand, color: string, iconSize: number, badgeSize: number) => {
     if (cmd.icon) {
-      return <Icon name={cmd.icon} size={iconSize} style={{ tintColor: color }} />;
+      return <Icon name={cmd.icon} size={iconSize} color={color} />;
     }
     return (
       <Text

@@ -8,7 +8,6 @@ import {
   computed,
   createAnimatedValue,
   effect,
-  openUrl,
   reduceMotion,
   Scroll,
   signal,
@@ -17,22 +16,14 @@ import {
   type CompositeAnimation,
   type JSX,
 } from "nsh";
-import { Input, Progress, Switch } from "nsh/base";
-import {
-  checkForUpdate,
-  downloadUpdate,
-  installAndRestart,
-  installOnQuit,
-  shellInfo,
-  type AppUpdate,
-  type UpdateProgress,
-} from "nsh/updater";
+import { Input, Switch } from "nsh/base";
+import { promptForUpdate, shellInfo } from "nsh/updater";
 import { Preview, type AboutInfoJs, type ToolchainStatusJs } from "xcpc-workstation/native";
 import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { Btn, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip } from "./kit";
+import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "./kit";
 import { Section, SectionRow } from "./layout";
 import { abbreviateHome, pathBase } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
@@ -94,15 +85,6 @@ import {
   middleTruncatePath,
   normalizeCxxOverrideInput,
 } from "./studio/buildLogic";
-import {
-  formatUpdateSummary,
-  parseUpdateNotes,
-  resolveReleasePageUrl,
-  updateAvailableActionLabel,
-  visibleUpdateNotes,
-  type InlineSpan,
-  type UpdateState,
-} from "./updateNotes";
 
 const NAV_ITEMS: readonly { id: SettingsSection; labelKey: MessageKey; icon: IconName }[] = [
   { id: "workspace", labelKey: "settings.nav.workspace", icon: "folder" },
@@ -186,40 +168,6 @@ function Card(props: { children?: JSX.Element }) {
     <View style={{ borderRadius: 10, borderWidth: 1, overflow: "hidden", boxShadow: cardShadow() }} class="bg-card border-border">
       {props.children}
     </View>
-  );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  return `${(kb / 1024).toFixed(1)} MB`;
-}
-
-function isDevOrUnsupportedUpdateError(err: unknown): boolean {
-  const text = String(err ?? "").toLowerCase();
-  return (
-    text.includes("unavailable") ||
-    text.includes("unsupported") ||
-    text.includes("not supported") ||
-    text.includes("no updater") ||
-    text.includes("err_feature_unavailable")
-  );
-}
-
-function isMissingOrPrivateUpdateChannelError(err: unknown): boolean {
-  const text = String(err ?? "").toLowerCase();
-  return (
-    text.includes("404") ||
-    text.includes("not found") ||
-    text.includes("401") ||
-    text.includes("403") ||
-    text.includes("unauthorized") ||
-    text.includes("forbidden") ||
-    text.includes("private") ||
-    text.includes("no release") ||
-    text.includes("no manifest") ||
-    (text.includes("manifest") && (text.includes("missing") || text.includes("not found") || text.includes("404")))
   );
 }
 
@@ -1148,80 +1096,6 @@ function AppearancePane() {
   );
 }
 
-function renderInlineSpans(spans: readonly InlineSpan[]): JSX.Element {
-  return spans.map((span) => {
-    if (span.kind === "bold") {
-      return (
-        <Text style={{ fontWeight: 600 }} class="text-foreground">
-          {span.text}
-        </Text>
-      );
-    }
-    if (span.kind === "code") {
-      return (
-        <Text style={{ fontSize: 11.5, fontFamily: MONO }} class="text-foreground">
-          {span.text}
-        </Text>
-      );
-    }
-    return span.text;
-  });
-}
-
-function UpdateNotesView(props: { notes: string }) {
-  const blocks = computed(() => parseUpdateNotes(props.notes));
-  return (
-    <View testID="update-notes-panel" style={{ borderTopWidth: 1 }} class="border-border bg-muted/40">
-      <Scroll style={{ maxHeight: 240 }}>
-        <View style={{ paddingLeft: 14, paddingRight: 14, paddingTop: 10, paddingBottom: 12, gap: 6 }}>
-          <Each
-            of={blocks()}
-            key={(b, i) => `${i}:${b.kind}:${b.kind === "heading" ? b.text : b.spans.map((s) => s.text).join("")}`}
-          >
-            {(block, index) => {
-              const b = block();
-              if (b.kind === "heading") {
-                return (
-                  <Text
-                    style={{
-                      fontSize: 12.5,
-                      lineHeight: 18,
-                      fontWeight: 600,
-                      marginTop: index() > 0 ? 4 : 0,
-                    }}
-                    class="text-foreground"
-                  >
-                    {b.text}
-                  </Text>
-                );
-              }
-              if (b.kind === "bullet") {
-                const indent = b.level === 1 ? 14 : 0;
-                const marker = b.level === 1 ? "◦" : "•";
-                return (
-                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, paddingLeft: indent }}>
-                    <Text style={{ fontSize: 12, lineHeight: 18, width: 8 }} class="text-muted-foreground">
-                      {marker}
-                    </Text>
-                    <Text style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-                      {renderInlineSpans(b.spans)}
-                    </Text>
-                  </View>
-                );
-              }
-              return (
-                <Text style={{ fontSize: 12, lineHeight: 18 }} class="text-secondary-foreground">
-                  {renderInlineSpans(b.spans)}
-                </Text>
-              );
-            }}
-          </Each>
-        </View>
-      </Scroll>
-    </View>
-  );
-}
-
 export function AboutPane() {
   const about = readAboutInfo();
   const devShell = isDevShell();
@@ -1229,8 +1103,7 @@ export function AboutPane() {
   const traceExported = createTransientFlag(1800);
   const traceBusy = signal(false);
   syncTraceStatus();
-  const updateState = signal<UpdateState>({ kind: "idle" });
-  const installing = signal(false);
+  const checkingUpdate = signal(false);
 
   let diagTimer: number | undefined;
   cleanup(() => clearTimeout(diagTimer));
@@ -1264,97 +1137,14 @@ export function AboutPane() {
   };
 
   const handleCheckUpdate = async () => {
-    if (devShell) return;
-    updateState.set({ kind: "checking" });
+    if (devShell || checkingUpdate()) return;
+    checkingUpdate.set(true);
     try {
-      const found = await checkForUpdate({ locale: locale() });
-      if (!found) {
-        updateState.set({ kind: "upToDate" });
-        return;
-      }
-      updateState.set({ kind: "available", update: found });
-    } catch (err) {
-      if (isDevOrUnsupportedUpdateError(err)) {
-        updateState.set({ kind: "error", message: t("settings.about.updateErr.unsupported") });
-      } else if (isMissingOrPrivateUpdateChannelError(err)) {
-        updateState.set({ kind: "error", message: t("settings.about.updateErr.channel") });
-      } else {
-        updateState.set({ kind: "error", message: t("settings.about.updateErr.checkFailed") });
-      }
+      await promptForUpdate({ quiet: false, locale: locale() });
+    } finally {
+      checkingUpdate.set(false);
     }
   };
-
-  const releaseOpenErr = signal<string | undefined>(undefined);
-
-  const handleDownload = async (update: AppUpdate) => {
-    releaseOpenErr.set(undefined);
-    if (!update.canInstall) {
-      try {
-        const res = await openUrl(resolveReleasePageUrl(update));
-        if (!res.opened) {
-          releaseOpenErr.set(t("settings.about.updateErr.openReleaseFailed"));
-        }
-      } catch {
-        releaseOpenErr.set(t("settings.about.updateErr.openReleaseFailed"));
-      }
-      return;
-    }
-    updateState.set({ kind: "downloading", update, progress: { received: 0, total: null } });
-    try {
-      await downloadUpdate((progress) => {
-        updateState.set({ kind: "downloading", update, progress });
-      });
-      updateState.set({ kind: "ready", update });
-    } catch (err) {
-      if (isDevOrUnsupportedUpdateError(err)) {
-        updateState.set({ kind: "error", message: t("settings.about.updateErr.unsupported") });
-      } else {
-        updateState.set({ kind: "error", message: t("settings.about.updateErr.downloadFailed") });
-      }
-    }
-  };
-
-  const handleInstallNow = async () => {
-    if (installing()) return;
-    installing.set(true);
-    try {
-      await installAndRestart();
-    } catch {
-      installing.set(false);
-      updateState.set({ kind: "error", message: t("settings.about.updateErr.installFailed") });
-    }
-  };
-
-  const handleInstallOnQuit = async (update: AppUpdate) => {
-    if (installing()) return;
-    installing.set(true);
-    try {
-      await installOnQuit();
-      installing.set(false);
-      updateState.set({ kind: "scheduled", update });
-    } catch {
-      installing.set(false);
-      updateState.set({ kind: "error", message: t("settings.about.updateErr.scheduleFailed") });
-    }
-  };
-
-  const updateSummary = (): string | undefined =>
-    formatUpdateSummary(updateState(), devShell, formatVersion, formatBytes);
-
-  const downloadPercent = () => {
-    const st = updateState();
-    if (st.kind !== "downloading") return 0;
-    const { received, total } = st.progress;
-    if (!total || total <= 0) return 0;
-    return Math.min(100, Math.max(0, (received / total) * 100));
-  };
-
-  const isDownloadIndeterminate = () => {
-    const st = updateState();
-    return st.kind === "downloading" && (!st.progress.total || st.progress.total <= 0);
-  };
-
-  const activeUpdateNotes = (): string => visibleUpdateNotes(updateState());
 
   return (
     <View style={{ gap: 24 }}>
@@ -1386,60 +1176,12 @@ export function AboutPane() {
           first
           trailing={
             devShell ? undefined : (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <If when={updateState().kind === "checking"}>
-                  <DelayedSpinner active size={14} />
-                </If>
-                <If
-                  when={
-                    updateState().kind === "idle" ||
-                    updateState().kind === "upToDate" ||
-                    updateState().kind === "error"
-                  }
-                >
-                  <Btn
-                    testID="check-update-btn"
-                    label={updateState().kind === "error" ? t("common.retry") : t("settings.about.checkNow")}
-                    onPress={() => void handleCheckUpdate()}
-                  />
-                </If>
-                <If when={updateState().kind === "checking"}>
-                  <Btn label={t("settings.about.checking")} disabled />
-                </If>
-                <If when={updateState().kind === "available"}>
-                  <Btn
-                    testID="update-action-btn"
-                    variant="primary"
-                    label={updateAvailableActionLabel((updateState() as { kind: "available"; update: AppUpdate }).update)}
-                    onPress={() => {
-                      const st = updateState();
-                      if (st.kind === "available") void handleDownload(st.update);
-                    }}
-                  />
-                </If>
-                <If when={updateState().kind === "ready" || updateState().kind === "scheduled"}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <If when={updateState().kind === "ready"}>
-                      <Btn
-                        testID="update-install-on-quit-btn"
-                        label={t("settings.about.installOnQuit")}
-                        disabled={installing()}
-                        onPress={() => {
-                          const st = updateState();
-                          if (st.kind === "ready") void handleInstallOnQuit(st.update);
-                        }}
-                      />
-                    </If>
-                    <Btn
-                      testID="update-install-now-btn"
-                      variant="primary"
-                      label={t("settings.about.installNow")}
-                      disabled={installing()}
-                      onPress={() => void handleInstallNow()}
-                    />
-                  </View>
-                </If>
-              </View>
+              <Btn
+                testID="check-update-btn"
+                label={checkingUpdate() ? t("settings.about.checking") : t("settings.about.checkNow")}
+                disabled={checkingUpdate()}
+                onPress={() => void handleCheckUpdate()}
+              />
             )
           }
         >
@@ -1447,41 +1189,17 @@ export function AboutPane() {
             <Text style={{ fontSize: 13.5, lineHeight: 18, fontWeight: 500 }} class="text-foreground">
               {t("settings.about.checkUpdate")}
             </Text>
-            <If when={Boolean(updateSummary())}>
+            <If when={devShell}>
               <Text
                 testID="update-summary"
-                style={{ fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] }}
+                style={{ fontSize: 12, lineHeight: 16 }}
                 class="text-secondary-foreground"
               >
-                {updateSummary() ?? ""}
-              </Text>
-            </If>
-            <If when={Boolean(releaseOpenErr())}>
-              <Text
-                testID="release-open-error"
-                style={{ fontSize: 12, lineHeight: 16 }}
-                class="text-destructive"
-              >
-                {releaseOpenErr() ?? ""}
+                {t("update.devBuild")}
               </Text>
             </If>
           </View>
         </SectionRow>
-
-        <If when={updateState().kind === "downloading"}>
-          <View style={{ paddingLeft: 14, paddingRight: 14, paddingBottom: 14, gap: 6 }}>
-            <Progress
-              value={downloadPercent()}
-              indeterminate={isDownloadIndeterminate()}
-              trackClass="h-1.5 rounded-full bg-muted overflow-hidden"
-              indicatorClass="h-full rounded-full bg-primary transition-all duration-[120ms]"
-            />
-          </View>
-        </If>
-
-        <If when={activeUpdateNotes().length > 0}>
-          <UpdateNotesView notes={activeUpdateNotes()} />
-        </If>
 
         <SectionRow
           trailing={

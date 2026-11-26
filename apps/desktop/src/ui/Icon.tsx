@@ -1,78 +1,130 @@
-// Lucide's line icons (ISC, `icons/LICENSE`), unmodified, tinted with a theme token.
+// Lucide vector icons via `nsh-icon` + `nsh-icon-lucide`, tinted with a theme token or custom color.
 
-import { Image, type ImageStyle, type StyleProp } from "nsh";
-import { token } from "./theme";
-import arrowLeft from "./icons/arrow-left.svg";
-import arrowRight from "./icons/arrow-right.svg";
-import bold from "./icons/bold.svg";
-import bookOpen from "./icons/book-open.svg";
-import bot from "./icons/bot.svg";
-import check from "./icons/check.svg";
-import chevronDown from "./icons/chevron-down.svg";
-import chevronLeft from "./icons/chevron-left.svg";
-import chevronRight from "./icons/chevron-right.svg";
-import chevronUp from "./icons/chevron-up.svg";
-import chevronsUpDown from "./icons/chevrons-up-down.svg";
-import circleAlert from "./icons/circle-alert.svg";
-import code from "./icons/code.svg";
-import copy from "./icons/copy.svg";
-import cornerDownLeft from "./icons/corner-down-left.svg";
-import crown from "./icons/crown.svg";
-import database from "./icons/database.svg";
-import ellipsis from "./icons/ellipsis.svg";
-import fileCode2 from "./icons/file-code-2.svg";
-import fileDown from "./icons/file-down.svg";
-import filePenLine from "./icons/file-pen-line.svg";
-import fileText from "./icons/file-text.svg";
-import filterX from "./icons/filter-x.svg";
-import folder from "./icons/folder.svg";
-import folderOpen from "./icons/folder-open.svg";
-import folderPlus from "./icons/folder-plus.svg";
-import gripVertical from "./icons/grip-vertical.svg";
-import heading from "./icons/heading.svg";
-import image from "./icons/image.svg";
-import info from "./icons/info.svg";
-import italic from "./icons/italic.svg";
-import keyboard from "./icons/keyboard.svg";
-import libraryBig from "./icons/library-big.svg";
-import link from "./icons/link.svg";
-import list from "./icons/list.svg";
-import listOrdered from "./icons/list-ordered.svg";
-import listPlus from "./icons/list-plus.svg";
-import minus from "./icons/minus.svg";
-import lock from "./icons/lock.svg";
-import lockOpen from "./icons/lock-open.svg";
-import palette from "./icons/palette.svg";
-import panelLeft from "./icons/panel-left.svg";
-import panelRight from "./icons/panel-right.svg";
-import pencil from "./icons/pencil.svg";
-import play from "./icons/play.svg";
-import plus from "./icons/plus.svg";
-import rotateCcw from "./icons/rotate-ccw.svg";
-import scale from "./icons/scale.svg";
-import search from "./icons/search.svg";
-import searchX from "./icons/search-x.svg";
-import settings from "./icons/settings.svg";
-import shieldCheck from "./icons/shield-check.svg";
-import sigma from "./icons/sigma.svg";
-import sparkles from "./icons/sparkles.svg";
-import squareCode from "./icons/square-code.svg";
-import stamp from "./icons/stamp.svg";
-import table from "./icons/table.svg";
-import trash from "./icons/trash-2.svg";
-import triangleAlert from "./icons/triangle-alert.svg";
-import trophy from "./icons/trophy.svg";
-import x from "./icons/x.svg";
-import zoomIn from "./icons/zoom-in.svg";
-import zoomOut from "./icons/zoom-out.svg";
+import { type ColorValue, type StyleProp, type ViewStyle } from "nsh";
+import { Icon as NshIcon } from "nsh-icon";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bold,
+  BookOpen,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  CircleAlert,
+  Code,
+  Copy,
+  Crown,
+  Database,
+  Ellipsis,
+  FileCode2,
+  FileDown,
+  FilePenLine,
+  FileText,
+  FilterX,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  GripVertical,
+  Heading,
+  Image,
+  Info,
+  Italic,
+  Keyboard,
+  LibraryBig,
+  Link,
+  List,
+  ListOrdered,
+  ListPlus,
+  Lock,
+  LockOpen,
+  Minus,
+  Palette,
+  PanelLeft,
+  PanelRight,
+  Pencil,
+  Play,
+  Plus,
+  RotateCcw,
+  Scale,
+  Search,
+  SearchX,
+  Settings,
+  ShieldCheck,
+  Sigma,
+  Sparkles,
+  SquareCode,
+  Stamp,
+  Table,
+  Trash2,
+  TriangleAlert,
+  Trophy,
+  X,
+} from "nsh-icon-lucide";
 
 const ICONS = {
-  arrowLeft, arrowRight, bold, bookOpen, bot, check, chevronDown, chevronLeft, chevronRight, chevronUp, minus, chevronsUpDown, circleAlert, code, copy,
-  cornerDownLeft, crown, database, ellipsis, fileCode2, fileDown, filePenLine, fileText, filterX, folder, folderOpen, folderPlus,
-  gripVertical, heading, image, info, italic, keyboard, libraryBig, link, list, listOrdered, listPlus, lock, lockOpen,
-  palette, panelLeft, panelRight, pencil, play, plus, rotateCcw, scale, search, searchX, settings, shieldCheck, sigma, sparkles, squareCode, stamp, table,
-  trash, triangleAlert, trophy, x, zoomIn, zoomOut,
-};
+  arrowLeft: ArrowLeft,
+  arrowRight: ArrowRight,
+  bold: Bold,
+  bookOpen: BookOpen,
+  bot: Bot,
+  check: Check,
+  chevronDown: ChevronDown,
+  chevronLeft: ChevronLeft,
+  chevronRight: ChevronRight,
+  chevronUp: ChevronUp,
+  circleAlert: CircleAlert,
+  code: Code,
+  copy: Copy,
+  crown: Crown,
+  database: Database,
+  ellipsis: Ellipsis,
+  fileCode2: FileCode2,
+  fileDown: FileDown,
+  filePenLine: FilePenLine,
+  fileText: FileText,
+  filterX: FilterX,
+  folder: Folder,
+  folderOpen: FolderOpen,
+  folderPlus: FolderPlus,
+  gripVertical: GripVertical,
+  heading: Heading,
+  image: Image,
+  info: Info,
+  italic: Italic,
+  keyboard: Keyboard,
+  libraryBig: LibraryBig,
+  link: Link,
+  list: List,
+  listOrdered: ListOrdered,
+  listPlus: ListPlus,
+  lock: Lock,
+  lockOpen: LockOpen,
+  minus: Minus,
+  palette: Palette,
+  panelLeft: PanelLeft,
+  panelRight: PanelRight,
+  pencil: Pencil,
+  play: Play,
+  plus: Plus,
+  rotateCcw: RotateCcw,
+  scale: Scale,
+  search: Search,
+  searchX: SearchX,
+  settings: Settings,
+  shieldCheck: ShieldCheck,
+  sigma: Sigma,
+  sparkles: Sparkles,
+  squareCode: SquareCode,
+  stamp: Stamp,
+  table: Table,
+  trash: Trash2,
+  triangleAlert: TriangleAlert,
+  trophy: Trophy,
+  x: X,
+} as const;
 
 export type IconName = keyof typeof ICONS;
 
@@ -87,13 +139,36 @@ export type IconTone =
   | "chart-2"
   | "chart-4";
 
-/** A line icon, 16 points by default, in the secondary text color unless told. */
-export function Icon(props: { name: IconName; size?: number; tone?: IconTone; style?: StyleProp<ImageStyle> }) {
-  const size = props.size ?? 16;
+const TONE_CLASS: Record<IconTone, string> = {
+  foreground: "text-foreground",
+  "secondary-foreground": "text-secondary-foreground",
+  "muted-foreground": "text-muted-foreground",
+  primary: "text-primary",
+  "primary-foreground": "text-primary-foreground",
+  destructive: "text-destructive",
+  "chart-2": "text-chart-2",
+  "chart-4": "text-chart-4",
+};
+
+/** A vector line icon, 16 points by default, in the secondary text color unless told. */
+export function Icon(props: {
+  name: IconName;
+  size?: number;
+  tone?: IconTone;
+  /** Explicit color override when an icon uses a custom palette instead of a theme tone. */
+  color?: ColorValue;
+  strokeWidth?: number;
+  label?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <Image
-      src={ICONS[props.name]}
-      style={[{ width: size, height: size, tintColor: token(props.tone ?? "secondary-foreground") }, props.style]}
+    <NshIcon
+      icon={ICONS[props.name]}
+      size={props.size ?? 16}
+      strokeWidth={props.strokeWidth}
+      label={props.label}
+      class={props.color !== undefined ? undefined : TONE_CLASS[props.tone ?? "secondary-foreground"]}
+      style={props.color !== undefined ? [{ color: props.color } as ViewStyle, props.style] : props.style}
     />
   );
 }
