@@ -145,8 +145,8 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                     style={{
                       borderRadius: RADIUS.md,
                       overflow: "hidden",
-                      zIndex: dragging() ? 2 : 0,
-                      transform: dragging() ? `translateY(${r.offset()}px)` : "none",
+                      zIndex: r.isElevated(index()) ? 2 : 0,
+                      transform: r.rowTransform(index()),
                       boxShadow: dragging() ? popoverShadow() : cardShadow(),
                     }}
                   >

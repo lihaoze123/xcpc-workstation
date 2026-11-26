@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "nsh/test";
 import { FOCUS_RING } from "./kit";
+import { computeDropDeltaY, computeReleaseVelocity } from "./studio/reorder";
 import { MONO, SANS, setWindowActiveForTest, windowActive } from "./theme";
 import {
   anchorOrigin,
@@ -323,5 +324,32 @@ describe("Motion tokens, slow-motion scaling, and reduced-motion tiers (Phase 6G
     expect(end.transform).toBeUndefined();
     expect(end.transitionProperty).toBe("opacity");
     expect(end.transitionDuration).toBe(DURATION.fast);
+  });
+
+  test("drag reorder drop delta preserves exact screen position and velocity over trailing 50ms (Phase 6G §5)", () => {
+    // Variable-height cards (e.g. Samples): row 0 (100px), row 1 (200px), gap 12px.
+    const slots = [
+      { top: 0, height: 100 },
+      { top: 112, height: 200 },
+      { top: 324, height: 80 },
+    ];
+    // Moving row 0 down to index 1 while dragged 180px:
+    // visualTop = 0 + 180 = 180; newSlotTop = 112 + 200 - 100 = 212 -> deltaY = -32
+    expect(computeDropDeltaY(slots, 0, 1, 180)).toBe(-32);
+    // Moving row 2 up to index 0 while dragged -300px:
+    // visualTop = 324 - 300 = 24; newSlotTop = 0 -> deltaY = 24
+    expect(computeDropDeltaY(slots, 2, 0, -300)).toBe(24);
+    // Dropping on same index returns raw offset
+    expect(computeDropDeltaY(slots, 1, 1, 15)).toBe(15);
+
+    // Trailing 50ms velocity
+    const samples = [
+      { t: 100, y: 0 },
+      { t: 180, y: 10 },
+      { t: 200, y: 20 },
+      { t: 220, y: 40 },
+    ];
+    // Window [170..220]: oldest inside/at cutoff is t=180 (y=10) -> (40-10)/40ms = 750 pt/s
+    expect(computeReleaseVelocity(samples, 220)).toBe(750);
   });
 });

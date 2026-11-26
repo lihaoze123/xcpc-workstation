@@ -96,8 +96,8 @@ export function Outline(props: {
                   onPress={() => r.clicked() && props.onSelect(x().label)}
                   tooltip={tip(x().item.title)}
                   style={{
-                    zIndex: dragging() ? 2 : 0,
-                    transform: dragging() ? `translateY(${r.offset()}px)` : "none",
+                    zIndex: r.isElevated(index()) ? 2 : 0,
+                    transform: r.rowTransform(index()),
                     boxShadow: dragging() ? popoverShadow() : "none",
                     borderRadius: RADIUS.sm,
                     cursor: canDrag() ? "grab" : "default",
