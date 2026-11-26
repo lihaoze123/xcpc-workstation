@@ -11,7 +11,7 @@ import { Icon } from "../Icon";
 import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import { info, openStudio, preview, refresh } from "../store";
 import { cardShadow } from "../theme";
 import { showToast } from "../Toast";
@@ -76,7 +76,7 @@ function FilterChip(props: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       <Text
@@ -423,7 +423,7 @@ export function SubmissionsTab(props: {
                   flexDirection: "row",
                   alignItems: "center",
                   gap: SPACE[4],
-                  ...colorTransition(120),
+                  ...colorTransition(),
                 }}
               >
                 <Text
@@ -458,7 +458,7 @@ export function SubmissionsTab(props: {
                 flexDirection: "row",
                 alignItems: "center",
                 gap: SPACE[4],
-                ...colorTransition(120),
+                ...colorTransition(),
               }}
             >
               <Text
@@ -539,7 +539,7 @@ export function SubmissionsTab(props: {
                         flexDirection: "row",
                         alignItems: "center",
                         gap: SPACE[8],
-                        ...colorTransition(100),
+                        ...colorTransition(),
                       }}
                     >
                       {/* Platform (hidden when only 1 platform exists) */}

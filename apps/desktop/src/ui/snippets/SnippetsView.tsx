@@ -30,7 +30,7 @@ import {
   snippetsRevision,
   snippetsSubTab,
 } from "../store";
-import { cardShadow, EASE_STANDARD, ms } from "../theme";
+import { cardShadow } from "../theme";
 import {
   filterSnippets,
   parseJsonPayload,
@@ -48,7 +48,7 @@ import type {
 } from "./types";
 import { runSnippetVerifyJob } from "./verifyJob";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
+import { colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 // Per review S-4: formula cards are a type (Σ icon), not a verification status.
 const STATUS_FILTERS: { id: SnippetStatusFilter; labelKey: MessageKey }[] = [
   { id: "all", labelKey: "snippets.filter.all" },
@@ -358,9 +358,7 @@ export function SnippetsView(props: { active: boolean }) {
                             flexDirection: "row",
                             alignItems: "center",
                             gap: SPACE[8],
-                            transitionProperty: "colors",
-                            transitionDuration: ms(120),
-                            transitionTimingFunction: EASE_STANDARD,
+                            ...colorTransition(),
                           }}
                         >
                           <Icon name={s().has_code ? "code" : "sigma"} size="sm" tone="secondary-foreground" />
@@ -925,9 +923,7 @@ function TrdRow(props: {
         alignItems: "center",
         gap: SPACE[8],
         opacity: props.muted && !props.selected ? 0.78 : 1,
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(),
       }}
     >
       <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>

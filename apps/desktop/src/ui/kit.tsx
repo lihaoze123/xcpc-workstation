@@ -4,8 +4,8 @@
 
 import { cleanup, effect, keymap, signal, Text, View, type JSX, type ViewStyle, type TextStyle, type StyleProp } from "nsh";
 import { Tooltip } from "nsh/base";
-import { colorTransition, indicatorTransition, pressActiveStyle, pressTransition } from "./motion";
-import { cardShadow, EASE_STANDARD, ms, popoverShadow, tierColor, tierSoft, windowActive } from "./theme";
+import { colorTransition, indicatorTransition, opacityTransition, pressActiveStyle, pressTransition } from "./tokens";
+import { cardShadow, popoverShadow, tierColor, tierSoft, windowActive } from "./theme";
 import { ratingTier } from "./logic";
 import { Icon, type IconName, type IconSize, type IconTone } from "./Icon";
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, inner, RADIUS, SPACE, type ControlSize } from "./tokens";
@@ -144,7 +144,7 @@ export function Btn(props: {
           justifyContent: "center",
           gap: SPACE[6],
           opacity: props.disabled ? 0.6 : 1,
-          ...(isPrimary ? { transform: "scale(1)", ...pressTransition(140) } : colorTransition(140)),
+          ...(isPrimary ? { transform: "scale(1)", ...pressTransition() } : colorTransition()),
         },
         props.style,
       ]}
@@ -191,7 +191,7 @@ export function IconBtn(props: {
           alignItems: "center",
           justifyContent: "center",
           opacity: props.disabled ? 0.4 : 1,
-          ...colorTransition(140),
+          ...colorTransition(),
         },
         props.style,
       ]}
@@ -249,7 +249,7 @@ export function Chip(props: { label: string; active?: boolean; onPress?: () => v
         borderRadius: RADIUS.xs,
         flexDirection: "row",
         alignItems: "center",
-        ...colorTransition(140),
+        ...colorTransition(),
       }}
     >
       <Text
@@ -269,7 +269,7 @@ export function Lock(props: { closed: boolean; size?: IconSize }) {
       name="lock"
       size={props.size ?? "sm"}
       tone="muted-foreground"
-      style={{ opacity: props.closed ? 1 : 0, transitionProperty: "opacity", transitionDuration: ms(140), transitionTimingFunction: EASE_STANDARD }}
+      style={{ opacity: props.closed ? 1 : 0, ...opacityTransition() }}
     />
   );
 }
@@ -339,18 +339,14 @@ export function Segmented<T extends string>(props: {
                 width: w,
                 alignItems: "center",
                 justifyContent: "center",
-                transitionProperty: "colors",
-                transitionDuration: ms(120),
-                transitionTimingFunction: EASE_STANDARD,
+                ...colorTransition(),
               }}
             >
               <Text
                 style={{
                   fontSize: FONT_SIZE.body,
                   numberOfLines: 1,
-                  transitionProperty: "colors",
-                  transitionDuration: ms(120),
-                  transitionTimingFunction: EASE_STANDARD,
+                  ...colorTransition(),
                 }}
                 class={active() ? "text-foreground" : props.disabled ? "text-secondary-foreground" : "text-secondary-foreground hover:text-foreground"}
               >

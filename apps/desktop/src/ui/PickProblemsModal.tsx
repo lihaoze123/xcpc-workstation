@@ -25,10 +25,9 @@ import { EmptyState, FilterEmpty, Spacer } from "./layout";
 import { TIER_RANGES, togglePickProblem, type TierName } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { DialogHeader } from "./Modal";
-import { EASE_STANDARD, ms } from "./theme";
 import { dialog, errorOf, info, preview, refresh, revision, type UiError } from "./store";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
+import { colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
 const PICK_ROW_HEIGHT = 38;
 const PICK_ROW_GAP = 2;
 const PICK_ROW_STRIDE = PICK_ROW_HEIGHT + PICK_ROW_GAP;
@@ -81,9 +80,7 @@ function PickerFilterMenu(props: {
             maxWidth: 112,
             minWidth: 0,
             overflow: "hidden",
-            transitionProperty: "colors",
-            transitionDuration: ms(120),
-            transitionTimingFunction: EASE_STANDARD,
+            ...colorTransition(),
           }}
         >
           <Text
@@ -439,9 +436,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                         alignItems: "center",
                         gap: SPACE[8],
                         opacity: disabled() ? 0.58 : 1,
-                        transitionProperty: "colors",
-                        transitionDuration: ms(100),
-                        transitionTimingFunction: EASE_STANDARD,
+                        ...colorTransition(),
                       }}
                     >
                       {/* Checkbox */}

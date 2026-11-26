@@ -8,6 +8,7 @@ import {
   Animated,
   cleanup,
   createAnimatedValue,
+  Easing,
   Image,
   reduceMotion,
   View,
@@ -16,7 +17,9 @@ import {
   type ViewStyle,
 } from "nsh";
 import { FOCUS_RING } from "./kit";
-import { EASE_EXPO_CURVE } from "./motion";
+
+// Documented exception (§8.5): brand intro animation uses an exponential ease-out curve.
+const EASE_EXPO_CURVE = Easing.bezier(0.16, 1, 0.3, 1);
 import plateSvg from "./brand/plate.svg";
 import paperBackSvg from "./brand/paper-back.svg";
 import paperMidSvg from "./brand/paper-mid.svg";

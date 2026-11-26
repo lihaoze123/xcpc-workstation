@@ -27,8 +27,8 @@ import {
   type SelectionState,
   type TierName,
 } from "./logic";
-import { colorTransition, pressActiveStyle, pressTransition } from "./motion";
-import { EASE_STANDARD, MONO, monoFont, ms, popoverShadow } from "./theme";
+import { colorTransition, pressActiveStyle, pressTransition } from "./tokens";
+import { MONO, monoFont, popoverShadow } from "./theme";
 import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
   activeRevision,
@@ -96,7 +96,7 @@ function FilterOptionPill(props: { label: string; active: boolean; onPress: () =
         borderRadius: RADIUS.sm,
         alignItems: "center",
         justifyContent: "center",
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       <Text
@@ -124,7 +124,7 @@ function SortRadioRow(props: { label: string; selected: boolean; onPress: () => 
         flexDirection: "row",
         alignItems: "center",
         gap: SPACE[8],
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       <View
@@ -925,9 +925,7 @@ export function LibraryView(props: { active: boolean }) {
                         alignItems: "center",
                         justifyContent: "center",
                         flexShrink: 0,
-                        transitionProperty: "colors",
-                        transitionDuration: ms(120),
-                        transitionTimingFunction: EASE_STANDARD,
+                        ...colorTransition(),
                       }}
                     >
                       <Icon name="x" size="sm" tone="muted-foreground" />
@@ -966,7 +964,7 @@ export function LibraryView(props: { active: boolean }) {
                         alignItems: "center",
                         gap: SPACE[4],
                         flexShrink: 0,
-                        ...colorTransition(120),
+                        ...colorTransition(),
                       }}
                     >
                       <Text
@@ -1167,7 +1165,7 @@ export function LibraryView(props: { active: boolean }) {
                       alignItems: "center",
                       justifyContent: "center",
                       transform: "scale(1)",
-                      ...pressTransition(140),
+                      ...pressTransition(),
                     }}
                   >
                     <Icon name="plus" size="md" tone="primary-foreground" />
@@ -1188,7 +1186,7 @@ export function LibraryView(props: { active: boolean }) {
                           height: CONTROL.md,
                           alignItems: "center",
                           justifyContent: "center",
-                          ...colorTransition(140),
+                          ...colorTransition(),
                         }}
                       >
                         <Chevron size="sm" tone="primary-foreground" />
@@ -1230,7 +1228,7 @@ export function LibraryView(props: { active: boolean }) {
                             alignItems: "center",
                             gap: SPACE[4],
                             flexShrink: 0,
-                            ...colorTransition(120),
+                            ...colorTransition(),
                           }}
                         >
                           <Text
@@ -1256,7 +1254,7 @@ export function LibraryView(props: { active: boolean }) {
                       alignItems: "center",
                       justifyContent: "center",
                       flexShrink: 0,
-                      ...colorTransition(120),
+                      ...colorTransition(),
                     }}
                   >
                     <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
@@ -1608,9 +1606,7 @@ function ProblemInspector(props: {
                         flexDirection: "row",
                         alignItems: "center",
                         gap: SPACE[4],
-                        transitionProperty: "colors",
-                        transitionDuration: ms(120),
-                        transitionTimingFunction: EASE_STANDARD,
+                        ...colorTransition(),
                       }}
                     >
                       <Icon name="trophy" size="sm" tone="muted-foreground" />
@@ -1717,9 +1713,7 @@ function ProblemInspector(props: {
                       flexDirection: "row",
                       alignItems: "center",
                       gap: SPACE[4],
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Text style={{ fontSize: FONT_SIZE.caption, fontFamily: MONO }} class="text-secondary-foreground">

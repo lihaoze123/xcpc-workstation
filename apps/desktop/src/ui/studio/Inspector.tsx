@@ -5,7 +5,7 @@
 //   from the active template's `#let schema = (...)` (with override bars & one-click restore),
 //   plus lightweight bridges to fork a custom template or open external style files.
 
-import { cleanup, computed, effect, reduceMotion, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
+import { cleanup, computed, effect, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
 import { Input } from "nsh/base";
 import type { ContestDetailJs, ContestItemDetailJs, PreviewDiagnostic } from "xcpc-workstation/native";
 import { freezeBlockedCopy, type Freeze } from "../Contest";
@@ -14,7 +14,7 @@ import { resolveLocalized, t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, DelayedSpinner, FOCUS_RING, IconBtn, Segmented, tip } from "../kit";
 import { Modal } from "../Modal";
-import { colorTransition, panelTransition } from "../motion";
+import { colorTransition, panelExitMs, panelTransform, panelTransition } from "../tokens";
 import { activeRevision, errorOf, goSettings, info, preview, refresh, unfreezeFor, type UiError } from "../store";
 import {
   encodeSingleOptionPatch,
@@ -121,13 +121,16 @@ export function Inspector(props: {
     }
     if (isOpen) {
       displayed.set(true);
-    } else if (reduceMotion()) {
-      displayed.set(false);
     } else {
-      hideTimer = setTimeout(() => {
-        hideTimer = undefined;
+      const dur = panelExitMs();
+      if (dur === 0) {
         displayed.set(false);
-      }, 240);
+      } else {
+        hideTimer = setTimeout(() => {
+          hideTimer = undefined;
+          displayed.set(false);
+        }, dur);
+      }
     }
   });
   cleanup(() => {
@@ -147,7 +150,7 @@ export function Inspector(props: {
         display: displayed() ? "flex" : "none",
         flexDirection: "column",
         opacity: props.open ? 1 : 0,
-        transform: props.open ? "translateX(0px)" : `translateX(${INSPECTOR_WIDTH + 1}px)`,
+        transform: panelTransform(props.open, INSPECTOR_WIDTH + 1),
         ...panelTransition(),
         pointerEvents: props.open ? "auto" : "none",
       }}
@@ -210,7 +213,7 @@ export function Inspector(props: {
                           flexDirection: "row",
                           alignItems: "center",
                           gap: SPACE[8],
-                          ...colorTransition(140),
+                          ...colorTransition(),
                         }}
                       >
                         <Icon name="code" size="md" tone="secondary-foreground" />
@@ -238,7 +241,7 @@ export function Inspector(props: {
                         flexDirection: "row",
                         alignItems: "center",
                         gap: SPACE[8],
-                        ...colorTransition(140),
+                        ...colorTransition(),
                       }}
                     >
                       <Icon name="code" size="md" tone="secondary-foreground" />
@@ -284,7 +287,7 @@ export function Inspector(props: {
                     flexDirection: "row",
                     alignItems: "center",
                     gap: SPACE[8],
-                    ...colorTransition(140),
+                    ...colorTransition(),
                   }}
                 >
                   <Icon name="image" size="md" tone="secondary-foreground" />

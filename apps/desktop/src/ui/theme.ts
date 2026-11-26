@@ -1,4 +1,4 @@
-import { batch, colorScheme, computed, lifecycle, reduceMotion, setColorScheme, setTheme, signal, token } from "nsh";
+import { batch, colorScheme, computed, lifecycle, setColorScheme, setTheme, signal, token } from "nsh";
 export { token };
 
 // The design tokens of docs/design-system.md §3 on shadcn's names, which the classes
@@ -135,16 +135,6 @@ export function applyThemeOverrides(overrides: {
     const ratio = overrides.editorLineHeight > 3 ? overrides.editorLineHeight / editorFontSize() : overrides.editorLineHeight;
     setEditorLineHeight(ratio);
   }
-}
-
-/** §8's curves. */
-export const EASE_STANDARD = "cubic-bezier(0.2, 0, 0, 1)";
-export const EASE_DRAWER = "cubic-bezier(0.16, 1, 0.3, 1)";
-export const EASE_EXPO = "cubic-bezier(0.16, 1, 0.3, 1)";
-
-/** A duration, 0 when the system asks for reduced motion. */
-export function ms(duration: number): number {
-  return reduceMotion() ? 0 : duration;
 }
 
 /** §3.3: the 7 Codeforces / AtCoder tiers and `unrated`, as the Core names them. */

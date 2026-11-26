@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { FOCUS_RING, RatingBadge, tip } from "../kit";
 import type { CheckboxTriState } from "../logic";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import { StatusMark } from "../studio/StatusSlot";
 import { markForPackageStatus } from "../studio/statusLogic";
 import { RADIUS, ROW, SPACE, TYPE } from "../tokens";
@@ -104,7 +104,7 @@ export function TriCheckbox(props: {
         justifyContent: "center",
         flexShrink: 0,
         opacity: shown() ? 1 : 0,
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       {props.state === "all" && <Icon name="check" size="sm" tone="primary-foreground" />}
@@ -216,7 +216,7 @@ export function LibraryListRow(props: {
         alignItems: "center",
         gap: SPACE[8],
         flexShrink: 0,
-        ...colorTransition(100),
+        ...colorTransition(),
       }}
     >
       {/* Reserved checkbox slot (§6.3): visible on hover, when selected, or when any item is selected. */}

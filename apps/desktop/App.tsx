@@ -1,5 +1,5 @@
 import "./src/ui/theme";
-import { cleanup, computed, effect, keymap, mount, reduceMotion, registerFont, signal, Text, View, type JSX } from "nsh";
+import { cleanup, computed, effect, keymap, mount, registerFont, signal, Text, View, type JSX } from "nsh";
 import { Preview } from "xcpc-workstation/native";
 import { CommandPalette } from "./src/ui/CommandPalette";
 import { UnfreezeDialog } from "./src/ui/Contest";
@@ -13,7 +13,7 @@ import { t } from "./src/ui/i18n";
 import { LibraryView } from "./src/ui/LibraryView";
 import { pathBase, visibleSpaces, windowTitle } from "./src/ui/logic";
 import { AppMenu, type MenuEntry } from "./src/ui/Menu";
-import { pageTransform, pageTransition } from "./src/ui/motion";
+import { colorTransition, isReducedMotion, studioExitMs, studioTransform, studioTransition } from "./src/ui/tokens";
 import { NavRail } from "./src/ui/NavRail";
 import { NewWorkspaceModal } from "./src/ui/NewWorkspaceModal";
 import { NoWorkspaceView } from "./src/ui/NoWorkspaceView";
@@ -31,7 +31,7 @@ import { TrainingView } from "./src/ui/TrainingView";
 import interVariableFontUrl from "./src/ui/fonts/InterVariable.woff2?url";
 import jetBrainsMonoRegularFontUrl from "./src/ui/fonts/JetBrainsMono-Regular.woff2?url";
 import jetBrainsMonoSemiBoldFontUrl from "./src/ui/fonts/JetBrainsMono-SemiBold.woff2?url";
-import { EASE_STANDARD, fontsReady, ms, popoverShadow, uiFontSource } from "./src/ui/theme";
+import { fontsReady, popoverShadow, uiFontSource } from "./src/ui/theme";
 import { TITLE_BAR, TitleBar, useWindowTitle } from "./src/ui/TitleBar";
 import { bindDiagnosticsLifecycle, openDiagnosticsWindow } from "./src/ui/o11y/windowManager";
 import { syncTraceStatus, traceInteraction } from "./src/ui/trace";
@@ -106,7 +106,7 @@ function SpaceStage(props: {
     }
     if (isVisible) {
       displayed.set(true);
-      if (reduceMotion() || (first && !props.animateOnMount)) {
+      if (isReducedMotion() || (first && !props.animateOnMount)) {
         revealed.set(true);
       } else {
         revealed.set(false);
@@ -117,14 +117,10 @@ function SpaceStage(props: {
       }
     } else {
       revealed.set(false);
-      if (reduceMotion()) {
+      hideTimer = setTimeout(() => {
+        hideTimer = undefined;
         displayed.set(false);
-      } else {
-        hideTimer = setTimeout(() => {
-          hideTimer = undefined;
-          displayed.set(false);
-        }, 240);
-      }
+      }, studioExitMs());
     }
   });
   cleanup(() => {
@@ -144,8 +140,8 @@ function SpaceStage(props: {
         ...(isStudio
           ? {
               opacity: revealed() ? 1 : 0,
-              transform: pageTransform(revealed(), "studio"),
-              ...pageTransition(),
+              transform: studioTransform(revealed()),
+              ...studioTransition(),
             }
           : undefined),
       }}
@@ -296,9 +292,7 @@ function App() {
                     gap: SPACE[4],
                     flexShrink: 1,
                     minWidth: 0,
-                    transitionProperty: "colors",
-                    transitionDuration: ms(120),
-                    transitionTimingFunction: EASE_STANDARD,
+                    ...colorTransition(),
                   }}
                 >
                   <Icon name="folder" size="sm" tone="secondary-foreground" />
@@ -349,9 +343,7 @@ function App() {
               flexDirection: "row",
               alignItems: "center",
               gap: SPACE[8],
-              transitionProperty: "colors",
-              transitionDuration: ms(120),
-              transitionTimingFunction: EASE_STANDARD,
+              ...colorTransition(),
             }}
           >
             <Icon name="search" size="sm" tone="muted-foreground" />
@@ -526,9 +518,7 @@ function App() {
                       borderRadius: RADIUS.xs,
                       alignItems: "center",
                       justifyContent: "center",
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Icon name="x" size="sm" tone="muted-foreground" />

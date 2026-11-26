@@ -11,7 +11,7 @@ import { Popover } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { DelayedSpinner, FOCUS_RING } from "../kit";
-import { colorTransition, overlayTransform, overlayTransition } from "../motion";
+import { colorTransition, overlayTransform, overlayTransition } from "../tokens";
 import { popoverShadow } from "../theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -128,7 +128,7 @@ export function StatusSlot(props: {
             alignItems: "center",
             gap: SPACE[6],
             flexShrink: 0,
-            ...colorTransition(120),
+            ...colorTransition(),
           }}
           class={
             hasBody()

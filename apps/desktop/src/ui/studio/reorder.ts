@@ -6,7 +6,7 @@
 
 import { batch, computed, signal, type MouseEvent, type PressEvent, type ViewRef } from "nsh";
 import { dropIndex } from "../logic";
-import { ms } from "../theme";
+import { spatialEnabled } from "../tokens";
 
 export function createReorder(commit: (from: number, to: number) => void, gap = 0) {
   const drag = signal<{ from: number; to: number } | undefined>(undefined);
@@ -20,7 +20,7 @@ export function createReorder(commit: (from: number, to: number) => void, gap = 
 
   function finish(to: number | undefined, from: number) {
     if (to === undefined || to === from) return;
-    if (ms(1) > 0) container?.animateLayout({ type: "easeOut", duration: 180 });
+    if (spatialEnabled()) container?.animateLayout({ type: "easeOut", duration: 180 });
     commit(from, to);
   }
 

@@ -6,18 +6,36 @@ import { describe, expect, test } from "nsh/test";
 import { FOCUS_RING } from "./kit";
 import { MONO, SANS, setWindowActiveForTest, windowActive } from "./theme";
 import {
+  colorTransition,
   CONTROL,
+  DURATION,
   FONT_SIZE,
   FONT_WEIGHT,
   GUTTER,
   ICON_SIZE,
   ICON_STROKE_PX,
   iconStrokeWidth,
+  indicatorTransition,
   inner,
+  layoutSpringConfig,
   LINE_HEIGHT,
+  overlayCloseMs,
+  overlayTransform,
+  overlayTransition,
+  pressActiveStyle,
+  pressTransition,
   RADIUS,
   ROW,
+  scaledDuration,
+  scaledSpring,
+  setMotionSlowFactorForTest,
+  setReducedMotionForTest,
   SPACE,
+  SPRING,
+  springCss,
+  structuralFadeMs,
+  studioTransform,
+  studioTransition,
   TOOLBAR,
   TYPE,
 } from "./tokens";
@@ -228,5 +246,66 @@ describe("State completeness primitives (Phase 6F)", () => {
 
   test("FOCUS_RING uses zero-layout-shift 1px inset ring", () => {
     expect(FOCUS_RING).toBe("focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring");
+  });
+});
+
+describe("Motion tokens, slow-motion scaling, and reduced-motion tiers (Phase 6G §4, §6, §7)", () => {
+  test("SPRING and DURATION match exact spec values", () => {
+    expect(SPRING.quick).toEqual({ stiffness: 500, damping: 39, mass: 1 });
+    expect(SPRING.standard).toEqual({ stiffness: 400, damping: 35, mass: 1 });
+    expect(SPRING.smooth).toEqual({ stiffness: 300, damping: 31, mass: 1 });
+    expect(DURATION).toEqual({ fast: 100, base: 120 });
+  });
+
+  test("XCPC_MOTION_SLOW scales durations by f and springs by k/f², c/f while preserving ζ", () => {
+    try {
+      setMotionSlowFactorForTest(10);
+      expect(scaledDuration(DURATION.fast)).toBe(1000);
+      expect(scaledDuration(DURATION.base)).toBe(1200);
+      const s = scaledSpring(SPRING.standard);
+      expect(s.stiffness).toBe(4);
+      expect(s.damping).toBe(3.5);
+      expect(s.mass).toBe(1);
+      const zetaOrig = SPRING.standard.damping / (2 * Math.sqrt(SPRING.standard.stiffness));
+      const zetaScaled = s.damping! / (2 * Math.sqrt(s.stiffness! * s.mass!));
+      expect(Math.abs(zetaScaled - zetaOrig)).toBeLessThan(1e-6);
+      expect(springCss(SPRING.standard)).toBe("spring(4, 3.5)");
+    } finally {
+      setMotionSlowFactorForTest(undefined);
+    }
+  });
+
+  test("reduced-motion degrades spatial/structural motion while preserving color feedback", () => {
+    try {
+      setReducedMotionForTest(false);
+      expect(studioTransform(false)).toBe("translateX(14px)");
+      expect(overlayTransform(false)).toBe("scale(0.96)");
+      expect(pressActiveStyle(false)).toEqual({ transform: "scale(0.97)" });
+      expect(overlayTransition(true).transitionTimingFunction).toBe("spring(400, 35)");
+      expect(overlayTransition(false).transitionProperty).toBe("opacity");
+      expect(overlayTransition(false).transitionDuration).toBe(DURATION.fast);
+      expect(structuralFadeMs()).toBe(DURATION.base);
+      expect(layoutSpringConfig()?.type).toBe("spring");
+
+      setReducedMotionForTest(true);
+      // Spatial motion: no translation/scale; studio & overlay become DURATION.base opacity fade; indicator snaps
+      expect(studioTransform(false)).toBeUndefined();
+      expect(studioTransition().transitionProperty).toBe("opacity");
+      expect(studioTransition().transitionDuration).toBe(DURATION.base);
+      expect(overlayTransform(false)).toBeUndefined();
+      expect(overlayTransition(true).transitionProperty).toBe("opacity");
+      expect(overlayTransition(true).transitionDuration).toBe(DURATION.base);
+      expect(overlayCloseMs()).toBe(DURATION.base);
+      expect(indicatorTransition().transitionDuration).toBe(0);
+      expect(pressActiveStyle(false)).toBeUndefined();
+      expect(pressTransition().transitionProperty).toBe("colors");
+      // Structural changes: instant, no delete fade
+      expect(structuralFadeMs()).toBe(0);
+      expect(layoutSpringConfig()).toBeUndefined();
+      // Color feedback: preserved
+      expect(colorTransition().transitionDuration).toBe(DURATION.base);
+    } finally {
+      setReducedMotionForTest(undefined);
+    }
   });
 });

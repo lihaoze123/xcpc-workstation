@@ -111,6 +111,23 @@ impl Preview {
         xcpc_app::AppController::o11y_env_enabled()
     }
 
+    /// Development-only motion slow-down multiplier (`XCPC_MOTION_SLOW=<factor>`).
+    /// Release builds always return `1.0` without reading the environment.
+    pub fn motion_slow_factor() -> f64 {
+        #[cfg(debug_assertions)]
+        {
+            std::env::var("XCPC_MOTION_SLOW")
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|&v| v.is_finite() && v > 1.0)
+                .unwrap_or(1.0)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            1.0
+        }
+    }
+
     /// Polls incremental Rust trace events, structured logs, and pixel cache stats as JSON.
     pub fn o11y_poll_delta(after_event_seq: f64, after_log_seq: f64) -> String {
         xcpc_app::AppController::o11y_poll_delta(after_event_seq, after_log_seq)

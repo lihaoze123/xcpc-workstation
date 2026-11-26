@@ -11,10 +11,10 @@ import { Icon, type IconName } from "./Icon";
 import { FilterEmpty } from "./layout";
 import { buildPaletteItems, shortcutForSpace } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
-import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
+import { backdropTransition, overlayCloseMs, overlayTransform, overlayTransition } from "./tokens";
 import { openDiagnosticsWindow } from "./o11y/windowManager";
 import { shortcutsOpen } from "./ShortcutsModal";
-import { modalBackdrop, modalShadow, ms } from "./theme";
+import { modalBackdrop, modalShadow } from "./theme";
 import { showToast } from "./Toast";
 import { parseJsonPayload } from "./snippets/snippetLogic";
 import type { SnippetListPayload, TrdSummaryItem } from "./snippets/types";
@@ -294,7 +294,7 @@ export function CommandPalette() {
       });
     } else if (visible()) {
       shown.set(false);
-      const dur = ms(140);
+      const dur = overlayCloseMs();
       if (dur === 0) visible.set(false);
       else closeTimer = setTimeout(() => visible.set(false), dur);
     }

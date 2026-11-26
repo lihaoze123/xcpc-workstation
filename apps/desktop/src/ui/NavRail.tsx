@@ -3,12 +3,11 @@
 // items (题库 ↔ 比赛); entering or leaving 设置 cross-fades in place (120ms opacity) rather
 // than sweeping across the full rail height. The rail folds away in the studio.
 
-import { effect, reduceMotion, signal, Text, View, type ViewStyle } from "nsh";
+import { effect, signal, Text, View } from "nsh";
 import { Icon, type IconName } from "./Icon";
 import { tip } from "./kit";
 import { shortcutForSpace, spaceName, visibleSpaces, type Space } from "./logic";
-import { colorTransition, indicatorTransition } from "./motion";
-import { EASE_STANDARD, ms } from "./theme";
+import { colorTransition, indicatorTransition, opacityTransition } from "./tokens";
 
 import { FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export const RAIL_WIDTH = 68;
@@ -29,7 +28,7 @@ function Item(props: { space: Space; icon: IconName; keys: string; current: Spac
         alignItems: "center",
         justifyContent: "center",
         gap: SPACE[4],
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
       class={
         on()
@@ -89,11 +88,6 @@ export function NavRail(props: {
     const idx = topList().indexOf(cur);
     return (idx >= 0 ? idx : 0) * (ITEM_SIZE + ITEM_GAP);
   };
-  const fadeTransition = (): ViewStyle => ({
-    transitionProperty: "opacity",
-    transitionDuration: ms(120),
-    transitionTimingFunction: EASE_STANDARD,
-  });
 
   const item = (space: Space, icon: IconName) => (
     <Item
@@ -121,7 +115,7 @@ export function NavRail(props: {
             borderRadius: RADIUS.md,
             opacity: inTopGroup() ? 1 : 0,
             transform: `translateY(${topIndicatorY()}px)`,
-            ...(slideTop() && !reduceMotion() ? indicatorTransition() : fadeTransition()),
+            ...(slideTop() ? indicatorTransition() : opacityTransition()),
           }}
           class="bg-accent"
         />
@@ -135,7 +129,7 @@ export function NavRail(props: {
             height: ITEM_SIZE,
             borderRadius: RADIUS.md,
             opacity: props.space === "settings" ? 1 : 0,
-            ...fadeTransition(),
+            ...opacityTransition(),
           }}
           class="bg-accent"
         />

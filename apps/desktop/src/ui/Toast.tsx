@@ -3,11 +3,11 @@
 // than stacking, hover pauses auto-dismiss, and when the PDF preview zoom pill is visible
 // the toast lifts above it so it never overlaps preview controls.
 
-import { cleanup, effect, reduceMotion, signal, Text, View } from "nsh";
+import { cleanup, effect, signal, Text, View } from "nsh";
 import { Icon } from "./Icon";
 import { FOCUS_RING } from "./kit";
-import { overlayTransition } from "./motion";
-import { ms, popoverShadow } from "./theme";
+import { isReducedMotion, overlayCloseMs, overlayTransition, toastTransform } from "./tokens";
+import { popoverShadow } from "./theme";
 
 import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 export type ToastTone = "success" | "issues" | "info";
@@ -94,7 +94,7 @@ export function ToastHost() {
     clearTimeout(unmountTimer);
     if (next) {
       rendered.set(next);
-      if (reduceMotion()) {
+      if (isReducedMotion()) {
         shown.set(true);
       } else {
         raf = requestAnimationFrame(() => {
@@ -104,7 +104,7 @@ export function ToastHost() {
       }
     } else if (rendered()) {
       shown.set(false);
-      const dur = ms(150);
+      const dur = overlayCloseMs();
       if (dur === 0) rendered.set(undefined);
       else unmountTimer = setTimeout(() => rendered.set(undefined), dur);
     }
@@ -146,12 +146,8 @@ export function ToastHost() {
             gap: SPACE[8],
             boxShadow: popoverShadow(),
             opacity: shown() ? 1 : 0,
-            transform: (() => {
-              const lift = toastBottomLift() ? -48 : 0;
-              const entry = reduceMotion() || shown() ? 0 : 6;
-              return `translateY(${lift + entry}px)`;
-            })(),
-            ...overlayTransition(),
+            transform: toastTransform(shown(), toastBottomLift() ? -48 : 0),
+            ...overlayTransition(shown()),
           }}
         >
           <If when={item().tone === "success"}>

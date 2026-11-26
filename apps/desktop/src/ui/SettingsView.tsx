@@ -7,8 +7,8 @@ import {
   Clipboard,
   computed,
   createAnimatedValue,
+  Easing,
   effect,
-  reduceMotion,
   Scroll,
   signal,
   Text,
@@ -26,7 +26,7 @@ import { Icon, type IconName } from "./Icon";
 import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
 import { DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
 import { abbreviateHome, pathBase, spaceName } from "./logic";
-import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
+import { chevronTransition, colorTransition, indicatorTransition, isReducedMotion } from "./tokens";
 import { ShortcutsList } from "./ShortcutsModal";
 import { PluginsPane } from "./PluginsPane";
 import {
@@ -59,22 +59,7 @@ import {
 } from "./store";
 import { encodeSingleOptionPatch, loadTemplatesCatalog, type TemplateOptionMap } from "./templates";
 import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
-import {
-  appearanceMode,
-  cardShadow,
-  DEFAULT_EDITOR_FONT_SIZE,
-  DEFAULT_EDITOR_LIGATURES,
-  DEFAULT_EDITOR_LINE_HEIGHT,
-  EASE_STANDARD,
-  editorFontSize,
-  editorLigatures,
-  editorLineHeight,
-  editorVimMode,
-  MONO,
-  ms,
-  uiFontSource,
-  type AppearanceMode,
-} from "./theme";
+import { appearanceMode, cardShadow, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_EDITOR_LIGATURES, DEFAULT_EDITOR_LINE_HEIGHT, editorFontSize, editorLigatures, editorLineHeight, editorVimMode, MONO, uiFontSource, type AppearanceMode } from "./theme";
 import {
   customOverrideInputValue,
   dedupDetectedCompilers,
@@ -325,7 +310,7 @@ function WorkspacePane(props: { active: boolean }) {
                     flexDirection: "row",
                     alignItems: "center",
                     gap: SPACE[8],
-                    ...colorTransition(120),
+                    ...colorTransition(),
                   }}
                 >
                   <View style={{ flex: 1, minWidth: 0 }}>
@@ -383,7 +368,7 @@ function WorkspacePane(props: { active: boolean }) {
             alignItems: "center",
             gap: SPACE[6],
             borderTopWidth: 1,
-            ...colorTransition(120),
+            ...colorTransition(),
           }}
         >
           <Icon
@@ -392,9 +377,7 @@ function WorkspacePane(props: { active: boolean }) {
             tone="muted-foreground"
             style={{
               transform: showJson() ? "rotate(0deg)" : "rotate(-90deg)",
-              transitionProperty: "transform",
-              transitionDuration: ms(120),
-              transitionTimingFunction: EASE_STANDARD,
+              ...chevronTransition(),
             }}
           />
           <Text style={{ fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
@@ -1305,7 +1288,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
       running.stop();
       running = undefined;
     }
-    if (reduceMotion()) {
+    if (isReducedMotion()) {
       paneOpacity.set(1);
       paneY.set(0);
       return;
@@ -1313,7 +1296,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
     // Keep opacity at 1 so switching settings panes (e.g. Workspace -> Plugins) never flashes a blank frame.
     paneOpacity.set(1);
     paneY.set(4);
-    const anim = Animated.timing(paneY, { toValue: 0, duration: 150, easing: EASE_EXPO_CURVE });
+    const anim = Animated.timing(paneY, { toValue: 0, duration: 150, easing: Easing.bezier(0.16, 1, 0.3, 1) });
     running = anim;
     void anim.start(() => {
       if (running === anim) running = undefined;
@@ -1375,7 +1358,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
                       flexDirection: "row",
                       alignItems: "center",
                       gap: SPACE[8],
-                      ...colorTransition(120),
+                      ...colorTransition(),
                     }}
                   >
                     <Icon

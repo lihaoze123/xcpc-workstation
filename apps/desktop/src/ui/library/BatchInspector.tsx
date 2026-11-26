@@ -12,7 +12,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { DetailHeader } from "../layout";
 import { errorCopy } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import {
   batchTask,
   cancelBatchTask,
@@ -91,7 +91,7 @@ function ActionRow(props: {
         alignItems: "center",
         gap: SPACE[8],
         opacity: props.disabled ? 0.5 : 1,
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       <Icon
@@ -355,7 +355,7 @@ export function BatchInspector(props: {
                             alignItems: "center",
                             gap: SPACE[8],
                             minWidth: 0,
-                            ...colorTransition(120),
+                            ...colorTransition(),
                           }}
                         >
                           <View style={{ width: 16, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>

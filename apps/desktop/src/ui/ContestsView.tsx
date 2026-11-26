@@ -14,7 +14,7 @@ import { ErrorDisplay } from "./ErrorDisplay";
 import { ContestStats, createFreeze, freezeBlockedCopy } from "./Contest";
 import { DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "./layout";
 import { labels, moveItem, partitionContests } from "./logic";
-import { EASE_STANDARD, ms, popoverShadow } from "./theme";
+import { popoverShadow } from "./theme";
 import {
   activeRevision,
   archivedExpanded,
@@ -35,7 +35,7 @@ import { createReorder } from "./studio/reorder";
 import { StatusMark } from "./studio/StatusSlot";
 import { markForPackageStatus } from "./studio/statusLogic";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, ROW, SPACE, TOOLBAR, TYPE } from "./tokens";
+import { chevronTransition, colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, opacityTransition, RADIUS, ROW, SPACE, TOOLBAR, TYPE } from "./tokens";
 const ROW_STRIDE = 54; // 52pt row + 2pt gap
 
 function toggleContestArchive(
@@ -215,9 +215,7 @@ export function ContestsView(props: { active: boolean }) {
           alignItems: "center",
           gap: SPACE[8],
           opacity: muted && !selected() ? 0.78 : 1,
-          transitionProperty: "colors",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          ...colorTransition(),
         }}
       >
         <View style={{ flex: 1, minWidth: 0, gap: SPACE[2] }}>
@@ -311,9 +309,7 @@ export function ContestsView(props: { active: boolean }) {
                 flexDirection: "row",
                 alignItems: "center",
                 gap: SPACE[6],
-                transitionProperty: "colors",
-                transitionDuration: ms(120),
-                transitionTimingFunction: EASE_STANDARD,
+                ...colorTransition(),
               }}
             >
               <Icon
@@ -322,9 +318,7 @@ export function ContestsView(props: { active: boolean }) {
                 tone="muted-foreground"
                 style={{
                   transform: archivedExpanded() ? "rotate(0deg)" : "rotate(-90deg)",
-                  transitionProperty: "transform",
-                  transitionDuration: ms(120),
-                  transitionTimingFunction: EASE_STANDARD,
+                  ...chevronTransition(),
                 }}
               />
               <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
@@ -708,9 +702,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
                         boxShadow: dragging() ? popoverShadow() : "none",
                         cursor: canDrag() ? (dragging() ? "grabbing" : "grab") : "default",
                         opacity: x().item.missing ? 0.65 : 1,
-                        transitionProperty: "colors",
-                        transitionDuration: ms(120),
-                        transitionTimingFunction: EASE_STANDARD,
+                        ...colorTransition(),
                       }}
                     >
                       <View
@@ -719,9 +711,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
                           alignItems: "center",
                           justifyContent: "center",
                           opacity: showHandle() ? 1 : 0,
-                          transitionProperty: "opacity",
-                          transitionDuration: ms(120),
-                          transitionTimingFunction: EASE_STANDARD,
+                          ...opacityTransition(),
                         }}
                       >
                         <Icon name="gripVertical" size="sm" tone="muted-foreground" />
@@ -783,9 +773,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
                     flexDirection: "row",
                     alignItems: "center",
                     gap: SPACE[8],
-                    transitionProperty: "colors",
-                    transitionDuration: ms(120),
-                    transitionTimingFunction: EASE_STANDARD,
+                    ...colorTransition(),
                   }}
                 >
                   <Icon name="plus" size="sm" tone="muted-foreground" />

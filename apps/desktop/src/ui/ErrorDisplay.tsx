@@ -10,10 +10,9 @@ import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { FOCUS_RING } from "./kit";
 import { errorCopy, errorDetails } from "./logic";
-import { EASE_STANDARD, ms } from "./theme";
 import type { UiError } from "./store";
 
-import { FONT_SIZE, RADIUS, SPACE } from "./tokens";
+import { colorTransition, FONT_SIZE, RADIUS, SPACE } from "./tokens";
 export function ErrorDisplay(props: {
   error: UiError | undefined;
   /** Where to look: a label to press (a file and line, a page, a contest). */
@@ -92,9 +91,7 @@ export function ErrorDisplay(props: {
                   borderRadius: RADIUS.xs,
                   alignItems: "center",
                   justifyContent: "center",
-                  transitionProperty: "colors",
-                  transitionDuration: ms(120),
-                  transitionTimingFunction: EASE_STANDARD,
+                  ...colorTransition(),
                 }}
               >
                 <Icon name="x" size="sm" tone="muted-foreground" />

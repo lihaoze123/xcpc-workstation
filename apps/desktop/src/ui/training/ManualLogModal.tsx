@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented } from "../kit";
 import { DialogHeader, Modal } from "../Modal";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import { preview, refresh } from "../store";
 import { popoverShadow } from "../theme";
 import type { ManualLogStatus } from "./types";
@@ -349,7 +349,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                             flexDirection: "row",
                             alignItems: "center",
                             gap: SPACE[8],
-                            ...colorTransition(100),
+                            ...colorTransition(),
                           }}
                         >
                           <Text

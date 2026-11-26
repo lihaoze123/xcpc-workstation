@@ -10,7 +10,7 @@ import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Chip, FOCUS_RING, tip } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import { cardShadow } from "../theme";
 import { showToast } from "../Toast";
 import { isEn, zhEn } from "./locale";
@@ -267,7 +267,7 @@ export function ContestsTab(props: {
                               alignItems: "center",
                               justifyContent: "space-between",
                               gap: SPACE[12],
-                              ...colorTransition(120),
+                              ...colorTransition(),
                             }}
                           >
                             <View style={{ flex: 1, minWidth: 0, gap: SPACE[4] }}>

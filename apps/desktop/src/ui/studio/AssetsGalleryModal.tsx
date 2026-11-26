@@ -12,7 +12,6 @@ import {
   Image,
   keymap,
   pixelRatio,
-  reduceMotion,
   Scroll,
   signal,
   Text,
@@ -29,9 +28,9 @@ import { Icon } from "../Icon";
 import { Btn, createTransientValue, FOCUS_RING, IconBtn, tip } from "../kit";
 import { EmptyState, PageLoading } from "../layout";
 import { Modal } from "../Modal";
-import { colorTransition, overlayTransition, panelTransition } from "../motion";
+import { colorTransition, isReducedMotion, overlayCloseMs, overlayTransform, overlayTransition, panelTransition } from "../tokens";
 import { errorOf, preview, revision, type UiError } from "../store";
-import { MONO, ms, token } from "../theme";
+import { MONO, token } from "../theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE, TOOLBAR } from "../tokens";
 type DeleteConfirm = { kind: "single"; asset: ProblemAssetJs } | { kind: "unused" };
@@ -197,7 +196,7 @@ export function AssetsGalleryModal(props: {
         lightboxAsset.set(cur);
         if (!lightboxMounted()) {
           lightboxMounted.set(true);
-          if (reduceMotion()) {
+          if (isReducedMotion()) {
             lightboxShown.set(true);
           } else {
             lightboxShown.set(false);
@@ -213,7 +212,7 @@ export function AssetsGalleryModal(props: {
     } else if (untracked(lightboxMounted)) {
       untracked(() => {
         lightboxShown.set(false);
-        const dur = ms(200);
+        const dur = overlayCloseMs();
         if (dur === 0) {
           lightboxMounted.set(false);
           lightboxAsset.set(undefined);
@@ -723,7 +722,7 @@ export function AssetsGalleryModal(props: {
                     bottom: 0,
                     flexDirection: "column",
                     opacity: lightboxShown() ? 1 : 0,
-                    transform: reduceMotion() ? undefined : lightboxShown() ? "scale(1)" : "scale(0.97)",
+                    transform: overlayTransform(lightboxShown()),
                     pointerEvents: mode() === "lightbox" ? "auto" : "none",
                     ...overlayTransition(),
                   }}
@@ -846,7 +845,7 @@ export function AssetsGalleryModal(props: {
                             height: CONTROL.sm,
                             borderRadius: RADIUS.xs,
                             justifyContent: "center",
-                            ...colorTransition(120),
+                            ...colorTransition(),
                           }}
                         >
                           <Text
@@ -881,7 +880,7 @@ export function AssetsGalleryModal(props: {
                                     borderRadius: RADIUS.sm,
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    ...colorTransition(120),
+                                    ...colorTransition(),
                                   }}
                                 >
                                   <Text
@@ -959,7 +958,7 @@ function AssetTile(props: {
           overflow: "hidden",
           position: "relative",
           ...props.checkerboard,
-          ...colorTransition(120),
+          ...colorTransition(),
         }}
       >
         <View

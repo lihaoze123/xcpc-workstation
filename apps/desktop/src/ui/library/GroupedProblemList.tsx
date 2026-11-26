@@ -1,12 +1,11 @@
 // Grouped folding list view for LibraryView (Phase 6D §8.1):
 // Headerless scrollable list rendering collapsible GroupHeader (32pt) & LibraryListRow (40pt) sections.
 
-import { reduceMotion, Scroll, signal, Text, View, type JSX } from "nsh";
+import { Scroll, signal, Text, View, type JSX } from "nsh";
 import { Icon } from "../Icon";
 import { FOCUS_RING } from "../kit";
 import { headerCheckboxState, type ProblemGroupSection } from "../logic";
-import { colorTransition } from "../motion";
-import { EASE_STANDARD, ms } from "../theme";
+import { chevronTransition, colorTransition } from "../tokens";
 import { LibraryListRow, TriCheckbox, type LibraryRow } from "./cells";
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, SPACE } from "../tokens";
 
@@ -80,7 +79,7 @@ export function GroupedProblemList(props: {
                           alignItems: "center",
                           gap: SPACE[6],
                           minWidth: 0,
-                          ...colorTransition(120),
+                          ...colorTransition(),
                         }}
                       >
                         <Icon
@@ -89,13 +88,7 @@ export function GroupedProblemList(props: {
                           tone="muted-foreground"
                           style={{
                             transform: isCollapsed() ? "rotate(0deg)" : "rotate(90deg)",
-                            ...(reduceMotion()
-                              ? {}
-                              : {
-                                  transitionProperty: "transform",
-                                  transitionDuration: ms(120),
-                                  transitionTimingFunction: EASE_STANDARD,
-                                }),
+                            ...chevronTransition(),
                           }}
                         />
                         <Text

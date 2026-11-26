@@ -2,14 +2,13 @@
 // 0 ms outer width toggle (handled by parent <If>) to prevent DataTable reflow jank,
 // with subtle 120 ms inner fade/slide that respects `prefers-reduced-motion`.
 
-import { effect, reduceMotion, Scroll, signal, Text, View, type ContextMenuEvent } from "nsh";
+import { effect, Scroll, signal, Text, View, type ContextMenuEvent } from "nsh";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName } from "../Icon";
 import { Btn, FOCUS_RING, tip } from "../kit";
-import { colorTransition } from "../motion";
-import { EASE_STANDARD, ms } from "../theme";
+import { colorTransition, isReducedMotion, panelTransform, panelTransition } from "../tokens";
 
 import { CONTROL, FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
 export type SidebarGroupSelection =
@@ -45,7 +44,7 @@ function SidebarRow(props: {
         alignItems: "center",
         gap: SPACE[8],
         minWidth: 0,
-        ...colorTransition(120),
+        ...colorTransition(),
       }}
     >
       {props.icon && (
@@ -89,9 +88,9 @@ export function GroupSidebar(props: {
   onRenameGroup: (name: string) => void;
   onDeleteGroup: (name: string) => void;
 }) {
-  const revealed = signal(reduceMotion());
+  const revealed = signal(isReducedMotion());
   effect(() => {
-    if (reduceMotion()) {
+    if (isReducedMotion()) {
       revealed.set(true);
       return;
     }
@@ -136,10 +135,8 @@ export function GroupSidebar(props: {
           padding: SPACE[8],
           gap: SPACE[2],
           opacity: revealed() ? 1 : 0,
-          transform: reduceMotion() ? undefined : revealed() ? "translateX(0px)" : "translateX(-4px)",
-          transitionProperty: "opacity, transform",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          transform: panelTransform(revealed(), -4),
+          ...panelTransition(),
         }}
       >
         <SidebarRow

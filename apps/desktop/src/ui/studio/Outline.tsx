@@ -10,11 +10,11 @@ import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { FOCUS_RING, tip } from "../kit";
 import { labels, moveItem } from "../logic";
-import { EASE_STANDARD, ms, popoverShadow } from "../theme";
+import { popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
 import { StatusMark, type StatusMarkKind } from "./StatusSlot";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
+import { colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
 export const OUTLINE_WIDTH = 232;
 const ROW_GAP = 1;
 
@@ -135,9 +135,7 @@ export function Outline(props: {
               alignItems: "center",
               justifyContent: "center",
               gap: SPACE[6],
-              transitionProperty: "colors",
-              transitionDuration: ms(120),
-              transitionTimingFunction: EASE_STANDARD,
+              ...colorTransition(),
             }}
           >
             <Icon name="listPlus" size="sm" tone="secondary-foreground" />
@@ -178,9 +176,7 @@ function Row(props: {
         flexDirection: "row",
         alignItems: "center",
         gap: SPACE[8],
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(),
       }}
     >
       <View style={{ width: 16, alignItems: "center", justifyContent: "center" }}>

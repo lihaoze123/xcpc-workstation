@@ -15,7 +15,7 @@ import { Btn, Chevron, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
 import { pathBase, validId } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { Modal } from "./Modal";
-import { colorTransition } from "./motion";
+import { colorTransition } from "./tokens";
 import { errorOf, preview, type UiError } from "./store";
 import {
   isFieldVisible,
@@ -129,7 +129,7 @@ export function TemplatePicker(props: {
                     flexDirection: "row",
                     alignItems: "center",
                     gap: SPACE[6],
-                    ...colorTransition(120),
+                    ...colorTransition(),
                   }}
                 >
                   <Text style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }} class="text-foreground">
@@ -383,7 +383,7 @@ function SchemaFieldRow(props: {
                     trigger={
                       <View
                         class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
-                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
+                        style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition() }}
                       >
                         <Text style={{ flex: 1, fontSize: FONT_SIZE.body }} class="text-foreground">{currentLabel()}</Text>
                         <Chevron size="sm" tone="muted-foreground" />
@@ -453,7 +453,7 @@ function SchemaFieldRow(props: {
                 trigger={
                   <View
                     class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
-                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
+                    style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition() }}
                   >
                     <Text
                       style={{ flex: 1, fontSize: FONT_SIZE.body, numberOfLines: 1, textOverflow: "ellipsis" }}
@@ -639,7 +639,7 @@ function TextOptionField(props: {
                     props.onCommit(preset());
                   }}
                   class={active() ? `bg-accent border border-border ${FOCUS_RING}` : `bg-muted/60 hover:bg-muted border border-border ${FOCUS_RING}`}
-                  style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", ...colorTransition(100) }}
+                  style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", ...colorTransition() }}
                 >
                   <Text
                     style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }}
@@ -1082,7 +1082,7 @@ export function InstallPresetModal(props: {
                     paddingTop: SPACE[8],
                     paddingBottom: SPACE[8],
                     gap: SPACE[2],
-                    ...colorTransition(120),
+                    ...colorTransition(),
                   }}
                 >
                   <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>

@@ -38,16 +38,11 @@ import {
 import {
   indicatorTransition,
   overlayTransition,
-  pageTransition,
   panelTransition,
   pressTransition,
-  SPRING_GENTLE,
-  SPRING_INDICATOR,
-  SPRING_OVERLAY,
-  SPRING_PAGE,
-  SPRING_PANEL,
-  SPRING_PRESS,
-} from "./src/ui/motion";
+  SPRING,
+  studioTransition,
+} from "./src/ui/tokens";
 import { formatAppVersion } from "./src/ui/SettingsView";
 import { filterShortcutGroups } from "./src/ui/ShortcutsModal";
 
@@ -420,7 +415,7 @@ test("the split ratio is kept within its range", () => {
 });
 
 test("motion springs converge to ζ ∈ [0.86, 0.90] without hardcoded transitionDuration", () => {
-  const presets = [SPRING_OVERLAY, SPRING_INDICATOR, SPRING_PANEL, SPRING_PAGE, SPRING_PRESS, SPRING_GENTLE];
+  const presets = [SPRING.quick, SPRING.standard, SPRING.smooth];
   for (const p of presets) {
     const k = p.stiffness ?? 0;
     const c = p.damping ?? 0;
@@ -428,7 +423,7 @@ test("motion springs converge to ζ ∈ [0.86, 0.90] without hardcoded transitio
     const zeta = c / (2 * Math.sqrt(k * m));
     expect(zeta >= 0.86 && zeta <= 0.90).toBe(true);
   }
-  const transitions = [overlayTransition(), indicatorTransition(), panelTransition(), pageTransition(), pressTransition()];
+  const transitions = [overlayTransition(), indicatorTransition(), panelTransition(), studioTransition(), pressTransition()];
   for (const t of transitions) {
     if (String(t.transitionTimingFunction ?? "").startsWith("spring(")) {
       expect(t.transitionDuration).toBe(undefined);

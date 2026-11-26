@@ -5,7 +5,7 @@
 // image paste, restrained typing ergonomics (`$`/`` ` `` pairing, list continuation, Tab
 // indent), diagnostic hover tooltips via `Overlay`, and `overviewRuler` marks.
 
-import { cleanup, Clipboard, colorScheme, computed, effect, keymap, Overlay, pixelRatio, reduceMotion, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
+import { cleanup, Clipboard, colorScheme, computed, effect, keymap, Overlay, pixelRatio, signal, Text, untracked, View, type Bounds, type InputRef } from "nsh";
 import {
   Editor,
   Input,
@@ -23,7 +23,6 @@ import { preview } from "../store";
 import { t } from "../i18n";
 import { Btn, FOCUS_RING, IconBtn, tip } from "../kit";
 import {
-  EASE_STANDARD,
   EDITOR_MONO,
   editorFontSize,
   editorInk,
@@ -31,7 +30,6 @@ import {
   editorLineHeight,
   editorMono,
   editorVimMode,
-  ms,
   popoverShadow,
   type EditorInk,
 } from "../theme";
@@ -53,7 +51,7 @@ import {
   type SlashCommand,
 } from "./SlashPopover";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
+import { colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, opacityTransition, RADIUS, SPACE, structuralFadeMs } from "../tokens";
 /** Returns true when `pos` falls inside an inline/display math or inline/fenced code span. */
 function isInMathOrCodeContext(spans: readonly MarkdownSpanJs[], pos: EditorPosition): boolean {
   for (const s of spans) {
@@ -742,7 +740,7 @@ export function MarkdownEditor(props: {
           cancelAnimationFrame(typewriterAnimRaf);
           typewriterAnimRaf = undefined;
         }
-        const dur = ms(140);
+        const dur = structuralFadeMs();
         if (dur === 0) {
           ed.setScrollOffset({ x: offset.x, y: destY });
           return;
@@ -1376,9 +1374,7 @@ export function MarkdownEditor(props: {
                 borderRadius: RADIUS.xs,
                 alignItems: "center",
                 justifyContent: "center",
-                transitionProperty: "colors",
-                transitionDuration: ms(120),
-                transitionTimingFunction: EASE_STANDARD,
+                ...colorTransition(),
               }}
             >
               <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class={caseSensitive() ? "text-foreground" : "text-secondary-foreground"}>
@@ -1557,9 +1553,7 @@ export function MarkdownEditor(props: {
                 justifyContent: "center",
                 pointerEvents: "none",
                 opacity: emptyLineHintVisible() ? 1 : 0,
-                transitionProperty: "opacity",
-                transitionDuration: reduceMotion() ? 0 : 160,
-                transitionTimingFunction: EASE_STANDARD,
+                ...opacityTransition(),
               }}
             >
               <Text

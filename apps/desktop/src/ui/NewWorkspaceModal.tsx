@@ -7,7 +7,7 @@ import { t, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
 import { FOCUS_RING, IconBtn, tip } from "./kit";
 import { Modal } from "./Modal";
-import { colorTransition } from "./motion";
+import { colorTransition } from "./tokens";
 import { newWorkspace, openExampleWorkspace } from "./store";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
@@ -105,7 +105,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                       alignItems: "center",
                       gap: SPACE[2],
                       borderWidth: active() ? 1 : 0,
-                      ...colorTransition(120),
+                      ...colorTransition(),
                     }}
                   >
                     <Text
@@ -158,7 +158,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                     flexDirection: "row",
                     alignItems: "center",
                     gap: SPACE[12],
-                    ...colorTransition(120),
+                    ...colorTransition(),
                   }}
                 >
                   <View

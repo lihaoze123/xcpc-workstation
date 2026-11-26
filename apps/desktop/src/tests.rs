@@ -259,3 +259,72 @@ fn static_ui_design_token_guardrail() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn static_ui_motion_guardrail() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![manifest.join("App.tsx")];
+    let mut stack = vec![manifest.join("src/ui")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().and_then(|s| s.to_str()) == Some("tokens") {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if (!name.ends_with(".ts") && !name.ends_with(".tsx"))
+                || name.ends_with(".test.ts")
+                || name.ends_with(".test.tsx")
+            {
+                continue;
+            }
+            // Documented motion exceptions (design-system.md §8):
+            // - Brand intro animation (EXPO curve): BrandIcon.tsx, NoWorkspaceView.tsx
+            // - Preview canvas crossfade (90ms) & wheel zoom damping (~120ms): studio/PreviewCanvas.tsx
+            if name == "BrandIcon.tsx"
+                || name == "NoWorkspaceView.tsx"
+                || name == "PreviewCanvas.tsx"
+            {
+                continue;
+            }
+            files.push(path);
+        }
+    }
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.strip_prefix(manifest).unwrap_or(&path).display();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("*") {
+                continue;
+            }
+            if line.contains("transitionDuration") && line.contains("ms(") {
+                violations.push(format!("{rel}:{}: raw transitionDuration: ms(...)", i + 1));
+            }
+            if line.contains("\"spring(") || line.contains("'spring(") || line.contains("`spring(")
+            {
+                violations.push(format!("{rel}:{}: inline spring(...) string", i + 1));
+            }
+            if line.contains("reduceMotion(") {
+                violations.push(format!(
+                    "{rel}:{}: direct reduceMotion() call (use tokens/motion.ts)",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Phase 6G §4 motion guardrail violations:\n{}",
+        violations.join("\n")
+    );
+}

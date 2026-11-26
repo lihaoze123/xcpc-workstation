@@ -1,13 +1,13 @@
 // Floating bottom batch action bar (§5.4):
 // Appears centered at the bottom of the library table when `selectedIds.size >= 1`.
 
-import { reduceMotion, Text, View } from "nsh";
+import { Text, View } from "nsh";
 import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, IconBtn, tip } from "../kit";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { overlayTransition } from "../motion";
+import { overlayTransform, overlayTransition } from "../tokens";
 import { modalShadow, token } from "../theme";
 
 import { FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "../tokens";
@@ -70,7 +70,7 @@ export function BatchFloatingBar(props: {
           gap: SPACE[4],
           boxShadow: modalShadow(),
           opacity: 1,
-          transform: reduceMotion() ? undefined : "translateY(0px) scale(1)",
+          transform: overlayTransform(true),
           ...overlayTransition(),
         }}
       >

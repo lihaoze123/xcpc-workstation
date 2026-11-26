@@ -12,7 +12,7 @@ import { DialogHeader, Modal } from "./Modal";
 import { Icon } from "./Icon";
 import { errorCopy, filterAddableContests, partitionBatchDelete, suggestDuplicateId, validId } from "./logic";
 import { PickProblemsBody } from "./PickProblemsModal";
-import { EASE_STANDARD, MONO, ms } from "./theme";
+import { MONO } from "./theme";
 import {
   dialog,
   errorOf,
@@ -28,7 +28,7 @@ import {
   type UiError,
 } from "./store";
 
-import { CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
+import { colorTransition, CONTROL, FONT_SIZE, FONT_WEIGHT, RADIUS, SPACE } from "./tokens";
 const message = (e: UiError | undefined) => {
   if (!e) return undefined;
   if (e.code === "invalid_id") return t("dialogs.invalidId");
@@ -581,9 +581,7 @@ function AddToContest(props: { problemId: string }) {
                       alignItems: "center",
                       gap: SPACE[8],
                       opacity: off() ? 0.55 : 1,
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Text style={{ numberOfLines: 1, textOverflow: "ellipsis", flex: 1, fontSize: FONT_SIZE.body }} class={off() && addedId() !== c().id ? "text-muted-foreground" : "text-foreground"}>
@@ -638,9 +636,7 @@ function AddToContest(props: { problemId: string }) {
           flexDirection: "row",
           alignItems: "center",
           gap: SPACE[8],
-          transitionProperty: "colors",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          ...colorTransition(),
         }}
       >
         <Icon name="plus" size="md" tone="primary" />
@@ -704,9 +700,7 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
                       flexDirection: "row",
                       alignItems: "center",
                       gap: SPACE[8],
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Icon name="trophy" size="sm" tone="secondary-foreground" />
@@ -985,9 +979,7 @@ function BatchTags(props: { open: boolean; problemIds: readonly string[] }) {
                       flexDirection: "row",
                       alignItems: "center",
                       gap: SPACE[6],
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Text style={{ fontSize: FONT_SIZE.caption }} class={textCls()}>
@@ -1325,9 +1317,7 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                       alignItems: "center",
                       gap: SPACE[8],
                       opacity: off() ? 0.55 : 1,
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                   >
                     <Text

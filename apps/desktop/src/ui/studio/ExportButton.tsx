@@ -11,10 +11,9 @@ import { DelayedSpinner, FOCUS_RING } from "../kit";
 import { revealState, type Book } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
 import type { OjPackageFormat } from "../store";
-import { EASE_STANDARD, ms } from "../theme";
 import type { RegisteredExporter } from "../tools/types";
 
-import { CONTROL, FONT_SIZE, RADIUS, SPACE } from "../tokens";
+import { colorTransition, CONTROL, FONT_SIZE, opacityTransition, RADIUS, SPACE } from "../tokens";
 const CONFIRM_MS = 1800;
 
 export function ExportButton(props: {
@@ -162,9 +161,7 @@ export function ExportButton(props: {
         height: CONTROL.md,
         alignItems: "center",
         justifyContent: "center",
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(),
       }}
     >
       <Icon name="chevronDown" size="sm" tone={fgTone()} />
@@ -180,9 +177,7 @@ export function ExportButton(props: {
         borderWidth: sec() ? 1 : 0,
         overflow: "hidden",
         opacity: busy() ? 0.8 : 1,
-        transitionProperty: "opacity",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...opacityTransition(),
       }}
       class={sec() ? "bg-card border-border" : "bg-primary"}
     >
@@ -198,9 +193,7 @@ export function ExportButton(props: {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          transitionProperty: "colors",
-          transitionDuration: ms(120),
-          transitionTimingFunction: EASE_STANDARD,
+          ...colorTransition(),
         }}
       >
         <View style={{ width: showSpinner() ? 12 : 0, marginRight: showSpinner() ? SPACE[6] : SPACE[0], overflow: "hidden", alignItems: "center", justifyContent: "center" }}>

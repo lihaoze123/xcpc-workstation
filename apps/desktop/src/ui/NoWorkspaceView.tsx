@@ -11,6 +11,7 @@ import {
   Animated,
   cleanup,
   createAnimatedValue,
+  Easing,
   keymap,
   reduceMotion,
   signal,
@@ -22,7 +23,9 @@ import { BrandIcon, type BrandIconController } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { t } from "./i18n";
 import { Btn, tip } from "./kit";
-import { EASE_EXPO_CURVE } from "./motion";
+
+// Documented exception (§8.5): brand intro stagger uses an exponential ease-out curve.
+const EASE_EXPO_CURVE = Easing.bezier(0.16, 1, 0.3, 1);
 import { formatAppVersion, readAboutInfo } from "./SettingsView";
 import { goSpace, info, openError, pickWorkspace, requestNewWorkspace } from "./store";
 

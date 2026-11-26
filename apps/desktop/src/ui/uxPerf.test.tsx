@@ -12,15 +12,7 @@ import { adaptiveCompileDelayMs, neighborPagesToPrewarm } from "./logic";
 import { activeRevision, createTracedPreview, preview, revision } from "./store";
 import { matrixCellKey, type MatrixCellData } from "./studio/buildLogic";
 import { createMatrixCellStore, stepMatrixSelection } from "./studio/matrixStore";
-import {
-  pageTransform,
-  SPRING_GENTLE,
-  SPRING_INDICATOR,
-  SPRING_OVERLAY,
-  SPRING_PAGE,
-  SPRING_PANEL,
-  SPRING_PRESS,
-} from "./motion";
+import { SPRING, studioTransform } from "./tokens";
 import {
   getJsTraceEvents,
   isJank60,
@@ -41,12 +33,9 @@ function dampingRatio(s: { stiffness?: number; damping?: number; mass?: number }
 describe("UI/UX quantitative gates (Phase 1)", () => {
   test("all motion spring presets stay within warm low-overshoot damping band (0.85 <= ζ <= 0.92)", () => {
     const presets = [
-      ["SPRING_OVERLAY", SPRING_OVERLAY],
-      ["SPRING_INDICATOR", SPRING_INDICATOR],
-      ["SPRING_PANEL", SPRING_PANEL],
-      ["SPRING_PAGE", SPRING_PAGE],
-      ["SPRING_PRESS", SPRING_PRESS],
-      ["SPRING_GENTLE", SPRING_GENTLE],
+      ["SPRING.quick", SPRING.quick],
+      ["SPRING.standard", SPRING.standard],
+      ["SPRING.smooth", SPRING.smooth],
     ] as const;
 
     for (const [, preset] of presets) {
@@ -55,11 +44,9 @@ describe("UI/UX quantitative gates (Phase 1)", () => {
       expect(zeta).toBeLessThanOrEqual(0.92);
     }
 
-    // Spatial continuity uses pure GPU pixel translation (no scale FBO resampling).
-    expect(pageTransform(false, "space")).toBe("translateY(6px)");
-    expect(pageTransform(true, "space")).toBe("translateY(0px)");
-    expect(pageTransform(false, "studio")).toBe("translateX(14px)");
-    expect(pageTransform(true, "studio")).toBe("translateX(0px)");
+    // Studio enter/exit uses pure GPU pixel translation (no scale FBO resampling).
+    expect(studioTransform(false)).toBe("translateX(14px)");
+    expect(studioTransform(true)).toBe("translateX(0px)");
   });
 
   test("fine-grained signal updates keep unrelated subscribers at 0 recomputes and commit < 2ms", () => {

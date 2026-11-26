@@ -2,9 +2,9 @@
 // signal from `MatrixCellStore` so streaming test-case updates never re-render
 // untouched cells. Adds a subtle GPU-composited settle pulse when a cell arrives live.
 
-import { reduceMotion, Text, View } from "nsh";
+import { Text, View } from "nsh";
 import { FOCUS_RING } from "../kit";
-import { colorTransition } from "../motion";
+import { colorTransition, spatialEnabled } from "../tokens";
 import {
   cellTimeMs,
   cellVisualStyle,
@@ -65,7 +65,7 @@ export function MatrixCellView(props: {
               class={`${st().cellClass} ${
                 props.isPicked()
                   ? "ring-2 ring-inset ring-primary"
-                  : isFresh() && !reduceMotion()
+                  : isFresh() && spatialEnabled()
                     ? "ring-1 ring-inset ring-primary/45"
                     : ""
               }`}
@@ -79,7 +79,7 @@ export function MatrixCellView(props: {
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: SPACE[6],
-                ...colorTransition(160),
+                ...colorTransition(),
               }}
             >
               <Text

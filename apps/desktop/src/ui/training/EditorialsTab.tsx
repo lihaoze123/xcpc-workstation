@@ -10,7 +10,7 @@ import { Icon } from "../Icon";
 import { Btn, Chip, FOCUS_RING, IconBtn, RatingBadge, tip } from "../kit";
 import { DetailHeader, EmptyState, FilterEmpty, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
-import { colorTransition } from "../motion";
+import { colorTransition } from "../tokens";
 import { info, openStudio } from "../store";
 import { PreviewCanvas } from "../studio/PreviewCanvas";
 import { isEn, zhEn } from "./locale";
@@ -255,7 +255,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           flexDirection: "row",
                           alignItems: "center",
                           gap: SPACE[4],
-                          ...colorTransition(120),
+                          ...colorTransition(),
                         }}
                       >
                         <Text
@@ -296,7 +296,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           flexDirection: "row",
                           alignItems: "center",
                           gap: SPACE[4],
-                          ...colorTransition(120),
+                          ...colorTransition(),
                         }}
                       >
                         <Text
@@ -367,7 +367,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
                             paddingLeft: SPACE[12],
                             paddingRight: SPACE[12],
                             gap: SPACE[4],
-                            ...colorTransition(100),
+                            ...colorTransition(),
                           }}
                         >
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[8] }}>

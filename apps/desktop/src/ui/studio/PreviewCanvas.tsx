@@ -50,8 +50,8 @@ import {
   type PageSize,
 } from "../logic";
 import { info, preview } from "../store";
-import { panelTransition } from "../motion";
-import { EASE_STANDARD, ms, popoverShadow } from "../theme";
+import { colorTransition, panelTransition, scrollAnimated, spatialEnabled } from "../tokens";
+import { popoverShadow } from "../theme";
 import { traceInteraction } from "../trace";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -321,7 +321,7 @@ export function PreviewCanvas(props: {
   }
 
   function scrollTo(y: number, animated = false) {
-    scroll?.scrollTo({ y, animated: animated && ms(1) > 0 });
+    scroll?.scrollTo({ y, animated: scrollAnimated(animated) });
   }
 
   function commitScroll(targetY: number, oldMaxScroll: number, newMaxScroll: number) {
@@ -919,7 +919,7 @@ export function PreviewCanvas(props: {
     zoomLastTime = now;
     const cur = live();
     const diff = zoomTargetK - cur.k;
-    if (Math.abs(diff) / cur.k < 0.0015 || ms(1) === 0) {
+    if (Math.abs(diff) / cur.k < 0.0015 || !spatialEnabled()) {
       applyLiveScale(zoomTargetK, zoomAnchor);
       commitZoom();
       return;
@@ -1471,9 +1471,7 @@ export function PreviewCanvas(props: {
                 borderRadius: RADIUS.full,
                 alignItems: "center",
                 justifyContent: "center",
-                transitionProperty: "colors",
-                transitionDuration: ms(120),
-                transitionTimingFunction: EASE_STANDARD,
+                ...colorTransition(),
               }}
             >
               <Text style={{ textAlign: "center", fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class="text-secondary-foreground">
@@ -1529,9 +1527,7 @@ export function PreviewCanvas(props: {
                       flexDirection: "row",
                       alignItems: "center",
                       gap: SPACE[4],
-                      transitionProperty: "colors",
-                      transitionDuration: ms(120),
-                      transitionTimingFunction: EASE_STANDARD,
+                      ...colorTransition(),
                     }}
                     class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   >
@@ -1593,9 +1589,7 @@ function HudButton(props: { icon: IconName; onPress: () => void; disabled?: bool
         alignItems: "center",
         justifyContent: "center",
         opacity: props.disabled ? 0.35 : 1,
-        transitionProperty: "colors",
-        transitionDuration: ms(120),
-        transitionTimingFunction: EASE_STANDARD,
+        ...colorTransition(),
       }}
     >
       <Icon name={props.icon} size="sm" />

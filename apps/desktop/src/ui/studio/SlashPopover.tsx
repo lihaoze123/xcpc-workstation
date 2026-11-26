@@ -8,7 +8,6 @@ import {
   colorScheme,
   effect,
   Overlay,
-  reduceMotion,
   Scroll,
   signal,
   Text,
@@ -23,7 +22,7 @@ import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
 import { FOCUS_RING, Kbd, tip } from "../kit";
 import { SectionEmpty } from "../layout";
-import { colorTransition, overlayTransition } from "../motion";
+import { colorTransition, overlayTransform, overlayTransition } from "../tokens";
 import { popoverShadow } from "../theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -516,7 +515,7 @@ export function SlashPopover(props: {
           flexDirection: "row",
           alignItems: "center",
           gap: SPACE[8],
-          ...colorTransition(110),
+          ...colorTransition(),
         }}
       >
         <View
@@ -583,12 +582,8 @@ export function SlashPopover(props: {
           overflow: "hidden",
           boxShadow: popoverShadow(),
           opacity: shown() ? 1 : 0,
-          transform: reduceMotion()
-            ? undefined
-            : shown()
-              ? "translateY(0px) scale(1)"
-              : "translateY(-4px) scale(0.985)",
-          ...overlayTransition(),
+          transform: overlayTransform(shown()),
+          ...overlayTransition(shown()),
         }}
       >
         {/* Borderless quiet filter header; receives focus so arrow/Enter/Tab never fight Editor */}
@@ -702,7 +697,7 @@ export function SlashPopover(props: {
                           borderRadius: RADIUS.sm,
                           alignItems: "center",
                           justifyContent: "center",
-                          ...colorTransition(110),
+                          ...colorTransition(),
                         }}
                       >
                         {renderGlyph(

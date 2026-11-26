@@ -7,7 +7,7 @@
 // 200 ms contest) and auto-saves after 500 ms with SHA-256 conflict detection. Ctrl+click
 // on the preview locates Markdown source; Mod+Shift+L locates the preview from the caret.
 
-import { batch, cleanup, Clipboard, computed, effect, keymap, reduceMotion, signal, Text, untracked, View, windowSize } from "nsh";
+import { batch, cleanup, Clipboard, computed, effect, keymap, signal, Text, untracked, View, windowSize } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type EditorDiagnostic, type EditorRef } from "nsh/base";
 import type {
   ActionResult,
@@ -60,9 +60,9 @@ import {
   type UiError,
 } from "../store";
 import { afterNextPaint } from "../frame";
-import { panelTransition } from "../motion";
+import { isReducedMotion, panelExitMs, panelTransform, panelTransition } from "../tokens";
 import { traceInteraction, traceSpan, traceUntilPaint } from "../trace";
-import { ms, popoverShadow, token } from "../theme";
+import { popoverShadow, token } from "../theme";
 import { TitleBar } from "../TitleBar";
 import { AssetsGalleryModal } from "./AssetsGalleryModal";
 import { BuildConsole, type BuildConsoleController } from "./BuildConsole";
@@ -175,7 +175,7 @@ export function StudioView(props: { active: boolean }) {
     clearTimeout(outlineTimer);
     if (showOutline) {
       outlineVisible.set(true);
-      if (reduceMotion()) {
+      if (isReducedMotion()) {
         outlineShown.set(true);
       } else {
         outlineRaf = requestAnimationFrame(() => {
@@ -185,7 +185,7 @@ export function StudioView(props: { active: boolean }) {
       }
     } else {
       outlineShown.set(false);
-      const dur = ms(180);
+      const dur = panelExitMs();
       if (dur === 0) outlineVisible.set(false);
       else outlineTimer = setTimeout(() => outlineVisible.set(false), dur);
     }
@@ -199,7 +199,7 @@ export function StudioView(props: { active: boolean }) {
       cancelAnimationFrame(previewRaf);
       previewRaf = undefined;
     }
-    if (first || reduceMotion()) {
+    if (first || isReducedMotion()) {
       previewShown.set(!hidden);
       return;
     }
@@ -1442,7 +1442,7 @@ export function StudioView(props: { active: boolean }) {
               flexShrink: 0,
               display: outlineVisible() ? "flex" : "none",
               opacity: outlineShown() ? 1 : 0,
-              transform: reduceMotion() ? undefined : outlineShown() ? "translateX(0px)" : "translateX(-10px)",
+              transform: panelTransform(outlineShown(), -10),
               ...panelTransition(),
             }}
           >
@@ -1805,7 +1805,7 @@ export function StudioView(props: { active: boolean }) {
                 style={{
                   flex: 1,
                   opacity: previewShown() ? 1 : 0,
-                  transform: reduceMotion() ? undefined : previewShown() ? "translateX(0px)" : "translateX(8px)",
+                  transform: panelTransform(previewShown(), 8),
                   ...panelTransition(),
                 }}
               >
