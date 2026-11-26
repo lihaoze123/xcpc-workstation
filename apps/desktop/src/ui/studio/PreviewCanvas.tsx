@@ -63,33 +63,49 @@ const BOTTOM_HUD_PAD = 76; // clears the floating HUD capsule (bottom 16 + heigh
 const BOTTOM_NO_HUD_PAD = 28;
 const FIT_SIDE_PAD = 36; // comfortable horizontal margin for fit-to-width
 const MAX_FIT_ZOOM = 1.25; // crisp and generous without blowing up on ultrawide monitors
+const READER_SIDE_PAD = SPACE[16]; // §8.1 reader mode: 16pt left/right margin
+const READER_PAGE_GAP = SPACE[12]; // §8.1 reader mode: 12pt vertical gap between pages
+const READER_VERT_PAD = SPACE[16]; // §8.1 reader mode: 16pt top/bottom breathing room
 
 function requestKey(req: { target: string; id: string; book: string }): string {
   return `${req.target}:${req.id}:${req.book}`;
 }
 
 /** Clamped visual gap between pages so extreme zoom levels never stretch or collapse spacing. */
-function pageGap(z: number): number {
+function pageGap(z: number, reader = false): number {
+  if (reader) return READER_PAGE_GAP;
   if (z <= 0) return GAP;
   return Math.max(10, Math.min(32, GAP * z));
 }
 
 /** Generous fit-to-width zoom with comfortable side margins and a sensible upper bound. */
-function fitZoom(list: readonly { width: number }[], paneWidth: number): number {
+function fitZoom(list: readonly { width: number }[], paneWidth: number, reader = false): number {
   if (list.length === 0 || paneWidth <= 0) return 0;
+  if (reader) {
+    const raw = (paneWidth - 2 * READER_SIDE_PAD) / list[0].width;
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, raw));
+  }
   const pad = Math.min(FIT_SIDE_PAD, Math.max(GAP, paneWidth * 0.06));
   const raw = (paneWidth - 2 * pad) / list[0].width;
   return Math.min(MAX_FIT_ZOOM, Math.max(MIN_ZOOM, raw));
 }
 
-function bottomPadFor(hasHud: boolean): number {
+function pageLeftFor(pageWidth: number, z: number, paneWidth: number, curPanX: number, reader = false): number {
+  if (reader) {
+    return Math.max(0, (paneWidth - pageWidth * z) / 2);
+  }
+  return leftFor(pageWidth, z, paneWidth, curPanX);
+}
+
+function bottomPadFor(hasHud: boolean, reader = false): number {
+  if (reader) return READER_VERT_PAD;
   return hasHud ? BOTTOM_HUD_PAD : BOTTOM_NO_HUD_PAD;
 }
 
 /** Pure height of the page stack (all pages plus gaps between them, excluding top/bottom padding). */
-function stackHeight(list: readonly { height: number }[], z: number): number {
+function stackHeight(list: readonly { height: number }[], z: number, reader = false): number {
   if (list.length === 0 || z <= 0) return 0;
-  const g = pageGap(z);
+  const g = pageGap(z, reader);
   let h = 0;
   for (let i = 0; i < list.length; i++) {
     h += list[i].height * z;
@@ -103,24 +119,25 @@ function stackHeight(list: readonly { height: number }[], z: number): number {
  * (while still clearing the bottom HUD without introducing a spurious scrollbar), otherwise
  * keeps a comfortable `TOP_PAD` breathing margin.
  */
-function topPadFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean): number {
+function topPadFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean, reader = false): number {
+  if (reader) return READER_VERT_PAD;
   if (list.length === 0 || z <= 0 || paneHeight <= 0) return TOP_PAD;
-  const sh = stackHeight(list, z);
-  const minBottom = bottomPadFor(hasHud);
+  const sh = stackHeight(list, z, false);
+  const minBottom = bottomPadFor(hasHud, false);
   const room = paneHeight - sh;
   if (room <= TOP_PAD + minBottom) return TOP_PAD;
   const centered = Math.floor(room / 2);
   return Math.max(TOP_PAD, Math.min(centered, room - minBottom));
 }
 
-function heightFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean): number {
+function heightFor(list: readonly { height: number }[], z: number, paneHeight: number, hasHud: boolean, reader = false): number {
   if (list.length === 0 || z <= 0) return 0;
-  return topPadFor(list, z, paneHeight, hasHud) + stackHeight(list, z) + bottomPadFor(hasHud);
+  return topPadFor(list, z, paneHeight, hasHud, reader) + stackHeight(list, z, reader) + bottomPadFor(hasHud, reader);
 }
 
 /** Y offset of page `index`'s top edge in scroll-content coordinates. */
-function pageYFor(list: readonly { height: number }[], z: number, index: number, topPad: number): number {
-  const g = pageGap(z);
+function pageYFor(list: readonly { height: number }[], z: number, index: number, topPad: number, reader = false): number {
+  const g = pageGap(z, reader);
   let y = topPad;
   for (let i = 0; i < index && i < list.length; i++) {
     y += list[i].height * z + g;
@@ -129,9 +146,9 @@ function pageYFor(list: readonly { height: number }[], z: number, index: number,
 }
 
 /** Target `scrollY` to jump to page `index`. */
-function topFor(list: readonly { height: number }[], z: number, index: number, topPad: number): number {
+function topFor(list: readonly { height: number }[], z: number, index: number, topPad: number, reader = false): number {
   if (index <= 0) return 0;
-  return Math.max(0, pageYFor(list, z, index, topPad) - pageGap(z));
+  return Math.max(0, pageYFor(list, z, index, topPad, reader) - pageGap(z, reader));
 }
 
 function pageIndexAt(
@@ -140,9 +157,10 @@ function pageIndexAt(
   scrollY: number,
   paneHeight: number,
   topPad: number,
+  reader = false,
 ): number {
   if (list.length === 0 || z <= 0) return 0;
-  const g = pageGap(z);
+  const g = pageGap(z, reader);
   const mid = scrollY + paneHeight / 3;
   let y = topPad;
   for (let i = 0; i < list.length; i++) {
@@ -159,11 +177,12 @@ function viewFor(
   curPanX: number,
   curPane: { width: number; height: number },
   topPad: number,
+  reader = false,
 ): PreviewView[] {
   const edge = (page: number): PreviewView => ({ page, x: 0, y: 0, width: 0, height: 0 });
   if (list.length === 0 || z === 0) return [edge(0), edge(1)];
-  const g = pageGap(z);
-  const curLeft = leftFor(list[0].width, z, curPane.width, curPanX);
+  const g = pageGap(z, reader);
+  const curLeft = pageLeftFor(list[0].width, z, curPane.width, curPanX, reader);
   const top = curScrollY;
   const bottom = top + curPane.height;
   const x0 = Math.max(0, -curLeft / z);
@@ -238,6 +257,8 @@ export function PreviewCanvas(props: {
   inset?: number;
   /** The floating HUD (the studio's); a glance elsewhere goes without. */
   hud?: boolean;
+  /** Reader mode (§8.1): fit-width continuous vertical scroll, 16pt side margins, 12pt page gap, no HUD/zoom/Ctrl+click jump. */
+  readerMode?: boolean;
   /** False while hidden (`display: none`): keeps rendered pages warm without compiling or rasterizing. */
   active?: boolean;
 }) {
@@ -269,7 +290,8 @@ export function PreviewCanvas(props: {
   let contentHeightLaidOut = 0;
   let pendingScroll: { y: number; minContentHeight: number; raf?: number } | undefined;
 
-  const hasHud = () => props.hud !== false;
+  const isReader = () => props.readerMode === true;
+  const hasHud = () => !isReader() && props.hud !== false;
   const isActive = () => props.active !== false;
   let deferredCompile = false;
   let pendingPane: { width: number; height: number } | undefined;
@@ -287,12 +309,12 @@ export function PreviewCanvas(props: {
 
   function currentMaxScroll(): number {
     const curPaneH = pane().height;
-    const h = contentHeightLaidOut > 0 ? contentHeightLaidOut : heightFor(pages(), zoom(), curPaneH, hasHud());
+    const h = contentHeightLaidOut > 0 ? contentHeightLaidOut : heightFor(pages(), zoom(), curPaneH, hasHud(), isReader());
     return Math.max(0, h - curPaneH);
   }
 
   function clampScroll(list: readonly PageSize[], z: number, y: number, paneH = pane().height): number {
-    const max = Math.max(0, heightFor(list, z, paneH, hasHud()) - paneH);
+    const max = Math.max(0, heightFor(list, z, paneH, hasHud(), isReader()) - paneH);
     return Math.min(max, Math.max(0, y));
   }
 
@@ -360,13 +382,13 @@ export function PreviewCanvas(props: {
   const effectiveWidth = computed(() => (pane().width > 0 ? Math.max(120, pane().width - inset()) : 0));
 
   const scale = computed(() => scaleFor(zoom(), pixelRatio()));
-  const left = computed(() => leftFor(pages()[0]?.width ?? 0, zoom(), effectiveWidth(), panX()));
-  const topPad = computed(() => topPadFor(pages(), zoom(), pane().height, hasHud()));
-  const bottomPad = computed(() => bottomPadFor(hasHud()));
+  const left = computed(() => pageLeftFor(pages()[0]?.width ?? 0, zoom(), effectiveWidth(), panX(), isReader()));
+  const topPad = computed(() => topPadFor(pages(), zoom(), pane().height, hasHud(), isReader()));
+  const bottomPad = computed(() => bottomPadFor(hasHud(), isReader()));
   const view = computed<PreviewView[]>(() =>
-    viewFor(pages(), zoom(), scrollY(), panX(), { width: effectiveWidth(), height: pane().height }, topPad()),
+    viewFor(pages(), zoom(), scrollY(), panX(), { width: effectiveWidth(), height: pane().height }, topPad(), isReader()),
   );
-  const currentPage = computed(() => pageIndexAt(pages(), zoom(), scrollY(), pane().height, topPad()));
+  const currentPage = computed(() => pageIndexAt(pages(), zoom(), scrollY(), pane().height, topPad(), isReader()));
 
   function tiles(v: PreviewView, s: number, margin: number) {
     const t = (pt: number, m: number) => Math.max(0, Math.floor((pt * s + m) / TILE));
@@ -546,11 +568,11 @@ export function PreviewCanvas(props: {
       });
       const z = zoom();
       const curPaneH = pane().height;
-      const newMaxScroll = Math.max(0, heightFor(result.pages, z, curPaneH, hasHud()) - curPaneH);
+      const newMaxScroll = Math.max(0, heightFor(result.pages, z, curPaneH, hasHud(), isReader()) - curPaneH);
       if (start) {
         if (z > 0) {
-          const tp = topPadFor(result.pages, z, curPaneH, hasHud());
-          const targetY = clampScroll(result.pages, z, topFor(result.pages, z, start.page, tp), curPaneH);
+          const tp = topPadFor(result.pages, z, curPaneH, hasHud(), isReader());
+          const targetY = clampScroll(result.pages, z, topFor(result.pages, z, start.page, tp, isReader()), curPaneH);
           scrollY.set(targetY);
           commitScroll(targetY, oldMaxScroll, newMaxScroll);
         } else {
@@ -578,11 +600,11 @@ export function PreviewCanvas(props: {
       nextPanX = saved.panX;
       nextNeedsFit = false;
       nextAutoFit = false;
-      const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud());
-      const rawY = start ? topFor(result.pages, nextZoom, start.page, tp) : saved.scrollY;
+      const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud(), isReader());
+      const rawY = start ? topFor(result.pages, nextZoom, start.page, tp, isReader()) : saved.scrollY;
       nextScrollY = clampScroll(result.pages, nextZoom, rawY, curPane.height);
     } else {
-      nextZoom = fitZoom(result.pages, untracked(effectiveWidth));
+      nextZoom = fitZoom(result.pages, untracked(effectiveWidth), isReader());
       nextNeedsFit = nextZoom === 0;
       nextAutoFit = true;
       nextPanX = 0;
@@ -590,12 +612,12 @@ export function PreviewCanvas(props: {
         pendingJumpPage = start.page;
         nextScrollY = 0;
       } else {
-        const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud());
-        const rawY = start ? topFor(result.pages, nextZoom, start.page, tp) : saved ? saved.scrollY : 0;
+        const tp = topPadFor(result.pages, nextZoom, curPane.height, hasHud(), isReader());
+        const rawY = start ? topFor(result.pages, nextZoom, start.page, tp, isReader()) : saved ? saved.scrollY : 0;
         nextScrollY = clampScroll(result.pages, nextZoom, rawY, curPane.height);
       }
     }
-    const newMaxScroll = Math.max(0, heightFor(result.pages, nextZoom, curPane.height, hasHud()) - curPane.height);
+    const newMaxScroll = Math.max(0, heightFor(result.pages, nextZoom, curPane.height, hasHud(), isReader()) - curPane.height);
     cancelLiveZoom();
     cancelPan();
     cancelPendingScroll();
@@ -642,13 +664,13 @@ export function PreviewCanvas(props: {
         const tp = topPadFor(saved.pageSizes, saved.zoom, effPane.height, hasHud());
         list = viewFor(saved.pageSizes, saved.zoom, saved.scrollY, saved.panX, effPane, tp);
       } else {
-        const estZoom = fitZoom([DEFAULT_PAGE], effPane.width);
+        const estZoom = fitZoom([DEFAULT_PAGE], effPane.width, isReader());
         s = scaleFor(estZoom, dpr);
         const estPages = [DEFAULT_PAGE, DEFAULT_PAGE];
-        const tp = topPadFor(estPages, estZoom, effPane.height, hasHud());
+        const tp = topPadFor(estPages, estZoom, effPane.height, hasHud(), isReader());
         list =
           estZoom > 0 && effPane.height > 0
-            ? viewFor(estPages, estZoom, 0, 0, effPane, tp)
+            ? viewFor(estPages, estZoom, 0, 0, effPane, tp, isReader())
             : [
                 { page: 0, x: 0, y: 0, width: 0, height: 0 },
                 { page: 1, x: 0, y: 0, width: 0, height: 0 },
@@ -910,22 +932,23 @@ export function PreviewCanvas(props: {
     const list = untracked(pages);
     const curZoom = untracked(zoom);
     if (list.length === 0 || curZoom <= 0 || w <= 0 || curPane.width <= 0) return;
+    const reader = isReader();
     const oldEffW = Math.max(120, curPane.width - lastCommittedInset);
     const newEffW = Math.max(120, w - nextInset);
-    const oldLeft = leftFor(list[0].width, curZoom, oldEffW, untracked(panX));
-    if (autoFit) {
-      const nextZoom = fitZoom(list, newEffW);
+    const oldLeft = pageLeftFor(list[0].width, curZoom, oldEffW, untracked(panX), reader);
+    if (autoFit || reader) {
+      const nextZoom = fitZoom(list, newEffW, reader);
       if (nextZoom <= 0) return;
       const k = nextZoom / curZoom;
-      const newLeft = leftFor(list[0].width, nextZoom, newEffW, 0);
+      const newLeft = pageLeftFor(list[0].width, nextZoom, newEffW, 0, reader);
       const tx = newLeft - k * oldLeft;
-      const oldTop = topPadFor(list, curZoom, curPane.height, hasHud());
-      const newTop = topPadFor(list, nextZoom, h, hasHud());
+      const oldTop = topPadFor(list, curZoom, curPane.height, hasHud(), reader);
+      const newTop = topPadFor(list, nextZoom, h, hasHud(), reader);
       const curScroll = untracked(scrollY);
       const ty = newTop - k * oldTop + (1 - k) * curScroll;
       resizeTransform.set({ k, tx, ty });
     } else {
-      const newLeft = leftFor(list[0].width, curZoom, newEffW, untracked(panX));
+      const newLeft = pageLeftFor(list[0].width, curZoom, newEffW, untracked(panX), false);
       resizeTransform.set({ k: 1, tx: newLeft - oldLeft, ty: 0 });
     }
   }
@@ -951,13 +974,14 @@ export function PreviewCanvas(props: {
       if (needsFit) fit();
       return;
     }
+    const reader = isReader();
     const oldMaxScroll = currentMaxScroll();
     const effW = Math.max(120, targetPane.width - curInset);
-    const shouldRefit = autoFit && !untracked(dragging) && untracked(live).k === 1;
-    const nextZoom = shouldRefit ? fitZoom(list, effW) : curZoom;
+    const shouldRefit = (autoFit || reader) && !untracked(dragging) && untracked(live).k === 1;
+    const nextZoom = shouldRefit ? fitZoom(list, effW, reader) : curZoom;
     const zoomChanged = shouldRefit && nextZoom > 0 && Math.abs(nextZoom - curZoom) > 0.001;
     const finalZoom = zoomChanged ? nextZoom : curZoom;
-    const newMaxScroll = Math.max(0, heightFor(list, finalZoom, targetPane.height, hasHud()) - targetPane.height);
+    const newMaxScroll = Math.max(0, heightFor(list, finalZoom, targetPane.height, hasHud(), reader) - targetPane.height);
     const curScroll = untracked(scrollY);
     const nextScrollY = Math.min(newMaxScroll, Math.max(0, curScroll));
     batch(() => {
@@ -1037,18 +1061,19 @@ export function PreviewCanvas(props: {
     const list = pages();
     const curPane = pane();
     const effW = effectiveWidth();
+    const reader = isReader();
     if (!needsFit || list.length === 0 || effW === 0) return;
-    const nextZoom = fitZoom(list, effW);
+    const nextZoom = fitZoom(list, effW, reader);
     if (nextZoom === 0) return;
     needsFit = false;
     autoFit = true;
     const oldMaxScroll = currentMaxScroll();
     const jumpPage = pendingJumpPage;
     pendingJumpPage = undefined;
-    const tp = topPadFor(list, nextZoom, curPane.height, hasHud());
+    const tp = topPadFor(list, nextZoom, curPane.height, hasHud(), reader);
     const nextScrollY =
       jumpPage !== undefined
-        ? clampScroll(list, nextZoom, topFor(list, nextZoom, jumpPage, tp), curPane.height)
+        ? clampScroll(list, nextZoom, topFor(list, nextZoom, jumpPage, tp, reader), curPane.height)
         : clampScroll(list, nextZoom, scrollY(), curPane.height);
     batch(() => {
       zoom.set(nextZoom);
@@ -1056,7 +1081,7 @@ export function PreviewCanvas(props: {
       if (jumpPage !== undefined || nextScrollY !== scrollY()) scrollY.set(nextScrollY);
     });
     if (jumpPage !== undefined) {
-      const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height);
+      const newMaxScroll = Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud(), reader) - curPane.height);
       commitScroll(nextScrollY, oldMaxScroll, newMaxScroll);
     }
   }
@@ -1064,6 +1089,7 @@ export function PreviewCanvas(props: {
   function fitWidth() {
     const list = pages();
     if (list.length === 0) return;
+    const reader = isReader();
     clearTimeout(resizeTimer);
     resizeTimer = undefined;
     if (pendingPane) {
@@ -1078,18 +1104,18 @@ export function PreviewCanvas(props: {
     cancelPendingScroll();
     const curPane = pane();
     const page = currentPage();
-    const nextZoom = fitZoom(list, effectiveWidth());
+    const nextZoom = fitZoom(list, effectiveWidth(), reader);
     if (nextZoom === 0) return;
     autoFit = true;
     const oldMaxScroll = currentMaxScroll();
-    const tp = topPadFor(list, nextZoom, curPane.height, hasHud());
-    const nextScrollY = clampScroll(list, nextZoom, topFor(list, nextZoom, page, tp), curPane.height);
+    const tp = topPadFor(list, nextZoom, curPane.height, hasHud(), reader);
+    const nextScrollY = clampScroll(list, nextZoom, topFor(list, nextZoom, page, tp, reader), curPane.height);
     batch(() => {
       zoom.set(nextZoom);
       panX.set(0);
       scrollY.set(nextScrollY);
     });
-    commitScroll(nextScrollY, oldMaxScroll, Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud()) - curPane.height));
+    commitScroll(nextScrollY, oldMaxScroll, Math.max(0, heightFor(list, nextZoom, curPane.height, hasHud(), reader) - curPane.height));
   }
 
   // Preview the Inspector drawer inset via GPU compositor transform during the drawer slide,
@@ -1168,10 +1194,12 @@ export function PreviewCanvas(props: {
     },
     goPage,
     scrollToLocation,
-    zoomBy: (factor: number) =>
+    zoomBy: (factor: number) => {
+      if (isReader()) return;
       traceInteraction("preview.zoom_step", () =>
         zoomWheel(factor, { x: effectiveWidth() / 2, y: pane().height / 2 }),
-      ),
+      );
+    },
     fitWidth,
     closeHud() {
       if (!hudOpen()) return false;
@@ -1238,7 +1266,7 @@ export function PreviewCanvas(props: {
         }
         if (list.length === 0 || w <= 0) return;
         if (curZoom > 0) {
-          const newMaxScroll = Math.max(0, heightFor(list, curZoom, h, hasHud()) - h);
+          const newMaxScroll = Math.max(0, heightFor(list, curZoom, h, hasHud(), isReader()) - h);
           if (untracked(scrollY) > newMaxScroll + 0.5) {
             scrollY.set(newMaxScroll);
             scrollTo(newMaxScroll);
@@ -1282,6 +1310,7 @@ export function PreviewCanvas(props: {
           }}
           onWheel={(e) => {
             cancelPendingScroll();
+            if (isReader()) return;
             if (e.modifiers.control) {
               const steps = e.deltaMode === "lines" ? e.delta.y : e.delta.y / 40;
               zoomWheel(Math.pow(1.12, -steps), viewportAt(e.pagePosition));
@@ -1291,11 +1320,16 @@ export function PreviewCanvas(props: {
               if (e.delta.x !== 0) panX.set(left() - e.delta.x * k);
             }
           }}
-          onPinch={(e) => zoomPinch(e.delta, e.phase, viewportAt(e.pagePosition))}
+          onPinch={(e) => {
+            if (isReader()) return;
+            zoomPinch(e.delta, e.phase, viewportAt(e.pagePosition));
+          }}
           onPress={(e) => {
+            if (isReader()) return;
             if (e.modifiers.control || e.modifiers.platform) locate(e);
           }}
           onMouseMove={(e) => {
+            if (isReader()) return;
             if (e.pressedButton !== "left" || e.modifiers.control) {
               if (dragStart || dragging()) commitPan();
               return;
@@ -1314,16 +1348,22 @@ export function PreviewCanvas(props: {
               panOffset.set({ dx, dy });
             });
           }}
-          onMouseUp={() => commitPan()}
-          onMouseLeave={() => commitPan()}
+          onMouseUp={() => {
+            if (isReader()) return;
+            commitPan();
+          }}
+          onMouseLeave={() => {
+            if (isReader()) return;
+            commitPan();
+          }}
           style={{
             paddingTop: topPad(),
             paddingBottom: bottomPad(),
-            gap: pageGap(zoom()),
+            gap: pageGap(zoom(), isReader()),
             opacity: zoom() === 0 ? 0 : 1,
             transform: liveTransform(),
             transformOrigin: "0 0",
-            cursor: dragging() ? "grabbing" : zoom() > 0 ? "grab" : "default",
+            cursor: isReader() ? "default" : dragging() ? "grabbing" : zoom() > 0 ? "grab" : "default",
           }}
         >
           <Each of={pages()} key="index">
@@ -1388,7 +1428,7 @@ export function PreviewCanvas(props: {
       </If>
 
       {/* Unified floating HUD capsule */}
-      <If when={props.hud !== false}>
+      <If when={hasHud()}>
         <View
           style={{
             position: "absolute",

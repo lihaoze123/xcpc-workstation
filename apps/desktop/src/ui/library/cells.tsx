@@ -1,26 +1,82 @@
-// Shared library table cells, tri-state checkbox, and header renderers (§5.2).
-// Reused verbatim by both flat <DataTable> and grouped <GroupedProblemList>.
+// Shared library list row, tri-state checkbox, and pure list helpers (Phase 6D §6, §8.1).
+// Reused verbatim by both flat list and grouped <GroupedProblemList>.
 
-import { Text, View, type JSX } from "nsh";
+import { signal, Text, View, type JSX } from "nsh";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Chip, RatingBadge, tip } from "../kit";
-import type { CheckboxTriState, LibraryColumnKey } from "../logic";
+import { RatingBadge, tip } from "../kit";
+import type { CheckboxTriState } from "../logic";
 import { colorTransition } from "../motion";
-import { MONO } from "../theme";
 import { StatusMark } from "../studio/StatusSlot";
 import { markForPackageStatus } from "../studio/statusLogic";
+import { RADIUS, ROW, SPACE, TYPE } from "../tokens";
 
-import { FONT_SIZE, RADIUS, SPACE } from "../tokens";
 export type LibraryRow = ProblemSummaryJs & {
   ratingText: string;
   tagsText: string;
   source: string;
   status: string;
+  updatedAt?: string | number | null;
 };
 
+export type LibrarySortKey = "title" | "rating" | "recent";
+export const DEFAULT_LIBRARY_SORT: LibrarySortKey = "title";
+
 export const ROW_LINE = 20;
+
+/** Formats up to `maxVisible` tags as compact secondary text with `+N` overflow (§8.1). */
+export function formatRowTags(tags: readonly string[], maxVisible = 2): string {
+  if (tags.length === 0) return "";
+  const shown = tags.slice(0, maxVisible);
+  const overflow = tags.length - shown.length;
+  return overflow > 0 ? `${shown.join(" · ")} +${overflow}` : shown.join(" · ");
+}
+
+/** Sorts library rows by title (default), rating (unrated last), or recent modification/visit. */
+export function sortLibraryRows<
+  T extends Pick<ProblemSummaryJs, "id" | "title" | "rating"> & { updatedAt?: string | number | null },
+>(
+  rows: readonly T[],
+  sortKey: LibrarySortKey,
+  loc: string,
+  recentRank?: ReadonlyMap<string, number>,
+): T[] {
+  const list = [...rows];
+  if (sortKey === "rating") {
+    list.sort((a, b) => {
+      if (a.rating == null && b.rating == null) return a.title.localeCompare(b.title, loc) || a.id.localeCompare(b.id);
+      if (a.rating == null) return 1;
+      if (b.rating == null) return -1;
+      return a.rating - b.rating || a.title.localeCompare(b.title, loc) || a.id.localeCompare(b.id);
+    });
+    return list;
+  }
+  if (sortKey === "recent") {
+    list.sort((a, b) => {
+      const aTime = a.updatedAt != null ? (typeof a.updatedAt === "number" ? a.updatedAt : Date.parse(a.updatedAt)) : NaN;
+      const bTime = b.updatedAt != null ? (typeof b.updatedAt === "number" ? b.updatedAt : Date.parse(b.updatedAt)) : NaN;
+      if (!Number.isNaN(aTime) || !Number.isNaN(bTime)) {
+        if (Number.isNaN(aTime)) return 1;
+        if (Number.isNaN(bTime)) return -1;
+        if (bTime !== aTime) return bTime - aTime;
+      }
+      if (recentRank && recentRank.size > 0) {
+        const ra = recentRank.get(a.id);
+        const rb = recentRank.get(b.id);
+        if (ra !== undefined || rb !== undefined) {
+          if (ra === undefined) return 1;
+          if (rb === undefined) return -1;
+          if (ra !== rb) return ra - rb;
+        }
+      }
+      return b.id.localeCompare(a.id);
+    });
+    return list;
+  }
+  list.sort((a, b) => a.title.localeCompare(b.title, loc) || a.id.localeCompare(b.id));
+  return list;
+}
 
 /** Compact 16x16 tri-state checkbox matching the design system's 4px radius & primary fill. */
 export function TriCheckbox(props: {
@@ -57,302 +113,163 @@ export function TriCheckbox(props: {
   );
 }
 
-/** Fixed status icon slot (draws nothing when empty, §6.1). */
-function StatusSlot(props: { children?: JSX.Element; tooltipText?: string; compact?: boolean }) {
-  const size = props.compact ? 16 : 18;
+/** Compact training status icon rendered inside the 16pt Status slot. */
+function TrainingStatusIcon(props: { status?: string | null }) {
+  const st = props.status ?? "none";
+  if (st === "ac") return <Icon name="check" size="sm" tone="chart-2" />;
+  if (st === "upsolved") return <Icon name="shieldCheck" size="sm" tone="primary" />;
+  if (st === "attempted") return <Icon name="circleAlert" size="sm" tone="chart-4" />;
+  if (st === "todo") {
+    return (
+      <View
+        style={{ width: 9, height: 9, borderRadius: RADIUS.xs, borderWidth: 1.5 }}
+        class="border-secondary-foreground"
+      />
+    );
+  }
+  return null;
+}
+
+/** Fixed 16pt status icon slot (draws nothing when empty, §6.1). */
+function LibraryStatusIcon(props: { row: LibraryRow; trainingEnabled?: boolean }) {
+  const st = props.row.packageStatus;
+  const tr = props.trainingEnabled ? props.row.trainingStatus : undefined;
+  const summaryParts: string[] = [];
+  if (st === "verified_fresh") summaryParts.push(t("library.status.verified"));
+  else if (st === "failed") summaryParts.push(t("library.status.failed"));
+  else if (st === "stale") summaryParts.push(t("library.status.stale"));
+  else if (st === "unverified") summaryParts.push(t("library.status.unverified"));
+  if (tr === "ac") summaryParts.push(t("training.status.ac"));
+  else if (tr === "upsolved") summaryParts.push(t("training.status.upsolved"));
+  else if (tr === "attempted") summaryParts.push(t("training.status.attempted"));
+  else if (tr === "todo") summaryParts.push(t("training.status.todo"));
+  if (props.row.hasEditorial) summaryParts.push(t("library.status.hasEditorial"));
+  if (props.row.hasSolutions) summaryParts.push(t("library.status.hasCode"));
+  const combinedTip = summaryParts.length > 0 ? summaryParts.join("  ") : undefined;
+
+  let primary: JSX.Element | null = null;
+  if (st === "failed" || st === "stale") {
+    primary = <StatusMark kind={markForPackageStatus(st)} />;
+  } else if (tr && tr !== "none") {
+    primary = <TrainingStatusIcon status={tr} />;
+  } else if (st) {
+    primary = <StatusMark kind={markForPackageStatus(st)} />;
+  } else if (props.row.hasEditorial) {
+    primary = <Icon name="filePenLine" size="sm" tone="secondary-foreground" />;
+  } else if (props.row.hasSolutions) {
+    primary = <Icon name="code" size="sm" tone="secondary-foreground" />;
+  }
+
   return (
     <View
-      tooltip={props.tooltipText ? tip(props.tooltipText) : undefined}
+      tooltip={combinedTip ? tip(combinedTip) : undefined}
       style={{
-        width: size,
-        height: 18, // token-exempt: compact inline status cell
+        width: 16,
+        height: 16,
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
       }}
     >
-      {props.children}
+      {primary}
     </View>
   );
 }
 
-/** Compact training status icon rendered inside the Status column's first slot (aligned across all rows). */
-function TrainingStatusSlot(props: { status?: string | null }) {
-  const st = props.status ?? "none";
-  if (st === "ac") {
-    return (
-      <StatusSlot compact tooltipText={t("training.status.ac")}>
-        <Icon name="check" size="sm" tone="chart-2" />
-      </StatusSlot>
-    );
-  }
-  if (st === "upsolved") {
-    return (
-      <StatusSlot compact tooltipText={t("training.status.upsolved")}>
-        <Icon name="shieldCheck" size="sm" tone="primary" />
-      </StatusSlot>
-    );
-  }
-  if (st === "attempted") {
-    return (
-      <StatusSlot compact tooltipText={t("training.status.attempted")}>
-        <Icon name="circleAlert" size="sm" tone="chart-4" />
-      </StatusSlot>
-    );
-  }
-  if (st === "todo") {
-    return (
-      <StatusSlot compact tooltipText={t("training.status.todo")}>
-        <View style={{ width: 9, height: 9, borderRadius: RADIUS.xs, borderWidth: 1.5 }} class="border-secondary-foreground" />
-      </StatusSlot>
-    );
-  }
-  return <StatusSlot compact />;
-}
-
-export function renderLibraryCellContent(
-  key: LibraryColumnKey | string,
-  row: LibraryRow | undefined,
-  opts: {
-    selected: boolean;
-    showCheckbox?: boolean | (() => boolean);
-    showInlineId: boolean;
-    maxTags: number;
-    tagsWidth?: number;
-    trainingEnabled?: boolean;
-    onToggleSelect?: () => void;
-  },
-): JSX.Element | null {
-  if (!row) return null;
-
-  if (key === "select") {
-    return (
-      <TriCheckbox
-        state={opts.selected ? "all" : "none"}
-        visible={opts.showCheckbox}
-        onPress={opts.onToggleSelect}
-      />
-    );
-  }
-
-  if (key === "title") {
-    return (
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: SPACE[6], minWidth: 0 }}>
-        <Text
-          style={{
-            numberOfLines: 1,
-            textOverflow: "ellipsis",
-            fontSize: FONT_SIZE.body,
-            lineHeight: ROW_LINE,
-            flexShrink: 1,
-            minWidth: 0,
-          }}
-          class="text-foreground"
-        >
-          {row.title}
-        </Text>
-        {opts.showInlineId && (
-          <Text
-            style={{
-              numberOfLines: 1,
-              textOverflow: "ellipsis",
-              fontSize: FONT_SIZE.caption,
-              lineHeight: ROW_LINE,
-              fontFamily: MONO,
-              maxWidth: 112,
-              flexShrink: 1,
-              minWidth: 0,
-            }}
-            class="text-muted-foreground"
-          >
-            {row.id}
-          </Text>
-        )}
-      </View>
-    );
-  }
-
-  if (key === "ratingText") {
-    return row.rating != null ? <RatingBadge rating={row.rating} /> : null;
-  }
-
-  if (key === "tagsText") {
-    // Budget tags against the column's inner width so `+N` is never clipped off-edge.
-    const maxChipW = 78;
-    const budget = Math.max(72, (opts.tagsWidth ?? 176) - 20);
-    const visible: string[] = [];
-    let used = 0;
-    for (let i = 0; i < row.tags.length && visible.length < opts.maxTags; i++) {
-      const tag = row.tags[i];
-      const est = Math.min(maxChipW, Math.ceil(tag.length * 6.8) + 14);
-      const gap = visible.length > 0 ? 4 : 0;
-      const remainingAfter = row.tags.length - (i + 1);
-      const overflowReserve = remainingAfter > 0 ? 30 : 0;
-      if (visible.length > 0 && used + gap + est + overflowReserve > budget) break;
-      visible.push(tag);
-      used += gap + est;
-    }
-    const overflow = Math.max(0, row.tags.length - visible.length);
-    return (
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: SPACE[4], minWidth: 0, overflow: "hidden" }}>
-        <Each of={visible} key={(tag) => tag}>
-          {(tag) => <Chip label={tag()} maxWidth={maxChipW} />}
-        </Each>
-        {overflow > 0 && (
-          <View
-            style={{
-              height: 20, // token-exempt: compact inline chip height
-              paddingLeft: SPACE[4],
-              paddingRight: SPACE[4],
-              borderRadius: RADIUS.xs,
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-            class="bg-muted"
-          >
-            <Text style={{ fontSize: FONT_SIZE.micro, fontVariant: ["tabular-nums"] }} class="text-muted-foreground">
-              {`+${overflow}`}
-            </Text>
-          </View>
-        )}
-      </View>
-    );
-  }
-
-  if (key === "status") {
-    const st = row.packageStatus;
-    const tr = opts.trainingEnabled ? row.trainingStatus : undefined;
-    const summaryParts: string[] = [];
-    if (st === "verified_fresh") summaryParts.push(t("library.status.verified"));
-    else if (st === "failed") summaryParts.push(t("library.status.failed"));
-    else if (st === "stale") summaryParts.push(t("library.status.stale"));
-    else if (st === "unverified") summaryParts.push(t("library.status.unverified"));
-    if (tr === "ac") summaryParts.push(t("training.status.ac"));
-    else if (tr === "upsolved") summaryParts.push(t("training.status.upsolved"));
-    else if (tr === "attempted") summaryParts.push(t("training.status.attempted"));
-    else if (tr === "todo") summaryParts.push(t("training.status.todo"));
-    if (row.hasEditorial) summaryParts.push(t("library.status.hasEditorial"));
-    if (row.hasSolutions) summaryParts.push(t("library.status.hasCode"));
-    const combinedTip = summaryParts.length > 0 ? summaryParts.join("  ") : undefined;
-
-    // Show the single highest-priority status indicator; secondary details live in the tooltip.
-    let primary: JSX.Element | undefined;
-    if (st === "failed" || st === "stale") {
-      primary = <StatusMark kind={markForPackageStatus(st)} />;
-    } else if (tr && tr !== "none") {
-      primary = <TrainingStatusSlot status={tr} />;
-    } else if (st) {
-      primary = <StatusMark kind={markForPackageStatus(st)} />;
-    } else if (row.hasEditorial) {
-      primary = <Icon name="filePenLine" size="sm" tone="secondary-foreground" />;
-    } else if (row.hasSolutions) {
-      primary = <Icon name="code" size="sm" tone="secondary-foreground" />;
-    }
-
-    return (
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
-        <StatusSlot tooltipText={combinedTip}>{primary}</StatusSlot>
-      </View>
-    );
-  }
-
-  if (key === "source") {
-    return (
-      <Text
-        style={{
-          numberOfLines: 1,
-          textOverflow: "ellipsis",
-          fontSize: FONT_SIZE.caption,
-          lineHeight: ROW_LINE,
-          fontFamily: MONO,
-          flexShrink: 1,
-          minWidth: 0,
-        }}
-        class="text-secondary-foreground"
-      >
-        {row.source}
-      </Text>
-    );
-  }
-
-  return null;
-}
-
-export function cellPadding(key: string): { paddingLeft: number; paddingRight: number; justifyContent: "flex-start" | "center" | "flex-end" } {
-  if (key === "select") return { paddingLeft: SPACE[0], paddingRight: SPACE[0], justifyContent: "center" };
-  if (key === "ratingText") return { paddingLeft: SPACE[8], paddingRight: SPACE[12], justifyContent: "flex-end" };
-  if (key === "status") return { paddingLeft: SPACE[4], paddingRight: SPACE[4], justifyContent: "center" };
-  if (key === "title") return { paddingLeft: SPACE[8], paddingRight: SPACE[12], justifyContent: "flex-start" };
-  return { paddingLeft: SPACE[12], paddingRight: SPACE[12], justifyContent: "flex-start" };
-}
-
-export function renderLibraryHeaderContent(props: {
-  key: string;
-  title: string;
-  sortDir?: "ascending" | "descending" | null;
-  triState: () => CheckboxTriState;
-  showCheckbox?: boolean | (() => boolean);
-  onToggleAll: () => void;
-  nativeSortIndicator?: boolean;
+/** 40pt single-line problem list row (§8.1): checkbox slot, title, tags, 44pt rating slot, 16pt status slot. */
+export function LibraryListRow(props: {
+  row: LibraryRow;
+  showRatingCol: boolean;
+  showStatusCol: boolean;
+  trainingEnabled?: boolean;
+  selected: boolean;
+  anySelected: boolean;
+  focused: boolean;
+  onRowClick: (id: string, opts: { shift: boolean; mod: boolean; checkbox: boolean }) => void;
+  onRowDoubleClick: (id: string) => void;
+  onRowContextMenu: (row: LibraryRow, x: number, y: number) => void;
 }) {
-  const pad = cellPadding(props.key);
-  const sortable = props.key === "title" || props.key === "ratingText";
-  const isEnd = props.key === "ratingText";
-
-  if (props.key === "select") {
-    return (
-      <View
-        style={{
-          flex: 1,
-          minWidth: 0,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <TriCheckbox
-          state={props.triState()}
-          visible={props.showCheckbox}
-          onPress={props.onToggleAll}
-          testID="library-select-all"
-        />
-      </View>
-    );
-  }
-
-  const chevron =
-    !props.nativeSortIndicator && props.sortDir ? (
-      <Icon
-        name="chevronDown"
-        size="sm"
-        tone="secondary-foreground"
-        style={{ transform: props.sortDir === "ascending" ? "rotate(180deg)" : "rotate(0deg)" }}
-      />
-    ) : null;
+  const hovered = signal(false);
+  const tagText = () => formatRowTags(props.row.tags, 2);
 
   return (
     <View
-      class={sortable ? "hover:bg-muted/60 transition-colors" : undefined}
+      onMouseEnter={() => hovered.set(true)}
+      onMouseLeave={() => hovered.set(false)}
+      onPress={(e) => {
+        const mod = e.modifiers.control || e.modifiers.platform;
+        const shift = e.modifiers.shift;
+        const isCheckboxSlot = e.position.x <= 36;
+        if (e.clickCount >= 2 && !isCheckboxSlot && !mod && !shift) {
+          props.onRowDoubleClick(props.row.id);
+          return;
+        }
+        props.onRowClick(props.row.id, { shift, mod, checkbox: isCheckboxSlot });
+      }}
+      onContextMenu={(e) => props.onRowContextMenu(props.row, e.pagePosition.x, e.pagePosition.y)}
+      class={props.selected || props.focused ? "bg-accent" : "bg-card hover:bg-muted"}
       style={{
-        flex: 1,
-        minWidth: 0,
+        height: ROW.list,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[12],
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: pad.justifyContent,
-        paddingLeft: pad.paddingLeft,
-        paddingRight: props.nativeSortIndicator && sortable ? Math.max(pad.paddingRight, 20) : pad.paddingRight,
-        gap: SPACE[4],
+        gap: SPACE[8],
+        flexShrink: 0,
+        ...colorTransition(100),
       }}
     >
-      {isEnd && chevron}
+      {/* Reserved checkbox slot (§6.3): visible on hover, when selected, or when any item is selected. */}
+      <View style={{ width: 24, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <TriCheckbox
+          state={props.selected ? "all" : "none"}
+          visible={() => hovered() || props.selected || props.anySelected}
+        />
+      </View>
+
+      {/* Title (TYPE.body, flex width, single-line ellipsis) */}
       <Text
-        style={{ fontSize: FONT_SIZE.caption, lineHeight: ROW_LINE, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
-        class={props.sortDir ? "text-foreground" : "text-muted-foreground"}
+        style={{
+          ...TYPE.body,
+          flexGrow: 1,
+          flexShrink: 1,
+          minWidth: 96,
+          numberOfLines: 1,
+          textOverflow: "ellipsis",
+        }}
+        class="text-foreground"
       >
-        {props.title}
+        {props.row.title}
       </Text>
-      {!isEnd && chevron}
+
+      {/* Tags (TYPE.caption, secondary color, max 2 + `+N`, shrinks/truncates first when tight) */}
+      <If when={tagText().length > 0}>
+        <Text
+          style={{
+            ...TYPE.caption,
+            flexShrink: 3,
+            minWidth: 0,
+            maxWidth: 132,
+            numberOfLines: 1,
+            textOverflow: "ellipsis",
+          }}
+          class="text-muted-foreground"
+        >
+          {tagText()}
+        </Text>
+      </If>
+
+      {/* Difficulty badge slot (fixed 44pt, hidden workspace-wide if all problems unrated §6.2) */}
+      <If when={props.showRatingCol}>
+        <View style={{ width: 44, alignItems: "flex-end", justifyContent: "center", flexShrink: 0 }}>
+          {props.row.rating != null ? <RatingBadge rating={props.row.rating} /> : null}
+        </View>
+      </If>
+
+      {/* Status icon slot (fixed 16pt, hidden workspace-wide if all problems have no status §6.2) */}
+      <If when={props.showStatusCol}>
+        <LibraryStatusIcon row={props.row} trainingEnabled={props.trainingEnabled} />
+      </If>
     </View>
   );
 }

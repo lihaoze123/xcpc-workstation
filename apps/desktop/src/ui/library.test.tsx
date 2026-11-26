@@ -11,6 +11,7 @@ import {
   partitionBatchDelete,
   type PaletteActionInput,
 } from "./logic";
+import { DEFAULT_LIBRARY_SORT, formatRowTags, sortLibraryRows } from "./library/cells";
 
 function makeProblem(overrides: Partial<ProblemSummaryJs> & { id: string }): ProblemSummaryJs {
   return {
@@ -314,5 +315,39 @@ describe("New Stage 4 errorCopy codes", () => {
     expect(errorCopy("group_already_exists").rule).toBe(false);
     expect(errorCopy("cancelled").rule).toBe(true);
     expect(errorCopy("not_a_package").rule).toBe(true);
+  });
+});
+
+describe("Library list row tags and sort helpers (Phase 6D §8.1)", () => {
+  test("formatRowTags shows up to 2 tags and appends +N overflow", () => {
+    expect(formatRowTags([])).toBe("");
+    expect(formatRowTags(["dp"])).toBe("dp");
+    expect(formatRowTags(["dp", "greedy"])).toBe("dp · greedy");
+    expect(formatRowTags(["dp", "greedy", "math", "graphs"])).toBe("dp · greedy +2");
+  });
+
+  test("sortLibraryRows supports title (default), rating (unrated last), and recent", () => {
+    expect(DEFAULT_LIBRARY_SORT).toBe("title");
+    const items = [
+      makeProblem({ id: "p-b", title: "Beta", rating: null }),
+      makeProblem({ id: "p-c", title: "Gamma", rating: 1800 }),
+      makeProblem({ id: "p-a", title: "Alpha", rating: 1200 }),
+    ];
+
+    expect(sortLibraryRows(items, "title", "en").map((p) => p.id)).toEqual(["p-a", "p-b", "p-c"]);
+    expect(sortLibraryRows(items, "rating", "en").map((p) => p.id)).toEqual(["p-a", "p-c", "p-b"]);
+
+    const recentRank = new Map([
+      ["p-c", 0],
+      ["p-b", 1],
+    ]);
+    expect(sortLibraryRows(items, "recent", "en", recentRank).map((p) => p.id)).toEqual(["p-c", "p-b", "p-a"]);
+
+    const withTimes = [
+      { ...items[0], updatedAt: "2026-01-01T00:00:00Z" },
+      { ...items[1], updatedAt: "2026-03-01T00:00:00Z" },
+      { ...items[2], updatedAt: "2026-02-01T00:00:00Z" },
+    ];
+    expect(sortLibraryRows(withTimes, "recent", "en").map((p) => p.id)).toEqual(["p-c", "p-a", "p-b"]);
   });
 });

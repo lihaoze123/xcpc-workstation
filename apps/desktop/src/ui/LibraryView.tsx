@@ -1,17 +1,15 @@
-// Cmd+1: the problem library. Collapsible persistent group sidebar on the left,
-// multi-dimensional filters & dynamic group-by folding over a virtualized table
-// (40 pt rows: select, title + inline ID, rating, tags, 3-slot status, source),
-// multi-select floating batch bar, and right-hand ProblemInspector / BatchInspector.
+// Cmd+1: the problem library (Phase 6D §8.1).
+// Collapsible persistent group sidebar on the left, fixed ~440pt headerless problem list
+// (40pt single-line rows, unified filter+sort popover, 28pt active filter chip bar, `+` split menu),
+// multi-select floating batch bar, and right-hand reader-mode ProblemInspector / BatchInspector.
 
-import { batch, cleanup, Clipboard, computed, effect, keymap, signal, Text, View, type InputRef } from "nsh";
+import { batch, cleanup, Clipboard, computed, effect, keymap, Scroll, signal, Text, View, type InputRef, type ScrollRef } from "nsh";
 import {
-  DataTable,
   Editor,
   Input,
+  Popover,
   ResizablePanel,
   ResizablePanelGroup,
-  type DataTableRef,
-  type DataTableSort,
 } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { PreviewRequest } from "xcpc-workstation/native";
@@ -19,19 +17,18 @@ import { Btn, Chevron, Chip, IconBtn, RatingBadge, Segmented, tip } from "./kit"
 import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
-import { DetailHeader, EmptyState, Spacer, Toolbar } from "./layout";
+import { DetailHeader, EmptyState, Toolbar } from "./layout";
 import {
   applyRowSelection,
-  computeLibraryColumns,
   EMPTY_SELECTION,
   groupProblems,
-  headerCheckboxState,
   TIER_RANGES,
   type LibraryGroupBy,
   type SelectionState,
   type TierName,
 } from "./logic";
-import { EASE_STANDARD, MONO, monoFont, ms } from "./theme";
+import { colorTransition, pressActiveStyle, pressTransition } from "./motion";
+import { EASE_STANDARD, MONO, monoFont, ms, popoverShadow } from "./theme";
 import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
   activeRevision,
@@ -62,58 +59,93 @@ import {
 } from "./tools/types";
 import { GroupSidebar, type SidebarGroupSelection } from "./library/GroupSidebar";
 import {
-  cellPadding,
-  renderLibraryCellContent,
-  renderLibraryHeaderContent,
-  ROW_LINE,
+  DEFAULT_LIBRARY_SORT,
+  LibraryListRow,
+  sortLibraryRows,
   type LibraryRow,
+  type LibrarySortKey,
 } from "./library/cells";
 import { GroupedProblemList } from "./library/GroupedProblemList";
 import { BatchFloatingBar } from "./library/BatchFloatingBar";
 import { BatchInspector } from "./library/BatchInspector";
+import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, ROW, SPACE, TYPE } from "./tokens";
 
-import { CONTROL, FONT_SIZE, RADIUS, ROW, SPACE } from "./tokens";
 const SEARCH_DEBOUNCE_MS = 120;
 const AUTO_COLLAPSE_WIDTH = 1040;
 
-function FilterMenu(props: { label: string; active: boolean; entries: MenuEntry[]; multi?: boolean; onSelect: (id: string) => void }) {
+interface ActiveFilterChip {
+  id: string;
+  label: string;
+  onRemove: () => void;
+}
+
+/** Compact selectable pill used inside the grouped Filter popover. */
+function FilterOptionPill(props: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <AppMenu
-      entries={props.entries}
-      stayOpen={props.multi}
-      onSelect={props.onSelect}
-      trigger={
-        <View
-          class={
-            props.active
-              ? "bg-accent border border-border hover:bg-accent/80 active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              : "border border-transparent hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          }
-          style={{
-            height: CONTROL.md,
-            maxWidth: 96,
-            paddingLeft: SPACE[6],
-            paddingRight: SPACE[4],
-            borderRadius: RADIUS.sm,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: SPACE[2],
-            flexShrink: 0,
-            transitionProperty: "colors",
-            transitionDuration: ms(120),
-            transitionTimingFunction: EASE_STANDARD,
-          }}
-        >
-          <Text
-            style={{ fontSize: FONT_SIZE.caption, lineHeight: ROW_LINE, flexShrink: 1, minWidth: 0, numberOfLines: 1, textOverflow: "ellipsis" }}
-            class={props.active ? "text-foreground" : "text-secondary-foreground"}
-          >
-            {props.label}
-          </Text>
-          <Chevron size="sm" tone={props.active ? "foreground" : "muted-foreground"} />
-        </View>
+    <View
+      onPress={props.onPress}
+      class={
+        props.active
+          ? "bg-accent border border-primary/40 text-foreground"
+          : "bg-muted/60 border border-transparent hover:bg-muted text-secondary-foreground"
       }
-    />
+      style={{
+        height: CONTROL.sm,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
+        alignItems: "center",
+        justifyContent: "center",
+        ...colorTransition(120),
+      }}
+    >
+      <Text
+        style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
+        class={props.active ? "text-foreground" : "text-secondary-foreground"}
+      >
+        {props.label}
+      </Text>
+    </View>
+  );
+}
+
+/** Radio option row for the bottom Sort section of the Filter popover. */
+function SortRadioRow(props: { label: string; selected: boolean; onPress: () => void; testID?: string }) {
+  return (
+    <View
+      testID={props.testID}
+      onPress={props.onPress}
+      class="hover:bg-muted active:bg-accent"
+      style={{
+        height: CONTROL.lg,
+        paddingLeft: SPACE[8],
+        paddingRight: SPACE[8],
+        borderRadius: RADIUS.sm,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: SPACE[8],
+        ...colorTransition(120),
+      }}
+    >
+      <View
+        class={props.selected ? "border border-primary" : "border border-border"}
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: RADIUS.full,
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <If when={props.selected}>
+          <View style={{ width: 6, height: 6, borderRadius: RADIUS.full }} class="bg-primary" />
+        </If>
+      </View>
+      <Text style={{ ...TYPE.body, flex: 1 }} class="text-foreground">
+        {props.label}
+      </Text>
+    </View>
   );
 }
 
@@ -125,15 +157,16 @@ export function LibraryView(props: { active: boolean }) {
   const platform = signal<string | undefined>(undefined);
   const trainingStatusFilter = signal<string | undefined>(undefined);
   const sidebarGroup = signal<SidebarGroupSelection>({ kind: "all" });
-  const sort = signal<DataTableSort | null>(null);
+  const sortKey = signal<LibrarySortKey>(DEFAULT_LIBRARY_SORT);
+  const filterOpen = signal(false);
   const selection = signal<SelectionState>(EMPTY_SELECTION);
 
   const outerWidth = signal(1280);
   const narrowSidebarOverride = signal<boolean | undefined>(undefined);
-  const width = signal(0); // table container width
-  const hoveredCell = signal<{ row: number; col: string } | undefined>(undefined);
-  const headerSelectHovered = signal(false);
-  let table: DataTableRef | undefined;
+  const width = signal(440); // list container width
+  let listScroll: ScrollRef | undefined;
+  let listHeight = 0;
+  let listScrollY = 0;
   let search: InputRef | undefined;
   let searchTimer: number | undefined;
   let widthTimer: number | undefined;
@@ -173,6 +206,17 @@ export function LibraryView(props: { active: boolean }) {
     searchTimer = setTimeout(() => queryText.set(val), SEARCH_DEBOUNCE_MS);
   };
 
+  const clearStructuredFilters = () => {
+    batch(() => {
+      tags.set([]);
+      tier.set(undefined);
+      platform.set(undefined);
+      trainingStatusFilter.set(undefined);
+      sidebarGroup.set({ kind: "all" });
+      setLibraryGroupBy("none");
+    });
+  };
+
   const clearFilters = () => {
     clearTimeout(searchTimer);
     batch(() => {
@@ -190,13 +234,12 @@ export function LibraryView(props: { active: boolean }) {
   effect(() => {
     void workspaceVersion();
     clearFilters();
-    sort.set(null);
+    sortKey.set(DEFAULT_LIBRARY_SORT);
     selection.set(EMPTY_SELECTION);
   });
 
   const readOnly = () => info().readOnly;
   const trainingEnabled = () => info().trainingEnabled;
-  const totalCount = () => info().problems.length;
 
   effect(() => {
     if (!trainingEnabled() && trainingStatusFilter() !== undefined) {
@@ -217,6 +260,24 @@ export function LibraryView(props: { active: boolean }) {
     if (sel.kind === "named" && !facets().groups.some((g) => g.name === sel.name)) {
       sidebarGroup.set({ kind: "all" });
     }
+  });
+
+  const recentRank = computed<Map<string, number>>(() => {
+    if (sortKey() !== "recent") return new Map();
+    void rev();
+    const map = new Map<string, number>();
+    try {
+      const hits = typeof preview.fuzzyJump === "function" ? preview.fuzzyJump("", null) : [];
+      let idx = 0;
+      for (const h of hits) {
+        if (h.kind === "problem" && !map.has(h.id)) {
+          map.set(h.id, idx++);
+        }
+      }
+    } catch {
+      // Fall back to deterministic ID order when fuzzyJump is unavailable.
+    }
+    return map;
   });
 
   const rows = computed<LibraryRow[]>(() => {
@@ -245,21 +306,7 @@ export function LibraryView(props: { active: boolean }) {
         source: p.sources.map((s) => `${s.platform} ${s.id}`).join("  "),
         status: `${p.packageStatus ?? ""}:${p.hasEditorial ? "e" : ""}:${p.hasSolutions ? "c" : ""}`,
       }));
-    const s = sort();
-    if (s) {
-      const dir = s.direction === "descending" ? -1 : 1;
-      list.sort((a, b) => {
-        if (s.key === "ratingText") {
-          if (a.rating == null && b.rating == null) return a.id.localeCompare(b.id);
-          if (a.rating == null) return 1; // keep unrated at the bottom
-          if (b.rating == null) return -1;
-          return (a.rating - b.rating) * dir;
-        }
-        if (s.key === "title") return a.title.localeCompare(b.title, locale()) * dir;
-        return a.id.localeCompare(b.id) * dir;
-      });
-    }
-    return list;
+    return sortLibraryRows(list, sortKey(), locale(), recentRank());
   });
 
   const visibleIds = computed(() => rows().map((r) => r.id));
@@ -283,8 +330,8 @@ export function LibraryView(props: { active: boolean }) {
     return out;
   });
 
-  // Workspace-wide column presence (§6.2): evaluated across ALL problems in the workspace
-  // (never the current filtered subset) so toggling filters never causes columns to pop in/out.
+  // Workspace-wide slot presence (§6.2): evaluated across ALL problems in the workspace
+  // (never the current filtered subset) so toggling filters never causes slots to pop in/out.
   const allWorkspaceProblems = computed(() => {
     void rev();
     return preview.searchProblems({
@@ -303,8 +350,6 @@ export function LibraryView(props: { active: boolean }) {
     const trEnabled = trainingEnabled();
     let hasRating = false;
     let hasStatus = false;
-    let hasTags = false;
-    let hasSource = false;
     for (const p of all) {
       if (!hasRating && p.rating != null) hasRating = true;
       if (
@@ -316,48 +361,96 @@ export function LibraryView(props: { active: boolean }) {
       ) {
         hasStatus = true;
       }
-      if (!hasTags && p.tags.length > 0) hasTags = true;
-      if (!hasSource && p.sources.length > 0) hasSource = true;
-      if (hasRating && hasStatus && hasTags && hasSource) break;
+      if (hasRating && hasStatus) break;
     }
-    return { hasRating, hasStatus, hasTags, hasSource };
+    return { hasRating, hasStatus };
   });
 
-  const colLayout = computed(() => {
-    const base = computeLibraryColumns(width());
-    const pres = workspaceColPresence();
-    let reclaimed = 0;
-    const filteredCols = base.columns.filter((c) => {
-      if (c.key === "ratingText" && !pres.hasRating) {
-        reclaimed += c.width;
-        return false;
+  const trainingStatusLabel = (st: string) => {
+    if (st === "none") return t("training.status.none");
+    if (st === "todo") return t("training.status.todo");
+    if (st === "attempted") return t("training.status.attempted");
+    if (st === "ac") return t("training.status.ac");
+    return t("training.status.upsolved");
+  };
+
+  const groupByOptionLabel = (mode: LibraryGroupBy) => {
+    if (mode === "none") return t("library.groupBy.none");
+    if (mode === "group") return t("library.groupBy.group");
+    if (mode === "rating") return t("library.groupBy.rating");
+    if (mode === "platform") return t("library.groupBy.platform");
+    if (mode === "contest") return t("library.groupBy.contest");
+    return t("library.groupBy.packageStatus");
+  };
+
+  const activeFilterChips = computed<ActiveFilterChip[]>(() => {
+    const chips: ActiveFilterChip[] = [];
+    const curTier = tier();
+    if (curTier !== undefined) {
+      const range = TIER_RANGES.find((r) => r.tier === curTier);
+      if (range) {
+        chips.push({
+          id: `tier:${curTier}`,
+          label: `${t("library.filter.rating")} ${range.label}`,
+          onRemove: () => tier.set(undefined),
+        });
       }
-      if (c.key === "status" && !pres.hasStatus) {
-        reclaimed += c.width;
-        return false;
-      }
-      if (c.key === "tagsText" && !pres.hasTags) {
-        reclaimed += c.width;
-        return false;
-      }
-      if (c.key === "source" && !pres.hasSource) {
-        reclaimed += c.width;
-        return false;
-      }
-      return true;
-    });
-    if (reclaimed === 0) return base;
-    const titleWidth = base.titleWidth + reclaimed;
-    const columns = filteredCols.map((c) => (c.key === "title" ? { ...c, width: titleWidth } : c));
-    return {
-      columns,
-      titleWidth,
-      tagsWidth: pres.hasTags ? base.tagsWidth : 0,
-      showInlineId: titleWidth >= 220,
-      maxTags: base.maxTags,
-    };
+    }
+    for (const tg of tags()) {
+      chips.push({
+        id: `tag:${tg}`,
+        label: tg,
+        onRemove: () => tags.set(tags().filter((x) => x !== tg)),
+      });
+    }
+    const curPlatform = platform();
+    if (curPlatform !== undefined) {
+      chips.push({
+        id: `platform:${curPlatform}`,
+        label: `${t("library.filter.source")} ${curPlatform}`,
+        onRemove: () => platform.set(undefined),
+      });
+    }
+    const curTr = trainingEnabled() ? trainingStatusFilter() : undefined;
+    if (curTr !== undefined) {
+      chips.push({
+        id: `training:${curTr}`,
+        label: `${t("training.filter.label")} ${trainingStatusLabel(curTr)}`,
+        onRemove: () => trainingStatusFilter.set(undefined),
+      });
+    }
+    const curGroupBy = libraryGroupBy();
+    if (curGroupBy !== "none") {
+      chips.push({
+        id: `groupBy:${curGroupBy}`,
+        label: `${t("library.groupBy.label")} ${groupByOptionLabel(curGroupBy)}`,
+        onRemove: () => setLibraryGroupBy("none"),
+      });
+    }
+    const sg = sidebarGroup();
+    if (sg.kind === "named") {
+      chips.push({
+        id: `sidebar:${sg.name}`,
+        label: sg.name,
+        onRemove: () => sidebarGroup.set({ kind: "all" }),
+      });
+    } else if (sg.kind === "ungrouped") {
+      chips.push({
+        id: "sidebar:__ungrouped__",
+        label: t("library.sidebar.ungrouped"),
+        onRemove: () => sidebarGroup.set({ kind: "all" }),
+      });
+    }
+    return chips;
   });
-  const columns = computed(() => colLayout().columns);
+
+  const hasFilterMenuActive = () =>
+    tags().length > 0 ||
+    tier() !== undefined ||
+    platform() !== undefined ||
+    (trainingEnabled() && trainingStatusFilter() !== undefined) ||
+    libraryGroupBy() !== "none" ||
+    sortKey() !== DEFAULT_LIBRARY_SORT;
 
   const filtered = () =>
     inputText().trim() !== "" ||
@@ -377,8 +470,6 @@ export function LibraryView(props: { active: boolean }) {
     const id = visibleSelected();
     return id ? rows().findIndex((r) => r.id === id) : -1;
   });
-
-  const headerTriState = computed(() => headerCheckboxState(selection().selectedIds, orderedVisibleIds()));
 
   const selectedProblemsList = computed(() => {
     const sel = selection().selectedIds;
@@ -425,9 +516,20 @@ export function LibraryView(props: { active: boolean }) {
     }
   });
 
+  function ensureRowVisible(index: number) {
+    if (!listScroll || listHeight <= 0 || index < 0) return;
+    const rowTop = index * ROW.list;
+    const rowBottom = rowTop + ROW.list;
+    if (rowTop < listScrollY) {
+      listScroll.scrollTo({ y: Math.max(0, rowTop), animated: false });
+    } else if (rowBottom > listScrollY + listHeight) {
+      listScroll.scrollTo({ y: Math.max(0, rowBottom - listHeight), animated: false });
+    }
+  }
+
   effect(() => {
     const row = selectedRow();
-    if (row >= 0 && libraryGroupBy() === "none") table?.scrollToRow(row, false);
+    if (row >= 0 && libraryGroupBy() === "none") ensureRowVisible(row);
   });
 
   const applySel = (action: Parameters<typeof applyRowSelection>[2]) => {
@@ -455,7 +557,7 @@ export function LibraryView(props: { active: boolean }) {
       selectedProblem.set(nextId);
       selection.set({ selectedIds: new Set(), anchorId: nextId, focusedId: nextId });
     });
-    if (libraryGroupBy() === "none") table?.scrollToRow(i, false);
+    if (libraryGroupBy() === "none") ensureRowVisible(i);
   }
 
   function open() {
@@ -470,7 +572,9 @@ export function LibraryView(props: { active: boolean }) {
   }, { when: "notEditing" });
   keymap.bind("escape", () => {
     if (!props.active) return;
-    if (selection().selectedIds.size > 0) {
+    if (filterOpen()) {
+      filterOpen.set(false);
+    } else if (selection().selectedIds.size > 0) {
       applySel({ kind: "clear" });
     } else if (inputText().length > 0) {
       setSearch("");
@@ -610,107 +714,6 @@ export function LibraryView(props: { active: boolean }) {
     ).finally(() => onClose?.());
   };
 
-  const tagItems = (): MenuEntry[] => facets().tags.map((tg) => ({ id: tg, label: tg, checked: tags().includes(tg) }));
-  const tierItems = (): MenuEntry[] => [
-    { id: "", label: t("library.filter.allRatings"), checked: tier() === undefined },
-    ...TIER_RANGES.map((r) => ({ id: r.tier, label: r.label, checked: tier() === r.tier })),
-  ];
-  const platformItems = (): MenuEntry[] =>
-    facets().platforms.length > 0
-      ? [
-          { id: "", label: t("library.filter.allSources"), checked: platform() === undefined },
-          ...facets().platforms.map((p) => ({ id: p, label: p, checked: platform() === p })),
-        ]
-      : [{ id: "__empty__", label: t("library.filter.noSources"), disabled: true }];
-
-  const trainingFilterItems = (): MenuEntry[] => [
-    { id: "", label: t("training.filter.all"), checked: trainingStatusFilter() === undefined },
-    { id: "none", label: t("training.status.none"), checked: trainingStatusFilter() === "none" },
-    { id: "todo", label: t("training.status.todo"), checked: trainingStatusFilter() === "todo" },
-    { id: "attempted", label: t("training.status.attempted"), checked: trainingStatusFilter() === "attempted" },
-    { id: "ac", label: t("training.status.ac"), checked: trainingStatusFilter() === "ac" },
-    { id: "upsolved", label: t("training.status.upsolved"), checked: trainingStatusFilter() === "upsolved" },
-  ];
-
-  const trainingFilterLabel = () => {
-    const st = trainingStatusFilter();
-    if (!st) return t("training.filter.label");
-    if (st === "none") return t("training.status.none");
-    if (st === "todo") return t("training.status.todo");
-    if (st === "attempted") return t("training.status.attempted");
-    if (st === "ac") return t("training.status.ac");
-    return t("training.status.upsolved");
-  };
-
-  const groupByItems = (): MenuEntry[] => [
-    { id: "none", label: t("library.groupBy.none"), checked: libraryGroupBy() === "none" },
-    { id: "group", label: t("library.groupBy.group"), checked: libraryGroupBy() === "group" },
-    { id: "rating", label: t("library.groupBy.rating"), checked: libraryGroupBy() === "rating" },
-    { id: "platform", label: t("library.groupBy.platform"), checked: libraryGroupBy() === "platform" },
-    { id: "contest", label: t("library.groupBy.contest"), checked: libraryGroupBy() === "contest" },
-    { id: "package_status", label: t("library.groupBy.packageStatus"), checked: libraryGroupBy() === "package_status" },
-  ];
-
-  const groupByLabel = () => {
-    const mode = libraryGroupBy();
-    if (mode === "none") return t("library.groupBy.label");
-    if (mode === "group") return t("library.groupBy.group");
-    if (mode === "rating") return t("library.groupBy.rating");
-    if (mode === "platform") return t("library.groupBy.platform");
-    if (mode === "contest") return t("library.groupBy.contest");
-    return t("library.groupBy.packageStatus");
-  };
-
-  const compactFilters = () => width() > 0 && width() < 660;
-
-  const moreFilterEntries = (): MenuEntry[] => {
-    const list: MenuEntry[] = [];
-    if (trainingEnabled()) {
-      list.push(
-        { id: "tr:", label: t("training.filter.all"), checked: trainingStatusFilter() === undefined },
-        { id: "tr:todo", label: t("training.status.todo"), checked: trainingStatusFilter() === "todo" },
-        { id: "tr:attempted", label: t("training.status.attempted"), checked: trainingStatusFilter() === "attempted" },
-        { id: "tr:ac", label: t("training.status.ac"), checked: trainingStatusFilter() === "ac" },
-        { id: "tr:upsolved", label: t("training.status.upsolved"), checked: trainingStatusFilter() === "upsolved" },
-        { id: "tr:none", label: t("training.status.none"), checked: trainingStatusFilter() === "none" },
-      );
-    }
-    if (facets().platforms.length > 0) {
-      if (list.length > 0) list.push({ separator: true, id: "sep-plat" });
-      list.push(
-        { id: "pl:", label: t("library.filter.allSources"), checked: platform() === undefined },
-        ...facets().platforms.map((p) => ({ id: `pl:${p}`, label: p, checked: platform() === p })),
-      );
-    }
-    if (list.length > 0) list.push({ separator: true, id: "sep-grp" });
-    list.push(
-      { id: "gb:none", label: t("library.groupBy.none"), checked: libraryGroupBy() === "none" },
-      { id: "gb:group", label: t("library.groupBy.group"), checked: libraryGroupBy() === "group" },
-      { id: "gb:rating", label: t("library.groupBy.rating"), checked: libraryGroupBy() === "rating" },
-      { id: "gb:platform", label: t("library.groupBy.platform"), checked: libraryGroupBy() === "platform" },
-      { id: "gb:contest", label: t("library.groupBy.contest"), checked: libraryGroupBy() === "contest" },
-      { id: "gb:package_status", label: t("library.groupBy.packageStatus"), checked: libraryGroupBy() === "package_status" },
-    );
-    return list;
-  };
-
-  const handleMoreFilterSelect = (id: string) => {
-    if (id.startsWith("tr:")) trainingStatusFilter.set(id.slice(3) || undefined);
-    else if (id.startsWith("pl:")) platform.set(id.slice(3) || undefined);
-    else if (id.startsWith("gb:")) setLibraryGroupBy(id.slice(3) as LibraryGroupBy);
-  };
-
-  const moreFilterActive = () =>
-    platform() !== undefined ||
-    (trainingEnabled() && trainingStatusFilter() !== undefined) ||
-    libraryGroupBy() !== "none";
-
-  const rowClasses = computed(() => {
-    const sel = selection().selectedIds;
-    if (sel.size === 0) return [];
-    return rows().map((r) => (sel.has(r.id) ? "bg-accent" : ""));
-  });
-
   const showBatchInspector = () => selection().selectedIds.size >= 2 || batchTask() !== undefined;
   const rightPanelVisible = () => showBatchInspector() || visibleSelected() !== undefined;
 
@@ -721,16 +724,6 @@ export function LibraryView(props: { active: boolean }) {
       [],
     );
   });
-
-  const pluginImporterEntries = computed<MenuEntry[]>(() =>
-    pluginImporters().map((imp) => ({
-      id: `${imp.plugin_id}:${imp.importer.id}`,
-      label: imp.importer.name,
-      note: imp.plugin_name,
-      icon: "sparkles",
-      disabled: readOnly(),
-    })),
-  );
 
   const onSelectImporter = (key: string) => {
     const idx = key.indexOf(":");
@@ -761,6 +754,46 @@ export function LibraryView(props: { active: boolean }) {
         });
       });
   };
+
+  const addMenuEntries = computed<MenuEntry[]>(() => {
+    const ro = readOnly();
+    const list: MenuEntry[] = [
+      { id: "newProblem", label: t("library.newProblem"), icon: "plus", keys: "mod+n", disabled: ro },
+      {
+        id: "importPolygon",
+        label: t("packages.importPolygon"),
+        icon: "folderOpen",
+        disabled: ro || importingPolygon(),
+      },
+    ];
+    const importers = pluginImporters();
+    if (importers.length > 0) {
+      list.push({ separator: true, id: "sep-importers" });
+      for (const imp of importers) {
+        list.push({
+          id: `imp:${imp.plugin_id}:${imp.importer.id}`,
+          label: imp.importer.name,
+          note: imp.plugin_name,
+          icon: "sparkles",
+          disabled: ro,
+        });
+      }
+    }
+    return list;
+  });
+
+  const handleAddMenuSelect = (id: string) => {
+    if (id === "newProblem") {
+      if (!readOnly()) dialog.set({ kind: "newProblem" });
+    } else if (id === "importPolygon") {
+      if (!readOnly() && !importingPolygon()) void importPolygon();
+    } else if (id.startsWith("imp:")) {
+      if (!readOnly()) onSelectImporter(id.slice(4));
+    }
+  };
+
+  const sortSectionTitle = () => (locale() === "en" ? "Sort" : "排序");
+  const sortRecentLabel = () => (locale() === "en" ? "Recently Modified" : "最近修改");
 
   const emptyElement = () =>
     filtered() ? (
@@ -814,7 +847,7 @@ export function LibraryView(props: { active: boolean }) {
 
       <View style={{ flex: 1, minWidth: 0 }}>
         <ResizablePanelGroup handleClass="bg-border w-px group-hover:bg-primary/50 group-active:bg-primary transition-colors">
-          <ResizablePanel minSize={320}>
+          <ResizablePanel size={440} minSize={340} maxSize={580} fixed={rightPanelVisible()}>
             <View
               style={{ flex: 1, minWidth: 0, position: "relative" }}
               onLayout={(e) => {
@@ -832,6 +865,7 @@ export function LibraryView(props: { active: boolean }) {
                 }, 80);
               }}
             >
+              {/* 52pt Toolbar with ONLY 4 elements (§8.1): sidebar toggle, flex search, unified Filter, `+` split menu */}
               <Toolbar>
                 <IconBtn
                   testID="library-sidebar-toggle"
@@ -841,10 +875,10 @@ export function LibraryView(props: { active: boolean }) {
                   onPress={toggleSidebar}
                   style={{ flexShrink: 0 }}
                 />
+
                 <View
                   style={{
-                    flexBasis: 168,
-                    flexShrink: 1,
+                    flex: 1,
                     minWidth: 80,
                     height: CONTROL.md,
                     borderRadius: RADIUS.sm,
@@ -905,101 +939,341 @@ export function LibraryView(props: { active: boolean }) {
                     </View>
                   </If>
                 </View>
-                <FilterMenu
-                  label={tags().length === 0 ? t("library.filter.tags") : tags().length === 1 ? tags()[0] : t("library.filter.tagsCount", { count: tags().length })}
-                  active={tags().length > 0}
-                  multi
-                  entries={tagItems().length > 0 ? tagItems() : [{ id: "__empty__", label: t("library.filter.noTags"), disabled: true }]}
-                  onSelect={(id) => id && id !== "__empty__" && tags.set(tags().includes(id) ? tags().filter((x) => x !== id) : [...tags(), id])}
-                />
-                <FilterMenu
-                  label={TIER_RANGES.find((r) => r.tier === tier())?.label ?? t("library.filter.rating")}
-                  active={tier() !== undefined}
-                  entries={tierItems()}
-                  onSelect={(id) => tier.set(id ? (id as TierName) : undefined)}
-                />
-                <If
-                  when={!compactFilters()}
-                  else={
-                    <FilterMenu
-                      label={t("library.filter.more")}
-                      active={moreFilterActive()}
-                      entries={moreFilterEntries()}
-                      onSelect={handleMoreFilterSelect}
-                    />
+
+                <Popover
+                  open={filterOpen()}
+                  onOpenChange={(e) => filterOpen.set(e.open)}
+                  placement="bottom"
+                  align="end"
+                  offset={4}
+                  popupClass="bg-popover border border-border"
+                  popupStyle={{
+                    width: 296,
+                    maxHeight: 440,
+                    padding: SPACE[12],
+                    borderRadius: RADIUS.lg,
+                    boxShadow: popoverShadow(),
+                  }}
+                  trigger={
+                    <View
+                      testID="library-filter-trigger"
+                      class={
+                        hasFilterMenuActive()
+                          ? "bg-accent border border-border hover:bg-accent/80 active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                          : "border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      }
+                      style={{
+                        height: CONTROL.md,
+                        paddingLeft: SPACE[8],
+                        paddingRight: SPACE[6],
+                        borderRadius: RADIUS.sm,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: SPACE[4],
+                        flexShrink: 0,
+                        ...colorTransition(120),
+                      }}
+                    >
+                      <Text
+                        style={{ fontSize: FONT_SIZE.body, lineHeight: LINE_HEIGHT.body }}
+                        class={hasFilterMenuActive() ? "text-foreground" : "text-secondary-foreground"}
+                      >
+                        {t("library.filter.more")}
+                      </Text>
+                      <If when={hasFilterMenuActive()}>
+                        <View
+                          testID="library-filter-dot"
+                          style={{ width: 6, height: 6, borderRadius: RADIUS.full, flexShrink: 0 }}
+                          class="bg-primary"
+                        />
+                      </If>
+                      <Chevron size="sm" tone={hasFilterMenuActive() ? "foreground" : "muted-foreground"} />
+                    </View>
                   }
                 >
-                  <FilterMenu
-                    label={platform() ?? t("library.filter.source")}
-                    active={platform() !== undefined}
-                    entries={platformItems()}
-                    onSelect={(id) => id !== "__empty__" && platform.set(id || undefined)}
-                  />
-                  <If when={trainingEnabled()}>
-                    <FilterMenu
-                      label={trainingFilterLabel()}
-                      active={trainingStatusFilter() !== undefined}
-                      entries={trainingFilterItems()}
-                      onSelect={(id) => trainingStatusFilter.set(id || undefined)}
-                    />
-                  </If>
-                  <FilterMenu
-                    label={groupByLabel()}
-                    active={libraryGroupBy() !== "none"}
-                    entries={groupByItems()}
-                    onSelect={(id) => setLibraryGroupBy(id as LibraryGroupBy)}
-                  />
-                </If>
-                <If when={filtered()}>
-                  <Btn label={width() >= 660 ? t("common.clear") : undefined} icon="filterX" variant="ghost" tooltip={tip(t("library.filter.clear"))} onPress={clearFilters} style={{ flexShrink: 0 }} />
-                </If>
-                <Spacer />
-                <If when={totalCount() > 0 && width() >= 540}>
-                  <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
-                    {filtered() ? `${rows().length} / ${totalCount()}` : t("library.count", { count: totalCount() })}
-                  </Text>
-                </If>
-                <Btn
-                  testID="library-import-polygon"
-                  label={width() >= 820 ? t("packages.importPolygon") : undefined}
-                  icon="folderOpen"
-                  variant="outline"
-                  disabled={readOnly() || importingPolygon()}
-                  tooltip={tip(readOnly() ? t("packages.readOnlyCannotImport") : t("packages.importPolygonTooltip"))}
-                  onPress={() => void importPolygon()}
-                  style={{ flexShrink: 0 }}
-                />
-                <If when={pluginImporters().length > 0}>
+                  <Scroll style={{ maxHeight: 416 }}>
+                    <View style={{ gap: SPACE[12] }}>
+                      {/* Group 1: Difficulty */}
+                      <View style={{ gap: SPACE[6] }}>
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                          {t("library.filter.rating")}
+                        </Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
+                          <FilterOptionPill
+                            label={t("library.filter.allRatings")}
+                            active={tier() === undefined}
+                            onPress={() => tier.set(undefined)}
+                          />
+                          <Each of={TIER_RANGES} key={(r) => r.tier}>
+                            {(r) => (
+                              <FilterOptionPill
+                                label={r().label}
+                                active={tier() === r().tier}
+                                onPress={() => tier.set(tier() === r().tier ? undefined : r().tier)}
+                              />
+                            )}
+                          </Each>
+                        </View>
+                      </View>
+
+                      {/* Group 2: Tags */}
+                      <If when={facets().tags.length > 0}>
+                        <View style={{ gap: SPACE[6] }}>
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                            {t("library.filter.tags")}
+                          </Text>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
+                            <Each of={facets().tags} key={(tg) => tg}>
+                              {(tg) => (
+                                <FilterOptionPill
+                                  label={tg()}
+                                  active={tags().includes(tg())}
+                                  onPress={() =>
+                                    tags.set(
+                                      tags().includes(tg()) ? tags().filter((x) => x !== tg()) : [...tags(), tg()],
+                                    )
+                                  }
+                                />
+                              )}
+                            </Each>
+                          </View>
+                        </View>
+                      </If>
+
+                      {/* Group 3: Source platform */}
+                      <If when={facets().platforms.length > 0}>
+                        <View style={{ gap: SPACE[6] }}>
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                            {t("library.filter.source")}
+                          </Text>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
+                            <FilterOptionPill
+                              label={t("library.filter.allSources")}
+                              active={platform() === undefined}
+                              onPress={() => platform.set(undefined)}
+                            />
+                            <Each of={facets().platforms} key={(p) => p}>
+                              {(p) => (
+                                <FilterOptionPill
+                                  label={p()}
+                                  active={platform() === p()}
+                                  onPress={() => platform.set(platform() === p() ? undefined : p())}
+                                />
+                              )}
+                            </Each>
+                          </View>
+                        </View>
+                      </If>
+
+                      {/* Training status (when enabled) */}
+                      <If when={trainingEnabled()}>
+                        <View style={{ gap: SPACE[6] }}>
+                          <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                            {t("training.filter.label")}
+                          </Text>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
+                            <FilterOptionPill
+                              label={t("training.filter.all")}
+                              active={trainingStatusFilter() === undefined}
+                              onPress={() => trainingStatusFilter.set(undefined)}
+                            />
+                            <Each of={["todo", "attempted", "ac", "upsolved", "none"] as const} key={(st) => st}>
+                              {(st) => (
+                                <FilterOptionPill
+                                  label={trainingStatusLabel(st())}
+                                  active={trainingStatusFilter() === st()}
+                                  onPress={() =>
+                                    trainingStatusFilter.set(trainingStatusFilter() === st() ? undefined : st())
+                                  }
+                                />
+                              )}
+                            </Each>
+                          </View>
+                        </View>
+                      </If>
+
+                      <View style={{ height: 1 }} class="bg-border" />
+
+                      {/* Group-by */}
+                      <View style={{ gap: SPACE[6] }}>
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-muted-foreground">
+                          {t("library.groupBy.label")}
+                        </Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[4] }}>
+                          <Each
+                            of={["none", "group", "rating", "platform", "contest", "package_status"] as LibraryGroupBy[]}
+                            key={(m) => m}
+                          >
+                            {(m) => (
+                              <FilterOptionPill
+                                label={groupByOptionLabel(m())}
+                                active={libraryGroupBy() === m()}
+                                onPress={() => setLibraryGroupBy(m())}
+                              />
+                            )}
+                          </Each>
+                        </View>
+                      </View>
+
+                      <View style={{ height: 1 }} class="bg-border" />
+
+                      {/* Sort radio group at the bottom (§8.1) */}
+                      <View style={{ gap: SPACE[2] }}>
+                        <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, paddingBottom: SPACE[2] }} class="text-muted-foreground">
+                          {sortSectionTitle()}
+                        </Text>
+                        <SortRadioRow
+                          testID="library-sort-title"
+                          label={t("library.col.title")}
+                          selected={sortKey() === "title"}
+                          onPress={() => sortKey.set("title")}
+                        />
+                        <SortRadioRow
+                          testID="library-sort-rating"
+                          label={t("library.col.rating")}
+                          selected={sortKey() === "rating"}
+                          onPress={() => sortKey.set("rating")}
+                        />
+                        <SortRadioRow
+                          testID="library-sort-recent"
+                          label={sortRecentLabel()}
+                          selected={sortKey() === "recent"}
+                          onPress={() => sortKey.set("recent")}
+                        />
+                      </View>
+                    </View>
+                  </Scroll>
+                </Popover>
+
+                {/* Right `+` split button: click `+` for New Problem, `▾` for New Problem / Import Polygon (§8.1) */}
+                <View
+                  testID="library-add-split"
+                  style={{
+                    height: CONTROL.md,
+                    borderRadius: RADIUS.sm,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    opacity: readOnly() ? 0.6 : 1,
+                  }}
+                  class="bg-primary"
+                >
+                  <View
+                    testID="library-new-problem"
+                    disabled={readOnly()}
+                    onPress={() => !readOnly() && dialog.set({ kind: "newProblem" })}
+                    tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
+                    class={readOnly() ? "" : "hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+                    activeStyle={pressActiveStyle(readOnly())}
+                    style={{
+                      width: CONTROL.md,
+                      height: CONTROL.md,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transform: "scale(1)",
+                      ...pressTransition(140),
+                    }}
+                  >
+                    <Icon name="plus" size="md" tone="primary-foreground" />
+                  </View>
+                  <View style={{ width: 1, height: 14 }} class="bg-primary-foreground/25" />
                   <AppMenu
-                    entries={pluginImporterEntries()}
-                    onSelect={onSelectImporter}
                     align="end"
-                    minWidth={210}
+                    entries={addMenuEntries()}
+                    onSelect={handleAddMenuSelect}
                     trigger={
-                      <Btn
-                        testID="library-plugin-importers"
-                        icon="sparkles"
-                        variant="outline"
+                      <View
+                        testID="library-add-menu-trigger"
                         disabled={readOnly()}
-                        tooltip={tip(t("tools.pluginImporters"))}
-                        style={{ flexShrink: 0 }}
-                      />
+                        tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("packages.importPolygon"))}
+                        class={readOnly() ? "" : "hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+                        style={{
+                          width: 20,
+                          height: CONTROL.md,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          ...colorTransition(140),
+                        }}
+                      >
+                        <Chevron size="sm" tone="primary-foreground" />
+                      </View>
                     }
                   />
-                </If>
-                <Btn
-                  label={width() >= 700 ? t("library.newProblem") : undefined}
-                  icon="plus"
-                  disabled={readOnly()}
-                  tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
-                  onPress={() => dialog.set({ kind: "newProblem" })}
-                  style={{ flexShrink: 0 }}
-                />
+                </View>
               </Toolbar>
 
+              {/* 28pt active filter chip bar — rendered ONLY when at least one filter is active (§8.1) */}
+              <If when={activeFilterChips().length > 0}>
+                <View
+                  testID="library-active-filters"
+                  style={{
+                    height: CONTROL.md,
+                    paddingLeft: SPACE[16],
+                    paddingRight: SPACE[12],
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: SPACE[6],
+                    borderBottomWidth: 1,
+                    flexShrink: 0,
+                  }}
+                  class="border-border bg-card"
+                >
+                  <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: SPACE[4], overflow: "hidden" }}>
+                    <Each of={activeFilterChips()} key={(c) => c.id}>
+                      {(chip) => (
+                        <View
+                          onPress={() => chip().onRemove()}
+                          class="bg-muted hover:bg-accent active:bg-accent"
+                          style={{
+                            height: 20, // token-exempt: compact inline filter chip height
+                            maxWidth: 160,
+                            paddingLeft: SPACE[6],
+                            paddingRight: SPACE[4],
+                            borderRadius: RADIUS.xs,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: SPACE[4],
+                            flexShrink: 0,
+                            ...colorTransition(120),
+                          }}
+                        >
+                          <Text
+                            style={{ fontSize: FONT_SIZE.caption, numberOfLines: 1, textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}
+                            class="text-secondary-foreground"
+                          >
+                            {chip().label}
+                          </Text>
+                          <Icon name="x" size="sm" tone="muted-foreground" />
+                        </View>
+                      )}
+                    </Each>
+                  </View>
+                  <View
+                    testID="library-active-filters-clear"
+                    onPress={clearStructuredFilters}
+                    class="hover:bg-muted active:bg-accent"
+                    style={{
+                      height: CONTROL.sm,
+                      paddingLeft: SPACE[6],
+                      paddingRight: SPACE[6],
+                      borderRadius: RADIUS.sm,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      ...colorTransition(120),
+                    }}
+                  >
+                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
+                      {t("common.clear")}
+                    </Text>
+                  </View>
+                </View>
+              </If>
+
+              {/* Headerless 40pt problem list (flat or grouped) */}
               <View
                 style={{ flex: 1, minHeight: 0 }}
-                onMouseLeave={() => hoveredCell.set(undefined)}
                 captureKeys={["up", "down", "enter"]}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown") move(1);
@@ -1012,15 +1286,9 @@ export function LibraryView(props: { active: boolean }) {
                   else={
                     <GroupedProblemList
                       sections={sections()}
-                      columns={columns()}
-                      showInlineId={colLayout().showInlineId}
-                      maxTags={colLayout().maxTags}
-                      tagsWidth={colLayout().tagsWidth}
+                      showRatingCol={workspaceColPresence().hasRating}
+                      showStatusCol={workspaceColPresence().hasStatus}
                       trainingEnabled={trainingEnabled()}
-                      sort={sort()}
-                      onSortChange={(s) => sort.set(s)}
-                      headerTriState={headerTriState()}
-                      onToggleAll={() => applySel({ kind: "toggleAll" })}
                       selectedIds={selection().selectedIds}
                       focusedId={visibleSelected()}
                       onRowClick={(id, opts) => applySel({ kind: "click", id, ...opts })}
@@ -1031,120 +1299,38 @@ export function LibraryView(props: { active: boolean }) {
                     />
                   }
                 >
-                  <If when={width() > 0}>
-                    <DataTable<LibraryRow>
-                      ref={(r) => (table = r)}
-                      testID="library-table"
+                  <If when={rows().length > 0} else={<View style={{ flex: 1 }}>{emptyElement()}</View>}>
+                    <Scroll
+                      ref={(r) => (listScroll = r)}
+                      testID="library-list"
                       style={{ flex: 1 }}
-                      columns={columns()}
-                      data={rows()}
-                      rowClasses={rowClasses()}
-                      sort={sort()}
-                      onSortChange={(e) => sort.set(e.sort)}
-                      rowHeight={40}
-                      headerHeight={34}
-                      fontSize={13.5}
-                      columnSelectable={false}
-                      movableColumns={false}
-                      resizableColumns={false}
-                      selectOnModifierPress={false}
-                      selection={selection().selectedIds.size === 0 && selectedRow() >= 0 ? { row: selectedRow() } : null}
-                      onRowPress={(e) => {
-                        const row = rows()[e.row];
-                        if (!row) return;
-                        const isCheckbox = e.column === 0;
-                        const mod = e.control || e.platform;
-                        applySel({
-                          kind: "click",
-                          id: row.id,
-                          shift: e.shift,
-                          mod,
-                          checkbox: isCheckbox,
-                        });
+                      onLayout={(e) => {
+                        listHeight = e.bounds.size.height;
                       }}
-                      onDoublePress={(e) => {
-                        if (e.target.column === 0) return;
-                        const row = rows()[e.target.row ?? -1];
-                        if (row) openStudio({ target: "problem", id: row.id });
+                      onScroll={(e) => {
+                        listScrollY = e.offset.y;
                       }}
-                      onContextMenu={(e) => {
-                        const row = e.row != null ? rows()[e.row] : undefined;
-                        if (!row) return;
-                        openContextMenuForRow(row, e.x, e.y, () => table?.clearMenuTarget());
-                      }}
-                      renderCell={(c) => {
-                        const r = rows()[c.row];
-                        const pad = cellPadding(c.key);
-                        return (
-                          <View
-                            onMouseEnter={() => hoveredCell.set({ row: c.row, col: c.key })}
-                            onMouseLeave={() => {
-                              const cur = hoveredCell();
-                              if (cur && cur.row === c.row && cur.col === c.key) hoveredCell.set(undefined);
-                            }}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: pad.justifyContent,
-                              paddingLeft: pad.paddingLeft,
-                              paddingRight: pad.paddingRight,
-                              overflow: "hidden",
-                            }}
-                          >
-                            {renderLibraryCellContent(c.key, r, {
-                              selected: r ? selection().selectedIds.has(r.id) : false,
-                              showCheckbox: () =>
-                                (r ? selection().selectedIds.has(r.id) : false) ||
-                                selection().selectedIds.size > 0 ||
-                                hoveredCell()?.row === c.row,
-                              showInlineId: colLayout().showInlineId,
-                              maxTags: colLayout().maxTags,
-                              tagsWidth: colLayout().tagsWidth,
-                              trainingEnabled: trainingEnabled(),
-                            })}
-                          </View>
-                        );
-                      }}
-                      renderHeaderCell={(h) =>
-                        h.key === "select" ? (
-                          <View
-                            style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "stretch" }}
-                            onMouseEnter={() => headerSelectHovered.set(true)}
-                            onMouseLeave={() => headerSelectHovered.set(false)}
-                          >
-                            {renderLibraryHeaderContent({
-                              key: h.key,
-                              title: h.title ?? "",
-                              sortDir: h.sort,
-                              triState: headerTriState,
-                              showCheckbox: () => headerSelectHovered() || selection().selectedIds.size > 0,
-                              onToggleAll: () => applySel({ kind: "toggleAll" }),
-                              nativeSortIndicator: true,
-                            })}
-                          </View>
-                        ) : (
-                          renderLibraryHeaderContent({
-                            key: h.key,
-                            title: h.title ?? "",
-                            sortDir: h.sort,
-                            triState: headerTriState,
-                            onToggleAll: () => applySel({ kind: "toggleAll" }),
-                            nativeSortIndicator: true,
-                          })
-                        )
-                      }
-                      classes={{
-                        root: "bg-card",
-                        header: "bg-card border-b border-border",
-                        row: "bg-card",
-                        rowOdd: "bg-card",
-                        rowHover: "bg-muted",
-                        rowSelected: "bg-accent",
-                      }}
-                      empty={emptyElement()}
-                    />
+                    >
+                      {/* token-exempt: clearance above batch floating bar */}
+                      <View style={{ paddingBottom: 72 }}>
+                        <Each of={rows()} key={(r) => r.id}>
+                          {(row) => (
+                            <LibraryListRow
+                              row={row()}
+                              showRatingCol={workspaceColPresence().hasRating}
+                              showStatusCol={workspaceColPresence().hasStatus}
+                              trainingEnabled={trainingEnabled()}
+                              selected={selection().selectedIds.has(row().id)}
+                              anySelected={selection().selectedIds.size > 0}
+                              focused={visibleSelected() === row().id && selection().selectedIds.size === 0}
+                              onRowClick={(id, opts) => applySel({ kind: "click", id, ...opts })}
+                              onRowDoubleClick={(id) => openStudio({ target: "problem", id })}
+                              onRowContextMenu={(r, x, y) => openContextMenuForRow(r, x, y)}
+                            />
+                          )}
+                        </Each>
+                      </View>
+                    </Scroll>
                   </If>
                 </If>
               </View>
@@ -1171,13 +1357,7 @@ export function LibraryView(props: { active: boolean }) {
             </View>
           </ResizablePanel>
 
-          <ResizablePanel
-            size={380}
-            minSize={300}
-            maxSize={560}
-            fixed
-            visible={rightPanelVisible()}
-          >
+          <ResizablePanel minSize={360} visible={rightPanelVisible()}>
             <If
               when={showBatchInspector()}
               else={
@@ -1219,7 +1399,7 @@ export function LibraryView(props: { active: boolean }) {
 
 type Tab = "statements" | "editorial" | "code";
 
-/** The selected problem as it prints, with its sources, referencing contests, and actions. */
+/** The selected problem in reader mode, with its sources, referencing contests, and actions. */
 function ProblemInspector(props: {
   id: string;
   active: boolean;
@@ -1560,7 +1740,7 @@ function ProblemInspector(props: {
       </If>
       <If
         when={tab() === "code"}
-        else={<PreviewCanvas request={request} controller={(c) => (canvas = c)} hud={false} active={props.active} />}
+        else={<PreviewCanvas request={request} controller={(c) => (canvas = c)} readerMode active={props.active} />}
       >
         <Editor
           style={{ flex: 1 }}
