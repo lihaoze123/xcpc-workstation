@@ -95,6 +95,7 @@ export function AssetsGalleryModal(props: {
   const mode = signal<"grid" | "lightbox">("grid");
   const lightboxMounted = signal(false);
   const lightboxShown = signal(false);
+  const lightboxClosing = signal(false);
   const lightboxAsset = signal<ProblemAssetJs | undefined>(undefined);
   const selectedIndex = signal(0);
   const gridCols = signal(4);
@@ -193,6 +194,7 @@ export function AssetsGalleryModal(props: {
     clearTimeout(lightboxCloseTimer);
     if (openLightbox) {
       untracked(() => {
+        lightboxClosing.set(false);
         lightboxAsset.set(cur);
         if (!lightboxMounted()) {
           lightboxMounted.set(true);
@@ -211,14 +213,17 @@ export function AssetsGalleryModal(props: {
       });
     } else if (untracked(lightboxMounted)) {
       untracked(() => {
+        lightboxClosing.set(true);
         lightboxShown.set(false);
         const dur = overlayCloseMs();
         if (dur === 0) {
           lightboxMounted.set(false);
+          lightboxClosing.set(false);
           lightboxAsset.set(undefined);
         } else {
           lightboxCloseTimer = setTimeout(() => {
             lightboxMounted.set(false);
+            lightboxClosing.set(false);
             lightboxAsset.set(undefined);
           }, dur);
         }
@@ -721,10 +726,11 @@ export function AssetsGalleryModal(props: {
                     right: 0,
                     bottom: 0,
                     flexDirection: "column",
+                    transformOrigin: "center",
                     opacity: lightboxShown() ? 1 : 0,
-                    transform: overlayTransform(lightboxShown()),
+                    transform: lightboxClosing() ? overlayTransform(true) : overlayTransform(lightboxShown()),
                     pointerEvents: mode() === "lightbox" ? "auto" : "none",
-                    ...overlayTransition(),
+                    ...overlayTransition(!lightboxClosing()),
                   }}
                 >
                   {/* Fit image stage (clamped to natural logical pixel size so small images stay crisp) */}

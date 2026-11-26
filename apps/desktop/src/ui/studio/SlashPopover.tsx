@@ -22,7 +22,7 @@ import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
 import { FOCUS_RING, Kbd, tip } from "../kit";
 import { SectionEmpty } from "../layout";
-import { colorTransition, overlayTransform, overlayTransition } from "../tokens";
+import { anchorOrigin, colorTransition, overlayTransform, overlayTransition, type AnchorPlacement } from "../tokens";
 import { popoverShadow } from "../theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -554,8 +554,17 @@ export function SlashPopover(props: {
     );
   };
 
+  const actualPlacement = signal<AnchorPlacement>("bottom");
+
   return (
-    <Overlay anchor={props.anchor} placement="bottom" align="start" offset={6} margin={10}>
+    <Overlay
+      anchor={props.anchor}
+      placement="bottom"
+      align="start"
+      offset={6}
+      margin={10}
+      onPosition={(e) => actualPlacement.set(e.placement)}
+    >
       <View
         testID="slash-popover"
         onMouseMove={(e) => {
@@ -581,6 +590,7 @@ export function SlashPopover(props: {
           padding: SPACE[6],
           overflow: "hidden",
           boxShadow: popoverShadow(),
+          transformOrigin: anchorOrigin(actualPlacement(), "start"),
           opacity: shown() ? 1 : 0,
           transform: overlayTransform(shown()),
           ...overlayTransition(shown()),

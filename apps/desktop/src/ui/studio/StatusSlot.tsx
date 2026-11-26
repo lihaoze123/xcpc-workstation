@@ -11,7 +11,15 @@ import { Popover } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { DelayedSpinner, FOCUS_RING } from "../kit";
-import { colorTransition, overlayTransform, overlayTransition } from "../tokens";
+import {
+  anchorOrigin,
+  colorTransition,
+  overlayTransform,
+  overlayTransition,
+  popupEndingStyle,
+  popupStartingStyle,
+  type AnchorPlacement,
+} from "../tokens";
 import { popoverShadow } from "../theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "../tokens";
@@ -96,6 +104,8 @@ export function StatusSlot(props: {
   const hasBody = () =>
     props.model.items.length > 0 || props.model.reminders.length > 0 || !!props.model.action || !!props.model.details;
 
+  const actualPlacement = signal<AnchorPlacement>("bottom");
+
   return (
     <Popover
       open={isOpen() && hasBody()}
@@ -103,18 +113,21 @@ export function StatusSlot(props: {
       placement="bottom"
       align="start"
       offset={6}
+      onPosition={(e) => actualPlacement.set(e.placement)}
+      onClose={() => actualPlacement.set("bottom")}
       popupClass="bg-popover border border-border"
       popupStyle={{
         width: 340,
         maxHeight: 380,
         borderRadius: RADIUS.lg,
         boxShadow: popoverShadow(),
+        transformOrigin: anchorOrigin(actualPlacement(), "start"),
         opacity: 1,
         transform: overlayTransform(true),
-        ...overlayTransition(),
+        ...overlayTransition(true),
       }}
-      popupStartingStyle={{ opacity: 0, transform: overlayTransform(false) }}
-      popupEndingStyle={{ opacity: 0, transform: overlayTransform(false) }}
+      popupStartingStyle={popupStartingStyle()}
+      popupEndingStyle={popupEndingStyle()}
       trigger={
         <View
           testID={props.testID ?? "status-slot"}

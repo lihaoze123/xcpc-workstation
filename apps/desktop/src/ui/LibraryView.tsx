@@ -27,7 +27,7 @@ import {
   type SelectionState,
   type TierName,
 } from "./logic";
-import { colorTransition, pressActiveStyle, pressTransition } from "./tokens";
+import { anchorOrigin, colorTransition, overlayTransform, overlayTransition, popupEndingStyle, popupStartingStyle, pressActiveStyle, pressTransition, type AnchorPlacement } from "./tokens";
 import { MONO, monoFont, popoverShadow } from "./theme";
 import { PreviewCanvas, type CanvasController } from "./studio/PreviewCanvas";
 import {
@@ -159,6 +159,7 @@ export function LibraryView(props: { active: boolean }) {
   const sidebarGroup = signal<SidebarGroupSelection>({ kind: "all" });
   const sortKey = signal<LibrarySortKey>(DEFAULT_LIBRARY_SORT);
   const filterOpen = signal(false);
+  const filterPlacement = signal<AnchorPlacement>("bottom");
   const selection = signal<SelectionState>(EMPTY_SELECTION);
 
   const outerWidth = signal(1280);
@@ -939,6 +940,8 @@ export function LibraryView(props: { active: boolean }) {
                   placement="bottom"
                   align="end"
                   offset={4}
+                  onPosition={(e) => filterPlacement.set(e.placement)}
+                  onClose={() => filterPlacement.set("bottom")}
                   popupClass="bg-popover border border-border"
                   popupStyle={{
                     width: 296,
@@ -946,7 +949,13 @@ export function LibraryView(props: { active: boolean }) {
                     padding: SPACE[12],
                     borderRadius: RADIUS.lg,
                     boxShadow: popoverShadow(),
+                    transformOrigin: anchorOrigin(filterPlacement(), "end"),
+                    opacity: 1,
+                    transform: overlayTransform(true),
+                    ...overlayTransition(true),
                   }}
+                  popupStartingStyle={popupStartingStyle()}
+                  popupEndingStyle={popupEndingStyle()}
                   trigger={
                     <View
                       testID="library-filter-trigger"

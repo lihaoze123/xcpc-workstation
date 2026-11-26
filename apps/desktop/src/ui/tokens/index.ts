@@ -30,6 +30,7 @@ export {
 } from "./metrics";
 
 export {
+  anchorOrigin,
   backdropTransition,
   chevronTransition,
   colorTransition,
@@ -46,6 +47,8 @@ export {
   panelExitMs,
   panelTransform,
   panelTransition,
+  popupEndingStyle,
+  popupStartingStyle,
   pressActiveStyle,
   pressTransition,
   scaledDuration,
@@ -61,6 +64,8 @@ export {
   studioTransform,
   studioTransition,
   toastTransform,
+  type AnchorAlign,
+  type AnchorPlacement,
   type DurationToken,
   type SpringToken,
 } from "./motion";

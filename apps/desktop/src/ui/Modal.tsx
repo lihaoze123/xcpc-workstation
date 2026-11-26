@@ -20,6 +20,7 @@ export function Modal(props: {
 }) {
   const mounted = signal(props.open);
   const shown = signal(false);
+  const closing = signal(false);
   let raf: number | undefined;
   let closeTimer: number | undefined;
 
@@ -31,16 +32,25 @@ export function Modal(props: {
     }
     clearTimeout(closeTimer);
     if (isOpen) {
+      closing.set(false);
       mounted.set(true);
       raf = requestAnimationFrame(() => {
         raf = undefined;
         shown.set(true);
       });
     } else if (mounted()) {
+      closing.set(true);
       shown.set(false);
       const dur = overlayCloseMs();
-      if (dur === 0) mounted.set(false);
-      else closeTimer = setTimeout(() => mounted.set(false), dur);
+      if (dur === 0) {
+        mounted.set(false);
+        closing.set(false);
+      } else {
+        closeTimer = setTimeout(() => {
+          mounted.set(false);
+          closing.set(false);
+        }, dur);
+      }
     }
   });
   cleanup(() => {
@@ -101,9 +111,10 @@ export function Modal(props: {
               borderWidth: 1,
               overflow: "hidden",
               boxShadow: modalShadow(),
+              transformOrigin: "center",
               opacity: shown() ? 1 : 0,
-              transform: overlayTransform(shown()),
-              ...overlayTransition(),
+              transform: closing() ? overlayTransform(true) : overlayTransform(shown()),
+              ...overlayTransition(!closing()),
               pointerEvents: props.open ? "auto" : "none",
             }}
             class="bg-card border-border"

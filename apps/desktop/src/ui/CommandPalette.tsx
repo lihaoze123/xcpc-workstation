@@ -275,6 +275,7 @@ export function CommandPalette() {
   const hasOpened = signal(paletteOpen());
   const visible = signal(paletteOpen());
   const shown = signal(false);
+  const closing = signal(false);
   let raf: number | undefined;
   let closeTimer: number | undefined;
 
@@ -287,16 +288,25 @@ export function CommandPalette() {
     clearTimeout(closeTimer);
     if (isOpen) {
       if (!hasOpened()) hasOpened.set(true);
+      closing.set(false);
       visible.set(true);
       raf = requestAnimationFrame(() => {
         raf = undefined;
         shown.set(true);
       });
     } else if (visible()) {
+      closing.set(true);
       shown.set(false);
       const dur = overlayCloseMs();
-      if (dur === 0) visible.set(false);
-      else closeTimer = setTimeout(() => visible.set(false), dur);
+      if (dur === 0) {
+        visible.set(false);
+        closing.set(false);
+      } else {
+        closeTimer = setTimeout(() => {
+          visible.set(false);
+          closing.set(false);
+        }, dur);
+      }
     }
   });
   cleanup(() => {
@@ -359,9 +369,10 @@ export function CommandPalette() {
               borderWidth: 1,
               overflow: "hidden",
               boxShadow: modalShadow(),
+              transformOrigin: "center",
               opacity: shown() ? 1 : 0,
-              transform: overlayTransform(shown()),
-              ...overlayTransition(),
+              transform: closing() ? overlayTransform(true) : overlayTransform(shown()),
+              ...overlayTransition(!closing()),
               pointerEvents: paletteOpen() ? "auto" : "none",
             }}
             class="bg-card border-border"

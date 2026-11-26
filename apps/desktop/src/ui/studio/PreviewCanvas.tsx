@@ -50,7 +50,7 @@ import {
   type PageSize,
 } from "../logic";
 import { info, preview } from "../store";
-import { colorTransition, panelTransition, scrollAnimated, spatialEnabled } from "../tokens";
+import { anchorOrigin, colorTransition, overlayTransform, overlayTransition, panelTransition, popupEndingStyle, popupStartingStyle, scrollAnimated, spatialEnabled, type AnchorPlacement } from "../tokens";
 import { popoverShadow } from "../theme";
 import { traceInteraction } from "../trace";
 
@@ -1182,6 +1182,7 @@ export function PreviewCanvas(props: {
   const counts = computed(() => diagnosticCounts(diagnostics()));
   const flagged = computed(() => diagnostics().filter((d) => d.severity === "error" || d.severity === "warning"));
   const hudOpen = signal(false);
+  const hudPlacement = signal<AnchorPlacement>("top");
 
   props.controller({
     compile,
@@ -1514,8 +1515,20 @@ export function PreviewCanvas(props: {
                 onOpenChange={(e) => hudOpen.set(e.open)}
                 placement="top"
                 offset={8}
+                onPosition={(e) => hudPlacement.set(e.placement)}
+                onClose={() => hudPlacement.set("top")}
                 popupClass="bg-popover border border-border rounded-[10px] p-1.5"
-                popupStyle={{ width: 360, maxHeight: 320, boxShadow: popoverShadow() }}
+                popupStyle={{
+                  width: 360,
+                  maxHeight: 320,
+                  boxShadow: popoverShadow(),
+                  transformOrigin: anchorOrigin(hudPlacement(), "center"),
+                  opacity: 1,
+                  transform: overlayTransform(true),
+                  ...overlayTransition(true),
+                }}
+                popupStartingStyle={popupStartingStyle()}
+                popupEndingStyle={popupEndingStyle()}
                 trigger={
                   <View
                     testID="preflight-badge"

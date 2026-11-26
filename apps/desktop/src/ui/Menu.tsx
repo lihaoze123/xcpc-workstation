@@ -2,11 +2,19 @@
 // the pickers. Rows are 32 points with a 16-point icon column (a check, or the item's
 // icon), the label, and a shortcut on the right; a destructive row is red.
 
-import { Text, View, type JSX, type ViewStyle, type StyleProp } from "nsh";
+import { signal, Text, View, type JSX, type ViewStyle, type StyleProp } from "nsh";
 import { Menu, MenuItem, MenuSeparator } from "nsh/base";
 import { Icon, type IconName } from "./Icon";
 import { Kbd } from "./kit";
-import { colorTransition, overlayTransform, overlayTransition } from "./tokens";
+import {
+  anchorOrigin,
+  colorTransition,
+  overlayTransform,
+  overlayTransition,
+  popupEndingStyle,
+  popupStartingStyle,
+  type AnchorPlacement,
+} from "./tokens";
 import { popoverShadow } from "./theme";
 
 import { CONTROL, FONT_SIZE, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
@@ -35,30 +43,28 @@ export function AppMenu(props: {
 }) {
   // Whether any row has an icon or a check: then every row keeps the icon column.
   const column = () => props.entries.some((e) => !("separator" in e) && (e.icon || e.checked !== undefined));
+  const actualPlacement = signal<AnchorPlacement>("bottom");
   return (
     <Menu
       trigger={props.trigger}
       placement="bottom"
       align={props.align ?? "start"}
       offset={4}
+      onPosition={(e) => actualPlacement.set(e.placement)}
+      onClose={() => actualPlacement.set("bottom")}
       popupClass="bg-popover border border-border"
       popupStyle={{
         minWidth: props.minWidth ?? 180,
         padding: SPACE[4],
         borderRadius: RADIUS.lg,
         boxShadow: popoverShadow(),
+        transformOrigin: anchorOrigin(actualPlacement(), props.align ?? "start"),
         opacity: 1,
         transform: overlayTransform(true),
-        ...overlayTransition(),
+        ...overlayTransition(true),
       }}
-      popupStartingStyle={{
-        opacity: 0,
-        transform: overlayTransform(false),
-      }}
-      popupEndingStyle={{
-        opacity: 0,
-        transform: overlayTransform(false),
-      }}
+      popupStartingStyle={popupStartingStyle()}
+      popupEndingStyle={popupEndingStyle()}
     >
       <Each of={props.entries} key={(e) => e.id}>
         {(e) => {

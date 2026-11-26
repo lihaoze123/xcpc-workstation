@@ -215,6 +215,39 @@ export function overlayCloseMs(): number {
   return scaledDuration(isReducedMotion() ? DURATION.base : DURATION.fast);
 }
 
+export type AnchorPlacement = "bottom" | "top" | "left" | "right";
+export type AnchorAlign = "start" | "center" | "end";
+
+/** Computes `transformOrigin` at the corner/edge closest to the trigger element (Phase 6G §3). */
+export function anchorOrigin(placement: AnchorPlacement, align: AnchorAlign = "start"): string {
+  switch (placement) {
+    case "bottom":
+      return align === "end" ? "top right" : align === "center" ? "top center" : "top left";
+    case "top":
+      return align === "end" ? "bottom right" : align === "center" ? "bottom center" : "bottom left";
+    case "right":
+      return align === "end" ? "bottom left" : align === "center" ? "center left" : "top left";
+    case "left":
+      return align === "end" ? "bottom right" : align === "center" ? "center right" : "top right";
+  }
+}
+
+/** Starting style for NSH `<Menu>` / `<Popover>` popups (`scale(0.96 -> 1)` + fade in). */
+export function popupStartingStyle(): ViewStyle {
+  return {
+    opacity: 0,
+    transform: overlayTransform(false),
+  };
+}
+
+/** Ending style for NSH `<Menu>` / `<Popover>` popups (`DURATION.fast` pure fade-out, no scale). */
+export function popupEndingStyle(): ViewStyle {
+  return {
+    opacity: 0,
+    ...overlayTransition(false),
+  };
+}
+
 /** Toast transform (6px rise on entry + optional drag offset; drag-only under reduced motion). */
 export function toastTransform(shown: boolean, dragY = 0): string | undefined {
   if (isReducedMotion()) {

@@ -6,6 +6,7 @@ import { describe, expect, test } from "nsh/test";
 import { FOCUS_RING } from "./kit";
 import { MONO, SANS, setWindowActiveForTest, windowActive } from "./theme";
 import {
+  anchorOrigin,
   colorTransition,
   CONTROL,
   DURATION,
@@ -22,6 +23,8 @@ import {
   overlayCloseMs,
   overlayTransform,
   overlayTransition,
+  popupEndingStyle,
+  popupStartingStyle,
   pressActiveStyle,
   pressTransition,
   RADIUS,
@@ -307,5 +310,18 @@ describe("Motion tokens, slow-motion scaling, and reduced-motion tiers (Phase 6G
     } finally {
       setReducedMotionForTest(undefined);
     }
+  });
+
+  test("anchorOrigin and popup ending style grow from trigger corner and fade out without scaling (Phase 6G §3)", () => {
+    expect(anchorOrigin("bottom", "start")).toBe("top left");
+    expect(anchorOrigin("bottom", "end")).toBe("top right");
+    expect(anchorOrigin("top", "start")).toBe("bottom left");
+    expect(anchorOrigin("top", "center")).toBe("bottom center");
+    expect(popupStartingStyle()).toEqual({ opacity: 0, transform: "scale(0.96)" });
+    const end = popupEndingStyle();
+    expect(end.opacity).toBe(0);
+    expect(end.transform).toBeUndefined();
+    expect(end.transitionProperty).toBe("opacity");
+    expect(end.transitionDuration).toBe(DURATION.fast);
   });
 });

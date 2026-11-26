@@ -82,6 +82,7 @@ export function currentToast(): ToastPayload | undefined {
 export function ToastHost() {
   const rendered = signal<ToastPayload | undefined>(activeToast());
   const shown = signal(false);
+  const closing = signal(false);
   let raf: number | undefined;
   let unmountTimer: number | undefined;
 
@@ -93,6 +94,7 @@ export function ToastHost() {
     }
     clearTimeout(unmountTimer);
     if (next) {
+      closing.set(false);
       rendered.set(next);
       if (isReducedMotion()) {
         shown.set(true);
@@ -103,10 +105,18 @@ export function ToastHost() {
         });
       }
     } else if (rendered()) {
+      closing.set(true);
       shown.set(false);
       const dur = overlayCloseMs();
-      if (dur === 0) rendered.set(undefined);
-      else unmountTimer = setTimeout(() => rendered.set(undefined), dur);
+      if (dur === 0) {
+        rendered.set(undefined);
+        closing.set(false);
+      } else {
+        unmountTimer = setTimeout(() => {
+          rendered.set(undefined);
+          closing.set(false);
+        }, dur);
+      }
     }
   });
 
@@ -146,8 +156,8 @@ export function ToastHost() {
             gap: SPACE[8],
             boxShadow: popoverShadow(),
             opacity: shown() ? 1 : 0,
-            transform: toastTransform(shown(), toastBottomLift() ? -48 : 0),
-            ...overlayTransition(shown()),
+            transform: toastTransform(shown() || closing(), toastBottomLift() ? -48 : 0),
+            ...overlayTransition(!closing()),
           }}
         >
           <If when={item().tone === "success"}>
