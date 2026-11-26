@@ -3,6 +3,7 @@
 // untouched cells. Adds a subtle GPU-composited settle pulse when a cell arrives live.
 
 import { reduceMotion, Text, View } from "nsh";
+import { FOCUS_RING } from "../kit";
 import { colorTransition } from "../motion";
 import {
   cellTimeMs,
@@ -39,6 +40,7 @@ export function MatrixCellView(props: {
         const c = cell();
         if (c) props.onPick(c);
       }}
+      class={FOCUS_RING}
       style={{
         flex: 1,
         minWidth: 120,

@@ -33,7 +33,7 @@ import {
   type Threshold,
 } from "nsh-o11y";
 import { t } from "../i18n";
-import { Btn, createTransientFlag, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, FOCUS_RING, Segmented, tip } from "../kit";
 import { Icon } from "../Icon";
 import { MONO, token } from "../theme";
 import { TitleBar, useWindowTitle } from "../TitleBar";
@@ -424,7 +424,7 @@ function TracesTab(props: {
             <View
               testID="o11y-flush-pending"
               onPress={flushPendingTraces}
-              class="bg-primary/10 hover:bg-primary/20 border border-primary/30"
+              class={`bg-primary/10 hover:bg-primary/20 border border-primary/30 ${FOCUS_RING}`}
               style={{
                 borderRadius: RADIUS.sm,
                 paddingHorizontal: SPACE[12],
@@ -456,7 +456,7 @@ function TracesTab(props: {
                   <View
                     testID={`o11y-trace-row-${tr().id}`}
                     onPress={() => props.onSelectTrace(tr().id)}
-                    class={active() ? "bg-accent" : "hover:bg-muted"}
+                    class={active() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted ${FOCUS_RING}`}
                     style={{
                       paddingHorizontal: SPACE[8],
                       paddingVertical: SPACE[8],
@@ -518,7 +518,7 @@ function TracesTab(props: {
                         activeBaselineId.set(b().id);
                         mode.set("compare");
                       }}
-                      class={isSelected() ? "bg-accent" : "hover:bg-muted"}
+                      class={isSelected() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted ${FOCUS_RING}`}
                       style={{
                         flexDirection: "row",
                         alignItems: "center",
@@ -537,7 +537,7 @@ function TracesTab(props: {
                       </Text>
                       <View
                         onPress={() => removeBaseline(b().id)}
-                        class="hover:bg-background"
+                        class={`hover:bg-background ${FOCUS_RING}`}
                         style={{ width: 18, height: 18, borderRadius: RADIUS.xs, alignItems: "center", justifyContent: "center" }} // token-exempt: compact inline icon box
                       >
                         <Icon name="x" size="sm" tone="muted-foreground" />
@@ -766,7 +766,7 @@ function LogsTab() {
               <View
                 testID={`o11y-log-sub-${sub}`}
                 onPress={() => subsystem.set(sub)}
-                class={active() ? "bg-primary" : "hover:bg-muted border border-border"}
+                class={active() ? `bg-primary ${FOCUS_RING}` : `hover:bg-muted border border-border ${FOCUS_RING}`}
                 style={{
                   paddingHorizontal: SPACE[8],
                   paddingVertical: SPACE[4],

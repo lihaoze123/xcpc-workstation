@@ -34,7 +34,7 @@ import {
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
-import { tip } from "../kit";
+import { FOCUS_RING, tip } from "../kit";
 import { PageLoading } from "../layout";
 import {
   BASE_SCALE,
@@ -1462,7 +1462,7 @@ export function PreviewCanvas(props: {
             <View
               onPress={() => zoom() > 0 && fitWidth()}
               tooltip={tip(t("preview.fitWidth"), "mod+0")}
-              class={zoom() > 0 ? "hover:bg-muted active:bg-accent" : ""}
+              class={zoom() > 0 ? `hover:bg-muted active:bg-accent ${FOCUS_RING}` : ""}
               style={{
                 height: CONTROL.sm,
                 minWidth: 42,
@@ -1533,7 +1533,7 @@ export function PreviewCanvas(props: {
                       transitionDuration: ms(120),
                       transitionTimingFunction: EASE_STANDARD,
                     }}
-                    class="hover:bg-muted active:bg-accent"
+                    class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   >
                     <View style={{ width: 6, height: 6, borderRadius: RADIUS.xs }} class={counts().errors > 0 ? "bg-destructive" : "bg-chart-4"} />
                     <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"] }} class={counts().errors > 0 ? "text-destructive" : "text-chart-4"}>
@@ -1552,7 +1552,7 @@ export function PreviewCanvas(props: {
                           if (x.page != null && !x.file) goPage(x.page);
                           else props.onDiagnostic?.(x);
                         }}
-                        class="hover:bg-muted active:bg-accent"
+                        class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                         style={{ paddingTop: SPACE[6], paddingBottom: SPACE[6], paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, gap: SPACE[2] }}
                       >
                         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
@@ -1585,7 +1585,7 @@ function HudButton(props: { icon: IconName; onPress: () => void; disabled?: bool
       disabled={props.disabled}
       onPress={() => !props.disabled && props.onPress()}
       tooltip={props.tooltip}
-      class={props.disabled ? "" : "hover:bg-muted active:bg-accent"}
+      class={props.disabled ? "" : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
       style={{
         width: 24,
         height: CONTROL.sm,

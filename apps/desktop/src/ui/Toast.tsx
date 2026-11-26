@@ -5,6 +5,7 @@
 
 import { cleanup, effect, reduceMotion, signal, Text, View } from "nsh";
 import { Icon } from "./Icon";
+import { FOCUS_RING } from "./kit";
 import { overlayTransition } from "./motion";
 import { ms, popoverShadow } from "./theme";
 
@@ -171,18 +172,23 @@ export function ToastHost() {
           </Text>
           <If when={item().action}>
             {(act) => (
-              <Text
+              <View
                 testID="app-toast-action"
                 onPress={() => {
                   const run = act().run;
                   dismissToast();
                   run();
                 }}
-                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, flexShrink: 0, paddingLeft: SPACE[4] }}
-                class="text-primary"
+                class={FOCUS_RING}
+                style={{ borderRadius: RADIUS.xs, flexShrink: 0, paddingLeft: SPACE[4], paddingRight: SPACE[4] }}
               >
-                {act().label}
-              </Text>
+                <Text
+                  style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
+                  class="text-primary"
+                >
+                  {act().label}
+                </Text>
+              </View>
             )}
           </If>
         </View>

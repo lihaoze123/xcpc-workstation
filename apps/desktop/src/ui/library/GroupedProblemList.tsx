@@ -3,6 +3,7 @@
 
 import { reduceMotion, Scroll, signal, Text, View, type JSX } from "nsh";
 import { Icon } from "../Icon";
+import { FOCUS_RING } from "../kit";
 import { headerCheckboxState, type ProblemGroupSection } from "../logic";
 import { colorTransition } from "../motion";
 import { EASE_STANDARD, ms } from "../theme";
@@ -58,6 +59,7 @@ export function GroupedProblemList(props: {
                       class="bg-muted/40 border-border"
                     >
                       <View
+                        class={FOCUS_RING}
                         style={{ width: 24, height: CONTROL.lg, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                         onPress={() => props.onToggleGroupSelect(rowIds())}
                       >
@@ -68,7 +70,7 @@ export function GroupedProblemList(props: {
                       </View>
                       <View
                         onPress={() => toggleCollapse(sec().key)}
-                        class="hover:bg-muted/70"
+                        class={`hover:bg-muted/70 ${FOCUS_RING}`}
                         style={{
                           flex: 1,
                           height: CONTROL.lg,

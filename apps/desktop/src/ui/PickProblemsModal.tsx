@@ -17,7 +17,7 @@ import {
   type ScrollRef,
 } from "nsh";
 import { Input } from "nsh/base";
-import { Btn, Chip, Chevron, RatingBadge, tip } from "./kit";
+import { Btn, Chip, Chevron, FOCUS_RING, RatingBadge, tip } from "./kit";
 import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
@@ -65,7 +65,11 @@ function PickerFilterMenu(props: {
       minWidth={160}
       trigger={
         <View
-          class={props.active ? "bg-accent border border-border" : "border border-border bg-card hover:bg-muted active:bg-accent"}
+          class={
+            props.active
+              ? `bg-accent border border-border ${FOCUS_RING}`
+              : `border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`
+          }
           style={{
             height: CONTROL.md,
             paddingLeft: SPACE[8],
@@ -329,7 +333,7 @@ export function PickProblemsBody(props: { contestId: string }) {
                     searchInput?.focus();
                   }}
                   tooltip={tip(t("library.clearSearch"), "escape")}
-                  class="hover:bg-muted active:bg-accent"
+                  class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{ width: 18, height: 18, borderRadius: RADIUS.xs, alignItems: "center", justifyContent: "center" }} // token-exempt: compact checkbox square
                 >
                   <Icon name="x" size="sm" tone="muted-foreground" />
@@ -423,8 +427,8 @@ export function PickProblemsBody(props: { contestId: string }) {
                         disabled()
                           ? ""
                           : focused()
-                            ? "bg-accent"
-                            : "hover:bg-muted active:bg-accent"
+                            ? `bg-accent ${FOCUS_RING}`
+                            : `hover:bg-muted active:bg-accent ${FOCUS_RING}`
                       }
                       style={{
                         height: PICK_ROW_HEIGHT,

@@ -8,6 +8,7 @@
 import { cleanup, Clipboard, signal, Text, View, type JSX } from "nsh";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
+import { FOCUS_RING } from "./kit";
 import { errorCopy, errorDetails } from "./logic";
 import { EASE_STANDARD, ms } from "./theme";
 import type { UiError } from "./store";
@@ -61,9 +62,11 @@ export function ErrorDisplay(props: {
             </Text>
             <Each of={props.locate ?? []} key={(l, i) => `${i}:${l.label}`}>
               {(l) => (
-                <Text style={{ fontSize: FONT_SIZE.caption, textDecorationLine: "underline" }} class="text-primary" onPress={() => l().onPress()}>
-                  {l().label}
-                </Text>
+                <View onPress={() => l().onPress()} class={FOCUS_RING} style={{ borderRadius: RADIUS.xs }}>
+                  <Text style={{ fontSize: FONT_SIZE.caption, textDecorationLine: "underline" }} class="text-primary">
+                    {l().label}
+                  </Text>
+                </View>
               )}
             </Each>
             {w().next && (
@@ -73,14 +76,16 @@ export function ErrorDisplay(props: {
             )}
             {props.action}
             {(props.error?.code || props.error?.error) && (
-              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground hover:text-secondary-foreground" onPress={copy}>
-                {copied() ? t("common.copied") : t("common.copyDetails")}
-              </Text>
+              <View onPress={copy} class={FOCUS_RING} style={{ borderRadius: RADIUS.xs }}>
+                <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground hover:text-secondary-foreground">
+                  {copied() ? t("common.copied") : t("common.copyDetails")}
+                </Text>
+              </View>
             )}
             {props.onDismiss && (
               <View
                 onPress={() => props.onDismiss!()}
-                class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                 style={{
                   width: 18,
                   height: 18, // token-exempt: compact inline icon badge box

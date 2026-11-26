@@ -8,7 +8,7 @@ import type { ContestDetailJs, PreviewStart } from "xcpc-workstation/native";
 import { ContestStats } from "../Contest";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { tip } from "../kit";
+import { FOCUS_RING, tip } from "../kit";
 import { labels, moveItem } from "../logic";
 import { EASE_STANDARD, ms, popoverShadow } from "../theme";
 import { createReorder } from "./reorder";
@@ -102,7 +102,7 @@ export function Outline(props: {
                     borderRadius: RADIUS.sm,
                     cursor: canDrag() ? "grab" : "default",
                   }}
-                  class={dragging() ? "bg-card border border-border" : "border border-transparent"}
+                  class={dragging() ? `bg-card border border-border ${FOCUS_RING}` : `border border-transparent ${FOCUS_RING}`}
                 >
                   <Row
                     label={x().label}
@@ -127,7 +127,7 @@ export function Outline(props: {
           <View
             testID="outline-pick-problems"
             onPress={() => props.onPickProblems?.()}
-            class="border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
             style={{
               height: CONTROL.md,
               borderRadius: RADIUS.sm,
@@ -169,7 +169,7 @@ function Row(props: {
   return (
     <View
       onPress={props.onPress ? () => props.onPress!() : undefined}
-      class={props.active ? "bg-accent" : "hover:bg-muted active:bg-accent/70"}
+      class={`${props.active ? "bg-accent" : "hover:bg-muted active:bg-accent/70"}${props.onPress ? ` ${FOCUS_RING}` : ""}`}
       style={{
         height: CONTROL.lg,
         paddingLeft: SPACE[8],

@@ -6,7 +6,7 @@
 import { computed, effect, keymap, Scroll, signal, Text, View, type ScrollRef, type ViewRef } from "nsh";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { WorkspaceContest } from "xcpc-workstation/native";
-import { Btn, DelayedSpinner, RatingBadge, tip } from "./kit";
+import { Btn, DelayedSpinner, FOCUS_RING, RatingBadge, tip } from "./kit";
 import { t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger } from "./Menu";
@@ -205,7 +205,7 @@ export function ContestsView(props: { active: boolean }) {
             e.pagePosition,
           );
         }}
-        class={selected() ? "bg-accent" : "hover:bg-muted active:bg-accent"}
+        class={selected() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
         style={{
           height: TOOLBAR,
           paddingLeft: SPACE[12],
@@ -303,7 +303,7 @@ export function ContestsView(props: { active: boolean }) {
             <View
               testID="archived-contests-toggle"
               onPress={() => archivedExpanded.set(!archivedExpanded())}
-              class="hover:bg-muted active:bg-accent"
+              class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
               style={{
                 height: ROW.table,
                 paddingLeft: SPACE[12],
@@ -691,8 +691,8 @@ function ContestPanel(props: { id: string; active: boolean }) {
                         dragging()
                           ? "bg-card border border-border"
                           : x().item.missing
-                            ? "border-border"
-                            : "hover:bg-muted active:bg-accent border-border"
+                            ? `border-border ${FOCUS_RING}`
+                            : `hover:bg-muted active:bg-accent border-border ${FOCUS_RING}`
                       }
                       style={{
                         height: ROW.list,
@@ -774,7 +774,7 @@ function ContestPanel(props: { id: string; active: boolean }) {
                 <View
                   testID="contest-pick-problems"
                   onPress={() => dialog.set({ kind: "pickProblems", contestId: props.id })}
-                  class="hover:bg-muted active:bg-accent border-border"
+                  class={`hover:bg-muted active:bg-accent border-border ${FOCUS_RING}`}
                   style={{
                     height: ROW.list,
                     paddingLeft: SPACE[32],

@@ -17,7 +17,7 @@ import type {
 import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
-import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
+import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "../kit";
 import { EmptyState, FilterEmpty, PageLoading, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { compilerMissing, dialog, ensureToolchainLoaded, goSettings, onExternalChange, preview, type UiError } from "../store";
@@ -211,7 +211,7 @@ function AuthoringToolbar(props: { ctrl: ToolbarCtrl; readOnly: boolean }) {
                   trigger={
                     <View
                       testID="build-verify-menu-trigger"
-                      class="bg-primary hover:bg-sidebar-primary border-l border-primary-foreground/20"
+                      class={`bg-primary hover:bg-sidebar-primary border-l border-primary-foreground/20 ${FOCUS_RING}`}
                       style={{
                         width: 26,
                         height: CONTROL.md,
@@ -1842,7 +1842,7 @@ export function BuildConsole(props: {
                             <Text
                               onPress={() => openFileInTree(cf().source_path)}
                               style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
-                              class="text-primary"
+                              class={`text-primary ${FOCUS_RING}`}
                             >
                               {t("build.compileError.openSource")}
                             </Text>
@@ -1924,7 +1924,7 @@ export function BuildConsole(props: {
                               testID={`matrix-col-${spec().name}`}
                               onPress={() => filterSolutions.set(toggleSubsetSelection(filterSolutions(), spec().name))}
                               tooltip={mismatch() ? tip(mismatch()!) : undefined}
-                              class={picked() ? "bg-accent" : "hover:bg-muted"}
+                              class={picked() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted ${FOCUS_RING}`}
                               style={{
                                 flex: 1,
                                 minWidth: 120,
@@ -2001,6 +2001,7 @@ export function BuildConsole(props: {
                                 >
                                   <View
                                     onPress={() => toggleSubtaskCollapsed(group().key)}
+                                    class={FOCUS_RING}
                                     style={{
                                       width: COL_TEST_W,
                                       flexShrink: 0,
@@ -2093,7 +2094,7 @@ export function BuildConsole(props: {
                                       <View
                                         testID={`matrix-row-${row().index}`}
                                         onPress={() => filterTests.set(toggleSubsetSelection(filterTests(), String(row().index)))}
-                                        class={filterTests().includes(String(row().index)) ? "bg-accent" : "hover:bg-muted"}
+                                        class={filterTests().includes(String(row().index)) ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted ${FOCUS_RING}`}
                                         style={{
                                           width: COL_TEST_W - 6,
                                           height: CONTROL.md,
@@ -2225,7 +2226,7 @@ export function BuildConsole(props: {
                       <View
                         testID="only-anomaly-toggle"
                         onPress={() => onlyAnomalyRows.set(!onlyAnomalyRows())}
-                        class={onlyAnomalyRows() ? "bg-muted border border-border" : "border border-transparent hover:bg-muted/60"}
+                        class={onlyAnomalyRows() ? `bg-muted border border-border ${FOCUS_RING}` : `border border-transparent hover:bg-muted/60 ${FOCUS_RING}`}
                         style={{
                           height: CONTROL.sm,
                           paddingLeft: SPACE[8],
@@ -2357,7 +2358,7 @@ export function BuildConsole(props: {
                       trigger={
                         <View
                           testID="batch-test-dropdown"
-                          class="border border-border bg-card hover:bg-muted"
+                          class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                           style={{
                             height: CONTROL.md,
                             paddingLeft: SPACE[8],
@@ -2397,7 +2398,7 @@ export function BuildConsole(props: {
                       trigger={
                         <View
                           testID="test-subtask-dropdown"
-                          class="border border-border bg-card hover:bg-muted"
+                          class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                           style={{
                             height: CONTROL.md,
                             paddingLeft: SPACE[8],
@@ -2575,7 +2576,7 @@ export function BuildConsole(props: {
                                 onSelect={(id) => batchEditGen.set(id)}
                                 trigger={
                                   <View
-                                    class="border border-border bg-card hover:bg-muted"
+                                    class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                                     style={{ height: CONTROL.md, paddingLeft: SPACE[8], paddingRight: SPACE[6], borderRadius: RADIUS.sm, flexDirection: "row", alignItems: "center", gap: SPACE[4] }}
                                   >
                                     <Text style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
@@ -2745,7 +2746,7 @@ export function BuildConsole(props: {
                               onSelect={(id) => selection.set({ kind: "selfTests", relPath: id })}
                               trigger={
                                 <View
-                                  class="border border-border bg-card hover:bg-muted"
+                                  class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                                   style={{
                                     height: CONTROL.md,
                                     paddingLeft: SPACE[8],
@@ -2838,7 +2839,7 @@ export function BuildConsole(props: {
                     trigger={
                       <View
                         testID="interactor-runs-trigger"
-                        class="border border-border bg-card hover:bg-muted"
+                        class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                         style={{
                           height: CONTROL.md,
                           paddingLeft: SPACE[8],
@@ -3120,7 +3121,7 @@ export function BuildConsole(props: {
                     trigger={
                       <View
                         testID="checker-select-trigger"
-                        class="border border-border bg-card hover:bg-muted"
+                        class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                         style={{
                           height: CONTROL.md,
                           paddingLeft: SPACE[12],
@@ -3303,7 +3304,7 @@ export function BuildConsole(props: {
                                   trigger={
                                     <View
                                       testID={`solution-config-trigger-${solName()}`}
-                                      class="border border-border bg-card hover:bg-muted"
+                                      class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                                       style={{
                                         height: CONTROL.md,
                                         paddingLeft: SPACE[8],
@@ -3668,7 +3669,7 @@ function TreeRow(props: {
       testID={props.testID}
       onPress={props.onPress}
       onContextMenu={props.onContextMenu}
-      class={props.active ? "bg-muted" : "hover:bg-muted/60"}
+      class={props.active ? `bg-muted ${FOCUS_RING}` : `hover:bg-muted/60 ${FOCUS_RING}`}
       style={{
         height: CONTROL.md,
         paddingLeft: SPACE[8],

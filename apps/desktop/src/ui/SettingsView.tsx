@@ -23,7 +23,7 @@ import { BrandIcon } from "./BrandIcon";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { languagePref, locale, resolveLocalized, t, type LanguagePref, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "./kit";
+import { Btn, createTransientFlag, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
 import { DetailHeader, GUTTER, Section, SectionRow, Toolbar } from "./layout";
 import { abbreviateHome, pathBase, spaceName } from "./logic";
 import { colorTransition, EASE_EXPO_CURVE, indicatorTransition } from "./motion";
@@ -316,7 +316,7 @@ function WorkspacePane(props: { active: boolean }) {
               {(path) => (
                 <View
                   onPress={() => openRecent(path())}
-                  class="hover:bg-muted active:bg-accent"
+                  class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{
                     height: 48,
                     paddingLeft: SPACE[12],
@@ -375,7 +375,7 @@ function WorkspacePane(props: { active: boolean }) {
         </SectionRow>
         <View
           onPress={() => showJson.set(!showJson())}
-          class="hover:bg-muted active:bg-accent border-border"
+          class={`hover:bg-muted active:bg-accent border-border ${FOCUS_RING}`}
           style={{
             height: ROW.table,
             paddingLeft: SPACE[12],
@@ -819,7 +819,8 @@ function ToolchainPane() {
         <View
           testID="toolchain-advanced-toggle"
           onPress={() => toolchainAdvancedOpen.set(!toolchainAdvancedOpen())}
-          style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], alignSelf: "flex-start" }}
+          class={FOCUS_RING}
+          style={{ flexDirection: "row", alignItems: "center", gap: SPACE[4], alignSelf: "flex-start", borderRadius: RADIUS.xs }}
         >
           <Icon name={toolchainAdvancedOpen() ? "chevronDown" : "chevronRight"} size="sm" tone="muted-foreground" />
           <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground hover:text-foreground">
@@ -1365,7 +1366,7 @@ export function SettingsView(props: { active?: boolean } = {}) {
                   <View
                     testID={`settings-nav-${item().id}`}
                     onPress={() => settingsSection.set(item().id)}
-                    class={selected() ? "" : "hover:bg-muted active:bg-accent"}
+                    class={selected() ? FOCUS_RING : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{
                       height: NAV_ITEM_HEIGHT,
                       paddingLeft: SPACE[12],

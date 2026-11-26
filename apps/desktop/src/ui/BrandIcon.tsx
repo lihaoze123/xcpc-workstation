@@ -15,6 +15,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "nsh";
+import { FOCUS_RING } from "./kit";
 import { EASE_EXPO_CURVE } from "./motion";
 import plateSvg from "./brand/plate.svg";
 import paperBackSvg from "./brand/paper-back.svg";
@@ -151,6 +152,7 @@ export function BrandIcon(props: BrandIconProps) {
     <View
       testID={props.testID}
       onPress={props.replayOnPress ? () => play() : undefined}
+      class={props.replayOnPress ? FOCUS_RING : undefined}
       style={[
         {
           width: size,

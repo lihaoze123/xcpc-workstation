@@ -7,7 +7,7 @@ import { Menu as DesktopMenu } from "nsh/desktop";
 import type { GroupSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName } from "../Icon";
-import { Btn, tip } from "../kit";
+import { Btn, FOCUS_RING, tip } from "../kit";
 import { colorTransition } from "../motion";
 import { EASE_STANDARD, ms } from "../theme";
 
@@ -33,8 +33,8 @@ function SidebarRow(props: {
       onContextMenu={props.onContextMenu}
       class={
         props.active
-          ? "bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          : "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+          ? `bg-accent ${FOCUS_RING}`
+          : `hover:bg-muted active:bg-accent ${FOCUS_RING}`
       }
       style={{
         height: CONTROL.md,

@@ -8,7 +8,7 @@ import { Input } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, IconBtn, RatingBadge, Segmented, tip } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
@@ -65,8 +65,8 @@ function FilterChip(props: {
       onPress={props.onPress}
       class={
         props.active
-          ? "bg-accent border border-foreground/40 active:opacity-90"
-          : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+          ? `bg-accent border border-foreground/40 active:opacity-90 ${FOCUS_RING}`
+          : `bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent ${FOCUS_RING}`
       }
       style={{
         height: CONTROL.sm,
@@ -412,8 +412,8 @@ export function SubmissionsTab(props: {
                 testID="submissions-diff-menu"
                 class={
                   hasDifficultyFilter()
-                    ? "bg-accent border border-foreground/40 active:opacity-90"
-                    : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+                    ? `bg-accent border border-foreground/40 active:opacity-90 ${FOCUS_RING}`
+                    : `bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent ${FOCUS_RING}`
                 }
                 style={{
                   height: CONTROL.sm,
@@ -449,7 +449,7 @@ export function SubmissionsTab(props: {
             <View
               testID="submissions-active-tag-chip"
               onPress={() => patch({ tag: "" })}
-              class="bg-accent border border-foreground/40 active:opacity-90"
+              class={`bg-accent border border-foreground/40 active:opacity-90 ${FOCUS_RING}`}
               style={{
                 height: CONTROL.sm,
                 paddingLeft: SPACE[8],
@@ -570,7 +570,7 @@ export function SubmissionsTab(props: {
                               numberOfLines: 1,
                               textOverflow: "ellipsis",
                             }}
-                            class={row().problem_url ? "text-foreground hover:text-primary" : "text-foreground"}
+                            class={row().problem_url ? `text-foreground hover:text-primary ${FOCUS_RING}` : "text-foreground"}
                           >
                             {row().problem_title || row().problem_key}
                           </Text>
@@ -646,8 +646,8 @@ export function SubmissionsTab(props: {
                               <Text
                                 testID={`submission-open-${row().problem_key}`}
                                 onPress={() => openProblemEditorial(pid())}
-                                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }}
-                                class="text-primary hover:opacity-80"
+                                style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, borderRadius: RADIUS.xs }}
+                                class={`text-primary hover:opacity-80 ${FOCUS_RING}`}
                               >
                                 {t("training.submissions.open")}
                               </Text>

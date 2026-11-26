@@ -7,7 +7,7 @@ import { Input } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
-import { Btn, Chip, createTransientFlag, DelayedSpinner, Lock, Segmented } from "../kit";
+import { Btn, Chip, createTransientFlag, DelayedSpinner, FOCUS_RING, Lock, Segmented } from "../kit";
 import { DetailHeader, EmptyState, FilterEmpty, GUTTER, Spacer, Toolbar } from "../layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
@@ -269,7 +269,7 @@ export function SnippetsView(props: { active: boolean }) {
                     onSelect={(id) => statusFilter.set(id as SnippetStatusFilter)}
                     trigger={
                       <View
-                        class="bg-card border border-border hover:bg-muted"
+                        class={`bg-card border border-border hover:bg-muted ${FOCUS_RING}`}
                         style={{
                           height: CONTROL.sm,
                           paddingLeft: SPACE[8],
@@ -297,7 +297,7 @@ export function SnippetsView(props: { active: boolean }) {
                       onSelect={(id) => tagFilter.set(id)}
                       trigger={
                         <View
-                          class="bg-card border border-border hover:bg-muted"
+                          class={`bg-card border border-border hover:bg-muted ${FOCUS_RING}`}
                           style={{
                             height: CONTROL.sm,
                             paddingLeft: SPACE[8],
@@ -349,7 +349,7 @@ export function SnippetsView(props: { active: boolean }) {
                             selectedSnippetSlug.set(s().slug);
                             if (e.clickCount >= 2) openSnippetStudio(s().slug);
                           }}
-                          class={selected() ? "bg-accent" : "hover:bg-muted active:bg-accent"}
+                          class={selected() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                           style={{
                             height: 54,
                             paddingLeft: SPACE[12],
@@ -468,7 +468,7 @@ export function SnippetsView(props: { active: boolean }) {
                         alignItems: "center",
                         gap: SPACE[6],
                       }}
-                      class="hover:bg-muted"
+                      class={`hover:bg-muted ${FOCUS_RING}`}
                     >
                       <Icon
                         name={archivedOpen() ? "chevronDown" : "chevronRight"}
@@ -915,7 +915,7 @@ function TrdRow(props: {
         props.onSelect();
         if (e.clickCount >= 2) props.onOpen();
       }}
-      class={props.selected ? "bg-accent" : "hover:bg-muted active:bg-accent"}
+      class={props.selected ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
       style={{
         height: 54,
         paddingLeft: SPACE[12],

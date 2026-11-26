@@ -8,7 +8,7 @@ import { Switch } from "nsh/base";
 import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Chip, tip } from "../kit";
+import { Chip, FOCUS_RING, tip } from "../kit";
 import { EmptyState, FilterEmpty } from "../layout";
 import { colorTransition } from "../motion";
 import { cardShadow } from "../theme";
@@ -149,7 +149,7 @@ export function ContestsTab(props: {
             <View
               testID="contests-platform-all"
               onPress={() => props.onPlatformChange("")}
-              class={props.platformFilter === "" ? "bg-accent border border-foreground/30" : "bg-card border border-border hover:bg-muted"}
+              class={props.platformFilter === "" ? `bg-accent border border-foreground/30 ${FOCUS_RING}` : `bg-card border border-border hover:bg-muted ${FOCUS_RING}`}
               style={{ height: CONTROL.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], borderRadius: RADIUS.sm, justifyContent: "center" }}
             >
               <Text
@@ -166,7 +166,7 @@ export function ContestsTab(props: {
                   <View
                     testID={`contests-platform-${plat()}`}
                     onPress={() => props.onPlatformChange(plat())}
-                    class={active() ? "bg-accent border border-foreground/30" : "bg-card border border-border hover:bg-muted"}
+                    class={active() ? `bg-accent border border-foreground/30 ${FOCUS_RING}` : `bg-card border border-border hover:bg-muted ${FOCUS_RING}`}
                     style={{ height: CONTROL.sm, paddingLeft: SPACE[12], paddingRight: SPACE[12], borderRadius: RADIUS.sm, justifyContent: "center" }}
                   >
                     <Text
@@ -187,8 +187,8 @@ export function ContestsTab(props: {
         >
           <Text
             onPress={() => props.onIncludeFinishedChange(!props.includeFinished)}
-            style={{ fontSize: FONT_SIZE.caption }}
-            class="text-secondary-foreground"
+            style={{ fontSize: FONT_SIZE.caption, borderRadius: RADIUS.xs }}
+            class={`text-secondary-foreground ${FOCUS_RING}`}
           >
             {t("training.contests.includeFinished")}
           </Text>
@@ -257,7 +257,7 @@ export function ContestsTab(props: {
                               if (hoveredKey() === rowKey()) hoveredKey.set(undefined);
                             }}
                             tooltip={clickable() ? tip(t("training.contests.openPage")) : undefined}
-                            class={clickable() ? "hover:bg-muted/60 active:bg-accent/60" : undefined}
+                            class={clickable() ? `hover:bg-muted/60 active:bg-accent/60 ${FOCUS_RING}` : undefined}
                             style={{
                               paddingTop: SPACE[12],
                               paddingBottom: SPACE[12],

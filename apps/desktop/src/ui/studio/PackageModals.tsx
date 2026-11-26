@@ -7,7 +7,7 @@ import { effect, signal, Text, untracked, View } from "nsh";
 import { Input, Switch } from "nsh/base";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
-import { Btn, FieldLabel } from "../kit";
+import { Btn, FieldLabel, FOCUS_RING } from "../kit";
 import { AppMenu } from "../Menu";
 import { Modal } from "../Modal";
 import { preview } from "../store";
@@ -223,7 +223,7 @@ export function AddGeneratorBatchModal(props: {
             }}
             trigger={
               <View
-                class="border border-border bg-card hover:bg-muted"
+                class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                 style={{
                   height: CONTROL.lg,
                   paddingLeft: SPACE[12],
@@ -297,7 +297,7 @@ export function AddGeneratorBatchModal(props: {
               onSelect={(id) => selectedSubtask.set(id === "__none__" ? null : id)}
               trigger={
                 <View
-                  class="border border-border bg-card hover:bg-muted"
+                  class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.lg,
                     paddingLeft: SPACE[12],
@@ -566,7 +566,7 @@ export function SubtaskModal(props: {
             {(["min", "sum"] as const).map((mode) => (
               <View
                 onPress={() => scoring.set(mode)}
-                class={scoring() === mode ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
+                class={scoring() === mode ? `bg-accent border border-border ${FOCUS_RING}` : `border border-border hover:bg-muted ${FOCUS_RING}`}
                 style={{
                   flex: 1,
                   height: CONTROL.md,
@@ -596,7 +596,7 @@ export function SubtaskModal(props: {
                   return (
                     <View
                       onPress={() => toggleDep(s().id)}
-                      class={active() ? "bg-accent border border-border" : "border border-border hover:bg-muted"}
+                      class={active() ? `bg-accent border border-border ${FOCUS_RING}` : `border border-border hover:bg-muted ${FOCUS_RING}`}
                       style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.sm, justifyContent: "center" }}
                     >
                       <Text
@@ -767,7 +767,7 @@ export function SolutionScoringModal(props: {
                         }}
                         trigger={
                           <View
-                            class="border border-border bg-card hover:bg-muted"
+                            class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                             style={{
                               height: CONTROL.md,
                               minWidth: 112,
@@ -878,7 +878,7 @@ export function InitPackageModal(props: {
               onSelect={(id) => runs.set(Number.parseInt(id, 10) || 1)}
               trigger={
                 <View
-                  class="border border-border bg-card hover:bg-muted"
+                  class={`border border-border bg-card hover:bg-muted ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.md,
                     paddingLeft: SPACE[8],

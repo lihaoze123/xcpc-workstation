@@ -21,7 +21,7 @@ import {
 import { PageImage, Preview, type MarkdownSpanJs } from "xcpc-workstation/native";
 import { preview } from "../store";
 import { t } from "../i18n";
-import { Btn, IconBtn, tip } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, tip } from "../kit";
 import {
   EASE_STANDARD,
   EDITOR_MONO,
@@ -1369,7 +1369,7 @@ export function MarkdownEditor(props: {
             <View
               onPress={() => caseSensitive.set(!caseSensitive())}
               tooltip={tip(t("editor.find.caseSensitive"))}
-              class={caseSensitive() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
+              class={caseSensitive() ? `bg-accent border border-border ${FOCUS_RING}` : `border border-transparent hover:bg-muted ${FOCUS_RING}`}
               style={{
                 width: 24,
                 height: CONTROL.sm,

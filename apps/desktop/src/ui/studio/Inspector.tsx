@@ -12,7 +12,7 @@ import { freezeBlockedCopy, type Freeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { resolveLocalized, t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { Btn, DelayedSpinner, FOCUS_RING, IconBtn, Segmented, tip } from "../kit";
 import { Modal } from "../Modal";
 import { colorTransition, panelTransition } from "../motion";
 import { activeRevision, errorOf, goSettings, info, preview, refresh, unfreezeFor, type UiError } from "../store";
@@ -200,7 +200,7 @@ export function Inspector(props: {
                       <View
                         testID="inspector-init-package-btn"
                         onPress={() => props.onInitPackage?.()}
-                        class="border border-border bg-card hover:bg-muted active:bg-accent"
+                        class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                         style={{
                           paddingLeft: SPACE[12],
                           paddingRight: SPACE[8],
@@ -229,7 +229,7 @@ export function Inspector(props: {
                     <View
                       testID="inspector-open-build-btn"
                       onPress={() => props.onOpenBuild?.()}
-                      class="border border-border bg-card hover:bg-muted active:bg-accent"
+                      class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                       style={{
                         height: CONTROL.lg,
                         paddingLeft: SPACE[12],
@@ -275,7 +275,7 @@ export function Inspector(props: {
                 <View
                   testID="inspector-assets-btn"
                   onPress={() => props.onOpenAssets?.()}
-                  class="border border-border bg-card hover:bg-muted active:bg-accent"
+                  class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.lg,
                     paddingLeft: SPACE[12],

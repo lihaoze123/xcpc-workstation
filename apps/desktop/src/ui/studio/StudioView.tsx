@@ -23,7 +23,7 @@ import type {
 import { createFreeze } from "../Contest";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { locale, t, type MessageKey } from "../i18n";
-import { Btn, IconBtn, Lock, Segmented, tip } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, Lock, Segmented, tip } from "../kit";
 import { EmptyState, InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { adaptiveCompileDelayMs, minimalEdit, ratioOf, type Book } from "../logic";
@@ -1315,7 +1315,7 @@ export function StudioView(props: { active: boolean }) {
                 <View
                   testID="studio-breadcrumb-contest"
                   onPress={returnToContest}
-                  class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.sm,
                     paddingLeft: SPACE[4],

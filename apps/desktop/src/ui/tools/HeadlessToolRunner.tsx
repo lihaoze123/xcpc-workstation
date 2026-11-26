@@ -5,7 +5,7 @@
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { Input } from "nsh/base";
 import { t } from "../i18n";
-import { Segmented } from "../kit";
+import { FOCUS_RING, Segmented } from "../kit";
 import { preview } from "../store";
 import { cardShadow, MONO } from "../theme";
 import { OutputRenderer } from "./OutputRenderer";
@@ -45,7 +45,7 @@ function FieldEditor(props: {
           borderRadius: RADIUS.sm,
           borderWidth: 1,
         }}
-        class={isOn() ? "border-border bg-accent" : "border-border bg-background hover:bg-muted"}
+        class={isOn() ? `border-border bg-accent ${FOCUS_RING}` : `border-border bg-background hover:bg-muted ${FOCUS_RING}`}
       >
         <Text style={{ fontSize: FONT_SIZE.caption }} class="text-foreground">
           {props.field.label}
@@ -111,7 +111,7 @@ function FieldEditor(props: {
                 <View
                   testID={`tool-field-${props.field.name}-${opt()}`}
                   onPress={() => props.onChange(opt(), true)}
-                  class={active() ? "bg-card" : "hover:bg-background/60"}
+                  class={active() ? `bg-card ${FOCUS_RING}` : `hover:bg-background/60 ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.sm,
                     paddingLeft: SPACE[8],

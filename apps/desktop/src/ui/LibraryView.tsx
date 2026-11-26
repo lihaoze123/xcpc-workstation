@@ -13,7 +13,7 @@ import {
 } from "nsh/base";
 import { Menu as DesktopMenu } from "nsh/desktop";
 import type { PreviewRequest } from "xcpc-workstation/native";
-import { Btn, Chevron, Chip, IconBtn, RatingBadge, Segmented, tip } from "./kit";
+import { Btn, Chevron, Chip, FOCUS_RING, IconBtn, RatingBadge, Segmented, tip } from "./kit";
 import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
@@ -86,8 +86,8 @@ function FilterOptionPill(props: { label: string; active: boolean; onPress: () =
       onPress={props.onPress}
       class={
         props.active
-          ? "bg-accent border border-primary/40 text-foreground"
-          : "bg-muted/60 border border-transparent hover:bg-muted text-secondary-foreground"
+          ? `bg-accent border border-primary/40 text-foreground ${FOCUS_RING}`
+          : `bg-muted/60 border border-transparent hover:bg-muted text-secondary-foreground ${FOCUS_RING}`
       }
       style={{
         height: CONTROL.sm,
@@ -115,7 +115,7 @@ function SortRadioRow(props: { label: string; selected: boolean; onPress: () => 
     <View
       testID={props.testID}
       onPress={props.onPress}
-      class="hover:bg-muted active:bg-accent"
+      class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
       style={{
         height: CONTROL.lg,
         paddingLeft: SPACE[8],
@@ -917,7 +917,7 @@ export function LibraryView(props: { active: boolean }) {
                         search?.focus();
                       }}
                       tooltip={tip(t("library.clearSearch"), "escape")}
-                      class="hover:bg-muted active:bg-accent"
+                      class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                       style={{
                         width: 20,
                         height: 20, // token-exempt: compact inline icon box
@@ -954,8 +954,8 @@ export function LibraryView(props: { active: boolean }) {
                       testID="library-filter-trigger"
                       class={
                         hasFilterMenuActive()
-                          ? "bg-accent border border-border hover:bg-accent/80 active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                          : "border border-border bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                          ? `bg-accent border border-border hover:bg-accent/80 active:bg-accent ${FOCUS_RING}`
+                          : `border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`
                       }
                       style={{
                         height: CONTROL.md,
@@ -1159,7 +1159,7 @@ export function LibraryView(props: { active: boolean }) {
                     disabled={readOnly()}
                     onPress={() => !readOnly() && dialog.set({ kind: "newProblem" })}
                     tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("library.newProblem"), readOnly() ? undefined : "mod+n")}
-                    class={readOnly() ? "" : "hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+                    class={readOnly() ? "" : `hover:bg-sidebar-primary active:opacity-90 ${FOCUS_RING}`}
                     activeStyle={pressActiveStyle(readOnly())}
                     style={{
                       width: CONTROL.md,
@@ -1182,7 +1182,7 @@ export function LibraryView(props: { active: boolean }) {
                         testID="library-add-menu-trigger"
                         disabled={readOnly()}
                         tooltip={tip(readOnly() ? t("library.readOnlyCannotCreate") : t("packages.importPolygon"))}
-                        class={readOnly() ? "" : "hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"}
+                        class={readOnly() ? "" : `hover:bg-sidebar-primary active:opacity-90 ${FOCUS_RING}`}
                         style={{
                           width: 20,
                           height: CONTROL.md,
@@ -1219,7 +1219,7 @@ export function LibraryView(props: { active: boolean }) {
                       {(chip) => (
                         <View
                           onPress={() => chip().onRemove()}
-                          class="bg-muted hover:bg-accent active:bg-accent"
+                          class={`bg-muted hover:bg-accent active:bg-accent ${FOCUS_RING}`}
                           style={{
                             height: 20, // token-exempt: compact inline filter chip height
                             maxWidth: 160,
@@ -1247,7 +1247,7 @@ export function LibraryView(props: { active: boolean }) {
                   <View
                     testID="library-active-filters-clear"
                     onPress={clearStructuredFilters}
-                    class="hover:bg-muted active:bg-accent"
+                    class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{
                       height: CONTROL.sm,
                       paddingLeft: SPACE[6],
@@ -1596,7 +1596,7 @@ function ProblemInspector(props: {
                     <View
                       onPress={() => jumpContest(c().id)}
                       tooltip={tip(t("library.inspector.jumpContest", { name: c().name }))}
-                      class="bg-muted hover:bg-accent active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      class={`bg-muted hover:bg-accent active:bg-accent ${FOCUS_RING}`}
                       style={{
                         height: 20, // token-exempt: compact inline tag chip height
                         maxWidth: 168,
@@ -1708,7 +1708,7 @@ function ProblemInspector(props: {
                 onSelect={(id) => solution.set(id)}
                 trigger={
                   <View
-                    class="hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                    class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{
                       height: CONTROL.sm,
                       paddingLeft: SPACE[8],

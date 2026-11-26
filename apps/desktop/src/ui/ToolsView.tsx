@@ -5,7 +5,7 @@
 import { batch, computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
-import { Btn } from "./kit";
+import { Btn, FOCUS_RING } from "./kit";
 import { EmptyState, GUTTER, PageLoading, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
@@ -225,8 +225,8 @@ export function ToolsView(props: { active?: boolean }) {
                   onPress={() => selectPlugin(group())}
                   class={
                     isSelected()
-                      ? "bg-accent"
-                      : "hover:bg-muted/70 active:bg-accent/60"
+                      ? `bg-accent ${FOCUS_RING}`
+                      : `hover:bg-muted/70 active:bg-accent/60 ${FOCUS_RING}`
                   }
                   style={{
                     paddingLeft: SPACE[12],

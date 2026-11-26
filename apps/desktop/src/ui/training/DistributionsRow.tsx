@@ -5,6 +5,7 @@
 
 import { computed, Text, View } from "nsh";
 import { t } from "../i18n";
+import { FOCUS_RING } from "../kit";
 import { FilterEmpty, SectionEmpty } from "../layout";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor } from "../theme";
@@ -85,10 +86,8 @@ export function DistributionsRow(props: {
               return (
                 <View
                   testID={`training-bucket-${bucket().label}`}
-                  onPress={() => {
-                    if (bucket().ac_count > 0) props.onSelectBucket(bucket());
-                  }}
-                  class={bucket().ac_count > 0 ? "hover:bg-muted/70 rounded-[6px]" : ""}
+                  onPress={bucket().ac_count > 0 ? () => props.onSelectBucket(bucket()) : undefined}
+                  class={bucket().ac_count > 0 ? `hover:bg-muted/70 rounded-[6px] ${FOCUS_RING}` : ""}
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
@@ -157,7 +156,7 @@ export function DistributionsRow(props: {
                   <View
                     testID={`training-tag-min-${opt().labelKey}`}
                     onPress={() => props.onTagMinRatingChange(opt().value)}
-                    class={active() ? "bg-accent border border-border" : "border border-transparent hover:bg-muted"}
+                    class={active() ? `bg-accent border border-border ${FOCUS_RING}` : `border border-transparent hover:bg-muted ${FOCUS_RING}`}
                     style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center" }}
                   >
                     <Text
@@ -220,7 +219,7 @@ export function DistributionsRow(props: {
                   <View
                     testID={`training-tag-${item().tag}`}
                     onPress={() => props.onSelectTag(item().tag, props.tagMinRating)}
-                    class="hover:bg-muted/70 rounded-[6px]"
+                    class={`hover:bg-muted/70 rounded-[6px] ${FOCUS_RING}`}
                     style={{
                       flexDirection: "row",
                       alignItems: "center",

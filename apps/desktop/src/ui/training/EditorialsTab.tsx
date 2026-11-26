@@ -7,7 +7,7 @@ import { Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import type { PreviewRequest } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, Chip, IconBtn, RatingBadge, tip } from "../kit";
+import { Btn, Chip, FOCUS_RING, IconBtn, RatingBadge, tip } from "../kit";
 import { DetailHeader, EmptyState, FilterEmpty, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
@@ -244,8 +244,8 @@ export function EditorialsTab(props: EditorialsTabProps) {
                         testID="editorials-tag-menu"
                         class={
                           props.filter.tag !== ""
-                            ? "bg-accent border border-foreground/40 active:opacity-90"
-                            : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+                            ? `bg-accent border border-foreground/40 active:opacity-90 ${FOCUS_RING}`
+                            : `bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent ${FOCUS_RING}`
                         }
                         style={{
                           height: CONTROL.sm,
@@ -285,8 +285,8 @@ export function EditorialsTab(props: EditorialsTabProps) {
                         testID="editorials-diff-menu"
                         class={
                           hasDifficultyFilter()
-                            ? "bg-accent border border-foreground/40 active:opacity-90"
-                            : "bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent"
+                            ? `bg-accent border border-foreground/40 active:opacity-90 ${FOCUS_RING}`
+                            : `bg-transparent border border-border/70 hover:bg-muted/80 active:bg-accent ${FOCUS_RING}`
                         }
                         style={{
                           height: CONTROL.sm,
@@ -357,8 +357,8 @@ export function EditorialsTab(props: EditorialsTabProps) {
                           onPress={() => selectedId.set(item().problemId)}
                           class={
                             isSelected()
-                              ? "bg-accent border border-foreground/30"
-                              : "bg-card border border-border hover:bg-muted/60"
+                              ? `bg-accent border border-foreground/30 ${FOCUS_RING}`
+                              : `bg-card border border-border hover:bg-muted/60 ${FOCUS_RING}`
                           }
                           style={{
                             borderRadius: RADIUS.md,

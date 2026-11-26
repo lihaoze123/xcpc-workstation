@@ -26,7 +26,7 @@ import type { ActionResult, CleanUnusedAssetsResultJs, ProblemAssetJs } from "xc
 import { ErrorDisplay } from "../ErrorDisplay";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, createTransientValue, IconBtn, tip } from "../kit";
+import { Btn, createTransientValue, FOCUS_RING, IconBtn, tip } from "../kit";
 import { EmptyState, PageLoading } from "../layout";
 import { Modal } from "../Modal";
 import { colorTransition, overlayTransition, panelTransition } from "../motion";
@@ -839,7 +839,7 @@ export function AssetsGalleryModal(props: {
                             props.onLocateReference(ref0.file, ref0.line);
                           }}
                           tooltip={tip(t("assets.jumpToReference"))}
-                          class="hover:bg-muted active:bg-accent"
+                          class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                           style={{
                             paddingLeft: SPACE[6],
                             paddingRight: SPACE[6],
@@ -871,8 +871,8 @@ export function AssetsGalleryModal(props: {
                                   tooltip={tip(t("assets.setWidth", { pct: w() }))}
                                   class={
                                     active()
-                                      ? "bg-accent border border-border"
-                                      : "bg-muted hover:bg-accent active:bg-accent"
+                                      ? `bg-accent border border-border ${FOCUS_RING}`
+                                      : `bg-muted hover:bg-accent active:bg-accent ${FOCUS_RING}`
                                   }
                                   style={{
                                     height: CONTROL.sm,
@@ -964,6 +964,7 @@ function AssetTile(props: {
       >
         <View
           onPress={props.onOpenLightbox}
+          class={FOCUS_RING}
           style={{
             width: "100%",
             height: "100%",
@@ -1019,7 +1020,7 @@ function AssetTile(props: {
       <If
         when={props.isRenaming}
         else={
-          <View onPress={props.onSelect} style={{ gap: SPACE[2], paddingLeft: SPACE[2], paddingRight: SPACE[2] }}>
+          <View onPress={props.onSelect} class={FOCUS_RING} style={{ gap: SPACE[2], paddingLeft: SPACE[2], paddingRight: SPACE[2] }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE[6] }}>
               <Text
                 style={{

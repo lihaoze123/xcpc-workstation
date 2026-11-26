@@ -21,7 +21,7 @@ import {
 import { Input } from "nsh/base";
 import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
-import { Kbd, tip } from "../kit";
+import { FOCUS_RING, Kbd, tip } from "../kit";
 import { SectionEmpty } from "../layout";
 import { colorTransition, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
@@ -507,7 +507,7 @@ export function SlashPopover(props: {
         testID={`slash-item-${cmd.id}`}
         onPress={() => props.onSelect(cmd)}
         onMouseEnter={(e) => handlePointerHover(index(), e.pagePosition)}
-        class={active() ? "bg-accent" : "hover:bg-muted/70"}
+        class={active() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted/70 ${FOCUS_RING}`}
         style={{
           height: ROW_HEIGHT,
           paddingLeft: SPACE[8],
@@ -695,7 +695,7 @@ export function SlashPopover(props: {
                         onPress={() => props.onSelect(cmd())}
                         onMouseEnter={(e) => handlePointerHover(idx(), e.pagePosition)}
                         tooltip={tip(slashCommandLabel(cmd()), cmd().shortcut)}
-                        class={active() ? "bg-accent" : "hover:bg-muted/75"}
+                        class={active() ? `bg-accent ${FOCUS_RING}` : `hover:bg-muted/75 ${FOCUS_RING}`}
                         style={{
                           flex: 1,
                           height: CONTROL.lg,

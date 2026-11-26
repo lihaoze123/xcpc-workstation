@@ -7,7 +7,7 @@ import { Input } from "nsh/base";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { Btn, IconBtn, RatingBadge, Segmented } from "../kit";
+import { Btn, FOCUS_RING, IconBtn, RatingBadge, Segmented } from "../kit";
 import { DialogHeader, Modal } from "../Modal";
 import { colorTransition } from "../motion";
 import { preview, refresh } from "../store";
@@ -340,7 +340,7 @@ export function ManualLogModal(props: ManualLogModalProps) {
                         <View
                           testID={`manual-log-suggestion-${prob().id}`}
                           onPress={() => pickWorkspaceProblem(prob())}
-                          class="hover:bg-muted active:bg-accent"
+                          class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                           style={{
                             paddingTop: SPACE[8],
                             paddingBottom: SPACE[8],

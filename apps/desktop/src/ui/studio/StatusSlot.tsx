@@ -10,7 +10,7 @@ import { cleanup, Clipboard, Scroll, signal, Text, View } from "nsh";
 import { Popover } from "nsh/base";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { DelayedSpinner } from "../kit";
+import { DelayedSpinner, FOCUS_RING } from "../kit";
 import { colorTransition, overlayTransform, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
@@ -132,7 +132,7 @@ export function StatusSlot(props: {
           }}
           class={
             hasBody()
-              ? "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              ? `hover:bg-muted active:bg-accent ${FOCUS_RING}`
               : ""
           }
         >
@@ -183,14 +183,14 @@ export function StatusSlot(props: {
                     a().run();
                   }}
                   style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }}
-                  class="text-primary"
+                  class={`text-primary ${FOCUS_RING}`}
                 >
                   {a().label}
                 </Text>
               )}
             </If>
             <If when={props.model.details}>
-              <Text testID="status-copy-details" onPress={copy} style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground hover:text-secondary-foreground">
+              <Text testID="status-copy-details" onPress={copy} style={{ fontSize: FONT_SIZE.caption }} class={`text-muted-foreground hover:text-secondary-foreground ${FOCUS_RING}`}>
                 {copied() ? t("common.copied") : t("common.copyDetails")}
               </Text>
             </If>
@@ -239,7 +239,7 @@ function StatusRow(props: { item: StatusItem; tone: "issue" | "reminder"; onGo: 
               go()();
             }}
             style={{ fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold, paddingTop: SPACE[2] }}
-            class="text-primary"
+            class={`text-primary ${FOCUS_RING}`}
           >
             {t("status.go")}
           </Text>

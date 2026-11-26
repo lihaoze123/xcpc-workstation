@@ -5,7 +5,7 @@ import { signal, Text, View, type JSX } from "nsh";
 import type { ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
-import { RatingBadge, tip } from "../kit";
+import { FOCUS_RING, RatingBadge, tip } from "../kit";
 import type { CheckboxTriState } from "../logic";
 import { colorTransition } from "../motion";
 import { StatusMark } from "../studio/StatusSlot";
@@ -93,8 +93,8 @@ export function TriCheckbox(props: {
       onPress={props.onPress}
       class={
         checked()
-          ? "bg-primary border border-primary hover:opacity-90"
-          : "bg-card border border-border hover:border-foreground/40"
+          ? `bg-primary border border-primary hover:opacity-90${props.onPress ? ` ${FOCUS_RING}` : ""}`
+          : `bg-card border border-border hover:border-foreground/40${props.onPress ? ` ${FOCUS_RING}` : ""}`
       }
       style={{
         width: 16,
@@ -207,7 +207,7 @@ export function LibraryListRow(props: {
         props.onRowClick(props.row.id, { shift, mod, checkbox: isCheckboxSlot });
       }}
       onContextMenu={(e) => props.onRowContextMenu(props.row, e.pagePosition.x, e.pagePosition.y)}
-      class={props.selected || props.focused ? "bg-accent" : "bg-card hover:bg-muted"}
+      class={props.selected || props.focused ? `bg-accent ${FOCUS_RING}` : `bg-card hover:bg-muted ${FOCUS_RING}`}
       style={{
         height: ROW.list,
         paddingLeft: SPACE[8],

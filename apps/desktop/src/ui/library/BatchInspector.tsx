@@ -7,7 +7,7 @@ import { Progress } from "nsh/base";
 import type { BatchTaskItemJs, BatchTaskSnapshotJs, GroupSummaryJs, ProblemSummaryJs } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon, type IconName, type IconTone } from "../Icon";
-import { Btn, DelayedSpinner, tip } from "../kit";
+import { Btn, DelayedSpinner, FOCUS_RING, tip } from "../kit";
 import { ErrorDisplay } from "../ErrorDisplay";
 import { DetailHeader } from "../layout";
 import { errorCopy } from "../logic";
@@ -80,7 +80,7 @@ function ActionRow(props: {
       class={
         props.disabled
           ? ""
-          : "hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+          : `hover:bg-muted active:bg-accent ${FOCUS_RING}`
       }
       style={{
         height: ROW.table,
@@ -339,11 +339,13 @@ export function BatchInspector(props: {
                       };
                       return (
                         <View
-                          onPress={() => {
-                            if (vis().clickable) openStudio({ target: "problem", id: it().problemId, initialTab: "build" });
-                          }}
+                          onPress={
+                            vis().clickable
+                              ? () => openStudio({ target: "problem", id: it().problemId, initialTab: "build" })
+                              : undefined
+                          }
                           tooltip={vis().clickable ? tip(t("library.batch.openBuildTooltip")) : undefined}
-                          class={vis().clickable ? "hover:bg-muted active:bg-accent" : undefined}
+                          class={vis().clickable ? `hover:bg-muted active:bg-accent ${FOCUS_RING}` : undefined}
                           style={{
                             height: CONTROL.lg,
                             paddingLeft: SPACE[8],

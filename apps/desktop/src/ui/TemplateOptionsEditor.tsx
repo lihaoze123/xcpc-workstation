@@ -11,7 +11,7 @@ import { Input, Switch } from "nsh/base";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { resolveLocalized, t } from "./i18n";
 import { Icon } from "./Icon";
-import { Btn, Chevron, IconBtn, Segmented, tip } from "./kit";
+import { Btn, Chevron, FOCUS_RING, IconBtn, Segmented, tip } from "./kit";
 import { pathBase, validId } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { Modal } from "./Modal";
@@ -120,7 +120,7 @@ export function TemplatePicker(props: {
               trigger={
                 <View
                   testID="template-picker"
-                  class="border border-border bg-card hover:bg-muted active:bg-accent"
+                  class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.lg,
                     borderRadius: RADIUS.sm,
@@ -382,7 +382,7 @@ function SchemaFieldRow(props: {
                     minWidth={180}
                     trigger={
                       <View
-                        class="border border-border bg-card hover:bg-muted active:bg-accent"
+                        class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                         style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
                       >
                         <Text style={{ flex: 1, fontSize: FONT_SIZE.body }} class="text-foreground">{currentLabel()}</Text>
@@ -452,7 +452,7 @@ function SchemaFieldRow(props: {
                 minWidth={220}
                 trigger={
                   <View
-                    class="border border-border bg-card hover:bg-muted active:bg-accent"
+                    class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{ height: CONTROL.lg, borderRadius: RADIUS.sm, paddingLeft: SPACE[12], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[6], ...colorTransition(120) }}
                   >
                     <Text
@@ -638,7 +638,7 @@ function TextOptionField(props: {
                     draft.set(preset());
                     props.onCommit(preset());
                   }}
-                  class={active() ? "bg-accent border border-border" : "bg-muted/60 hover:bg-muted border border-border"}
+                  class={active() ? `bg-accent border border-border ${FOCUS_RING}` : `bg-muted/60 hover:bg-muted border border-border ${FOCUS_RING}`}
                   style={{ height: CONTROL.sm, paddingLeft: SPACE[8], paddingRight: SPACE[8], borderRadius: RADIUS.xs, justifyContent: "center", ...colorTransition(100) }}
                 >
                   <Text
@@ -1074,7 +1074,7 @@ export function InstallPresetModal(props: {
               return (
                 <View
                   onPress={() => choosePreset(preset().id)}
-                  class={active() ? "border border-primary bg-accent/60" : "border border-border bg-card hover:bg-muted/60"}
+                  class={active() ? `border border-primary bg-accent/60 ${FOCUS_RING}` : `border border-border bg-card hover:bg-muted/60 ${FOCUS_RING}`}
                   style={{
                     borderRadius: RADIUS.md,
                     paddingLeft: SPACE[12],

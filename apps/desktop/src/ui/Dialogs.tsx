@@ -3,7 +3,7 @@
 
 import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
-import { Btn, Chip, DelayedSpinner, Segmented } from "./kit";
+import { Btn, Chip, DelayedSpinner, FOCUS_RING, Segmented } from "./kit";
 import { SectionEmpty } from "./layout";
 import type { ResolvedProblemUrlJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
@@ -565,7 +565,13 @@ function AddToContest(props: { problemId: string }) {
                     onMouseMove={() => {
                       if (!off() && highlighted() !== i()) highlighted.set(i());
                     }}
-                    class={off() ? "" : focused() ? "bg-accent active:bg-accent" : "hover:bg-muted active:bg-accent"}
+                    class={
+                      off()
+                        ? ""
+                        : focused()
+                          ? `bg-accent active:bg-accent ${FOCUS_RING}`
+                          : `hover:bg-muted active:bg-accent ${FOCUS_RING}`
+                    }
                     style={{
                       height: CONTROL.lg,
                       paddingLeft: SPACE[12],
@@ -619,7 +625,11 @@ function AddToContest(props: { problemId: string }) {
           const newIdx = contests().length;
           if (highlighted() !== newIdx) highlighted.set(newIdx);
         }}
-        class={highlighted() === contests().length ? "bg-accent active:bg-accent" : "hover:bg-muted active:bg-accent"}
+        class={
+          highlighted() === contests().length
+            ? `bg-accent active:bg-accent ${FOCUS_RING}`
+            : `hover:bg-muted active:bg-accent ${FOCUS_RING}`
+        }
         style={{
           height: CONTROL.lg,
           paddingLeft: SPACE[12],
@@ -685,7 +695,7 @@ function DeleteProblem(props: { problemId: string; onJumpContest?: (contestId: s
                 {(c) => (
                   <View
                     onPress={() => jumpContest(c().id)}
-                    class="border border-border bg-muted/50 hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                    class={`border border-border bg-muted/50 hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{
                       height: CONTROL.lg,
                       paddingLeft: SPACE[12],
@@ -966,7 +976,7 @@ function BatchTags(props: { open: boolean; problemIds: readonly string[] }) {
                 return (
                   <View
                     onPress={() => cycleTag(item().tag)}
-                    class={cls()}
+                    class={`${cls()} ${FOCUS_RING}`}
                     style={{
                       height: CONTROL.sm,
                       paddingLeft: SPACE[8],
@@ -1145,7 +1155,7 @@ function BatchDelete(props: { problemIds: readonly string[]; onJumpContest?: (co
                           {(c) => (
                             <View
                               onPress={() => jumpContest(c().id)}
-                              class="border border-border bg-muted/60 hover:bg-muted"
+                              class={`border border-border bg-muted/60 hover:bg-muted ${FOCUS_RING}`}
                               style={{
                                 height: CONTROL.sm,
                                 paddingLeft: SPACE[6],
@@ -1305,7 +1315,7 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
                     onPress={() => {
                       if (!off()) add(c().id, net());
                     }}
-                    class={off() ? "" : "hover:bg-muted active:bg-accent"}
+                    class={off() ? "" : `hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                     style={{
                       height: CONTROL.lg,
                       paddingLeft: SPACE[12],

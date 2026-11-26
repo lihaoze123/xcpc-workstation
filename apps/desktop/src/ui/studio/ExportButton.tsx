@@ -7,7 +7,7 @@ import { cleanup, effect, signal, Text, View } from "nsh";
 import type { ExportBookStatusJs } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
-import { DelayedSpinner } from "../kit";
+import { DelayedSpinner, FOCUS_RING } from "../kit";
 import { revealState, type Book } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
 import type { OjPackageFormat } from "../store";
@@ -147,10 +147,10 @@ export function ExportButton(props: {
     sec()
       ? disabled
         ? "bg-card"
-        : "bg-card hover:bg-muted active:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        : `bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`
       : disabled
         ? "bg-primary"
-        : "bg-primary hover:bg-sidebar-primary active:opacity-90 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+        : `bg-primary hover:bg-sidebar-primary active:opacity-90 ${FOCUS_RING}`;
 
   const chevronTrigger = (disabled: boolean) => (
     <View

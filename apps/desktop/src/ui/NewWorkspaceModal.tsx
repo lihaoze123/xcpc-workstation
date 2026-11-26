@@ -5,7 +5,7 @@
 import { colorScheme, signal, Text, View } from "nsh";
 import { t, type MessageKey } from "./i18n";
 import { Icon, type IconName } from "./Icon";
-import { IconBtn, tip } from "./kit";
+import { FOCUS_RING, IconBtn, tip } from "./kit";
 import { Modal } from "./Modal";
 import { colorTransition } from "./motion";
 import { newWorkspace, openExampleWorkspace } from "./store";
@@ -94,7 +94,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                   <View
                     testID={`new-workspace-tpl-${tpl().id}`}
                     onPress={() => selectedTemplate.set(tpl().id)}
-                    class={active() ? "bg-card border border-border" : "hover:bg-background/50"}
+                    class={active() ? `bg-card border border-border ${FOCUS_RING}` : `hover:bg-background/50 ${FOCUS_RING}`}
                     style={{
                       flex: 1,
                       borderRadius: RADIUS.sm,
@@ -148,7 +148,7 @@ export function NewWorkspaceModal(props: { open: boolean; onClose: () => void })
                 <View
                   testID={opt().testID}
                   onPress={() => opt().run()}
-                  class="bg-background border border-border hover:bg-muted/70 active:bg-accent"
+                  class={`bg-background border border-border hover:bg-muted/70 active:bg-accent ${FOCUS_RING}`}
                   style={{
                     borderRadius: RADIUS.lg,
                     paddingTop: SPACE[12],
