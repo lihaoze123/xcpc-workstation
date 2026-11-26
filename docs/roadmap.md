@@ -343,9 +343,9 @@
 
 **不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
 
-## Phase 6：增强 o11y 与全面整体打磨（已完成，v0.6.0-beta.1）
+## Phase 6：增强 o11y、全面整体打磨与渲染引擎演进（6A–6G 已完成至 v0.6.0-beta.2；6H 待实施）
 
-2026-11-26 对齐确认，按 **6A / 6A.5 / 6B / 6C** 四步推进，详细规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)：
+2026-11-26 对齐确认，**6A / 6A.5 / 6B / 6C**（规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)）与 **6D–6G** 均已在 `v0.6.0-beta.1` 完成落地，`v0.6.0-beta.2` 补齐了 Windows 全量体验对齐（路径规范化、静默 Job Object 评测、原生剪贴板、内存极致优化至 ~76 MB、WebView2 插件字体与样式一致性）；下一步为 **6H（Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进）**：
 
 ### Phase 6A：升级 NSH v0.7.1、清理自造轮子与原生 `<Editor>` 复测
 
@@ -369,26 +369,33 @@
 1. **核心链路量化优化**：以真实 Perfetto Trace 与 `TraceComparison` 基线对比驱动，消除重复并发 `preview.compile`、将训练看板与工具链探测异步化（`training_dashboard_async` / `toolchain_status_async` + SWR 缓存）、为冷启动快照与偏好落盘增加指纹去重防抖、缓存命令面板插件/模板索引并常驻挂载 `CommandPalette`、在诊断窗口非 Metrics 页暂停图表重绘；60Hz 实机最慢帧由 `355.5ms` 降至 `97.7ms`（-72.5%），连续打字端到端预览 `9–24ms`。
 2. **NSH 0.7 体验红利**：接入 `quitRequest` 未保存改动退出保护（统一刷盘注册表 `flushAllBeforeQuit`）、启用 `smoothWheel` 滚动手感、利用 `DataTable` `grow` 与单图标状态列优化题库表格列宽并完善主/诊断窗口生命周期联动。
 
-### Phase 6D：底层设计系统收敛与重点界面精修（待实施）
+### Phase 6D：底层设计系统收敛与重点界面精修（已完成）
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6d-ui-polish.md](./specs/phase-6d-ui-polish.md)：
 
 1. **底层系统先行**：字号收敛为 6 档 Token（字重只用 400/600）、间距/圆角/控件高度（`24/28/32`，工具行降到 28）刻度化、图标 3 档尺寸加恒定 1.5px 线宽，并以 `tokens.test.tsx` 护栏防止回退；表面层次改为「外壳 + 内嵌浮层面板」（出版工作室同样套用）；页面收敛为列表-详情 / 单页 / 工作室三种原型，页头只能用 `Toolbar` / `DetailHeader`；下划线 Tab 只用于导航级、胶囊只用于参数级；空值不画、整列空则隐藏、复选框按需显露；语义色只做小面积标记。
 2. **重点界面精修**：题库从表格改为列表（筛选合并、「导入 Polygon」收进「+」分体菜单、详情预览改为适合宽度的连续滚动阅读器）；比赛详情去掉区块标题与卡片外框，「挑题」改为列表末行；出版工作室标题栏改为面包屑 + 两个图标开关 + 导出主按钮，去掉「专注」按钮（保留快捷键）；训练总览合并为一条概览带，热力图固定为最近 12 个月。其余界面只做 Token 迁移与原型套用。
 
-### Phase 6E：界面排版（待实施）
+### Phase 6E：界面排版（已完成）
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6e-typography.md](./specs/phase-6e-typography.md)：内嵌 Inter 作为西文与数字字体，中文显式列出各平台系统字体（不内嵌）；界面另带 JetBrains Mono，等宽只用于代码、路径与命令、日志，slug / 题号 / 数值改用 Inter + `tabular-nums`；按 Inter Dynamic Metrics 公式只给 title（−0.25）与 display（−0.5）设字距；字体在首帧前注册完成，杜绝启动时字体替换闪烁。
 
-### Phase 6F：状态完整性（待实施）
+### Phase 6F：状态完整性（已完成）
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6f-state-completeness.md](./specs/phase-6f-state-completeness.md)：文字只在确实被截断时挂 Tooltip（`onTextLayout` 检测，不可靠则不做）；窗口失焦时只把指示条变灰；空 / 加载 / 出错按页级、区块级、行级三级各用一种表现，「筛选后无结果」与「还没有内容」分开，不做骨架屏；按固定清单手动验收超长文本、单条、大量数据与空工作区；聚焦环样式不变，补齐覆盖。
 
-### Phase 6G：动效即空间模型（待实施）
+### Phase 6G：动效即空间模型（已完成）
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6g-motion.md](./specs/phase-6g-motion.md)：动效只说明来去与关联，同级切换保持瞬间；工作室进出严格对称、下层不做视差；非虚拟列表增删与折叠区块经 `ViewRef.animateLayout` 弹簧过渡（前置验证不过则不做）；有锚点的浮层从触发元素的角长出，关闭只快速淡出；动效收成 3 档弹簧 + 2 档时长 Token，减少动态效果集中降级；拖拽松手续接指针速度、零跳动；用开发专用慢放开关逐项录屏验收。
 
-**不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器。
+### Phase 6H：Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进（待实施）
+
+2026-11-27 `/grill-me` 对齐确认，详细规格见 [specs/phase-6h-vello-preview.md](./specs/phase-6h-vello-preview.md)。留在 NSH 架构内，分 **6H.1 → 6H.2** 两步升级桌面端实时预览渲染管线：
+
+1. **6H.1（解耦 Vello 渲染器 + `RgbaPixels`，立即可落地）**：在 `xcpc-engine` 内以可选 feature `vello-preview` 实现直连 `typst::layout::Frame` 的 Sparse Strips（`vello_gpu` + `vello_cpu`）转换器与按 `page_fingerprint` 缓存的矢量场景（支持字形、形状/渐变/裁剪、轻量 `Tiling` 与 `resvg` SVG，罕见原语如彩色位图/SVG 字形与内嵌 PDF 自动单页回退 `typst-render` 并记 `WARN`），经 `RgbaPixels` 喂给现有 `PageImage`；仅用于桌面端实时预览，不影响 `xcpc` CLI / MCP / PDF 导出。设置硬性前置 PoC 量化门控（复杂/高倍缩放 P95 提速 ≥ 2×、13 页 `olymp-ref` 画质无退化、Windows 离开工作室空闲释放 GPU 上下文后内存 ≤ 100 MB；若 6H.1 GPU 读回收益不明显则先落 `vello_cpu`）。
+2. **6H.2（`nsh-gpu` 零拷贝直连，上游前置条件就绪后实施）**：待 `longbridge/nsh` 合入 Windows D3D12 `GpuView` 并对齐 `wgpu` 主版本后，复用 6H.1 的矢量场景缓存实现 `<GpuPageView>`，直接绘入 `GpuFrame::target(&wgpu::TextureView)`，撤掉 512px 分块瓦片与 48 MiB `PIXELS` 缓存，实现手势期实时无损矢量缩放（无 GPU 环境静默回退 `PageImage`）。不在「设置」页新增开关，仅在独立诊断窗口展示生效后端与回退计数，并保留 `XCPC_PREVIEW_RENDERER` 环境变量排障。
+
+**不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器、NSH `CanvasOp` 路径回放方案（A1）、`reflexo` 跨进程矢量 IR、替换 CLI/PDF 渲染器、设置页渲染后端开关。
 
 ## 待定与远期（尚未排期）
 
@@ -404,9 +411,8 @@
 - Web 版。
 - 选手开发调试环境：复用 `Toolchain` 层帮选手配好本机编译器、clangd、调试器（只保证版本一致，不在可复现契约之内）。
 - 题目包的更多语言（Python 等，经 `Language` 层加入）。
-- 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到）：
+- 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到；矢量 GPU 预览已升级排入 Phase 6H）：
   - 100 页以上的文档每次编辑的增量编译要 45ms 以上：看 Typst 能否只从改动的那页往后重新分页，或者整本预览时只编译当前题（单题聚焦预览）。
-  - 若以后要矢量预览：tinymist 的做法是 reflexo 矢量中间表示加 WGPU/Vello 绘制（`tinymist-viewer`），NSH 在 Linux 上的 `svg()`/`Painter` 是 UI 线程上的 Cairo 重放，不适合。
 
 ## 备选路线：真 TeX + rtex（已验证，暂不采用）
 

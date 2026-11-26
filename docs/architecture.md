@@ -7,7 +7,7 @@
 | 平台 | 以 Linux 为主要开发与视觉回归基线，同时提供 **Windows 原生发行版**（支持 Windows 路径规范化去 `\\?\` 前缀、静默 Job Object 评测、WebView2 沙箱与原生 `CF_DIB`+`"PNG"` 剪贴板）。macOS 暂不验收，Web 版远期待定 |
 | 应用框架 | **NSH 0.7（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
 | UI 组件 | **以 `nsh/base` 为基础**，需要时可以基于 NSH 自己写组件（如预览页面的 `PageImage`）：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
-| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译（有界回收 `evict(2)`）、文档与数学引擎共享 `Arc<FontStore>` 与 `Arc<LazyHash<Library>>`、按需解码内嵌字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF |
+| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译（有界回收 `evict(2)`）、文档与数学引擎共享 `Arc<FontStore>` 与 `Arc<LazyHash<Library>>`、按需解码内嵌字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF；桌面端实时预览计划在 Phase 6H 通过 `xcpc-engine` 可选 `vello-preview` feature 演进为 Vello（Sparse Strips）+ `nsh-gpu` 零拷贝渲染（CLI / MCP / PDF 保持 `typst-render` / `typst-pdf` 不变，见 [specs/phase-6h-vello-preview.md](./specs/phase-6h-vello-preview.md)） |
 | 题面字体 | Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供；release 构建内嵌 Latin Modern 与 JetBrains Mono，Windows 未设 `XCPC_FONT_DIRS` 时定向加载核心 CJK 字体并在遇自定义字体名时透明扩展扫描系统字体，见 [statement-style.md](./statement-style.md#17-字体) |
 | 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）+ `mitex`；LaTeX 输入用 `tylax`；导出为 Markdown 用 `typlite`/`tylax` |
 | 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite 派生数据 |
