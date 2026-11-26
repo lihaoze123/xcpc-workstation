@@ -1,6 +1,6 @@
 # Phase 6 规格：增强 o11y 与全面整体打磨
 
-2026-11-26 深度对齐确认，承接 [perf-ux-observability.md](./perf-ux-observability.md) 与 Phase 5（Living TRD），按 **6A → 6B → 6C** 三步推进：先将宿主框架从 NSH `v0.6.0` 升级至 `v0.7.1` 并系统清理自造轮子，再引入 [`nsh-o11y`](https://jetsquirrel.github.io/nsh-o11y/) 搭起应用内实时可观测性诊断窗口，最后以可量化的前后基线对比为依据，对核心链路与交互手感做全面整体打磨。
+2026-11-26 深度对齐确认，承接 [perf-ux-observability.md](./perf-ux-observability.md) 与 Phase 5（Living TRD），按 **6A → 6A.5 → 6B → 6C** 四步推进：先将宿主框架从 NSH `v0.6.0` 升级至 `v0.7.1` 并系统清理自造轮子，再优化构建体验与 Core 边界（解耦 `xcpc-storage`、下沉 `xcpc-app`、接入 `sccache` 与 `thin` LTO），随后引入 [`nsh-o11y`](https://jetsquirrel.github.io/nsh-o11y/) 搭起应用内实时可观测性诊断窗口，最后以可量化的前后基线对比为依据，对核心链路与交互手感做全面整体打磨。
 
 ---
 
@@ -49,6 +49,32 @@
 3. **长文档与 Vim 键位**：验证长题面/多题切换时的滚动流畅度、`overFocused: true` 接管后的 Vim 模式切换，以及斜杠命令、公式悬浮预览与诊断浮层坐标。
 
 - **决策门**：若上述体验全部达标（或仅需轻量参数/样式修补），则正式留在原生 `<Editor>`；若粗体度量或核心编辑能力仍存在无法绕过的根因缺陷，记录最小复现路径并单独开启 `editor-core`（裁剪版 + 原生 IME 合成槽）替代评估。
+
+---
+
+## 2.5 Phase 6A.5：构建体验与 Core 边界优化
+
+### 2.5.1 Core 依赖解耦与 `apps/desktop` 瘦身
+
+- **斩断 `xcpc-storage → xcpc-engine` 依赖倒挂**：
+  - 将 [crates/xcpc-storage/src/lib.rs](../../crates/xcpc-storage/src/lib.rs) 与 [crates/xcpc-storage/src/example.rs](../../crates/xcpc-storage/src/example.rs) 仅有的 3 处 `xcpc_engine::preset_source` 静态模板文本移出 `xcpc-engine`（下沉至 `xcpc-domain`）；
+  - 消除后，`xcpc-storage`、`xcpc-judge`、`xcpc-lint`、`xcpc-plugin`、`xcpc-sync` 均不再依赖 `typst-*`，可与 `xcpc-engine` 并行编译。
+- **业务下沉为 `crates/xcpc-app`**：
+  - 将 `apps/desktop/src/` 中与 NSH 无关的纯业务编排、状态机、插件宿主、缓存/快照、配置/主题、纯 Rust DTO 与单元测试（`state.rs`、`plugins.rs`、`snippets.rs`、`cache.rs`、`snapshot.rs`、`prefs.rs`、`theme_config.rs`、`types.rs` 纯 Rust 结构、`tests.rs`）下沉至 `crates/xcpc-app`；
+  - `apps/desktop` 回归薄壳定位（仅保留 `#[native_module]` / `#[class] Preview` 胶水、JS DTO 映射、`file_dialog`、`linux_chrome.rs` 与 `page_image.rs`），日常逻辑迭代直接 `cargo test -p xcpc-app` 秒跑，不再拖带 `nsh-core` / GTK / QuickJS。
+
+### 2.5.2 `nshm` 边界约定
+
+- 业务代码一律留在普通 Cargo workspace crate，**本次不自建本地 `--path` `nshm`**；
+- 仅在未来出现「可跨项目复用或强隔离的纯原生组件」（如独立开源 `PageImage` 或引入 `editor-core`）时再抽成本地 `nshm`。
+
+### 2.5.3 本地开发与 Release 构建加速
+
+- **本地 `sccache`**：在 [flake.nix](../../flake.nix) 的 `devShell` 中加入 `sccache`（`RUSTC_WRAPPER=sccache`），跨根 workspace、`apps/desktop/.nsh/rust` 与 swarm/jj 分支共享 `typst`/`rusqlite`/`rquickjs`/`nsh` 等重依赖缓存；保持 `lld` 链接器，不对 NSH 生成的 `.nsh/rust/Cargo.toml` 做侵入式 hack。
+- **Release `thin` LTO 与 CI 缓存**：
+  - [.cargo/config.toml](../../.cargo/config.toml) 中 `[profile.release]` 从 `lto = "fat"` 切换为 `lto = "thin"`（保留 `opt-level = "z"`、`strip = true`、`panic = "abort"`），在产物体积基本持平的前提下大幅缩短 release 链接耗时；
+  - 在 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) 与 [.github/workflows/release.yml](../../.github/workflows/release.yml) 中补充缓存 `~/.nsh/nshms`；
+  - 打包时实测对比优化前后体积与耗时，确认 `nsh-icon-lucide` 与 `nsh-o11y` 未带来非预期的图标/代码体积膨胀。
 
 ---
 
@@ -120,7 +146,11 @@
    - `nix develop`、`cargo check`、`cargo test`、`nsh check`、`nsh test` 与 `scripts/package.sh` 在 NSH `v0.7.1` 下全部通过；
    - 6 项自造轮子全部清理/替换完毕（无残留 `apps/desktop/src/ui/icons/` 与 `vim_bridge.rs`）；
    - 原生 `<Editor>` 复测记录清晰结论（通过或明确记录触发备选方案的条件）。
-2. **6B 验收**：
+2. **6A.5 验收**：
+   - `cargo tree -p xcpc-storage` 无 `xcpc-engine` / `typst-*` 依赖；
+   - `cargo test -p xcpc-app` 脱离 `nsh-core` / GTK / QuickJS 独立全绿，且 `cargo test --workspace`、`nsh check`、`nsh test` 全部通过；
+   - `flake.nix` 集成 `sccache`，`.cargo/config.toml` 切换 `lto = "thin"`，CI 缓存 `~/.nsh/nshms`，`scripts/package.sh --target linux --no-upx` 实测验证耗时与体积。
+3. **6B 验收**：
    - 独立诊断窗口可正常打开/关闭/与主窗口联动；主窗口无任何新增技术文案或常驻 HUD；
    - 常态下无后台 `rAF` 轮询与额外磁盘写入，且慢事件/错误日志可打开窗口回溯；
    - `TimeSeriesChart`（4 面板联动）、`TraceWaterfall` + `TraceComparison`、`LogView` 以及 Perfetto JSON 导出均在实机工作流中跑通。

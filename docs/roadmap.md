@@ -345,13 +345,18 @@
 
 ## Phase 6：增强 o11y 与全面整体打磨（规划已确认）
 
-2026-11-26 对齐确认，按 **6A / 6B / 6C** 三步推进，详细规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)：
+2026-11-26 对齐确认，按 **6A / 6A.5 / 6B / 6C** 四步推进，详细规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)：
 
 ### Phase 6A：升级 NSH v0.7.1、清理自造轮子与原生 `<Editor>` 复测
 
 1. **宿主框架升级**：`flake.nix` 与打包链路从 NSH `v0.6.0` 升级至 `v0.7.1`，启用 `nshm` / `nsh.lock` 依赖管理，精简 Linux 打包中不再需要的 GStreamer 强依赖。
 2. **清理 6 项自造轮子**：用 `nsh-icon` + `nsh-icon-lucide` 替代手维护的 60+ SVG 与静态图标表；用 `keymap.bind({ overFocused: true })` 删除 `vim_bridge.rs`；用 `nsh/base` `TitleBar` 简化自绘顶栏并复测是否可删除 `linux_chrome.rs`；用 `nsh-o11y` `TimeSeriesChart` 替换训练看板手写折线图（保留年度日历热力图）；用原生 `promptForUpdate({ quiet })` 替换「设置 → 关于」手写更新下载 UI。
 3. **原生 `<Editor>` 复测**：先留在 NSH 0.7.1 原生 `<Editor>`，实测粗体标题度量、中文 IME 跟随、长文档滚动与去掉 `vim_bridge.rs` 后的 Vim 键位；仅在存在无法绕过的根因问题时再评估引入 `huacnlee/nsvim` 的 `editor-core`。
+
+### Phase 6A.5：构建体验与 Core 边界优化
+
+1. **Core 依赖解耦与 `apps/desktop` 瘦身**：将 `xcpc-storage` 引用的静态模板文本下沉至 `xcpc-domain` 以斩断 `xcpc-storage → xcpc-engine`（及 `typst-*`）依赖倒挂；将 `apps/desktop/src/` 中与 NSH 无关的纯业务编排与单元测试下沉为 `crates/xcpc-app`，使 `apps/desktop` 回归薄壳且 `cargo test -p xcpc-app` 可秒跑。
+2. **本地与 Release 构建加速**：在 `flake.nix` 中接入 `sccache` 跨 workspace 共享第三方重依赖缓存；`.cargo/config.toml` 的 `[profile.release]` 切换为 `lto = "thin"`；CI/Release 工作流缓存 `~/.nsh/nshms`；业务代码保持普通 Cargo crate（不自建本地 `--path` `nshm`）。
 
 ### Phase 6B：基于 `nsh-o11y` 的独立诊断窗口与分层采集底座
 

@@ -5806,6 +5806,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "xcpc-app"
+version = "0.5.0-beta.2"
+dependencies = [
+ "base64 0.22.1",
+ "notify",
+ "png",
+ "serde",
+ "serde_json",
+ "toml 1.2.1+spec-1.1.0",
+ "xcpc-convert",
+ "xcpc-domain",
+ "xcpc-engine",
+ "xcpc-judge",
+ "xcpc-lint",
+ "xcpc-packages",
+ "xcpc-plugin",
+ "xcpc-storage",
+ "xcpc-sync",
+ "xcpc-trace",
+]
+
+[[package]]
 name = "xcpc-convert"
 version = "0.5.0"
 dependencies = [
@@ -5828,24 +5850,15 @@ name = "xcpc-desktop"
 version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
- "notify",
  "nsh-base",
  "nsh-core",
  "nsh-icon",
  "nsh-icon-lucide",
  "nsh-o11y",
- "png",
  "serde_json",
- "toml 1.2.1+spec-1.1.0",
- "xcpc-convert",
+ "xcpc-app",
  "xcpc-domain",
- "xcpc-engine",
- "xcpc-judge",
- "xcpc-lint",
- "xcpc-packages",
- "xcpc-plugin",
  "xcpc-storage",
- "xcpc-sync",
  "xcpc-trace",
 ]
 
@@ -5999,7 +6012,6 @@ dependencies = [
  "toml 1.2.1+spec-1.1.0",
  "toml_edit",
  "xcpc-domain",
- "xcpc-engine",
 ]
 
 [[package]]

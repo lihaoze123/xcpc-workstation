@@ -19,6 +19,7 @@ xcpc-judge = { path = "crates/xcpc-judge" }
 xcpc-packages = { path = "crates/xcpc-packages" }
 xcpc-plugin = { path = "crates/xcpc-plugin" }
 xcpc-sync = { path = "crates/xcpc-sync" }
+xcpc-app = { path = "crates/xcpc-app" }
 
 nsh-core = "0.7.1"
 nsh-base = { version = "0.7.1", default-features = false }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nsh_core::JsonValue;
+use serde_json::Value as JsonValue;
 
 use crate::types::AppPrefsJs;
 
@@ -232,7 +232,7 @@ fn dedup_recent(list: Vec<String>) -> Vec<String> {
 }
 
 fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
-    let val: JsonValue = text.parse().ok()?;
+    let val: JsonValue = serde_json::from_str(text).ok()?;
     let obj = val.as_object()?;
     let mut app = AppPrefsJs::default();
 
@@ -326,7 +326,7 @@ fn parse_prefs_json(text: &str) -> Option<StoredPrefs> {
 }
 
 fn empty_json_object() -> JsonValue {
-    "{}".parse().expect("valid empty JSON object")
+    JsonValue::Object(serde_json::Map::new())
 }
 
 fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
@@ -385,11 +385,14 @@ fn serialize_prefs_json(prefs: &StoredPrefs) -> String {
     }
     root["frecency"] = frec;
 
-    format!("{root:#}\n")
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(&root).unwrap_or_default()
+    )
 }
 
 /// Generates a ready-to-paste MCP client JSON configuration snippet pointing at `root`.
-pub(crate) fn mcp_config_snippet(root: Option<&Path>) -> String {
+pub fn mcp_config_snippet(root: Option<&Path>) -> String {
     let mut server = empty_json_object();
     server["command"] = JsonValue::from("xcpc");
     let args = match root {
@@ -407,5 +410,5 @@ pub(crate) fn mcp_config_snippet(root: Option<&Path>) -> String {
 
     let mut root_obj = empty_json_object();
     root_obj["mcpServers"] = servers;
-    format!("{root_obj:#}")
+    serde_json::to_string_pretty(&root_obj).unwrap_or_default()
 }

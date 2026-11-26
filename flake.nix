@@ -165,6 +165,7 @@
               pkgs.cargo-xwin
               pkgs.lld
               pkgs.llvm
+              pkgs.sccache
               pkgs.upx
               pkgs.tectonic
               pkgs.pandoc
@@ -185,7 +186,11 @@
             # Pinned polygon-chinese-template checkout used to build reference PDFs.
             XCPC_OLYMP_REFERENCE = "${olymp-reference}";
 
-            shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            shellHook = ''
+              # Cache compiled Rust artifacts across workspaces (root + apps/desktop/.nsh/rust).
+              export RUSTC_WRAPPER="''${RUSTC_WRAPPER:-${pkgs.sccache}/bin/sccache}"
+            ''
+            + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
               export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
               # Use lld for much faster Linux incremental linking while keeping Nix's
               # wrapped `cc` so all Nix library rpaths (GTK4, OpenSSL, etc.) are preserved.

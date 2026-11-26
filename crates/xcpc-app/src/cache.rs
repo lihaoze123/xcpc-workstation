@@ -1,33 +1,50 @@
 //! Pixel-buffer LRU cache, lazy per-page fingerprinting, tile rasterization, and
-//! generation-based task cancellation shared with [`crate::page_image::PageImage`].
+//! generation-based task cancellation shared with the desktop shell's `PageImage` view.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
-use nsh_core::element::ImageSrc;
 use xcpc_convert::{Document, publish};
 use xcpc_engine::Compiled;
 
 use crate::types::{PreviewLayer, PreviewPage, PreviewRequest, PreviewResult, PreviewView};
 
+/// Immutable, zero-copy-cloneable RGBA pixel buffer for rasterized preview pages and tiles.
+#[derive(Debug, Clone)]
+pub struct RgbaPixels {
+    pub width: u32,
+    pub height: u32,
+    pub data: Arc<[u8]>,
+}
+
+impl RgbaPixels {
+    pub fn new(width: u32, height: u32, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            data: Arc::from(data),
+        }
+    }
+}
+
 /// The most pixels per point of a whole-page layer: sharper than this, the part in view
 /// is tiled over it (an A4 page at 1.5 is 893 × 1263 pixels, 4.5 MB).
-pub(crate) const BASE_SCALE: f32 = 1.5;
+pub const BASE_SCALE: f32 = 1.5;
 
 /// The side of a tile in pixels.
-pub(crate) const TILE: u32 = 512;
+pub const TILE: u32 = 512;
 
 /// Byte budget for the rasterized pixel cache (96 MiB).
-pub(crate) const PIXEL_CACHE_BUDGET: usize = 96 * 1024 * 1024;
+pub const PIXEL_CACHE_BUDGET: usize = 96 * 1024 * 1024;
 
-/// Unique ID assigned to each [`crate::Preview`] instance to isolate its cache keys.
+/// Unique ID assigned to each `State` instance to isolate its cache keys.
 pub(crate) static NEXT_PREVIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Whether a cached pixel buffer is a whole-page base layer or a zoomed tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LayerKind {
+pub enum LayerKind {
     /// Whole-page layer (`scale <= BASE_SCALE`, no sub-region).
     Base,
     /// High-DPI tile layer (`scale > BASE_SCALE`, sub-region).
@@ -35,19 +52,19 @@ pub(crate) enum LayerKind {
 }
 
 pub(crate) struct PixelEntry {
-    pub(crate) src: ImageSrc,
+    pub(crate) src: RgbaPixels,
     pub(crate) bytes: usize,
     pub(crate) kind: LayerKind,
     pub(crate) owner: u64,
     pub(crate) last_used: u64,
 }
 
-/// Byte-budgeted LRU pixel cache shared with [`crate::page_image::PageImage`].
+/// Byte-budgeted LRU pixel cache shared with the desktop shell's `PageImage`.
 ///
 /// Eviction never drops currently active layers (`protected`), prefers evicting
 /// least-recently-used tile layers first, and only evicts base whole-page layers
 /// when no non-protected tiles remain.
-pub(crate) struct PixelCache {
+pub struct PixelCache {
     pub(crate) budget: usize,
     pub(crate) total_bytes: usize,
     clock: u64,
@@ -55,7 +72,7 @@ pub(crate) struct PixelCache {
 }
 
 impl PixelCache {
-    pub(crate) fn with_budget(budget: usize) -> Self {
+    pub fn with_budget(budget: usize) -> Self {
         Self {
             budget,
             total_bytes: 0,
@@ -69,7 +86,7 @@ impl PixelCache {
         self.clock
     }
 
-    pub(crate) fn contains_and_touch(&mut self, key: &str) -> bool {
+    pub fn contains_and_touch(&mut self, key: &str) -> bool {
         let next = self.clock.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(key) {
             self.clock = next;
@@ -80,7 +97,7 @@ impl PixelCache {
         }
     }
 
-    pub(crate) fn get(&mut self, key: &str) -> Option<ImageSrc> {
+    pub fn get(&mut self, key: &str) -> Option<RgbaPixels> {
         let next = self.clock.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(key) {
             self.clock = next;
@@ -91,10 +108,10 @@ impl PixelCache {
         }
     }
 
-    pub(crate) fn insert(
+    pub fn insert(
         &mut self,
         key: String,
-        src: ImageSrc,
+        src: RgbaPixels,
         bytes: usize,
         kind: LayerKind,
         owner: u64,
@@ -182,9 +199,9 @@ impl PixelCache {
     }
 }
 
-/// The rasterized layers by key, for [`crate::page_image::PageImage`], managed as a
+/// The rasterized layers by key, for the desktop shell's `PageImage`, managed as a
 /// byte-budgeted LRU cache.
-pub(crate) static PIXELS: LazyLock<Mutex<PixelCache>> =
+pub static PIXELS: LazyLock<Mutex<PixelCache>> =
     LazyLock::new(|| Mutex::new(PixelCache::with_budget(PIXEL_CACHE_BUDGET)));
 
 /// One sampled mapping from a 1-based Markdown line to a 0-based preview page and vertical
@@ -247,14 +264,14 @@ impl CachedCompile {
 
 /// Generation-based cancellation check for an in-flight compile/rasterize request.
 #[derive(Clone, Copy)]
-pub(crate) struct CancelToken<'a> {
-    pub(crate) generation: u64,
-    pub(crate) latest: &'a AtomicU64,
+pub struct CancelToken<'a> {
+    pub generation: u64,
+    pub latest: &'a AtomicU64,
 }
 
 impl CancelToken<'_> {
     #[inline]
-    pub(crate) fn is_cancelled(self) -> bool {
+    pub fn is_cancelled(self) -> bool {
         self.latest.load(Ordering::Acquire) != self.generation
     }
 }
@@ -271,7 +288,7 @@ pub(crate) struct Job {
 /// A completed rasterized layer ready to insert into [`PIXELS`].
 pub(crate) struct RenderedLayer {
     pub(crate) key: String,
-    pub(crate) src: ImageSrc,
+    pub(crate) src: RgbaPixels,
     pub(crate) bytes: usize,
     pub(crate) kind: LayerKind,
 }
@@ -571,7 +588,7 @@ pub(crate) fn render_chunk(
         // Pages are opaque, so premultiplied RGBA is straight RGBA.
         out.push(RenderedLayer {
             key: job.key.clone(),
-            src: ImageSrc::rgba(w, h, pixmap.take()),
+            src: RgbaPixels::new(w, h, pixmap.take()),
             bytes,
             kind: job.kind,
         });

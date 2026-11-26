@@ -93,7 +93,7 @@ pub(crate) fn derive_library_training_statuses(
 }
 
 impl State {
-    pub(crate) fn effective_data_dir(&self) -> Result<PathBuf, String> {
+    pub fn effective_data_dir(&self) -> Result<PathBuf, String> {
         self.data_dir
             .clone()
             .or_else(xcpc_sync::default_data_dir)
@@ -111,7 +111,7 @@ impl State {
 
     // ---- Training status ---------------------------------------------------------------
 
-    pub(crate) fn set_training_status(&self, problem_id: &str, status: &str) -> ActionResult {
+    pub fn set_training_status(&self, problem_id: &str, status: &str) -> ActionResult {
         let Some(log_status) = TrainingLogStatus::parse(status) else {
             return ActionResult::err(
                 "invalid",
@@ -152,7 +152,7 @@ impl State {
 
     // ---- Resolve & Create Problem from URL ---------------------------------------------
 
-    pub(crate) fn resolve_problem_url(&self, url: &str) -> ResolvedProblemUrlJs {
+    pub fn resolve_problem_url(&self, url: &str) -> ResolvedProblemUrlJs {
         let trimmed = url.trim();
         if trimmed.is_empty() {
             return ResolvedProblemUrlJs {
@@ -221,7 +221,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_problem_from_url(
+    pub fn create_problem_from_url(
         &self,
         id: &str,
         title: &str,
@@ -305,7 +305,7 @@ impl State {
 
     // ---- Plugins & Sync Overview -------------------------------------------------------
 
-    pub(crate) fn get_plugins_overview(&self) -> PluginsOverviewJs {
+    pub fn get_plugins_overview(&self) -> PluginsOverviewJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -409,7 +409,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_plugin_enabled(&self, id: &str, enabled: bool) -> ActionResult {
+    pub fn set_plugin_enabled(&self, id: &str, enabled: bool) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -421,7 +421,7 @@ impl State {
         }
     }
 
-    pub(crate) fn trust_plugin(&self, id: &str) -> ActionResult {
+    pub fn trust_plugin(&self, id: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -433,7 +433,7 @@ impl State {
         }
     }
 
-    pub(crate) fn export_builtin_plugin(&self, id: &str) -> ExportPluginResultJs {
+    pub fn export_builtin_plugin(&self, id: &str) -> ExportPluginResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -462,11 +462,7 @@ impl State {
         }
     }
 
-    pub(crate) fn install_plugin_from_path(
-        &self,
-        path: &Path,
-        is_zip: bool,
-    ) -> InstallPluginResultJs {
+    pub fn install_plugin_from_path(&self, path: &Path, is_zip: bool) -> InstallPluginResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -506,7 +502,7 @@ impl State {
         }
     }
 
-    pub(crate) fn add_plugin_repo(&self, url: &str) -> ActionResult {
+    pub fn add_plugin_repo(&self, url: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -518,7 +514,7 @@ impl State {
         }
     }
 
-    pub(crate) fn remove_plugin_repo(&self, url: &str) -> ActionResult {
+    pub fn remove_plugin_repo(&self, url: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -530,7 +526,7 @@ impl State {
         }
     }
 
-    pub(crate) fn restore_official_plugin_repo(&self) -> ActionResult {
+    pub fn restore_official_plugin_repo(&self) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -542,7 +538,7 @@ impl State {
         }
     }
 
-    pub(crate) fn fetch_plugin_repo_catalog(&self, url: &str) -> RepoCatalogResultJs {
+    pub fn fetch_plugin_repo_catalog(&self, url: &str) -> RepoCatalogResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -599,7 +595,7 @@ impl State {
         }
     }
 
-    pub(crate) fn fetch_all_plugin_repo_catalogs(&self) -> PluginRepoCatalogJs {
+    pub fn fetch_all_plugin_repo_catalogs(&self) -> PluginRepoCatalogJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -668,7 +664,7 @@ impl State {
         }
     }
 
-    pub(crate) fn install_plugin_from_repo(
+    pub fn install_plugin_from_repo(
         &self,
         repo_url: &str,
         plugin_id: &str,
@@ -723,7 +719,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_sync_handle(&self, platform: &str, handle: &str) -> ActionResult {
+    pub fn set_sync_handle(&self, platform: &str, handle: &str) -> ActionResult {
         let engine = match self.sync_engine() {
             Ok(e) => e,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -737,7 +733,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_auto_sync_on_startup(&self, enabled: bool) -> ActionResult {
+    pub fn set_auto_sync_on_startup(&self, enabled: bool) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -753,12 +749,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_plugin_credential(
-        &self,
-        plugin_id: &str,
-        key: &str,
-        value: &str,
-    ) -> ActionResult {
+    pub fn set_plugin_credential(&self, plugin_id: &str, key: &str, value: &str) -> ActionResult {
         let pid = plugin_id.trim();
         let k = key.trim();
         if pid.is_empty() || k.is_empty() {
@@ -775,7 +766,7 @@ impl State {
         }
     }
 
-    pub(crate) fn verify_plugin(
+    pub fn verify_plugin(
         &self,
         plugin_id: &str,
         handle_override: Option<&str>,
@@ -871,7 +862,7 @@ impl State {
         }
     }
 
-    pub(crate) fn sync_oj(&self, platform: Option<String>, full: bool) -> SyncReportJs {
+    pub fn sync_oj(&self, platform: Option<String>, full: bool) -> SyncReportJs {
         let engine = match self.sync_engine() {
             Ok(e) => e,
             Err(err) => {
@@ -925,7 +916,7 @@ impl State {
     /// Runs a silent startup incremental sync once per session if `auto_sync_on_startup` is
     /// enabled and at least one enabled `oj_source` plugin has a configured handle.
     /// Returns `true` if a sync was actually executed (so the UI can silently refresh).
-    pub(crate) fn startup_sync_if_enabled(&self) -> bool {
+    pub fn startup_sync_if_enabled(&self) -> bool {
         if self.startup_sync_triggered.swap(true, Ordering::AcqRel) {
             return false;
         }
@@ -958,7 +949,7 @@ impl State {
 
     // ---- Phase 4B: Training Dashboard, Contests Calendar, Submissions & Ingest ---------
 
-    pub(crate) fn training_dashboard(
+    pub fn training_dashboard(
         &self,
         window: Option<String>,
         heatmap_year: Option<i32>,
@@ -1005,7 +996,7 @@ impl State {
         }
     }
 
-    pub(crate) fn training_contests(
+    pub fn training_contests(
         &self,
         platform: Option<String>,
         include_finished: bool,
@@ -1040,10 +1031,7 @@ impl State {
         }
     }
 
-    pub(crate) fn training_submissions(
-        &self,
-        query: TrainingSubmissionsQueryJs,
-    ) -> JsonReportResultJs {
+    pub fn training_submissions(&self, query: TrainingSubmissionsQueryJs) -> JsonReportResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return JsonReportResultJs::err("data_dir", err),
@@ -1083,10 +1071,7 @@ impl State {
         }
     }
 
-    pub(crate) fn training_ingest_problem(
-        &self,
-        req: IngestProblemRequestJs,
-    ) -> IngestProblemResultJs {
+    pub fn training_ingest_problem(&self, req: IngestProblemRequestJs) -> IngestProblemResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -1180,7 +1165,7 @@ impl State {
         }
     }
 
-    pub(crate) fn training_log_record(&self, req_json: &str) -> ManualLogResultJs {
+    pub fn training_log_record(&self, req_json: &str) -> ManualLogResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -1239,7 +1224,7 @@ impl State {
         }
     }
 
-    pub(crate) fn training_list_editorials(&self, query_json: &str) -> EditorialListResultJs {
+    pub fn training_list_editorials(&self, query_json: &str) -> EditorialListResultJs {
         let ws = {
             let core = self.core.lock().unwrap();
             core.workspace.clone()
@@ -1315,7 +1300,7 @@ impl State {
         Some(Arc::new(DesktopWorkspaceReader(ws)))
     }
 
-    pub(crate) fn plugin_list_tools(&self) -> JsonReportResultJs {
+    pub fn plugin_list_tools(&self) -> JsonReportResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return JsonReportResultJs::err("data_dir", err),
@@ -1328,7 +1313,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_run_tool(
+    pub fn plugin_run_tool(
         &self,
         plugin_id: &str,
         tool_id: &str,
@@ -1359,7 +1344,7 @@ impl State {
         }
     }
 
-    pub(crate) fn load_plugin_ui_html(&self, plugin_id: &str) -> PluginUiHtmlJs {
+    pub fn load_plugin_ui_html(&self, plugin_id: &str) -> PluginUiHtmlJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -1392,7 +1377,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_list_oj_accounts(&self, plugin_id: &str) -> PluginWorkspaceResultJs {
+    pub fn plugin_list_oj_accounts(&self, plugin_id: &str) -> PluginWorkspaceResultJs {
         let err_res = |code: &str, msg: String| PluginWorkspaceResultJs {
             ok: false,
             data_json: None,
@@ -1477,7 +1462,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_workspace_query(
+    pub fn plugin_workspace_query(
         &self,
         plugin_id: &str,
         method: &str,
@@ -1715,7 +1700,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_render_svg_png(svg: &str, scale: Option<f64>) -> PluginRenderPngResultJs {
+    pub fn plugin_render_svg_png(svg: &str, scale: Option<f64>) -> PluginRenderPngResultJs {
         match svg_to_png_base64(svg, scale.map(|s| s as f32)) {
             Ok(b64) => PluginRenderPngResultJs {
                 ok: true,
@@ -1730,7 +1715,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
+    pub fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return JsonReportResultJs::err("data_dir", err),
@@ -1755,7 +1740,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_run_command(
+    pub fn plugin_run_command(
         &self,
         plugin_id: &str,
         command_id: &str,
@@ -1784,7 +1769,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_list_importers(&self) -> JsonReportResultJs {
+    pub fn plugin_list_importers(&self) -> JsonReportResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return JsonReportResultJs::err("data_dir", err),
@@ -1797,11 +1782,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_importer_extensions(
-        &self,
-        plugin_id: &str,
-        importer_id: &str,
-    ) -> Vec<String> {
+    pub fn plugin_importer_extensions(&self, plugin_id: &str, importer_id: &str) -> Vec<String> {
         let Ok(dir) = self.effective_data_dir() else {
             return Vec::new();
         };
@@ -1820,7 +1801,7 @@ impl State {
             .unwrap_or_default()
     }
 
-    pub(crate) fn plugin_run_importer_paths(
+    pub fn plugin_run_importer_paths(
         &self,
         plugin_id: &str,
         importer_id: &str,
@@ -1888,7 +1869,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_list_exporters(&self) -> JsonReportResultJs {
+    pub fn plugin_list_exporters(&self) -> JsonReportResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return JsonReportResultJs::err("data_dir", err),
@@ -1901,7 +1882,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_run_exporter(
+    pub fn plugin_run_exporter(
         &self,
         plugin_id: &str,
         exporter_id: &str,
@@ -2080,7 +2061,7 @@ fn build_export_context(ws: &Workspace, kind: &str, id: &str) -> Result<ExportCo
 }
 
 /// Atomically writes `bytes` to `path` via a sibling temporary file + rename.
-pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -2109,7 +2090,7 @@ pub(crate) fn default_training_status_str() -> String {
 // ---- Phase 4D: Synchronous Plugin KV Bridge & `notify` Hot Reload Watcher --------------
 
 impl State {
-    pub(crate) fn plugin_kv_get(&self, plugin_id: &str, key: &str) -> PluginKvResultJs {
+    pub fn plugin_kv_get(&self, plugin_id: &str, key: &str) -> PluginKvResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {
@@ -2155,12 +2136,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_kv_set(
-        &self,
-        plugin_id: &str,
-        key: &str,
-        value_json: &str,
-    ) -> ActionResult {
+    pub fn plugin_kv_set(&self, plugin_id: &str, key: &str, value_json: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -2180,7 +2156,7 @@ impl State {
         }
     }
 
-    pub(crate) fn plugin_kv_remove(&self, plugin_id: &str, key: &str) -> ActionResult {
+    pub fn plugin_kv_remove(&self, plugin_id: &str, key: &str) -> ActionResult {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => return ActionResult::err("data_dir", err),
@@ -2285,7 +2261,7 @@ pub(crate) struct PluginFileWatcher {
 }
 
 impl PluginFileWatcher {
-    pub(crate) fn start(data_dir: PathBuf) -> Option<Self> {
+    pub fn start(data_dir: PathBuf) -> Option<Self> {
         use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
         use std::collections::BTreeSet;
         use std::sync::mpsc;
@@ -2457,17 +2433,15 @@ impl PluginFileWatcher {
         })
     }
 
-    pub(crate) fn refresh(&self) {
+    pub fn refresh(&self) {
         let _ = self.ctrl_tx.send(PluginWatchControl::Refresh);
     }
 
-    pub(crate) fn receiver(
-        &self,
-    ) -> Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PluginWatchEventJs>>> {
+    pub fn receiver(&self) -> Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PluginWatchEventJs>>> {
         Arc::clone(&self.event_rx)
     }
 
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         let _ = self.ctrl_tx.send(PluginWatchControl::Stop);
     }
 }
@@ -2481,7 +2455,7 @@ impl Drop for PluginFileWatcher {
 // ---- Phase 4D+: Uninstall --------------------------------------------------------------
 
 impl State {
-    pub(crate) fn uninstall_plugin(&self, id: &str) -> InstallPluginResultJs {
+    pub fn uninstall_plugin(&self, id: &str) -> InstallPluginResultJs {
         let dir = match self.effective_data_dir() {
             Ok(d) => d,
             Err(err) => {

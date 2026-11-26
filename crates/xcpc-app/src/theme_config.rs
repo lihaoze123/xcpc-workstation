@@ -3,10 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use nsh_core::prelude::*;
-
 /// Starter template written when the user clicks "打开 theme.toml" and no file exists yet.
-pub(crate) const STARTER_THEME_TOML: &str = r##"# XCPC Workstation 主题定制（所有字段均可选，保存后自动生效）
+pub const STARTER_THEME_TOML: &str = r##"# XCPC Workstation 主题定制（所有字段均可选，保存后自动生效）
 
 # [colors.light]
 # primary = "#0B6989"
@@ -55,13 +53,13 @@ const ALLOWED_COLOR_KEYS: &[&str] = &[
     "destructive",
 ];
 
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ThemeColorEntryJs {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ThemeOverridesJs {
     pub light_colors: Vec<ThemeColorEntryJs>,
     pub dark_colors: Vec<ThemeColorEntryJs>,
@@ -74,7 +72,7 @@ pub struct ThemeOverridesJs {
 }
 
 /// Loads user-global `<dataDir>/theme.toml` if present.
-pub(crate) fn load_theme_overrides(data_dir: Option<&Path>) -> ThemeOverridesJs {
+pub fn load_theme_overrides(data_dir: Option<&Path>) -> ThemeOverridesJs {
     let mut light: HashMap<String, String> = HashMap::new();
     let mut dark: HashMap<String, String> = HashMap::new();
     let mut radius: Option<f64> = None;
@@ -158,7 +156,7 @@ pub(crate) fn load_theme_overrides(data_dir: Option<&Path>) -> ThemeOverridesJs 
 }
 
 /// Ensures `<dataDir>/theme.toml` exists and returns its absolute path.
-pub(crate) fn ensure_theme_file(data_dir: Option<&Path>) -> Result<PathBuf, String> {
+pub fn ensure_theme_file(data_dir: Option<&Path>) -> Result<PathBuf, String> {
     let dir =
         data_dir.ok_or_else(|| "当前环境未配置应用数据目录，无法创建 theme.toml".to_owned())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("无法创建配置目录：{e}"))?;

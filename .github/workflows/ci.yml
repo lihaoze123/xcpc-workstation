@@ -103,6 +103,14 @@ jobs:
           echo "$NSH_BIN" >> "$GITHUB_PATH"
           "$NSH_BIN/nsh" --version
 
+      - name: Cache NSH packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nsh/nshms
+          key: nshms-${{ runner.os }}-${{ hashFiles('apps/desktop/nsh.lock') }}
+          restore-keys: |
+            nshms-${{ runner.os }}-
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |

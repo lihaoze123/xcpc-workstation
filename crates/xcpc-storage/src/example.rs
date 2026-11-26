@@ -1682,7 +1682,7 @@ pub fn init_example_workspace_with_options(
         let rel = format!("templates/{preset_id}.typ");
         let abs = ws.resolve(&rel)?;
         if fs::symlink_metadata(&abs).is_err()
-            && let Some(src) = xcpc_engine::preset_source(preset_id)
+            && let Some(src) = xcpc_domain::preset_source(preset_id)
         {
             ws.write(&rel, src.as_bytes())?;
         }

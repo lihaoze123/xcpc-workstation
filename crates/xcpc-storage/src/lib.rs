@@ -461,7 +461,7 @@ pub fn init_workspace_with_template(
 
     let seed_id = selected_tpl.unwrap_or("olymp-classic");
     for id in [seed_id, "trd-compact", "trd-book"] {
-        if let Some(src) = xcpc_engine::preset_source(id) {
+        if let Some(src) = xcpc_domain::preset_source(id) {
             let tpl_file = dir.join("templates").join(format!("{id}.typ"));
             if fs::symlink_metadata(&tpl_file).is_err() {
                 write_atomic(&tpl_file, src.as_bytes()).map_err(|e| io(tpl_file.display(), e))?;
@@ -953,7 +953,7 @@ impl Workspace {
         preset_id: &str,
         target_name: Option<&str>,
     ) -> Result<String> {
-        let Some(src) = xcpc_engine::preset_source(preset_id) else {
+        let Some(src) = xcpc_domain::preset_source(preset_id) else {
             return Err(Error::NotFound(format!("preset {preset_id:?}")));
         };
         let target = target_name

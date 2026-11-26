@@ -1,43 +1,26 @@
 //! The desktop shell's Rust side: what `App.tsx` imports from `xcpc-workstation/native`.
 //! Their TypeScript declarations are generated into `.nsh/types/xcpc-workstation/native.d.ts`.
 //!
-//! Only glue lives here: the workspace, index and file watcher are `xcpc-storage`'s,
-//! publishing and preflight lint are `xcpc-convert`'s, typesetting is `xcpc-engine`'s.
-//!
-//! Pages go to the screen as pixel buffers ([`ImageSrc::rgba`]), not encoded files:
-//! rasterizing a page takes a fraction of what encoding it as PNG would. A page shows as
-//! layers ([`PreviewLayer`]): the whole page at the scale the app asks for, up to
-//! `BASE_SCALE`; sharper, the whole page at that scale and over it tiles of 512 pixels at
-//! the scale asked for, covering the part in view. Pixels are kept in a 96 MiB LRU cache
-//! preferring base layers over tiles, and stale render tasks abort immediately via an
-//! `AtomicU64` generation counter.
+//! Only thin NSH glue lives here (`#[native_module]`, `#[class] Preview`, async `blocking`
+//! dispatch, native file dialogs, JS DTO mappings, `PageImage`, and Linux chrome). All
+//! pure-Rust business logic, state machines, and unit tests live in `crates/xcpc-app`.
 
-mod cache;
 mod linux_chrome;
 mod page_image;
-mod plugins;
-mod prefs;
-mod snapshot;
-mod snippets;
-mod state;
-mod theme_config;
 mod types;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use nsh_base as _;
 use nsh_core::element::JsError;
 use nsh_core::file_dialog::{FileFilter, OpenDialog, SaveDialog};
 use nsh_core::prelude::*;
+use xcpc_app::CancelToken;
 use xcpc_storage::Workspace;
 
-use crate::cache::CancelToken;
-use crate::state::State;
-
 pub use crate::page_image::{PageImage, PageImageProps};
-pub use crate::theme_config::{ThemeColorEntryJs, ThemeOverridesJs};
 pub use crate::types::{
     AboutInfoJs, ActionResult, AddedTestResultJs, AdoptSolutionResultJs, AggregatedRepoPluginJs,
     AppPrefsJs, AssetReferenceJs, BatchDeleteItemJs, BatchDeleteResultJs, BatchExportRequestJs,
@@ -59,10 +42,10 @@ pub use crate::types::{
     ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoFetchErrorJs,
     RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
     SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
-    TagCountJs, TestCasePreviewJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
-    TrainingSubmissionsQueryJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs,
-    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
-    WorkspaceProblem,
+    TagCountJs, TestCasePreviewJs, ThemeColorEntryJs, ThemeOverridesJs, ToolchainStatusJs,
+    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
+    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
+    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
 };
 
 /// The crate's UI set (`nsh.json` `"rust"`).
@@ -72,29 +55,10 @@ fn native(registry: &mut Registry) {
     registry.register::<PageImage>();
 }
 
-/// The workspace bridge and preview engine: reads and saves files with SHA-256 conflict
-/// detection, watches external changes, maintains the in-memory workspace index, exposes
-/// Phase 2 semantic operations, compiles with `publish::check` off the UI thread, and
-/// rasterizes visible pages for [`PageImage`].
+/// Thin NSH desktop wrapper around [`xcpc_app::AppController`].
 #[class]
 pub struct Preview {
-    state: Arc<State>,
-    /// Generation counter incremented on every `Preview::compile` (before taking `compiler`)
-    /// so in-flight tile rasterization aborts as soon as a newer request arrives.
-    generation: Arc<AtomicU64>,
-}
-
-impl Drop for Preview {
-    fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::AcqRel);
-        // Stop the watcher and any running batch task before dropping our `Arc<State>` so
-        // any pending `next_change` / `next_batch_event` blocking on `mpsc::Receiver::recv()`
-        // wakes up immediately and never leaks.
-        self.state.stop_batch_task();
-        self.state.stop_plugin_watcher();
-        let old_watcher = self.state.stop_watcher();
-        drop(old_watcher);
-    }
+    app: xcpc_app::AppController,
 }
 
 #[class]
@@ -105,105 +69,41 @@ impl Preview {
     /// legacy `last-workspace`). Pass `process.dataDir` for persistence; `null` disables it.
     pub fn new(data_dir: Option<String>) -> Self {
         linux_chrome::strip_titlebar_icon_once();
-        let data_dir = data_dir.map(|passed| {
-            std::env::var_os("XCPC_DATA_DIR")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(passed))
-        });
         Preview {
-            state: Arc::new(State::new(data_dir)),
-            generation: Arc::new(AtomicU64::new(0)),
+            app: xcpc_app::AppController::new(data_dir),
         }
     }
 
     /// The workspace of the test fixture `contest-zh`.
     pub fn fixture() -> String {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/fixtures/olymp-ref/contest-zh/workspace"
-        )
-        .to_owned()
+        xcpc_app::AppController::fixture()
     }
 
     /// Returns raw font file bytes for JetBrains Mono (Regular, Medium, Bold, Italic,
     /// BoldItalic) discovered from `XCPC_FONT_DIRS` and the executable's sibling `fonts/`
     /// directory, ready to pass to `registerFont(bytes)`.
     pub fn ui_fonts() -> Vec<Vec<u8>> {
-        let mut dirs = Vec::new();
-        if let Some(env_dirs) = std::env::var_os("XCPC_FONT_DIRS").filter(|v| !v.is_empty()) {
-            dirs.extend(std::env::split_paths(&env_dirs));
-        }
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(parent) = exe.parent()
-        {
-            let sibling = parent.join("fonts");
-            if sibling.is_dir() {
-                dirs.push(sibling);
-            }
-        }
-        load_ui_fonts_from(&dirs)
+        xcpc_app::AppController::ui_fonts()
     }
 
     /// Returns build and runtime diagnostic info for the About view.
     pub fn about_info() -> AboutInfoJs {
-        let font_source =
-            if let Some(env_dirs) = std::env::var_os("XCPC_FONT_DIRS").filter(|v| !v.is_empty()) {
-                let count = std::env::split_paths(&env_dirs).count();
-                format!("环境变量 XCPC_FONT_DIRS（{count} 个目录）")
-            } else if std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.join("fonts").is_dir()))
-                .unwrap_or(false)
-            {
-                "应用内置字体目录 + 系统字体".to_owned()
-            } else if xcpc_engine::HAS_BUNDLED_FONTS {
-                "内嵌字体 + 系统字体".to_owned()
-            } else {
-                "系统字体".to_owned()
-            };
-        AboutInfoJs {
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            commit: env!("XCPC_GIT_COMMIT").to_owned(),
-            build_date: env!("XCPC_BUILD_DATE").to_owned(),
-            is_dev: cfg!(debug_assertions),
-            os: std::env::consts::OS.to_owned(),
-            arch: std::env::consts::ARCH.to_owned(),
-            font_source,
-        }
+        xcpc_app::AppController::about_info().into()
     }
 
     /// Returns current offline performance trace status and Rust monotonic clock reading.
     pub fn trace_status() -> TraceStatusJs {
-        let s = xcpc_trace::status();
-        TraceStatusJs {
-            enabled: s.enabled,
-            event_count: s.event_count as u32,
-            dropped_count: s.dropped_count as u32,
-            rust_now_us: s.rust_now_us,
-        }
+        xcpc_app::AppController::trace_status().into()
     }
 
     /// Starts (or restarts) an offline performance trace recording session.
     pub fn trace_start() -> TraceStatusJs {
-        let s = xcpc_trace::start();
-        TraceStatusJs {
-            enabled: s.enabled,
-            event_count: s.event_count as u32,
-            dropped_count: s.dropped_count as u32,
-            rust_now_us: s.rust_now_us,
-        }
+        xcpc_app::AppController::trace_start().into()
     }
 
     /// Stops offline performance trace recording while keeping buffered events for export.
     pub fn trace_stop() -> TraceStatusJs {
-        let s = xcpc_trace::stop();
-        TraceStatusJs {
-            enabled: s.enabled,
-            event_count: s.event_count as u32,
-            dropped_count: s.dropped_count as u32,
-            rust_now_us: s.rust_now_us,
-        }
+        xcpc_app::AppController::trace_stop().into()
     }
 
     /// Prompts for a save location and writes a merged Rust + JS Chrome Trace JSON file
@@ -264,25 +164,13 @@ impl Preview {
 
     /// Opens the workspace at `path` instead.
     pub fn open_workspace(&self, path: String, read_only: bool) -> WorkspaceInfo {
-        match Workspace::open(&path, read_only) {
-            Ok(ws) => self.switch(ws),
-            Err(e) => WorkspaceInfo {
-                error: Some(e.human_message()),
-                ..Default::default()
-            },
-        }
+        self.app.open_workspace(path, read_only).into()
     }
 
     /// Initializes a new XCPC workspace at `path` (creating `workspace.toml`, `problems/`,
     /// `contests/`, `.gitignore`, and a static `AGENTS.md` if absent) and switches to it.
     pub fn init_workspace(&self, path: String, template: Option<String>) -> WorkspaceInfo {
-        match xcpc_storage::init_workspace_with_template(&path, template.as_deref()) {
-            Ok(ws) => self.switch(ws),
-            Err(e) => WorkspaceInfo {
-                error: Some(e.human_message()),
-                ..self.workspace()
-            },
-        }
+        self.app.init_workspace(path, template).into()
     }
 
     /// Initializes the built-in example workspace at `dir` (3 curated problems + 2 contests)
@@ -294,14 +182,9 @@ impl Preview {
         template: Option<String>,
         language: Option<String>,
     ) -> WorkspaceInfo {
-        let lang = parse_example_language(language.as_deref());
-        match xcpc_storage::init_example_workspace_with_options(&dir, template.as_deref(), lang) {
-            Ok(ws) => self.switch(ws),
-            Err(e) => WorkspaceInfo {
-                error: Some(e.human_message()),
-                ..self.workspace()
-            },
-        }
+        self.app
+            .init_example_workspace(dir, template, language)
+            .into()
     }
 
     /// Opens the system folder picker, releases the built-in example workspace into the
@@ -316,7 +199,7 @@ impl Preview {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
-        let start = this.with(|p| p.state.workspace_root());
+        let start = this.with(|p| p.app.state.workspace_root());
         let title = label_or(
             labels.as_ref().and_then(|l| l.title.as_deref()),
             "选择示例工作区存放目录",
@@ -333,7 +216,7 @@ impl Preview {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
-        let lang = parse_example_language(language.as_deref());
+        let lang = xcpc_app::parse_example_language(language.as_deref());
         this.with(|p| {
             let dir = match picked {
                 Ok(Some(paths)) => paths.into_iter().next(),
@@ -348,13 +231,13 @@ impl Preview {
             let Some(dir) = dir else {
                 return p.workspace();
             };
-            let target_dir = resolve_example_target_dir(&dir);
+            let target_dir = xcpc_app::resolve_example_target_dir(&dir);
             match xcpc_storage::init_example_workspace_with_options(
                 &target_dir,
                 template.as_deref(),
                 lang,
             ) {
-                Ok(ws) => p.switch(ws),
+                Ok(ws) => p.app.switch(ws).into(),
                 Err(e) => WorkspaceInfo {
                     error: Some(e.human_message()),
                     ..p.workspace()
@@ -373,7 +256,7 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let start = this.with(|p| p.state.workspace_root());
+        let start = this.with(|p| p.app.state.workspace_root());
         let title = label_or(
             labels.as_ref().and_then(|l| l.title.as_deref()),
             "选择工作区目录",
@@ -435,7 +318,7 @@ impl Preview {
         if this.is_disposed() {
             return WorkspaceInfo::default();
         }
-        let start = this.with(|p| p.state.workspace_root());
+        let start = this.with(|p| p.app.state.workspace_root());
         let title = label_or(
             labels.as_ref().and_then(|l| l.title.as_deref()),
             "打开工作区",
@@ -467,7 +350,7 @@ impl Preview {
                 return p.workspace();
             };
             match Workspace::discover(&dir, false) {
-                Ok(ws) => p.switch(ws),
+                Ok(ws) => p.app.switch(ws).into(),
                 Err(_) => WorkspaceInfo {
                     error: Some(format!(
                         "{} 不在工作区里（没有 workspace.toml）",
@@ -481,18 +364,18 @@ impl Preview {
 
     /// What the workspace has.
     pub fn workspace(&self) -> WorkspaceInfo {
-        self.state.info()
+        self.app.workspace().into()
     }
 
     /// Recently opened workspace directories, most recent first.
     pub fn recent_workspaces(&self) -> Vec<String> {
-        self.state.recent_workspaces()
+        self.app.recent_workspaces()
     }
 
     /// Generates the ready-to-paste JSON snippet for configuring `xcpc mcp` against the
     /// currently open workspace.
     pub fn mcp_config_snippet(&self) -> String {
-        self.state.mcp_config_snippet()
+        self.app.mcp_config_snippet()
     }
 
     // ---- File read / save & live watcher -----------------------------------------------
@@ -500,7 +383,7 @@ impl Preview {
     /// Reads a file of the workspace for the editor together with its SHA-256 content hash
     /// (empty string when the file does not exist yet).
     pub fn read(&self, path: String) -> WorkspaceFile {
-        self.state.read(path)
+        self.app.read(path).into()
     }
 
     /// Atomically saves a workspace file, checking `expectedHash` when provided.
@@ -510,7 +393,7 @@ impl Preview {
     /// echoed back by `nextChange()`, incrementally refresh the index, and preserve the
     /// compiled preview cache when the saved Markdown matches the already-compiled state.
     pub fn save(&self, path: String, text: String, expected_hash: Option<String>) -> SaveResult {
-        self.state.save(path, text, expected_hash)
+        self.app.save(path, text, expected_hash).into()
     }
 
     /// Long-polling async notification of external filesystem changes inside the active
@@ -528,8 +411,8 @@ impl Preview {
             };
         }
         let (weak_state, session) = this.with(|p| {
-            let session = p.state.watch_session();
-            (Arc::downgrade(&p.state), session)
+            let session = p.app.state.watch_session();
+            (Arc::downgrade(&p.app.state), session)
         });
         let Some(session) = session else {
             return WatchEventJs {
@@ -551,7 +434,7 @@ impl Preview {
                     }
                 };
                 match guard.recv() {
-                    Ok(ev) => ev,
+                    Ok(ev) => ev.into(),
                     Err(_) => {
                         return WatchEventJs {
                             kind: "closed".into(),
@@ -566,7 +449,7 @@ impl Preview {
                     paths: Vec::new(),
                 };
             };
-            state.apply_watch_event(session_id, event)
+            state.apply_watch_event(session_id, event).into()
         })
         .await
         .unwrap_or_else(|_| WatchEventJs {
@@ -589,7 +472,7 @@ impl Preview {
         if this.is_disposed() {
             return PreviewResult::default();
         }
-        let (state, generation) = this.with(|p| (p.state.clone(), p.generation.clone()));
+        let (state, generation) = this.with(|p| (p.app.state.clone(), p.app.generation.clone()));
         let my_gen = generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         blocking(move || {
             let cancel = CancelToken {
@@ -599,7 +482,9 @@ impl Preview {
             if cancel.is_cancelled() {
                 return PreviewResult::default();
             }
-            state.run(&request, scale as f32, &view, cancel)
+            let req: xcpc_app::PreviewRequest = request.into();
+            let view: Vec<xcpc_app::PreviewView> = view.into_iter().map(Into::into).collect();
+            state.run(&req, scale as f32, &view, cancel).into()
         })
         .await
         .unwrap_or_else(|e| PreviewResult {
@@ -615,7 +500,7 @@ impl Preview {
         if this.is_disposed() || pages.is_empty() {
             return 0;
         }
-        let (state, generation) = this.with(|p| (p.state.clone(), p.generation.clone()));
+        let (state, generation) = this.with(|p| (p.app.state.clone(), p.app.generation.clone()));
         let expected_gen = generation.load(Ordering::Acquire);
         blocking(move || {
             let cancel = CancelToken {
@@ -640,17 +525,21 @@ impl Preview {
         if this.is_disposed() {
             return MathPreviewJs::default();
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.render_math_preview(&latex, display, dark, scale as f32))
-            .await
-            .unwrap_or_default()
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .render_math_preview(&latex, display, dark, scale as f32)
+                .into()
+        })
+        .await
+        .unwrap_or_default()
     }
 
     /// Maps a click at `(xPt, yPt)` (typographic points from the top-left of 0-based `page`)
     /// on the currently cached preview back to its 1-based Markdown source location.
     /// Returns `null` immediately without blocking if a compilation is in flight.
     pub fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
-        self.state.locate_click(page, x_pt, y_pt)
+        self.app.locate_click(page, x_pt, y_pt).map(Into::into)
     }
 
     /// Maps a 1-based `line` in workspace-relative `file` (e.g. `"problems/a/statement.md"`)
@@ -658,55 +547,15 @@ impl Preview {
     /// active compilation; falls back to the problem's first page when exact anchors are
     /// unavailable.
     pub fn locate_source(&self, file: String, line: u32) -> Option<PreviewLocationJs> {
-        self.state.locate_source(&file, line)
+        self.app.locate_source(file, line).map(Into::into)
     }
 
     /// Where `text`'s Markdown structure lies (headings, emphasis, math, code, markup), as
     /// the conversion reads it, for the editor to style its source.
     pub fn markdown_spans(text: String) -> Vec<MarkdownSpanJs> {
-        use xcpc_convert::SpanKind as K;
-        // Byte offset → (line, UTF-16 column), walking the text once in span order.
-        let mut starts = vec![0usize];
-        starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
-        let at = |offset: usize| -> (u32, u32) {
-            let line = starts.partition_point(|&s| s <= offset) - 1;
-            let column = text[starts[line]..offset].encode_utf16().count();
-            (line as u32, column as u32)
-        };
-        xcpc_convert::markdown_spans(&text)
+        xcpc_app::AppController::markdown_spans(text)
             .into_iter()
-            .map(|s| {
-                let (start_line, start_column) = at(s.range.start);
-                let (end_line, end_column) = at(s.range.end);
-                let kind = match s.kind {
-                    K::Heading => "heading",
-                    K::Strong => "strong",
-                    K::Emphasis => "emphasis",
-                    K::Strikethrough => "strikethrough",
-                    K::InlineMath => "inlineMath",
-                    K::DisplayMath => "displayMath",
-                    K::MathCommand => "mathCommand",
-                    K::MathOperator => "mathOperator",
-                    K::Code => "code",
-                    K::CodeBlock => "codeBlock",
-                    K::CodeComment => "codeComment",
-                    K::CodeString => "codeString",
-                    K::CodeKeyword => "codeKeyword",
-                    K::CodeNumber => "codeNumber",
-                    K::Link => "link",
-                    K::Url => "url",
-                    K::Table => "table",
-                    K::Markup => "markup",
-                };
-                MarkdownSpanJs {
-                    kind: kind.into(),
-                    level: s.level.into(),
-                    start_line,
-                    start_column,
-                    end_line,
-                    end_column,
-                }
-            })
+            .map(Into::into)
             .collect()
     }
 
@@ -718,8 +567,9 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.export(&request))
+        let state = this.with(|p| p.app.state.clone());
+        let req: xcpc_app::PreviewRequest = request.into();
+        blocking(move || state.export(&req).into())
             .await
             .unwrap_or_else(|e| WorkspaceFile {
                 error: Some(format!("export failed: {e}")),
@@ -730,7 +580,7 @@ impl Preview {
     /// Reports independent PDF freshness (`exists`, `fresh`, `relPath`, `absPath`) for both
     /// the statements book and the editorial book of `request`'s target.
     pub fn export_status(&self, request: PreviewRequest) -> ExportBookStatusJs {
-        self.state.export_status(&request)
+        self.app.export_status(request.into()).into()
     }
 
     /// Off-UI-thread async variant of [`Self::export_status`] for Studio's status bar.
@@ -741,8 +591,9 @@ impl Preview {
         if this.is_disposed() {
             return ExportBookStatusJs::default();
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.export_status(&request))
+        let state = this.with(|p| p.app.state.clone());
+        let req: xcpc_app::PreviewRequest = request.into();
+        blocking(move || state.export_status(&req).into())
             .await
             .unwrap_or_default()
     }
@@ -754,10 +605,10 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let resolved = this.with(|p| p.state.resolve_reveal_path(&path));
+        let resolved = this.with(|p| p.app.state.resolve_reveal_path(&path));
         let abs = match resolved {
             Ok(abs) => abs,
-            Err(err) => return err,
+            Err(err) => return err.into(),
         };
         match reveal_path(abs).await {
             Ok(()) => ActionResult::ok(),
@@ -767,12 +618,12 @@ impl Preview {
 
     /// Loads user-global theme overrides from `<dataDir>/theme.toml`.
     pub fn load_theme_overrides(&self) -> ThemeOverridesJs {
-        theme_config::load_theme_overrides(self.state.data_dir.as_deref())
+        self.app.load_theme_overrides().into()
     }
 
     /// Detects the operating system UI locale and normalizes it to `"zh-CN"` or `"en"`.
     pub fn system_locale(&self) -> String {
-        detect_system_locale().to_owned()
+        self.app.system_locale()
     }
 
     /// Ensures `<dataDir>/theme.toml` exists and reveals it in the system file manager.
@@ -780,7 +631,7 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let ensured = this.with(|p| theme_config::ensure_theme_file(p.state.data_dir.as_deref()));
+        let ensured = this.with(|p| xcpc_app::ensure_theme_file(p.app.state.data_dir.as_deref()));
         let path = match ensured {
             Ok(p) => p,
             Err(e) => return ActionResult::err("io", e),
@@ -795,23 +646,27 @@ impl Preview {
 
     /// Searches indexed problems using structured filters and normalized text matching.
     pub fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
-        self.state.search_problems(query)
+        self.app
+            .search_problems(query.into())
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Returns sorted distinct tags and external platforms across all indexed problems.
     pub fn workspace_facets(&self) -> WorkspaceFacets {
-        self.state.workspace_facets()
+        self.app.workspace_facets().into()
     }
 
     /// Loads full problem details: metadata, statements & editorial with hashes, samples,
     /// solution filenames, and referencing contests.
     pub fn problem_detail(&self, id: String) -> ProblemDetailJs {
-        self.state.problem_detail(&id)
+        self.app.problem_detail(id).into()
     }
 
     /// Reads one solution file under `problems/<id>/solutions/<name>` read-only.
     pub fn read_solution(&self, id: String, name: String) -> WorkspaceFile {
-        self.state.read_solution(&id, &name)
+        self.app.read_solution(id, name).into()
     }
 
     /// Assembles a standalone Markdown statement with `samples/` embedded before `## 提示` / `## Note`.
@@ -820,15 +675,15 @@ impl Preview {
         id: String,
         unsaved_statement: Option<String>,
     ) -> Result<String, JsError> {
-        self.state
-            .export_markdown_with_samples(&id, unsaved_statement.as_deref())
+        self.app
+            .export_markdown_with_samples(id, unsaved_statement)
             .map_err(JsError::Error)
     }
 
     /// Creates a new problem directory with `problem.toml`, a `statement.md` skeleton, and
     /// an empty `samples/` directory, refreshing the in-memory index.
     pub fn create_problem(&self, id: String, title: String) -> ActionResult {
-        self.state.create_problem(&id, &title)
+        self.app.create_problem(id, title).into()
     }
 
     /// Recursively duplicates `problems/<sourceId>/` into `problems/<newId>/`, optionally
@@ -839,43 +694,42 @@ impl Preview {
         new_id: String,
         title: Option<String>,
     ) -> ActionResult {
-        self.state
-            .duplicate_problem(&source_id, &new_id, title.as_deref())
+        self.app.duplicate_problem(source_id, new_id, title).into()
     }
 
     /// Partially updates `problems/<id>/problem.toml` via `toml_edit`, preserving comments,
     /// key order, and unknown fields.
     pub fn update_problem_meta(&self, id: String, patch: ProblemMetaPatchJs) -> ActionResult {
-        self.state.update_problem_meta(&id, patch)
+        self.app.update_problem_meta(id, patch.into()).into()
     }
 
     /// Deletes a problem from the library. Refuses with `code: "problem_referenced"` and
     /// `referencingContests` when any unfrozen contest references it.
     pub fn delete_problem(&self, id: String) -> ActionResult {
-        self.state.delete_problem(&id)
+        self.app.delete_problem(id).into()
     }
 
     // ---- Persistent problem groups & batch operations ----------------------------------
 
     /// Creates a new persistent problem group in `workspace.toml`.
     pub fn create_group(&self, name: String) -> ActionResult {
-        self.state.create_group(&name)
+        self.app.create_group(name).into()
     }
 
     /// Renames a persistent problem group in `workspace.toml` and all member `problem.toml` files.
     pub fn rename_group(&self, old_name: String, new_name: String) -> ActionResult {
-        self.state.rename_group(&old_name, &new_name)
+        self.app.rename_group(old_name, new_name).into()
     }
 
     /// Deletes a persistent problem group from `workspace.toml` and ungroups member problems
     /// without deleting any problems.
     pub fn delete_group(&self, name: String) -> ActionResult {
-        self.state.delete_group(&name)
+        self.app.delete_group(name).into()
     }
 
     /// Reorders declared persistent problem groups in `workspace.toml`.
     pub fn reorder_groups(&self, names: Vec<String>) -> ActionResult {
-        self.state.reorder_groups(&names)
+        self.app.reorder_groups(names).into()
     }
 
     /// Sets or clears the persistent `group` on multiple problems in one batch.
@@ -884,7 +738,7 @@ impl Preview {
         ids: Vec<String>,
         group: Option<String>,
     ) -> BatchMutationResultJs {
-        self.state.batch_set_group(&ids, group.as_deref())
+        self.app.batch_set_group(ids, group).into()
     }
 
     /// Adds and/or removes tags across multiple problems in one batch.
@@ -894,12 +748,12 @@ impl Preview {
         add: Vec<String>,
         remove: Vec<String>,
     ) -> BatchMutationResultJs {
-        self.state.batch_edit_tags(&ids, &add, &remove)
+        self.app.batch_edit_tags(ids, add, remove).into()
     }
 
     /// Sets or clears `rating` across multiple problems in one batch.
     pub fn batch_set_rating(&self, ids: Vec<String>, rating: Option<u32>) -> BatchMutationResultJs {
-        self.state.batch_set_rating(&ids, rating)
+        self.app.batch_set_rating(ids, rating).into()
     }
 
     /// Atomically adds multiple problems to an existing contest, refusing if frozen/archived
@@ -909,13 +763,15 @@ impl Preview {
         contest_id: String,
         problem_ids: Vec<String>,
     ) -> BatchMutationResultJs {
-        self.state.batch_add_to_contest(&contest_id, &problem_ids)
+        self.app
+            .batch_add_to_contest(contest_id, problem_ids)
+            .into()
     }
 
     /// Batch-deletes multiple problems, skipping any referenced by unfrozen contests with
     /// `code: "problem_referenced"` and `referencingContests`.
     pub fn batch_delete_problems(&self, ids: Vec<String>) -> BatchDeleteResultJs {
-        self.state.batch_delete_problems(&ids)
+        self.app.batch_delete_problems(ids).into()
     }
 
     /// Starts a strictly sequential background batch package build/verification task
@@ -927,23 +783,23 @@ impl Preview {
         mode: String,
         contest_id: Option<String>,
     ) -> BatchStartResultJs {
-        self.state.start_batch_build(ids, mode, contest_id)
+        self.app.start_batch_build(ids, mode, contest_id).into()
     }
 
     /// Starts a background batch export task (`format`: `"domjudge"`, `"hydro"`, or
     /// `"merged_pdf"`). Stream progress via `nextBatchEvent(taskId)`.
     pub fn start_batch_export(&self, req: BatchExportRequestJs) -> BatchStartResultJs {
-        self.state.start_batch_export(req)
+        self.app.start_batch_export(req.into()).into()
     }
 
     /// Cooperatively cancels the currently running background batch task, if any.
     pub fn cancel_batch_task(&self) -> ActionResult {
-        self.state.cancel_batch_task()
+        self.app.cancel_batch_task().into()
     }
 
     /// Returns the latest snapshot of the active or most recently completed batch task.
     pub fn batch_task_status(&self) -> BatchTaskSnapshotJs {
-        self.state.batch_task_status()
+        self.app.batch_task_status().into()
     }
 
     /// Polling-free streaming event receiver for `taskId` returned by `startBatchBuild` or
@@ -953,7 +809,8 @@ impl Preview {
         if this.is_disposed() {
             return BatchTaskEventJs::closed(task_id, BatchTaskSnapshotJs::default());
         }
-        let (rx_opt, fallback_snap) = this.with(|p| p.state.batch_event_receiver(task_id));
+        let (rx_opt, fallback_snap) = this.with(|p| p.app.state.batch_event_receiver(task_id));
+        let fallback_snap: BatchTaskSnapshotJs = fallback_snap.into();
         let Some(rx) = rx_opt else {
             return BatchTaskEventJs::closed(task_id, fallback_snap);
         };
@@ -963,7 +820,7 @@ impl Preview {
                 Err(_) => return BatchTaskEventJs::closed(task_id, fallback_snap),
             };
             match guard.recv() {
-                Ok(ev) => ev,
+                Ok(ev) => ev.into(),
                 Err(_) => BatchTaskEventJs::closed(task_id, fallback_snap),
             }
         })
@@ -974,7 +831,9 @@ impl Preview {
     /// Saves `samples` into `problems/<id>/samples/` as `01.in`/`01.ans`..`NN.in`/`NN.ans`,
     /// stripping UTF-8 BOM and `\r` atomically and refreshing cache and index.
     pub fn save_samples(&self, id: String, samples: Vec<SamplePairJs>) -> ActionResult {
-        self.state.save_samples(&id, samples)
+        self.app
+            .save_samples(id, samples.into_iter().map(Into::into).collect())
+            .into()
     }
 
     /// Opens the system single-file picker filtered to image formats (`png`, `jpg`, `jpeg`,
@@ -993,7 +852,8 @@ impl Preview {
         }
         // Fail fast before opening the dialog if the workspace is read-only or contest frozen.
         let check = this.with(|p| {
-            p.state
+            p.app
+                .state
                 .validate_image_target(&target, &id, label.as_deref())
         });
         if let Err(err) = check {
@@ -1022,7 +882,7 @@ impl Preview {
         if this.is_disposed() {
             return Err(JsError::Error("preview disposed".into()));
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let rel =
             blocking(move || state.import_image_file(&target, &id, label.as_deref(), &src_path))
                 .await
@@ -1043,8 +903,8 @@ impl Preview {
         ext: String,
         bytes: Vec<u8>,
     ) -> Result<String, JsError> {
-        self.state
-            .import_image_bytes(&target, &id, label.as_deref(), &ext, &bytes)
+        self.app
+            .import_image_bytes(target, id, label, ext, bytes)
             .map_err(JsError::Error)
     }
 
@@ -1059,10 +919,16 @@ impl Preview {
         if this.is_disposed() {
             return Vec::new();
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.list_problem_assets(&target, &id, label.as_deref()))
-            .await
-            .unwrap_or_default()
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .list_problem_assets(&target, &id, label.as_deref())
+                .into_iter()
+                .map(Into::into)
+                .collect()
+        })
+        .await
+        .unwrap_or_default()
     }
 
     /// Atomically renames `assets/<oldName>` to `assets/<newName>` and updates matching
@@ -1075,8 +941,9 @@ impl Preview {
         old_name: String,
         new_name: String,
     ) -> ActionResult {
-        self.state
-            .rename_problem_asset(&target, &id, label.as_deref(), &old_name, &new_name)
+        self.app
+            .rename_problem_asset(target, id, label, old_name, new_name)
+            .into()
     }
 
     /// Deletes `assets/<name>` inside the target problem while enforcing workspace sandbox,
@@ -1088,8 +955,9 @@ impl Preview {
         label: Option<String>,
         name: String,
     ) -> ActionResult {
-        self.state
-            .delete_problem_asset(&target, &id, label.as_deref(), &name)
+        self.app
+            .delete_problem_asset(target, id, label, name)
+            .into()
     }
 
     /// Batch-deletes all unreferenced assets inside the target problem's `assets/` directory.
@@ -1099,8 +967,7 @@ impl Preview {
         id: String,
         label: Option<String>,
     ) -> CleanUnusedAssetsResultJs {
-        self.state
-            .clean_unused_assets(&target, &id, label.as_deref())
+        self.app.clean_unused_assets(target, id, label).into()
     }
 
     /// Sets or clears `{width=NN%}` on Markdown references to `assetName` in `docPath`
@@ -1114,48 +981,43 @@ impl Preview {
         width_pct: Option<f64>,
         doc_path: Option<String>,
     ) -> ActionResult {
-        self.state.set_asset_width(
-            &target,
-            &id,
-            label.as_deref(),
-            &asset_name,
-            width_pct,
-            doc_path.as_deref(),
-        )
+        self.app
+            .set_asset_width(target, id, label, asset_name, width_pct, doc_path)
+            .into()
     }
 
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
     /// Loads full contest metadata and per-item effective/original values with override flags.
     pub fn contest_detail(&self, id: String) -> ContestDetailJs {
-        self.state.contest_detail(&id)
+        self.app.contest_detail(id).into()
     }
 
     /// Computes 8-tier difficulty distribution and tag counts for `id`.
     pub fn contest_stats(&self, id: String) -> ContestStatsJs {
-        self.state.contest_stats(&id)
+        self.app.contest_stats(id).into()
     }
 
     /// Creates a new empty contest via `compose_contest(id, [], { name })`, refusing if `id`
     /// already exists.
     pub fn create_contest(&self, id: String, name: String) -> ActionResult {
-        self.state.create_contest(&id, &name)
+        self.app.create_contest(id, name).into()
     }
 
     /// Sets the ordered problem list for contest `id`, re-labelling `A..Z`, preserving
     /// existing overrides on kept problems, and removing overrides for dropped problems.
     pub fn compose_contest(&self, id: String, problem_ids: Vec<String>) -> ActionResult {
-        self.state.compose_contest(&id, &problem_ids)
+        self.app.compose_contest(id, problem_ids).into()
     }
 
     /// Partially updates `contests/<id>/contest.toml` metadata via `toml_edit`.
     pub fn update_contest_meta(&self, id: String, patch: ContestMetaPatchJs) -> ActionResult {
-        self.state.update_contest_meta(&id, patch)
+        self.app.update_contest_meta(id, patch.into()).into()
     }
 
     /// Archives or unarchives contest `id` (`archived = true` or removes `archived` in `contest.toml`).
     pub fn set_contest_archived(&self, id: String, archived: bool) -> ActionResult {
-        self.state.set_contest_archived(&id, archived)
+        self.app.set_contest_archived(id, archived).into()
     }
 
     /// Sets or clears metadata overrides for `label` inside `contestId`. Passing `null`
@@ -1166,7 +1028,9 @@ impl Preview {
         label: String,
         patch: OverridePatchJs,
     ) -> ActionResult {
-        self.state.set_override(&contest_id, &label, patch)
+        self.app
+            .set_override(contest_id, label, patch.into())
+            .into()
     }
 
     /// Compiles statements (and optional editorial), checks preflight lint, and atomically
@@ -1180,8 +1044,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.freeze_contest(&id))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.freeze_contest(&id).into())
             .await
             .unwrap_or_else(|e| FreezeResultJs {
                 ok: false,
@@ -1194,13 +1058,13 @@ impl Preview {
     /// Byte-for-byte diff between a frozen contest's snapshot and the live library, for the
     /// unfreeze confirmation dialog.
     pub fn unfreeze_diff(&self, id: String) -> UnfreezeDiffResultJs {
-        self.state.unfreeze_diff(&id)
+        self.app.unfreeze_diff(id).into()
     }
 
     /// Unfreezes a frozen contest (GUI-only, after human confirmation), deleting `snapshot/`
     /// and restoring live references.
     pub fn unfreeze_contest(&self, id: String) -> ActionResult {
-        self.state.unfreeze_contest(&id)
+        self.app.unfreeze_contest(id).into()
     }
 
     // ---- Templates & declarative schemas -----------------------------------------------
@@ -1210,7 +1074,7 @@ impl Preview {
     /// definitions, installable preset seeds, workspace-level default options, and loaded
     /// font families.
     pub fn list_templates_json(&self) -> String {
-        self.state.list_templates_json()
+        self.app.list_templates_json()
     }
 
     /// Updates `workspace.toml`'s default `template` and/or `[template-options.<tpl>]`.
@@ -1220,13 +1084,14 @@ impl Preview {
         clear_template: bool,
         options_json: Option<String>,
     ) -> ActionResult {
-        self.state
+        self.app
             .update_workspace_template(template, clear_template, options_json)
+            .into()
     }
 
     /// Forks a workspace template `source` into `templates/<newName>.typ`.
     pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
-        self.state.fork_template(&source, &new_name)
+        self.app.fork_template(source, new_name).into()
     }
 
     /// Installs a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into
@@ -1236,19 +1101,20 @@ impl Preview {
         preset_id: String,
         target_name: Option<String>,
     ) -> ActionResult {
-        self.state
-            .install_preset_template(&preset_id, target_name.as_deref())
+        self.app
+            .install_preset_template(preset_id, target_name)
+            .into()
     }
 
     /// Copies the contest's currently effective template to `contests/<contestId>/template.typ`
     /// so it can be edited independently for this contest.
     pub fn detach_contest_template(&self, contest_id: String) -> ActionResult {
-        self.state.detach_contest_template(&contest_id)
+        self.app.detach_contest_template(contest_id).into()
     }
 
     /// Removes `contests/<contestId>/template.typ`, restoring reference to workspace templates.
     pub fn remove_contest_template(&self, contest_id: String) -> ActionResult {
-        self.state.remove_contest_template(&contest_id)
+        self.app.remove_contest_template(contest_id).into()
     }
 
     /// Opens `templates/<name>.typ` with the system's default external editor (falling
@@ -1257,10 +1123,10 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let resolved = this.with(|p| p.state.resolve_template_file(&name));
+        let resolved = this.with(|p| p.app.state.resolve_template_file(&name));
         let path = match resolved {
             Ok(p) => p,
-            Err(err) => return err,
+            Err(err) => return err.into(),
         };
         match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
@@ -1277,10 +1143,10 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let resolved = this.with(|p| p.state.resolve_contest_template_file(&contest_id));
+        let resolved = this.with(|p| p.app.state.resolve_contest_template_file(&contest_id));
         let path = match resolved {
             Ok(p) => p,
-            Err(err) => return err,
+            Err(err) => return err.into(),
         };
         match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
@@ -1301,7 +1167,8 @@ impl Preview {
             return Err(JsError::Error("preview disposed".into()));
         }
         let check = this.with(|p| {
-            p.state
+            p.app
+                .state
                 .validate_template_image_target(contest_id.as_deref())
         });
         if let Err(err) = check {
@@ -1333,7 +1200,7 @@ impl Preview {
         if this.is_disposed() {
             return Err(JsError::Error("preview disposed".into()));
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let rel = blocking(move || state.import_template_image(contest_id.as_deref(), &src_path))
             .await
             .map_err(|e| JsError::Error(format!("template image import failed: {e}")))?
@@ -1346,10 +1213,10 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let ensured = this.with(|p| p.state.ensure_preamble_file());
+        let ensured = this.with(|p| p.app.state.ensure_preamble_file());
         let path = match ensured {
             Ok(p) => p,
-            Err(err) => return err,
+            Err(err) => return err.into(),
         };
         match open_in_external_editor(path).await {
             Ok(()) => ActionResult::ok(),
@@ -1362,24 +1229,28 @@ impl Preview {
     /// Fuzzy-searches problems, contests, and (when `activeContest` is given) the active
     /// contest's problem labels, ranked with persisted Frecency.
     pub fn fuzzy_jump(&self, query: String, active_contest: Option<String>) -> Vec<FuzzyHitJs> {
-        self.state.fuzzy_jump(&query, active_contest.as_deref())
+        self.app
+            .fuzzy_jump(query, active_contest)
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Records a visit (`"problem:<id>"`, `"contest:<id>"`, or
     /// `"contest_item:<contestId>:<label>"`) for Frecency ranking and persists `prefs.json`.
     pub fn record_visit(&self, key: String) {
-        self.state.record_visit(&key);
+        self.app.record_visit(key)
     }
 
     /// Loads persisted desktop preferences from `<dataDir>/prefs.json`.
     pub fn load_prefs(&self) -> AppPrefsJs {
-        self.state.load_prefs()
+        self.app.load_prefs().into()
     }
 
     /// Persists desktop preferences atomically to `<dataDir>/prefs.json` (preserving
     /// persisted Frecency history).
     pub fn save_prefs(&self, prefs: AppPrefsJs) {
-        self.state.save_prefs(prefs);
+        self.app.save_prefs(prefs.into())
     }
 
     /// Saves a cold-start preview snapshot (metadata JSON + 1–2 visible pages' pixels)
@@ -1395,7 +1266,7 @@ impl Preview {
         if this.is_disposed() {
             return false;
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let scale = render_scale.unwrap_or(1.0) as f32;
         blocking(move || state.save_cold_start_snapshot(&meta_json, &pages, scale))
             .await
@@ -1405,7 +1276,7 @@ impl Preview {
     /// Restores the cold-start preview snapshot from `<dataDir>/snapshots/` if it matches
     /// the active workspace and current on-disk content hash; returns `null` otherwise.
     pub fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
-        self.state.load_cold_start_snapshot()
+        self.app.load_cold_start_snapshot().map(Into::into)
     }
 
     // ---- Phase 3A: Local Polygon toolchain & package build -----------------------------
@@ -1413,18 +1284,18 @@ impl Preview {
     /// Detects host C++ compilers (`g++` / `clang++`) taking persisted `cxxOverride` and
     /// `XCPC_CXX` into account.
     pub fn toolchain_status(&self) -> ToolchainStatusJs {
-        self.state.toolchain_status()
+        self.app.toolchain_status().into()
     }
 
     /// Persists an explicit C++ compiler path override (passing `null` or empty clears it)
     /// and returns the refreshed toolchain detection status.
     pub fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
-        self.state.set_cxx_override(path)
+        self.app.set_cxx_override(path).into()
     }
 
     /// Fast O(1) check for whether `slug` has a local Polygon package.
     pub fn has_package(&self, slug: String) -> bool {
-        self.state.has_package(&slug)
+        self.app.has_package(slug)
     }
 
     /// Pure read-only inspection of a problem package (`hasPackage`, freshness, files,
@@ -1435,7 +1306,7 @@ impl Preview {
         slug: String,
         contest_id: Option<String>,
     ) -> PackageInspectionResultJs {
-        self.state.inspect_package_in(&slug, contest_id.as_deref())
+        self.app.inspect_package(slug, contest_id).into()
     }
 
     /// Off-UI-thread async variant of [`Self::inspect_package`] so Studio never blocks the
@@ -1452,20 +1323,24 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.inspect_package_in(&slug, contest_id.as_deref()))
-            .await
-            .unwrap_or_else(|e| PackageInspectionResultJs {
-                ok: false,
-                error: Some(format!("inspect_package task failed: {e}")),
-                ..Default::default()
-            })
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .inspect_package_in(&slug, contest_id.as_deref())
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| PackageInspectionResultJs {
+            ok: false,
+            error: Some(format!("inspect_package task failed: {e}")),
+            ..Default::default()
+        })
     }
 
     /// Scaffolds a problem package with `testlib.h` templates without overwriting existing
     /// files, and returns the refreshed inspection JSON.
     pub fn init_package(&self, slug: String) -> PackageInitResultJs {
-        self.state.init_package(&slug)
+        self.app.init_package(slug).into()
     }
 
     /// Scaffolds a problem package with optional Phase 3C features (`interactive`, `runs`, `subtasks`).
@@ -1476,8 +1351,9 @@ impl Preview {
         runs: Option<u32>,
         subtasks: bool,
     ) -> PackageInitResultJs {
-        self.state
-            .init_package_with_options(&slug, interactive, runs, subtasks)
+        self.app
+            .init_package_with_options(slug, interactive, runs, subtasks)
+            .into()
     }
 
     /// Spawns a background thread to run `xcpc_judge::build_package` (`"debug"` or
@@ -1490,18 +1366,19 @@ impl Preview {
         solutions: Option<Vec<String>>,
         contest_id: Option<String>,
     ) -> ActionResult {
-        self.state
-            .start_package_build(&slug, &mode, tests, solutions, contest_id)
+        self.app
+            .start_package_build(slug, mode, tests, solutions, contest_id)
+            .into()
     }
 
     /// Signals cancellation to the currently running background package build, if any.
     pub fn cancel_package_build(&self) -> ActionResult {
-        self.state.cancel_package_build()
+        self.app.cancel_package_build().into()
     }
 
     /// Returns the latest progress and completion snapshot of the background package build.
     pub fn package_build_status(&self) -> PackageBuildStatusJs {
-        self.state.package_build_status()
+        self.app.package_build_status().into()
     }
 
     /// Validates that `relPath` (file or directory) stays inside `problems/<slug>/` and opens
@@ -1514,10 +1391,10 @@ impl Preview {
         if this.is_disposed() {
             return ActionResult::err("disposed", "preview disposed");
         }
-        let resolved = this.with(|p| p.state.resolve_package_file(&slug, &rel_path));
+        let resolved = this.with(|p| p.app.state.resolve_package_file(&slug, &rel_path));
         let path = match resolved {
             Ok(p) => p,
-            Err(err) => return err,
+            Err(err) => return err.into(),
         };
         let res = if path.is_dir() {
             reveal_path(path).await
@@ -1539,13 +1416,14 @@ impl Preview {
         head_lines: Option<u32>,
         tail_lines: Option<u32>,
     ) -> TestCasePreviewJs {
-        self.state
-            .inspect_test_case(&slug, &selector, head_lines, tail_lines)
+        self.app
+            .inspect_test_case(slug, selector, head_lines, tail_lines)
+            .into()
     }
 
     /// Updates `[package].checker` in `problem.toml` (built-in checker name or `"checker.cpp"`).
     pub fn set_package_checker(&self, slug: String, checker: String) -> ActionResult {
-        self.state.set_package_checker(&slug, &checker)
+        self.app.set_package_checker(slug, checker).into()
     }
 
     /// Updates `[solutions.<name>]` (`main`, `expect`, `tags`) in `problem.toml`.
@@ -1557,8 +1435,9 @@ impl Preview {
         expect: Option<Vec<String>>,
         tags: Option<Vec<String>>,
     ) -> ActionResult {
-        self.state
-            .set_solution_config(&slug, &name, is_main, expect, tags)
+        self.app
+            .set_solution_config(slug, name, is_main, expect, tags)
+            .into()
     }
 
     /// Creates a new boilerplate package source file (`solution`, `generator`, `validator`,
@@ -1569,7 +1448,7 @@ impl Preview {
         kind: String,
         name: String,
     ) -> PackageCreateResultJs {
-        self.state.create_package_source(&slug, &kind, &name)
+        self.app.create_package_source(slug, kind, name).into()
     }
 
     /// Adds a hand-written test file under `tests/` and appends a `[[test]]` rule.
@@ -1580,8 +1459,7 @@ impl Preview {
         tag: Option<String>,
         content: String,
     ) -> AddedTestResultJs {
-        self.state
-            .add_hand_test(&slug, name.as_deref(), tag.as_deref(), &content)
+        self.app.add_hand_test(slug, name, tag, content).into()
     }
 
     /// Appends a generator `[[test]]` batch rule to `problem.toml`.
@@ -1594,14 +1472,9 @@ impl Preview {
         tag: Option<String>,
         name: Option<String>,
     ) -> AddedTestResultJs {
-        self.state.add_generator_test(
-            &slug,
-            &generator,
-            &args,
-            repeat,
-            tag.as_deref(),
-            name.as_deref(),
-        )
+        self.app
+            .add_generator_test(slug, generator, args, repeat, tag, name)
+            .into()
     }
 
     /// Updates the 0-based generator `[[test]]` rule in `problem.toml` in-place via `toml_edit`.
@@ -1616,25 +1489,19 @@ impl Preview {
         tag: Option<String>,
         name: Option<String>,
     ) -> ActionResult {
-        self.state.update_generator_test(
-            &slug,
-            rule_index,
-            &generator,
-            &args,
-            repeat,
-            tag.as_deref(),
-            name.as_deref(),
-        )
+        self.app
+            .update_generator_test(slug, rule_index, generator, args, repeat, tag, name)
+            .into()
     }
 
     /// Removes the 0-based `[[test]]` rule from `problem.toml`.
     pub fn remove_test_rule(&self, slug: String, rule_index: u32) -> ActionResult {
-        self.state.remove_test_rule(&slug, rule_index)
+        self.app.remove_test_rule(slug, rule_index).into()
     }
 
     /// Deletes a solution source file and removes its `[solutions.<name>]` table from `problem.toml`.
     pub fn delete_solution(&self, slug: String, name: String) -> ActionResult {
-        self.state.delete_solution(&slug, &name)
+        self.app.delete_solution(slug, name).into()
     }
 
     /// Deletes a generator source file and optionally removes referencing `[[test]]` rules.
@@ -1644,23 +1511,24 @@ impl Preview {
         filename: String,
         remove_referencing_tests: bool,
     ) -> ActionResult {
-        self.state
-            .delete_generator(&slug, &filename, remove_referencing_tests)
+        self.app
+            .delete_generator(slug, filename, remove_referencing_tests)
+            .into()
     }
 
     /// Deletes a validator or checker self-test file inside `problems/<slug>/tests/{validator,checker}/`.
     pub fn delete_self_test(&self, slug: String, rel_path: String) -> ActionResult {
-        self.state.delete_self_test(&slug, &rel_path)
+        self.app.delete_self_test(slug, rel_path).into()
     }
 
     /// Deletes `interactor.cpp` (or versioned C++ variants) from `problems/<slug>/`.
     pub fn delete_interactor(&self, slug: String) -> ActionResult {
-        self.state.delete_interactor(&slug)
+        self.app.delete_interactor(slug).into()
     }
 
     /// Updates `[package].runs` in `problem.toml` (`null` or `1` returns to single-run default).
     pub fn set_package_runs(&self, slug: String, runs: Option<u32>) -> ActionResult {
-        self.state.set_package_runs(&slug, runs)
+        self.app.set_package_runs(slug, runs).into()
     }
 
     /// Adds or updates a `[[subtask]]` entry in `problem.toml` (matched by `id`).
@@ -1672,8 +1540,9 @@ impl Preview {
         depends: Vec<String>,
         scoring: String,
     ) -> ActionResult {
-        self.state
-            .upsert_subtask(&slug, &id, score, depends, &scoring)
+        self.app
+            .upsert_subtask(slug, id, score, depends, scoring)
+            .into()
     }
 
     /// Deletes a `[[subtask]]` entry by `subtaskId` and optionally clears references.
@@ -1683,8 +1552,9 @@ impl Preview {
         subtask_id: String,
         clear_references: bool,
     ) -> ActionResult {
-        self.state
-            .delete_subtask(&slug, &subtask_id, clear_references)
+        self.app
+            .delete_subtask(slug, subtask_id, clear_references)
+            .into()
     }
 
     /// Sets or clears `[[test]].subtask` on the 0-based `ruleIndex` test rule.
@@ -1694,8 +1564,7 @@ impl Preview {
         rule_index: u32,
         subtask: Option<String>,
     ) -> ActionResult {
-        self.state
-            .set_test_subtask(&slug, rule_index, subtask.as_deref())
+        self.app.set_test_subtask(slug, rule_index, subtask).into()
     }
 
     /// Updates `[solutions.<name>]` OI scoring assertions (`scoreJson`, `subtasksJson`).
@@ -1706,33 +1575,30 @@ impl Preview {
         score_json: Option<String>,
         subtasks_json: Option<String>,
     ) -> ActionResult {
-        self.state.set_solution_scoring(
-            &slug,
-            &name,
-            score_json.as_deref(),
-            subtasks_json.as_deref(),
-        )
+        self.app
+            .set_solution_scoring(slug, name, score_json, subtasks_json)
+            .into()
     }
 
     /// Deletes the 1-based sample pair (`samples/NN.{in,ans}`) and renumbers remaining samples contiguously.
     pub fn delete_sample(&self, slug: String, sample_index: u32) -> ActionResult {
-        self.state.delete_sample(&slug, sample_index)
+        self.app.delete_sample(slug, sample_index).into()
     }
 
     /// Normalizes CRLF, UTF-8 BOM, and missing trailing newlines across hand-written inputs.
     pub fn normalize_dirty_inputs(&self, slug: String) -> NormalizeDirtyResultJs {
-        self.state.normalize_dirty_inputs(&slug)
+        self.app.normalize_dirty_inputs(slug).into()
     }
 
     /// Restores the original bytes from the most recent `normalizeDirtyInputs` call for `slug`.
     pub fn undo_normalize_dirty_inputs(&self, slug: String) -> ActionResult {
-        self.state.undo_normalize_dirty_inputs(&slug)
+        self.app.undo_normalize_dirty_inputs(slug).into()
     }
 
     /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor
     /// (enforces a strict 256 KiB cap).
     pub fn read_package_file(&self, slug: String, rel_path: String) -> PackageFileContentJs {
-        self.state.read_package_file(&slug, &rel_path)
+        self.app.read_package_file(slug, rel_path).into()
     }
 
     /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
@@ -1744,8 +1610,9 @@ impl Preview {
         content: String,
         expected_hash: Option<String>,
     ) -> SavePackageFileResultJs {
-        self.state
-            .save_package_file(&slug, &rel_path, &content, expected_hash.as_deref())
+        self.app
+            .save_package_file(slug, rel_path, content, expected_hash)
+            .into()
     }
 
     // ---- Phase 3B: Polygon import & OJ package export ----------------------------------
@@ -1764,7 +1631,7 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let precheck = this.with(|p| p.state.validate_polygon_import_writable());
+        let precheck = this.with(|p| p.app.state.validate_polygon_import_writable());
         if let Err((code, error, detail)) = precheck {
             return PolygonImportResultJs {
                 ok: false,
@@ -1819,8 +1686,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.import_polygon(&zip_path, target_id))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.import_polygon(&zip_path, target_id).into())
             .await
             .unwrap_or_else(|e| PolygonImportResultJs {
                 ok: false,
@@ -1846,9 +1713,9 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let path = PathBuf::from(zip_path);
-        blocking(move || state.import_polygon(&path, target_id))
+        blocking(move || state.import_polygon(&path, target_id).into())
             .await
             .unwrap_or_else(|e| PolygonImportResultJs {
                 ok: false,
@@ -1878,9 +1745,9 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let fmt_fallback = format.clone();
-        blocking(move || state.export_oj_package(&format, &target, &id))
+        blocking(move || state.export_oj_package(&format, &target, &id).into())
             .await
             .unwrap_or_else(|e| ExportOjResultJs {
                 ok: false,
@@ -1897,7 +1764,7 @@ impl Preview {
     /// Loads the latest isolated sanitizer report (`build/problems/<slug>/sanitizer-report.json`),
     /// returning `ok: true, reportJson: null` when no sanitizer run has been recorded yet.
     pub fn load_sanitizer_report(&self, slug: String) -> JsonReportResultJs {
-        self.state.load_sanitizer_report(&slug)
+        self.app.load_sanitizer_report(slug).into()
     }
 
     /// Runs ASan/UBSan check on `slug` off the UI thread and returns the serialized `SanitizerReport`.
@@ -1910,8 +1777,8 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.sanitize_problem(&slug, tests, solutions))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.sanitize_problem(&slug, tests, solutions).into())
             .await
             .unwrap_or_else(|e| {
                 JsonReportResultJs::err("io", format!("sanitizer task failed: {e}"))
@@ -2017,13 +1884,15 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let file_paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-        blocking(move || state.run_external_problem_solutions(&slug, &file_paths, auto_build))
-            .await
-            .unwrap_or_else(|e| {
-                JsonReportResultJs::err("io", format!("external run task failed: {e}"))
-            })
+        blocking(move || {
+            state
+                .run_external_problem_solutions(&slug, &file_paths, auto_build)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs::err("io", format!("external run task failed: {e}")))
     }
 
     /// Zero-pollution trial run of a single-directory or multi-tester directory against `contestId`
@@ -2037,13 +1906,17 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         let dir_path = PathBuf::from(dir);
-        blocking(move || state.run_external_contest_solutions(&contest_id, &dir_path, auto_build))
-            .await
-            .unwrap_or_else(|e| {
-                JsonReportResultJs::err("io", format!("external contest run task failed: {e}"))
-            })
+        blocking(move || {
+            state
+                .run_external_contest_solutions(&contest_id, &dir_path, auto_build)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| {
+            JsonReportResultJs::err("io", format!("external contest run task failed: {e}"))
+        })
     }
 
     /// Explicitly adopts an external `.cpp` file into `problems/<slug>/solutions/` and registers
@@ -2057,14 +1930,9 @@ impl Preview {
         tags: Option<Vec<String>>,
         is_main: Option<bool>,
     ) -> AdoptSolutionResultJs {
-        self.state.adopt_external_solution(
-            &slug,
-            Path::new(&source_file),
-            name,
-            expect,
-            tags,
-            is_main,
-        )
+        self.app
+            .adopt_external_solution(slug, source_file, name, expect, tags, is_main)
+            .into()
     }
 
     /// Performs a read-only contest readiness audit across all problems in `contestId` off the
@@ -2074,8 +1942,8 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.audit_contest(&contest_id))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.audit_contest(&contest_id).into())
             .await
             .unwrap_or_else(|e| {
                 JsonReportResultJs::err("io", format!("contest audit task failed: {e}"))
@@ -2173,7 +2041,7 @@ impl Preview {
     /// Appends a manual training status event (`todo | attempted | ac | upsolved | clear`)
     /// to `training/logs.jsonl`.
     pub fn set_training_status(&self, problem_id: String, status: String) -> ActionResult {
-        self.state.set_training_status(&problem_id, &status)
+        self.app.set_training_status(problem_id, status).into()
     }
 
     /// Resolves an external OJ problem URL via enabled `oj_source` plugins and `oj_sync.db`.
@@ -2185,8 +2053,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.resolve_problem_url(&url))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.resolve_problem_url(&url).into())
             .await
             .unwrap_or_else(|e| ResolvedProblemUrlJs {
                 ok: false,
@@ -2208,33 +2076,34 @@ impl Preview {
         tags: Vec<String>,
         rating: Option<u32>,
     ) -> CreateProblemFromUrlResultJs {
-        self.state
-            .create_problem_from_url(&id, &title, &platform, &source_id, &url, tags, rating)
+        self.app
+            .create_problem_from_url(id, title, platform, source_id, url, tags, rating)
+            .into()
     }
 
     /// Returns all discovered plugins, subscribed repositories, and global sync settings.
     pub fn get_plugins_overview(&self) -> PluginsOverviewJs {
-        self.state.get_plugins_overview()
+        self.app.get_plugins_overview().into()
     }
 
     /// Enables or disables a discovered plugin by ID.
     pub fn set_plugin_enabled(&self, id: String, enabled: bool) -> ActionResult {
-        self.state.set_plugin_enabled(&id, enabled)
+        self.app.set_plugin_enabled(id, enabled).into()
     }
 
     /// Explicitly trusts a plugin awaiting permission confirmation (`pendingTrust = false`).
     pub fn trust_plugin(&self, id: String) -> ActionResult {
-        self.state.trust_plugin(&id)
+        self.app.trust_plugin(id).into()
     }
 
     /// Re-scans `<dataDir>/plugins/` and returns the refreshed plugins overview.
     pub fn reload_plugins(&self) -> PluginsOverviewJs {
-        self.state.get_plugins_overview()
+        self.app.reload_plugins().into()
     }
 
     /// Exports an embedded built-in plugin to `<dataDir>/plugins/<id>/` for local customization.
     pub fn export_builtin_plugin(&self, id: String) -> ExportPluginResultJs {
-        self.state.export_builtin_plugin(&id)
+        self.app.export_builtin_plugin(id).into()
     }
 
     /// Opens a native folder or `.zip` picker (`kind`: `"dir" | "zip"`) and installs the plugin.
@@ -2313,8 +2182,8 @@ impl Preview {
                 error: Some("preview disposed".into()),
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.install_plugin_from_path(&picked, is_zip))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.install_plugin_from_path(&picked, is_zip).into())
             .await
             .unwrap_or_else(|e| InstallPluginResultJs {
                 ok: false,
@@ -2327,17 +2196,17 @@ impl Preview {
 
     /// Subscribes to a decentralized plugin repository (`index.json` URL).
     pub fn add_plugin_repo(&self, url: String) -> ActionResult {
-        self.state.add_plugin_repo(&url)
+        self.app.add_plugin_repo(url).into()
     }
 
     /// Unsubscribes from a decentralized plugin repository URL.
     pub fn remove_plugin_repo(&self, url: String) -> ActionResult {
-        self.state.remove_plugin_repo(&url)
+        self.app.remove_plugin_repo(url).into()
     }
 
     /// Restores the official plugin repository subscription if it was removed.
     pub fn restore_official_plugin_repo(&self) -> ActionResult {
-        self.state.restore_official_plugin_repo()
+        self.app.restore_official_plugin_repo().into()
     }
 
     /// Fetches a decentralized plugin repository's `index.json` catalog off the UI thread.
@@ -2352,8 +2221,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.fetch_plugin_repo_catalog(&url))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.fetch_plugin_repo_catalog(&url).into())
             .await
             .unwrap_or_else(|e| RepoCatalogResultJs {
                 ok: false,
@@ -2372,8 +2241,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.fetch_all_plugin_repo_catalogs())
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.fetch_all_plugin_repo_catalogs().into())
             .await
             .unwrap_or_else(|e| PluginRepoCatalogJs {
                 ok: false,
@@ -2395,8 +2264,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.install_plugin_from_repo(&repo_url, &plugin_id))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.install_plugin_from_repo(&repo_url, &plugin_id).into())
             .await
             .unwrap_or_else(|e| InstallPluginResultJs {
                 ok: false,
@@ -2407,12 +2276,12 @@ impl Preview {
 
     /// Sets (or clears when empty) the single OJ handle for `platform`.
     pub fn set_sync_handle(&self, platform: String, handle: String) -> ActionResult {
-        self.state.set_sync_handle(&platform, &handle)
+        self.app.set_sync_handle(platform, handle).into()
     }
 
     /// Toggles silent OJ auto-sync on application startup.
     pub fn set_auto_sync_on_startup(&self, enabled: bool) -> ActionResult {
-        self.state.set_auto_sync_on_startup(enabled)
+        self.app.set_auto_sync_on_startup(enabled).into()
     }
 
     /// Stores (or deletes when empty) a plugin credential in the OS keyring.
@@ -2422,7 +2291,7 @@ impl Preview {
         key: String,
         value: String,
     ) -> ActionResult {
-        self.state.set_plugin_credential(&plugin_id, &key, &value)
+        self.app.set_plugin_credential(plugin_id, key, value).into()
     }
 
     /// Runs a plugin's `verify(ctx)` action off the UI thread.
@@ -2439,8 +2308,8 @@ impl Preview {
                 error: Some("preview disposed".into()),
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.verify_plugin(&plugin_id, handle.as_deref()))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.verify_plugin(&plugin_id, handle.as_deref()).into())
             .await
             .unwrap_or_else(|e| VerifyPluginResultJs {
                 ok: false,
@@ -2462,8 +2331,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.sync_oj(platform, full))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.sync_oj(platform, full).into())
             .await
             .unwrap_or_else(|e| SyncReportJs {
                 ok: false,
@@ -2478,7 +2347,7 @@ impl Preview {
         if this.is_disposed() {
             return false;
         }
-        let state = this.with(|p| p.state.clone());
+        let state = this.with(|p| p.app.state.clone());
         blocking(move || state.startup_sync_if_enabled())
             .await
             .unwrap_or(false)
@@ -2493,8 +2362,9 @@ impl Preview {
         heatmap_year: Option<i32>,
         tag_min_rating: Option<i32>,
     ) -> JsonReportResultJs {
-        self.state
+        self.app
             .training_dashboard(window, heatmap_year, tag_min_rating)
+            .into()
     }
 
     /// Queries aggregated upcoming / running (and optional finished) OJ contests as JSON.
@@ -2503,81 +2373,44 @@ impl Preview {
         platform: Option<String>,
         include_finished: bool,
     ) -> JsonReportResultJs {
-        self.state.training_contests(platform, include_finished)
+        self.app
+            .training_contests(platform, include_finished)
+            .into()
     }
 
     /// Queries synced submissions (raw or deduplicated per problem) as JSON, enriched with
     /// `library_problem_id` from the open workspace.
     pub fn training_submissions(&self, query: TrainingSubmissionsQueryJs) -> JsonReportResultJs {
-        self.state.training_submissions(query)
+        self.app.training_submissions(query.into()).into()
     }
 
     /// Ingests an external OJ problem (by URL or `(platform, problemKey)`) into the open
     /// workspace, deduplicating by `[[source]]` and refreshing the workspace index.
     pub fn training_ingest_problem(&self, req: IngestProblemRequestJs) -> IngestProblemResultJs {
-        self.state.training_ingest_problem(req)
+        self.app.training_ingest_problem(req.into()).into()
     }
 
     /// Records a manual training log entry (workspace check-in or standalone) into
     /// `training/logs.jsonl`, optionally creating a linked library problem.
     pub fn training_log_record(&self, req_json: String) -> ManualLogResultJs {
-        self.state.training_log_record(&req_json)
+        self.app.training_log_record(req_json).into()
     }
 
     /// Lists non-empty problem editorials in the open workspace, filtered by `queryJson`.
     pub fn training_list_editorials(&self, query_json: String) -> EditorialListResultJs {
-        self.state.training_list_editorials(&query_json)
+        self.app.training_list_editorials(query_json).into()
     }
 
     /// Opens an external `http://` or `https://` URL in the user's default browser.
     pub fn open_external_url(url: String) -> ActionResult {
-        let trimmed = url.trim();
-        if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
-            return ActionResult::err(
-                "invalid_url",
-                "only http:// and https:// URLs are supported",
-            );
-        }
-        let spawned = {
-            #[cfg(target_os = "macos")]
-            {
-                std::process::Command::new("open")
-                    .arg(trimmed)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-            }
-            #[cfg(target_os = "windows")]
-            {
-                std::process::Command::new("cmd")
-                    .args(["/C", "start", "", trimmed])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-            }
-            #[cfg(all(unix, not(target_os = "macos")))]
-            {
-                std::process::Command::new("xdg-open")
-                    .arg(trimmed)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-            }
-        };
-        match spawned {
-            Ok(_) => ActionResult::ok(),
-            Err(err) => ActionResult::err("io", err.to_string()),
-        }
+        xcpc_app::AppController::open_external_url(url).into()
     }
 
     // ---- Phase 4C: Toolbox, Plugin UI SDK, Commands & Importer/Exporter ----------------
 
     /// Lists all enabled `tool` plugins and their declared headless tools as JSON.
     pub fn plugin_list_tools(&self) -> JsonReportResultJs {
-        self.state.plugin_list_tools()
+        self.app.plugin_list_tools().into()
     }
 
     /// Executes a headless plugin tool action `runTool(toolId, inputs, ctx)` off the UI thread.
@@ -2590,15 +2423,19 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.plugin_run_tool(&plugin_id, &tool_id, &inputs_json))
-            .await
-            .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run tool failed: {e}")))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_run_tool(&plugin_id, &tool_id, &inputs_json)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run tool failed: {e}")))
     }
 
     /// Loads the pure-Web HTML entry (`ui.html`) for an enabled, trusted UI plugin.
     pub fn load_plugin_ui_html(&self, plugin_id: String) -> PluginUiHtmlJs {
-        self.state.load_plugin_ui_html(&plugin_id)
+        self.app.load_plugin_ui_html(plugin_id).into()
     }
 
     /// Executes a permission-checked read-only workspace query (`listProblems`, `getProblem`,
@@ -2610,19 +2447,20 @@ impl Preview {
         method: String,
         args_json: Option<String>,
     ) -> PluginWorkspaceResultJs {
-        self.state
-            .plugin_workspace_query(&plugin_id, &method, args_json.as_deref())
+        self.app
+            .plugin_workspace_query(plugin_id, method, args_json)
+            .into()
     }
 
     /// Returns the user's bound OJ accounts (platform, handle, cached rating/rank) for an
     /// enabled, trusted plugin. Exposes no credentials or private submission data.
     pub fn plugin_list_oj_accounts(&self, plugin_id: String) -> PluginWorkspaceResultJs {
-        self.state.plugin_list_oj_accounts(&plugin_id)
+        self.app.plugin_list_oj_accounts(plugin_id).into()
     }
 
     /// Renders an SVG string to a PNG image (base64-encoded) via `resvg` + `tiny-skia`.
     pub fn plugin_render_svg_png(svg: String, scale: Option<f64>) -> PluginRenderPngResultJs {
-        State::plugin_render_svg_png(&svg, scale)
+        xcpc_app::AppController::plugin_render_svg_png(svg, scale).into()
     }
 
     /// Opens a native save dialog and atomically writes a base64-encoded PNG file.
@@ -2682,7 +2520,7 @@ impl Preview {
             }
         };
         let path_str = picked.display().to_string();
-        match blocking(move || crate::plugins::atomic_write_file(&picked, &bytes)).await {
+        match blocking(move || xcpc_app::atomic_write_file(&picked, &bytes)).await {
             Ok(Ok(())) => SaveReportResultJs {
                 ok: true,
                 cancelled: false,
@@ -2751,7 +2589,7 @@ impl Preview {
         };
         let path_str = picked.display().to_string();
         let bytes = text.into_bytes();
-        match blocking(move || crate::plugins::atomic_write_file(&picked, &bytes)).await {
+        match blocking(move || xcpc_app::atomic_write_file(&picked, &bytes)).await {
             Ok(Ok(())) => SaveReportResultJs {
                 ok: true,
                 cancelled: false,
@@ -2775,12 +2613,12 @@ impl Preview {
 
     /// Lists commands registered by enabled plugins matching `context` (`"global" | "problem" | "contest"`).
     pub fn plugin_list_commands(&self, context: Option<String>) -> JsonReportResultJs {
-        self.state.plugin_list_commands(context)
+        self.app.plugin_list_commands(context).into()
     }
 
     /// Synchronously reads a key from the plugin's persistent KV store (`<dataDir>/plugin_kv/<id>.json`).
     pub fn plugin_kv_get(&self, plugin_id: String, key: String) -> PluginKvResultJs {
-        self.state.plugin_kv_get(&plugin_id, &key)
+        self.app.plugin_kv_get(plugin_id, key).into()
     }
 
     /// Synchronously writes a JSON-encoded value into the plugin's persistent KV store.
@@ -2790,18 +2628,18 @@ impl Preview {
         key: String,
         value_json: String,
     ) -> ActionResult {
-        self.state.plugin_kv_set(&plugin_id, &key, &value_json)
+        self.app.plugin_kv_set(plugin_id, key, value_json).into()
     }
 
     /// Synchronously removes a key from the plugin's persistent KV store.
     pub fn plugin_kv_remove(&self, plugin_id: String, key: String) -> ActionResult {
-        self.state.plugin_kv_remove(&plugin_id, &key)
+        self.app.plugin_kv_remove(plugin_id, key).into()
     }
 
     /// Uninstalls a locally installed plugin, unlinks a dev-linked plugin (never deleting source dir),
     /// or reverts a local override back to the built-in version.
     pub fn uninstall_plugin(&self, id: String) -> InstallPluginResultJs {
-        self.state.uninstall_plugin(&id)
+        self.app.uninstall_plugin(id).into()
     }
 
     /// Prompts the user to pick a single local file (up to 16 MiB) and returns its UTF-8 text (when valid)
@@ -2896,7 +2734,7 @@ impl Preview {
         if this.is_disposed() {
             return closed();
         }
-        let rx = this.with(|p| p.state.ensure_plugin_watcher());
+        let rx = this.with(|p| p.app.state.ensure_plugin_watcher());
         let Some(rx) = rx else {
             return closed();
         };
@@ -2906,7 +2744,7 @@ impl Preview {
                 Err(_) => return closed(),
             };
             match guard.recv() {
-                Ok(ev) => ev,
+                Ok(ev) => ev.into(),
                 Err(_) => closed(),
             }
         })
@@ -2924,15 +2762,19 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.plugin_run_command(&plugin_id, &command_id, &context_payload_json))
-            .await
-            .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run command failed: {e}")))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_run_command(&plugin_id, &command_id, &context_payload_json)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run command failed: {e}")))
     }
 
     /// Lists all importers declared by enabled plugins as JSON.
     pub fn plugin_list_importers(&self) -> JsonReportResultJs {
-        self.state.plugin_list_importers()
+        self.app.plugin_list_importers().into()
     }
 
     /// Picks file(s) via the native dialog, runs a plugin importer, and atomically applies the draft.
@@ -2945,7 +2787,11 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let exts = this.with(|p| p.state.plugin_importer_extensions(&plugin_id, &importer_id));
+        let exts = this.with(|p| {
+            p.app
+                .state
+                .plugin_importer_extensions(&plugin_id, &importer_id)
+        });
         let title = label_or(
             labels.as_ref().and_then(|l| l.title.as_deref()),
             "选择导入文件",
@@ -2974,17 +2820,19 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.plugin_run_importer_paths(&plugin_id, &importer_id, &picked))
-            .await
-            .unwrap_or_else(|e| {
-                JsonReportResultJs::err("task", format!("run importer failed: {e}"))
-            })
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_run_importer_paths(&plugin_id, &importer_id, &picked)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run importer failed: {e}")))
     }
 
     /// Lists all exporters declared by enabled plugins as JSON.
     pub fn plugin_list_exporters(&self) -> JsonReportResultJs {
-        self.state.plugin_list_exporters()
+        self.app.plugin_list_exporters().into()
     }
 
     /// Runs a plugin exporter for a problem or contest and atomically writes output under `build/exports/`.
@@ -2998,24 +2846,26 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.plugin_run_exporter(&plugin_id, &exporter_id, &kind, &id))
-            .await
-            .unwrap_or_else(|e| {
-                JsonReportResultJs::err("task", format!("run exporter failed: {e}"))
-            })
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_run_exporter(&plugin_id, &exporter_id, &kind, &id)
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("run exporter failed: {e}")))
     }
 
     // ---- Phase 5: Algorithm Snippets, Bundler & Living TRDs ----------------------------
 
     /// Lists all workspace snippets with verification status, reverse dependencies, and tags.
     pub fn list_snippets_json(&self) -> JsonReportResultJs {
-        self.state.list_snippets_json()
+        self.app.list_snippets_json().into()
     }
 
     /// Loads one snippet's full detail, verification status, and last cached report.
     pub fn load_snippet_json(&self, slug: String) -> JsonReportResultJs {
-        self.state.load_snippet_json(&slug)
+        self.app.load_snippet_json(slug).into()
     }
 
     /// Creates a new snippet under `snippets/<slug>/`.
@@ -3026,13 +2876,12 @@ impl Preview {
         code: Option<String>,
         notes: Option<String>,
     ) -> ActionResult {
-        self.state
-            .create_snippet(&slug, &meta_json, code.as_deref(), notes.as_deref())
+        self.app.create_snippet(slug, meta_json, code, notes).into()
     }
 
     /// Partially updates `snippets/<slug>/snippet.toml` via `toml_edit`.
     pub fn update_snippet_meta(&self, slug: String, patch_json: String) -> ActionResult {
-        self.state.update_snippet_meta(&slug, &patch_json)
+        self.app.update_snippet_meta(slug, patch_json).into()
     }
 
     /// Atomically writes a single file inside `snippets/<slug>/` (`code.hpp`, `notes.md`,
@@ -3043,12 +2892,12 @@ impl Preview {
         file_name: String,
         content: String,
     ) -> ActionResult {
-        self.state.write_snippet_file(&slug, &file_name, &content)
+        self.app.write_snippet_file(slug, file_name, content).into()
     }
 
     /// Deletes `snippets/<slug>/`.
     pub fn delete_snippet(&self, slug: String) -> ActionResult {
-        self.state.delete_snippet(&slug)
+        self.app.delete_snippet(slug).into()
     }
 
     /// Starts background verification (`mode`: `"single" | "cascade" | "all"`).
@@ -3058,12 +2907,12 @@ impl Preview {
         slug: Option<String>,
         force: bool,
     ) -> ActionResult {
-        self.state.start_snippet_verify(&mode, slug, force)
+        self.app.start_snippet_verify(mode, slug, force).into()
     }
 
     /// Returns the current background snippet verification status and reports as JSON.
     pub fn snippet_verify_status_json(&self) -> JsonReportResultJs {
-        self.state.snippet_verify_status_json()
+        self.app.snippet_verify_status_json().into()
     }
 
     /// Persists Library Checker mirror URL and local repository path in `prefs.json`.
@@ -3072,13 +2921,14 @@ impl Preview {
         mirror_url: Option<String>,
         local_repo_path: Option<String>,
     ) -> ActionResult {
-        self.state
+        self.app
             .set_library_checker_config(mirror_url, local_repo_path)
+            .into()
     }
 
     /// Expands a workspace snippet and all its transitive local `#include`s into one C++ file.
     pub fn bundle_snippet_json(&self, slug: String, compact: bool) -> JsonReportResultJs {
-        self.state.bundle_snippet_json(&slug, compact)
+        self.app.bundle_snippet_json(slug, compact).into()
     }
 
     /// Expands a local C++ file on disk with optional `-I` include directories.
@@ -3088,8 +2938,9 @@ impl Preview {
         include_dirs: Vec<String>,
         compact: bool,
     ) -> JsonReportResultJs {
-        self.state
-            .bundle_local_file_json(&path, include_dirs, compact)
+        self.app
+            .bundle_local_file_json(path, include_dirs, compact)
+            .into()
     }
 
     /// Expands pasted C++ source text with optional base directory and `-I` include directories.
@@ -3100,8 +2951,9 @@ impl Preview {
         include_dirs: Vec<String>,
         compact: bool,
     ) -> JsonReportResultJs {
-        self.state
-            .bundle_local_source_json(&source, base_dir, include_dirs, compact)
+        self.app
+            .bundle_local_source_json(source, base_dir, include_dirs, compact)
+            .into()
     }
 
     /// Opens a native file dialog to pick a local `.cpp` / `.cc` / `.hpp` source file.
@@ -3115,7 +2967,7 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let start = this.with(|p| p.state.workspace_root());
+        let start = this.with(|p| p.app.state.workspace_root());
         let title = label_or(
             labels.as_ref().and_then(|l| l.title.as_deref()),
             "选择 C++ 源文件",
@@ -3188,12 +3040,12 @@ impl Preview {
 
     /// Lists all workspace TRD summaries as JSON.
     pub fn list_trds_json(&self) -> JsonReportResultJs {
-        self.state.list_trds_json()
+        self.app.list_trds_json().into()
     }
 
     /// Loads one TRD's detail, preflight issues, and local template schema as JSON.
     pub fn load_trd_json(&self, id: String) -> JsonReportResultJs {
-        self.state.load_trd_json(&id)
+        self.app.load_trd_json(id).into()
     }
 
     /// Creates or replaces a TRD's chapters and optional metadata patch.
@@ -3203,28 +3055,29 @@ impl Preview {
         chapters_json: String,
         meta_patch_json: Option<String>,
     ) -> ActionResult {
-        self.state
-            .compose_trd(&id, &chapters_json, meta_patch_json.as_deref())
+        self.app
+            .compose_trd(id, chapters_json, meta_patch_json)
+            .into()
     }
 
     /// Partially updates `trds/<id>/trd.toml` metadata via `toml_edit`.
     pub fn update_trd_meta(&self, id: String, patch_json: String) -> ActionResult {
-        self.state.update_trd_meta(&id, &patch_json)
+        self.app.update_trd_meta(id, patch_json).into()
     }
 
     /// Deletes an unfrozen, unarchived TRD directory.
     pub fn delete_trd(&self, id: String) -> ActionResult {
-        self.state.delete_trd(&id)
+        self.app.delete_trd(id).into()
     }
 
     /// Archives or unarchives a TRD.
     pub fn set_trd_archived(&self, id: String, archived: bool) -> ActionResult {
-        self.state.set_trd_archived(&id, archived)
+        self.app.set_trd_archived(id, archived).into()
     }
 
     /// Runs TRD preflight checks (missing snippets, missing deps, cycles, verify warnings).
     pub fn preflight_trd_json(&self, id: String) -> JsonReportResultJs {
-        self.state.preflight_trd_json(&id)
+        self.app.preflight_trd_json(id).into()
     }
 
     /// Compiles and exports `trds/<id>/` to PDF off the UI thread.
@@ -3235,8 +3088,8 @@ impl Preview {
                 ..Default::default()
             };
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.export_trd_pdf(&id))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.export_trd_pdf(&id).into())
             .await
             .unwrap_or_else(|e| WorkspaceFile {
                 error: Some(format!("export trd failed: {e}")),
@@ -3246,7 +3099,7 @@ impl Preview {
 
     /// Checks whether the default exported PDF for `trds/<id>/` exists on disk.
     pub fn trd_export_status(&self, id: String) -> PdfFreshnessJs {
-        self.state.trd_export_status(&id)
+        self.app.trd_export_status(id).into()
     }
 
     /// Freezes (finalizes) a TRD snapshot with its compiled PDF off the UI thread.
@@ -3254,154 +3107,25 @@ impl Preview {
         if this.is_disposed() {
             return JsonReportResultJs::err("disposed", "preview disposed");
         }
-        let state = this.with(|p| p.state.clone());
-        blocking(move || state.freeze_trd(&id, strict))
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || state.freeze_trd(&id, strict).into())
             .await
             .unwrap_or_else(|e| JsonReportResultJs::err("task", format!("freeze trd failed: {e}")))
     }
 
     /// Computes the diff between a frozen TRD's snapshot and live workspace snippets.
     pub fn diff_trd_for_unfreeze_json(&self, id: String) -> JsonReportResultJs {
-        self.state.diff_trd_for_unfreeze_json(&id)
+        self.app.diff_trd_for_unfreeze_json(id).into()
     }
 
     /// Unfreezes (reopens) a frozen TRD for live editing.
     pub fn unfreeze_trd(&self, id: String) -> ActionResult {
-        self.state.unfreeze_trd(&id)
+        self.app.unfreeze_trd(id).into()
     }
 
     /// Lists TRD templates (`TemplateKind::Trd`), TRD presets, and loaded font families.
     pub fn list_trd_templates_json(&self) -> String {
-        self.state.list_trd_templates_json()
-    }
-}
-
-/// If `dir` is non-empty, returns a fresh `xcpc-example` subdirectory inside it
-/// (`xcpc-example`, `xcpc-example-2`, ...) so existing files are never mixed with
-/// example content.
-pub(crate) fn parse_example_language(raw: Option<&str>) -> xcpc_domain::Language {
-    match raw.map(str::trim) {
-        Some(s) if s.to_ascii_lowercase().starts_with("en") => xcpc_domain::Language::English,
-        _ => xcpc_domain::Language::Chinese,
-    }
-}
-
-pub(crate) fn resolve_example_target_dir(dir: &Path) -> PathBuf {
-    let is_non_empty = |p: &Path| {
-        std::fs::read_dir(p)
-            .ok()
-            .and_then(|mut it| it.next())
-            .is_some()
-    };
-    if !is_non_empty(dir) {
-        return dir.to_path_buf();
-    }
-    let first = dir.join("xcpc-example");
-    if !first.exists() || !is_non_empty(&first) {
-        return first;
-    }
-    for n in 2u32..=1000 {
-        let candidate = dir.join(format!("xcpc-example-{n}"));
-        if !candidate.exists() || !is_non_empty(&candidate) {
-            return candidate;
-        }
-    }
-    first
-}
-
-impl Preview {
-    /// Makes `ws` the active workspace: cancels in-flight renders, swaps watcher outside
-    /// the mutex, refreshes the index, and returns the new [`WorkspaceInfo`].
-    fn switch(&self, ws: Workspace) -> WorkspaceInfo {
-        self.generation.fetch_add(1, Ordering::AcqRel);
-        let old_watcher = self.state.install_workspace(ws);
-        drop(old_watcher);
-        self.workspace()
-    }
-}
-
-const UI_FONT_STEMS: &[&str] = &[
-    "JetBrainsMono-Regular",
-    "JetBrainsMono-Medium",
-    "JetBrainsMono-Bold",
-    "JetBrainsMono-Italic",
-    "JetBrainsMono-BoldItalic",
-];
-
-pub(crate) fn load_ui_fonts_from(dirs: &[PathBuf]) -> Vec<Vec<u8>> {
-    let mut found_ttf: Vec<Option<PathBuf>> = vec![None; UI_FONT_STEMS.len()];
-    let mut found_otf: Vec<Option<PathBuf>> = vec![None; UI_FONT_STEMS.len()];
-    let mut fallback: Vec<PathBuf> = Vec::new();
-
-    for dir in dirs {
-        scan_ui_fonts_dir(dir, 0, &mut found_ttf, &mut found_otf, &mut fallback);
-    }
-
-    let mut chosen: Vec<PathBuf> = Vec::new();
-    for (ttf, otf) in found_ttf.iter_mut().zip(&mut found_otf) {
-        if let Some(p) = ttf.take().or_else(|| otf.take()) {
-            chosen.push(p);
-        }
-    }
-    if chosen.is_empty() {
-        fallback.sort();
-        fallback.dedup();
-        chosen = fallback;
-    }
-
-    chosen
-        .into_iter()
-        .filter_map(|p| std::fs::read(p).ok())
-        .filter(|b| !b.is_empty())
-        .collect()
-}
-
-fn scan_ui_fonts_dir(
-    dir: &Path,
-    depth: usize,
-    found_ttf: &mut [Option<PathBuf>],
-    found_otf: &mut [Option<PathBuf>],
-    fallback: &mut Vec<PathBuf>,
-) {
-    if depth > 4 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
-            scan_ui_fonts_dir(&path, depth + 1, found_ttf, found_otf, fallback);
-            continue;
-        }
-        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-            continue;
-        };
-        let is_ttf = ext.eq_ignore_ascii_case("ttf");
-        let is_otf = ext.eq_ignore_ascii_case("otf");
-        if !is_ttf && !is_otf {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if let Some(idx) = UI_FONT_STEMS
-            .iter()
-            .position(|target| stem.eq_ignore_ascii_case(target))
-        {
-            let slot = if is_ttf {
-                &mut found_ttf[idx]
-            } else {
-                &mut found_otf[idx]
-            };
-            if slot.is_none() {
-                *slot = Some(path);
-            }
-        } else if stem.starts_with("JetBrainsMono") && !stem.starts_with("JetBrainsMonoNL") {
-            fallback.push(path);
-        }
+        self.app.list_trd_templates_json()
     }
 }
 
@@ -3447,55 +3171,5 @@ fn label_or<'a>(opt: Option<&'a str>, fallback: &'a str) -> &'a str {
         .filter(|s| !s.is_empty())
         .unwrap_or(fallback)
 }
-
-#[cfg(windows)]
-fn windows_user_locale() -> Option<String> {
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetUserDefaultLocaleName(lp_locale_name: *mut u16, cch_locale_name: i32) -> i32;
-    }
-    let mut buf = [0u16; 85];
-    // SAFETY: `buf` is a valid writable buffer of `buf.len()` UTF-16 code units.
-    let len = unsafe { GetUserDefaultLocaleName(buf.as_mut_ptr(), buf.len() as i32) };
-    if len > 1 {
-        let slice = &buf[..(len as usize - 1)];
-        let s = String::from_utf16_lossy(slice);
-        if !s.trim().is_empty() {
-            return Some(s);
-        }
-    }
-    None
-}
-
-fn detect_system_locale() -> &'static str {
-    #[cfg(windows)]
-    if let Some(raw) = windows_user_locale() {
-        return normalize_system_locale(&raw);
-    }
-
-    for var in ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] {
-        if let Ok(val) = std::env::var(var)
-            && !val.trim().is_empty()
-        {
-            return normalize_system_locale(&val);
-        }
-    }
-    "en"
-}
-
-pub(crate) fn normalize_system_locale(raw: &str) -> &'static str {
-    let Some(first) = raw.split(':').map(str::trim).find(|s| !s.is_empty()) else {
-        return "en";
-    };
-    let no_mod = first.split('@').next().unwrap_or(first);
-    let no_enc = no_mod.split('.').next().unwrap_or(no_mod);
-    let norm = no_enc.trim().replace('_', "-").to_ascii_lowercase();
-    if norm.starts_with("zh") {
-        "zh-CN"
-    } else {
-        "en"
-    }
-}
-
 #[cfg(test)]
 mod tests;

@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub mod presets;
 pub mod snippet;
+pub use presets::*;
 pub use snippet::*;
 
 /// The languages a statement is set in: they pick the template's keywords.

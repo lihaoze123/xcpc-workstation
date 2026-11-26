@@ -76,7 +76,7 @@ fn err_json_storage(err: xcpc_storage::Error) -> JsonReportResultJs {
 }
 
 impl State {
-    pub(crate) fn snippet_verify_options(&self, force: bool) -> SnippetVerifyOptions {
+    pub fn snippet_verify_options(&self, force: bool) -> SnippetVerifyOptions {
         let (cxx_override, mirror_url, local_repo_path) = {
             let core = self.core.lock().unwrap();
             (
@@ -97,7 +97,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_library_checker_config(
+    pub fn set_library_checker_config(
         &self,
         mirror_url: Option<String>,
         local_repo_path: Option<String>,
@@ -111,7 +111,7 @@ impl State {
 
     // ---- Snippets ----------------------------------------------------------------------
 
-    pub(crate) fn list_snippets_json(&self) -> JsonReportResultJs {
+    pub fn list_snippets_json(&self) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -150,7 +150,7 @@ impl State {
         }))
     }
 
-    pub(crate) fn load_snippet_json(&self, slug: &str) -> JsonReportResultJs {
+    pub fn load_snippet_json(&self, slug: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -168,7 +168,7 @@ impl State {
         }))
     }
 
-    pub(crate) fn create_snippet(
+    pub fn create_snippet(
         &self,
         slug: &str,
         meta_json: &str,
@@ -194,7 +194,7 @@ impl State {
         }
     }
 
-    pub(crate) fn update_snippet_meta(&self, slug: &str, patch_json: &str) -> ActionResult {
+    pub fn update_snippet_meta(&self, slug: &str, patch_json: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -212,12 +212,7 @@ impl State {
         }
     }
 
-    pub(crate) fn write_snippet_file(
-        &self,
-        slug: &str,
-        file_name: &str,
-        content: &str,
-    ) -> ActionResult {
+    pub fn write_snippet_file(&self, slug: &str, file_name: &str, content: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -233,7 +228,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_snippet(&self, slug: &str) -> ActionResult {
+    pub fn delete_snippet(&self, slug: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -247,7 +242,7 @@ impl State {
         }
     }
 
-    pub(crate) fn start_snippet_verify(
+    pub fn start_snippet_verify(
         &self,
         mode: &str,
         slug: Option<String>,
@@ -317,7 +312,7 @@ impl State {
         ActionResult::ok()
     }
 
-    pub(crate) fn snippet_verify_status_json(&self) -> JsonReportResultJs {
+    pub fn snippet_verify_status_json(&self) -> JsonReportResultJs {
         let guard = self.snippet_verify.lock().unwrap();
         ok_json(&serde_json::json!({
             "seq": guard.seq,
@@ -334,7 +329,7 @@ impl State {
 
     // ---- Bundler -----------------------------------------------------------------------
 
-    pub(crate) fn bundle_snippet_json(&self, slug: &str, compact: bool) -> JsonReportResultJs {
+    pub fn bundle_snippet_json(&self, slug: &str, compact: bool) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -350,7 +345,7 @@ impl State {
         }
     }
 
-    pub(crate) fn bundle_local_file_json(
+    pub fn bundle_local_file_json(
         &self,
         path: &str,
         include_dirs: Vec<String>,
@@ -371,7 +366,7 @@ impl State {
         }
     }
 
-    pub(crate) fn bundle_local_source_json(
+    pub fn bundle_local_source_json(
         &self,
         source: &str,
         base_dir: Option<String>,
@@ -399,7 +394,7 @@ impl State {
 
     // ---- TRDs --------------------------------------------------------------------------
 
-    pub(crate) fn list_trds_json(&self) -> JsonReportResultJs {
+    pub fn list_trds_json(&self) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -410,7 +405,7 @@ impl State {
         }
     }
 
-    pub(crate) fn load_trd_json(&self, id: &str) -> JsonReportResultJs {
+    pub fn load_trd_json(&self, id: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -440,7 +435,7 @@ impl State {
         }))
     }
 
-    pub(crate) fn compose_trd(
+    pub fn compose_trd(
         &self,
         id: &str,
         chapters_json: &str,
@@ -470,7 +465,7 @@ impl State {
         }
     }
 
-    pub(crate) fn update_trd_meta(&self, id: &str, patch_json: &str) -> ActionResult {
+    pub fn update_trd_meta(&self, id: &str, patch_json: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -488,7 +483,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_trd(&self, id: &str) -> ActionResult {
+    pub fn delete_trd(&self, id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -502,7 +497,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_trd_archived(&self, id: &str, archived: bool) -> ActionResult {
+    pub fn set_trd_archived(&self, id: &str, archived: bool) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -516,7 +511,7 @@ impl State {
         }
     }
 
-    pub(crate) fn preflight_trd_json(&self, id: &str) -> JsonReportResultJs {
+    pub fn preflight_trd_json(&self, id: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -528,7 +523,7 @@ impl State {
         }
     }
 
-    pub(crate) fn export_trd_pdf(&self, id: &str) -> WorkspaceFile {
+    pub fn export_trd_pdf(&self, id: &str) -> WorkspaceFile {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return WorkspaceFile {
@@ -564,7 +559,7 @@ impl State {
         }
     }
 
-    pub(crate) fn trd_export_status(&self, id: &str) -> PdfFreshnessJs {
+    pub fn trd_export_status(&self, id: &str) -> PdfFreshnessJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return PdfFreshnessJs::default();
@@ -580,7 +575,7 @@ impl State {
         }
     }
 
-    pub(crate) fn freeze_trd(&self, id: &str, strict: bool) -> JsonReportResultJs {
+    pub fn freeze_trd(&self, id: &str, strict: bool) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -606,7 +601,7 @@ impl State {
         }
     }
 
-    pub(crate) fn diff_trd_for_unfreeze_json(&self, id: &str) -> JsonReportResultJs {
+    pub fn diff_trd_for_unfreeze_json(&self, id: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return err_json("no_workspace", "no workspace open");
@@ -617,7 +612,7 @@ impl State {
         }
     }
 
-    pub(crate) fn unfreeze_trd(&self, id: &str) -> ActionResult {
+    pub fn unfreeze_trd(&self, id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -631,7 +626,7 @@ impl State {
         }
     }
 
-    pub(crate) fn list_trd_templates_json(&self) -> String {
+    pub fn list_trd_templates_json(&self) -> String {
         let presets = xcpc_engine::list_presets_by_kind(TemplateKind::Trd);
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {

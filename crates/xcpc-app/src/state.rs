@@ -46,9 +46,9 @@ use crate::types::{
 
 /// Active watch receiver shared with `Preview::next_change` outside `State`'s mutex.
 #[derive(Clone)]
-pub(crate) struct WatchSession {
-    pub(crate) id: u64,
-    pub(crate) rx: Arc<Mutex<mpsc::Receiver<WatchEvent>>>,
+pub struct WatchSession {
+    pub id: u64,
+    pub rx: Arc<Mutex<mpsc::Receiver<WatchEvent>>>,
 }
 
 /// In-session record of a PDF exported by `Preview::export`, used by `export_status` to
@@ -89,7 +89,7 @@ pub(crate) struct CompilerState {
 }
 
 impl CompilerState {
-    pub(crate) fn sync_root(&mut self, ws: &Workspace) {
+    pub fn sync_root(&mut self, ws: &Workspace) {
         let root = ws.root();
         if self.engine_root.as_deref() != Some(root) {
             self.engine.set_root(Some(root.to_path_buf()));
@@ -210,10 +210,10 @@ pub(crate) struct LocalTemplateCacheEntry {
     info: Option<xcpc_domain::TemplateInfo>,
 }
 
-pub(crate) struct State {
+pub struct State {
     pub(crate) id: u64,
     /// Where `prefs.json` (recent workspaces, layout & Frecency) is kept.
-    pub(crate) data_dir: Option<PathBuf>,
+    pub data_dir: Option<PathBuf>,
     /// Bumped on workspace mutations, switches, and external watch events to invalidate `cached`.
     pub(crate) revision: Arc<AtomicU64>,
     pub(crate) core: Mutex<CoreState>,
@@ -266,12 +266,12 @@ impl Drop for State {
 }
 
 impl State {
-    pub(crate) fn new(data_dir: Option<PathBuf>) -> Self {
+    pub fn new(data_dir: Option<PathBuf>) -> Self {
         let env_ws = std::env::var_os("XCPC_WORKSPACE").map(PathBuf::from);
         Self::new_with_sources(data_dir, env_ws.as_deref(), Path::new("."))
     }
 
-    pub(crate) fn new_with_sources(
+    pub fn new_with_sources(
         data_dir: Option<PathBuf>,
         env_workspace: Option<&Path>,
         cwd: &Path,
@@ -339,11 +339,11 @@ impl State {
         state
     }
 
-    pub(crate) fn revision(&self) -> u64 {
+    pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::Acquire)
     }
 
-    pub(crate) fn ensure_plugin_watcher(
+    pub fn ensure_plugin_watcher(
         &self,
     ) -> Option<Arc<Mutex<std::sync::mpsc::Receiver<crate::types::PluginWatchEventJs>>>> {
         let mut slot = self.plugin_watcher.lock().ok()?;
@@ -354,7 +354,7 @@ impl State {
         slot.as_ref().map(|w| w.receiver())
     }
 
-    pub(crate) fn refresh_plugin_watcher(&self) {
+    pub fn refresh_plugin_watcher(&self) {
         if let Ok(slot) = self.plugin_watcher.lock()
             && let Some(ref w) = *slot
         {
@@ -362,13 +362,13 @@ impl State {
         }
     }
 
-    pub(crate) fn stop_plugin_watcher(&self) {
+    pub fn stop_plugin_watcher(&self) {
         if let Ok(mut slot) = self.plugin_watcher.lock() {
             drop(slot.take());
         }
     }
 
-    pub(crate) fn workspace_root(&self) -> Option<PathBuf> {
+    pub fn workspace_root(&self) -> Option<PathBuf> {
         self.core
             .lock()
             .unwrap()
@@ -377,7 +377,7 @@ impl State {
             .map(|w| w.root().to_path_buf())
     }
 
-    pub(crate) fn recent_workspaces(&self) -> Vec<String> {
+    pub fn recent_workspaces(&self) -> Vec<String> {
         self.core
             .lock()
             .unwrap()
@@ -387,14 +387,14 @@ impl State {
             .clone()
     }
 
-    pub(crate) fn watch_session(&self) -> Option<WatchSession> {
+    pub fn watch_session(&self) -> Option<WatchSession> {
         self.core.lock().unwrap().watch_session.clone()
     }
 
     /// Switches to `ws`, starting a fresh [`WorkspaceWatcher`] wired with [`SelfWriteTracker`]
     /// and scanning a fresh [`WorkspaceIndex`]. Returns the previous watcher so the caller
     /// can drop it outside `core`'s mutex. Never blocks on `compiler`.
-    pub(crate) fn install_workspace(&self, ws: Workspace) -> Option<WorkspaceWatcher> {
+    pub fn install_workspace(&self, ws: Workspace) -> Option<WorkspaceWatcher> {
         let (tracked_ws, new_watcher, new_session_rx) = match ws.watch() {
             Ok((tracked, watcher, rx)) => (tracked, Some(watcher), Some(rx)),
             Err(_) => (ws, None, None),
@@ -437,7 +437,7 @@ impl State {
     }
 
     /// Stops the active watcher (if any) and returns it to be dropped outside the lock.
-    pub(crate) fn stop_watcher(&self) -> Option<WorkspaceWatcher> {
+    pub fn stop_watcher(&self) -> Option<WorkspaceWatcher> {
         let mut core = self.core.lock().ok()?;
         core.watch_session = None;
         core.watcher.take()
@@ -445,7 +445,7 @@ impl State {
 
     /// Cancels any active background batch task and immediately resolves waiting
     /// `next_batch_event` receivers with `"closed"`.
-    pub(crate) fn stop_batch_task(&self) {
+    pub fn stop_batch_task(&self) {
         let Ok(mut slot) = self.batch_task.lock() else {
             return;
         };
@@ -472,7 +472,7 @@ impl State {
     }
 
     /// Invalidates the compiled preview cache without touching `compiler` or `core`.
-    pub(crate) fn invalidate_cache(&self) {
+    pub fn invalidate_cache(&self) {
         self.revision.fetch_add(1, Ordering::AcqRel);
         *self.snapshot.lock().unwrap() = None;
     }
@@ -480,7 +480,7 @@ impl State {
     /// Applies an external [`WatchEvent`] if it still belongs to `session_id`: updates
     /// [`WorkspaceIndex`] incrementally (or rescans on overflow) and invalidates the
     /// compiled cache. Never blocks on `compiler`.
-    pub(crate) fn apply_watch_event(&self, session_id: u64, event: WatchEvent) -> WatchEventJs {
+    pub fn apply_watch_event(&self, session_id: u64, event: WatchEvent) -> WatchEventJs {
         let out = match event {
             WatchEvent::Changed(paths) => {
                 let mut core = self.core.lock().unwrap();
@@ -563,7 +563,7 @@ impl State {
 
     // ---- Workspace info & file I/O -----------------------------------------------------
 
-    pub(crate) fn info(&self) -> WorkspaceInfo {
+    pub fn info(&self) -> WorkspaceInfo {
         let _span = xcpc_trace::span("desktop", "state_info");
         let core = self.core.lock().unwrap();
         let Some(ws) = core.workspace.as_ref() else {
@@ -636,7 +636,7 @@ impl State {
         info
     }
 
-    pub(crate) fn read(&self, path: String) -> WorkspaceFile {
+    pub fn read(&self, path: String) -> WorkspaceFile {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return WorkspaceFile {
@@ -671,12 +671,7 @@ impl State {
         }
     }
 
-    pub(crate) fn save(
-        &self,
-        path: String,
-        text: String,
-        expected_hash: Option<String>,
-    ) -> SaveResult {
+    pub fn save(&self, path: String, text: String, expected_hash: Option<String>) -> SaveResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return SaveResult {
@@ -736,7 +731,7 @@ impl State {
         }
     }
 
-    pub(crate) fn mcp_config_snippet(&self) -> String {
+    pub fn mcp_config_snippet(&self) -> String {
         let root = self.workspace_root();
         mcp_config_snippet(root.as_deref())
     }
@@ -745,7 +740,7 @@ impl State {
 
     /// Speculatively pre-warms adjacent pages in the background without blocking any
     /// active or incoming `run()` compile (uses `try_lock` on `compiler`).
-    pub(crate) fn prewarm_neighbors(
+    pub fn prewarm_neighbors(
         &self,
         scale: f32,
         neighbor_pages: &[u32],
@@ -767,7 +762,7 @@ impl State {
         crate::cache::prewarm_cached(self.id, active, cached, scale, neighbor_pages, cancel)
     }
 
-    pub(crate) fn run(
+    pub fn run(
         &self,
         request: &PreviewRequest,
         scale: f32,
@@ -891,7 +886,7 @@ impl State {
         result
     }
 
-    pub(crate) fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
+    pub fn locate_click(&self, page: u32, x_pt: f64, y_pt: f64) -> Option<SourceLocationJs> {
         let Ok(compiler) = self.compiler.try_lock() else {
             return None;
         };
@@ -916,7 +911,7 @@ impl State {
 
     /// Maps a 1-based line inside workspace-relative `file` to its position `(page, yPt)`
     /// in the currently cached preview. Never blocks on an active compilation.
-    pub(crate) fn locate_source(&self, file: &str, line: u32) -> Option<PreviewLocationJs> {
+    pub fn locate_source(&self, file: &str, line: u32) -> Option<PreviewLocationJs> {
         let norm_file = normalize_ws_rel(file);
         if norm_file.is_empty() {
             return None;
@@ -976,7 +971,7 @@ impl State {
         })
     }
 
-    pub(crate) fn export(&self, request: &PreviewRequest) -> WorkspaceFile {
+    pub fn export(&self, request: &PreviewRequest) -> WorkspaceFile {
         let target = request.target();
         let kind = request.kind();
         let ws = self.core.lock().unwrap().workspace.clone();
@@ -1059,7 +1054,7 @@ impl State {
 
     /// Resolves and validates `path` (absolute or workspace-relative) for `revealInFolder`,
     /// enforcing that the target exists and stays strictly inside the open workspace.
-    pub(crate) fn resolve_reveal_path(&self, path: &str) -> Result<PathBuf, ActionResult> {
+    pub fn resolve_reveal_path(&self, path: &str) -> Result<PathBuf, ActionResult> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err(ActionResult::err("no_workspace", "no workspace open"));
@@ -1095,7 +1090,7 @@ impl State {
     /// Computes independent PDF freshness states for both `statements` and `editorial` books
     /// of `request`'s target (in-session content fingerprint with restart `mtime` fallback).
     /// Never blocks on `compiler`.
-    pub(crate) fn export_status(&self, request: &PreviewRequest) -> ExportBookStatusJs {
+    pub fn export_status(&self, request: &PreviewRequest) -> ExportBookStatusJs {
         let _span = xcpc_trace::span_with("desktop", "export_status", || {
             serde_json::json!({
                 "target": request.target,
@@ -1142,7 +1137,7 @@ impl State {
 
     // ---- Problem library & editing -----------------------------------------------------
 
-    pub(crate) fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
+    pub fn search_problems(&self, query: ProblemSearchQuery) -> Vec<ProblemSummaryJs> {
         let _span = xcpc_trace::span("desktop", "search_problems");
         let group = if query.ungrouped_only {
             Some(GroupFilter::Ungrouped)
@@ -1219,7 +1214,7 @@ impl State {
             .collect()
     }
 
-    pub(crate) fn workspace_facets(&self) -> WorkspaceFacets {
+    pub fn workspace_facets(&self) -> WorkspaceFacets {
         let mut tags = BTreeSet::new();
         let mut platforms = BTreeSet::new();
         let core = self.core.lock().unwrap();
@@ -1255,7 +1250,7 @@ impl State {
         }
     }
 
-    pub(crate) fn problem_detail(&self, id: &str) -> ProblemDetailJs {
+    pub fn problem_detail(&self, id: &str) -> ProblemDetailJs {
         let _span = xcpc_trace::span_with(
             "desktop",
             "problem_detail",
@@ -1370,7 +1365,7 @@ impl State {
         }
     }
 
-    pub(crate) fn read_solution(&self, id: &str, name: &str) -> WorkspaceFile {
+    pub fn read_solution(&self, id: &str, name: &str) -> WorkspaceFile {
         let path = format!("problems/{id}/solutions/{name}");
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
@@ -1401,7 +1396,7 @@ impl State {
 
     /// Assembles a standalone Markdown statement for `id` with its `samples/` embedded
     /// before `## 提示` / `## Note` (without modifying the source file on disk).
-    pub(crate) fn export_markdown_with_samples(
+    pub fn export_markdown_with_samples(
         &self,
         id: &str,
         unsaved_statement: Option<&str>,
@@ -1432,7 +1427,7 @@ impl State {
     /// Compiles and rasterizes a single LaTeX math expression into the shared `PIXELS`
     /// cache for the editor's floating mini math preview. Runs off the UI thread via
     /// `math_engine` so it never contends with full-document preview compilation.
-    pub(crate) fn render_math_preview(
+    pub fn render_math_preview(
         &self,
         latex: &str,
         display: bool,
@@ -1495,7 +1490,7 @@ impl State {
             };
             let (w, h) = (pixmap.width(), pixmap.height());
             let bytes = (w as usize).saturating_mul(h as usize).saturating_mul(4);
-            let src = nsh_core::element::ImageSrc::rgba(w, h, pixmap.take());
+            let src = crate::cache::RgbaPixels::new(w, h, pixmap.take());
             let mut pixels = PIXELS.lock().unwrap();
             pixels.insert(
                 key.clone(),
@@ -1513,7 +1508,7 @@ impl State {
         }
     }
 
-    pub(crate) fn create_problem(&self, id: &str, title: &str) -> ActionResult {
+    pub fn create_problem(&self, id: &str, title: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1528,7 +1523,7 @@ impl State {
         }
     }
 
-    pub(crate) fn duplicate_problem(
+    pub fn duplicate_problem(
         &self,
         source_id: &str,
         new_id: &str,
@@ -1548,7 +1543,7 @@ impl State {
         }
     }
 
-    pub(crate) fn update_problem_meta(&self, id: &str, patch: ProblemMetaPatchJs) -> ActionResult {
+    pub fn update_problem_meta(&self, id: &str, patch: ProblemMetaPatchJs) -> ActionResult {
         let _span = xcpc_trace::span_with(
             "desktop",
             "update_problem_meta",
@@ -1572,7 +1567,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_problem(&self, id: &str) -> ActionResult {
+    pub fn delete_problem(&self, id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1589,7 +1584,7 @@ impl State {
 
     // ---- Persistent problem groups & synchronous batch mutations -----------------------
 
-    pub(crate) fn create_group(&self, name: &str) -> ActionResult {
+    pub fn create_group(&self, name: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1609,7 +1604,7 @@ impl State {
         }
     }
 
-    pub(crate) fn rename_group(&self, old_name: &str, new_name: &str) -> ActionResult {
+    pub fn rename_group(&self, old_name: &str, new_name: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1626,7 +1621,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_group(&self, name: &str) -> ActionResult {
+    pub fn delete_group(&self, name: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1643,7 +1638,7 @@ impl State {
         }
     }
 
-    pub(crate) fn reorder_groups(&self, names: &[String]) -> ActionResult {
+    pub fn reorder_groups(&self, names: &[String]) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1663,11 +1658,7 @@ impl State {
         }
     }
 
-    pub(crate) fn batch_set_group(
-        &self,
-        ids: &[String],
-        group: Option<&str>,
-    ) -> BatchMutationResultJs {
+    pub fn batch_set_group(&self, ids: &[String], group: Option<&str>) -> BatchMutationResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return BatchMutationResultJs::err("no_workspace", "no workspace open");
@@ -1692,7 +1683,7 @@ impl State {
         }
     }
 
-    pub(crate) fn batch_edit_tags(
+    pub fn batch_edit_tags(
         &self,
         ids: &[String],
         add: &[String],
@@ -1721,11 +1712,7 @@ impl State {
         }
     }
 
-    pub(crate) fn batch_set_rating(
-        &self,
-        ids: &[String],
-        rating: Option<u32>,
-    ) -> BatchMutationResultJs {
+    pub fn batch_set_rating(&self, ids: &[String], rating: Option<u32>) -> BatchMutationResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return BatchMutationResultJs::err("no_workspace", "no workspace open");
@@ -1749,7 +1736,7 @@ impl State {
         }
     }
 
-    pub(crate) fn batch_add_to_contest(
+    pub fn batch_add_to_contest(
         &self,
         contest_id: &str,
         problem_ids: &[String],
@@ -1771,7 +1758,7 @@ impl State {
         }
     }
 
-    pub(crate) fn batch_delete_problems(&self, ids: &[String]) -> BatchDeleteResultJs {
+    pub fn batch_delete_problems(&self, ids: &[String]) -> BatchDeleteResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return BatchDeleteResultJs::err("no_workspace", "no workspace open");
@@ -1795,7 +1782,7 @@ impl State {
         }
     }
 
-    pub(crate) fn save_samples(&self, id: &str, samples: Vec<SamplePairJs>) -> ActionResult {
+    pub fn save_samples(&self, id: &str, samples: Vec<SamplePairJs>) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -1814,7 +1801,7 @@ impl State {
 
     // ---- Contest composition, overrides, stats, freeze & unfreeze ----------------------
 
-    pub(crate) fn contest_detail(&self, id: &str) -> ContestDetailJs {
+    pub fn contest_detail(&self, id: &str) -> ContestDetailJs {
         let _span = xcpc_trace::span_with(
             "desktop",
             "contest_detail",
@@ -2031,7 +2018,7 @@ impl State {
         }
     }
 
-    pub(crate) fn contest_stats(&self, id: &str) -> ContestStatsJs {
+    pub fn contest_stats(&self, id: &str) -> ContestStatsJs {
         let stats = {
             let core = self.core.lock().unwrap();
             if let Some(s) = core.index.contest_stats_by_id(id) {
@@ -2079,7 +2066,7 @@ impl State {
         }
     }
 
-    pub(crate) fn create_contest(&self, id: &str, name: &str) -> ActionResult {
+    pub fn create_contest(&self, id: &str, name: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2112,7 +2099,7 @@ impl State {
         }
     }
 
-    pub(crate) fn compose_contest(&self, id: &str, problem_ids: &[String]) -> ActionResult {
+    pub fn compose_contest(&self, id: &str, problem_ids: &[String]) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2127,7 +2114,7 @@ impl State {
         }
     }
 
-    pub(crate) fn update_contest_meta(&self, id: &str, patch: ContestMetaPatchJs) -> ActionResult {
+    pub fn update_contest_meta(&self, id: &str, patch: ContestMetaPatchJs) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2146,7 +2133,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_contest_archived(&self, id: &str, archived: bool) -> ActionResult {
+    pub fn set_contest_archived(&self, id: &str, archived: bool) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2161,7 +2148,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_override(
+    pub fn set_override(
         &self,
         contest_id: &str,
         label: &str,
@@ -2190,7 +2177,7 @@ impl State {
         }
     }
 
-    pub(crate) fn freeze_contest(&self, id: &str) -> FreezeResultJs {
+    pub fn freeze_contest(&self, id: &str) -> FreezeResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return FreezeResultJs {
@@ -2238,7 +2225,7 @@ impl State {
         }
     }
 
-    pub(crate) fn unfreeze_diff(&self, id: &str) -> UnfreezeDiffResultJs {
+    pub fn unfreeze_diff(&self, id: &str) -> UnfreezeDiffResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return UnfreezeDiffResultJs {
@@ -2276,7 +2263,7 @@ impl State {
         }
     }
 
-    pub(crate) fn unfreeze_contest(&self, id: &str) -> ActionResult {
+    pub fn unfreeze_contest(&self, id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2293,7 +2280,7 @@ impl State {
 
     // ---- Templates & declarative schemas -----------------------------------------------
 
-    pub(crate) fn inspect_local_template_cached(
+    pub fn inspect_local_template_cached(
         &self,
         ws: &Workspace,
         rel_path: &str,
@@ -2334,7 +2321,7 @@ impl State {
         info
     }
 
-    pub(crate) fn list_templates_json(&self) -> String {
+    pub fn list_templates_json(&self) -> String {
         let presets = xcpc_engine::list_presets_by_kind(xcpc_domain::TemplateKind::Statement);
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
@@ -2411,7 +2398,7 @@ impl State {
         .unwrap_or_else(|_| "{}".into())
     }
 
-    pub(crate) fn update_workspace_template(
+    pub fn update_workspace_template(
         &self,
         template: Option<String>,
         clear_template: bool,
@@ -2441,7 +2428,7 @@ impl State {
         }
     }
 
-    pub(crate) fn fork_template(&self, source: &str, new_name: &str) -> ActionResult {
+    pub fn fork_template(&self, source: &str, new_name: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2455,7 +2442,7 @@ impl State {
         }
     }
 
-    pub(crate) fn install_preset_template(
+    pub fn install_preset_template(
         &self,
         preset_id: &str,
         target_name: Option<&str>,
@@ -2473,7 +2460,7 @@ impl State {
         }
     }
 
-    pub(crate) fn detach_contest_template(&self, contest_id: &str) -> ActionResult {
+    pub fn detach_contest_template(&self, contest_id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2487,7 +2474,7 @@ impl State {
         }
     }
 
-    pub(crate) fn remove_contest_template(&self, contest_id: &str) -> ActionResult {
+    pub fn remove_contest_template(&self, contest_id: &str) -> ActionResult {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return ActionResult::err("no_workspace", "no workspace open");
@@ -2501,10 +2488,7 @@ impl State {
         }
     }
 
-    pub(crate) fn validate_template_image_target(
-        &self,
-        contest_id: Option<&str>,
-    ) -> Result<(), String> {
+    pub fn validate_template_image_target(&self, contest_id: Option<&str>) -> Result<(), String> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err("没有打开的工作区".into());
@@ -2521,7 +2505,7 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn import_template_image(
+    pub fn import_template_image(
         &self,
         contest_id: Option<&str>,
         src_path: &Path,
@@ -2537,7 +2521,7 @@ impl State {
         Ok(rel)
     }
 
-    pub(crate) fn resolve_template_file(&self, name: &str) -> Result<PathBuf, ActionResult> {
+    pub fn resolve_template_file(&self, name: &str) -> Result<PathBuf, ActionResult> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err(ActionResult::err("no_workspace", "no workspace open"));
@@ -2552,10 +2536,7 @@ impl State {
         }
     }
 
-    pub(crate) fn resolve_contest_template_file(
-        &self,
-        contest_id: &str,
-    ) -> Result<PathBuf, ActionResult> {
+    pub fn resolve_contest_template_file(&self, contest_id: &str) -> Result<PathBuf, ActionResult> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err(ActionResult::err("no_workspace", "no workspace open"));
@@ -2570,7 +2551,7 @@ impl State {
         }
     }
 
-    pub(crate) fn ensure_preamble_file(&self) -> Result<PathBuf, ActionResult> {
+    pub fn ensure_preamble_file(&self) -> Result<PathBuf, ActionResult> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err(ActionResult::err("no_workspace", "no workspace open"));
@@ -2580,11 +2561,11 @@ impl State {
 
     // ---- Cmd+K fuzzy jump, Frecency & preferences --------------------------------------
 
-    pub(crate) fn fuzzy_jump(&self, query: &str, active_contest: Option<&str>) -> Vec<FuzzyHitJs> {
+    pub fn fuzzy_jump(&self, query: &str, active_contest: Option<&str>) -> Vec<FuzzyHitJs> {
         self.fuzzy_jump_at(query, active_contest, now_epoch_secs())
     }
 
-    pub(crate) fn fuzzy_jump_at(
+    pub fn fuzzy_jump_at(
         &self,
         query: &str,
         active_contest: Option<&str>,
@@ -2665,17 +2646,17 @@ impl State {
         hits
     }
 
-    pub(crate) fn record_visit(&self, key: &str) {
+    pub fn record_visit(&self, key: &str) {
         let mut core = self.core.lock().unwrap();
         core.prefs.record_visit(key);
         core.prefs.persist(self.data_dir.as_deref());
     }
 
-    pub(crate) fn load_prefs(&self) -> AppPrefsJs {
+    pub fn load_prefs(&self) -> AppPrefsJs {
         self.core.lock().unwrap().prefs.app.clone()
     }
 
-    pub(crate) fn save_prefs(&self, prefs: AppPrefsJs) {
+    pub fn save_prefs(&self, prefs: AppPrefsJs) {
         let mut core = self.core.lock().unwrap();
         core.prefs.apply_app_prefs(prefs);
         core.prefs.persist(self.data_dir.as_deref());
@@ -2685,7 +2666,7 @@ impl State {
 
     /// Pre-validates that `target` / `id` / `label` resolves to an existing writable problem
     /// (not read-only workspace, not a frozen contest, valid IDs).
-    pub(crate) fn validate_image_target(
+    pub fn validate_image_target(
         &self,
         target: &str,
         id: &str,
@@ -2697,7 +2678,7 @@ impl State {
 
     /// Reads `src_path` and atomically imports it into `problems/<problem_id>/assets/<name>`,
     /// avoiding overwrites with `-2`, `-3`, ... suffixes. Returns `"assets/<name>"`.
-    pub(crate) fn import_image_file(
+    pub fn import_image_file(
         &self,
         target: &str,
         id: &str,
@@ -2725,7 +2706,7 @@ impl State {
 
     /// Atomically writes raw image `bytes` into `problems/<problem_id>/assets/paste-YYYYMMDD-HHMMSS.<ext>`
     /// (with `-2`, `-3`, ... suffix on collision). Returns `"assets/<name>"`.
-    pub(crate) fn import_image_bytes(
+    pub fn import_image_bytes(
         &self,
         target: &str,
         id: &str,
@@ -2823,7 +2804,7 @@ impl State {
 
     /// Lists all files inside the target problem's `assets/` directory, sorted by filename,
     /// with byte size, image dimensions (when readable), and exact Markdown references.
-    pub(crate) fn list_problem_assets(
+    pub fn list_problem_assets(
         &self,
         target: &str,
         id: &str,
@@ -2866,7 +2847,7 @@ impl State {
 
     /// Atomically renames `assets/<old_name>` to `assets/<new_name>` inside the target
     /// problem and updates matching references in `statement*.md` / `editorial.md` via Core.
-    pub(crate) fn rename_problem_asset(
+    pub fn rename_problem_asset(
         &self,
         target: &str,
         id: &str,
@@ -2889,7 +2870,7 @@ impl State {
 
     /// Deletes `assets/<name>` inside the target problem while enforcing workspace sandbox,
     /// read-only mode, and frozen-contest guards via Core.
-    pub(crate) fn delete_problem_asset(
+    pub fn delete_problem_asset(
         &self,
         target: &str,
         id: &str,
@@ -2910,7 +2891,7 @@ impl State {
     }
 
     /// Batch-removes all unreferenced assets inside the target problem's `assets/` directory.
-    pub(crate) fn clean_unused_assets(
+    pub fn clean_unused_assets(
         &self,
         target: &str,
         id: &str,
@@ -2972,7 +2953,7 @@ impl State {
 
     /// Sets or clears `{width=NN%}` on Markdown image references to `asset_name` inside the
     /// target problem (either in `doc_path` or across all `statement*.md` and `editorial.md`).
-    pub(crate) fn set_asset_width(
+    pub fn set_asset_width(
         &self,
         target: &str,
         id: &str,
@@ -3087,7 +3068,7 @@ impl State {
     /// currently cached compiled preview into `<dataDir>/snapshots/`.
     ///
     /// Uses `try_lock()` on `compiler` so it never blocks when a compilation is in flight.
-    pub(crate) fn save_cold_start_snapshot(
+    pub fn save_cold_start_snapshot(
         &self,
         meta_json: &str,
         pages: &[u32],
@@ -3110,14 +3091,14 @@ impl State {
 
     /// Restores the cold-start preview snapshot from `<dataDir>/snapshots/` when it matches
     /// the open workspace and the target's current on-disk content hash.
-    pub(crate) fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
+    pub fn load_cold_start_snapshot(&self) -> Option<ColdStartSnapshotJs> {
         let ws = self.core.lock().unwrap().workspace.clone();
         snapshot::load_cold_start_snapshot(self.data_dir.as_deref(), ws.as_ref(), self.id)
     }
 
     // ---- Phase 3A: Local Polygon toolchain & package build -----------------------------
 
-    pub(crate) fn toolchain_status(&self) -> ToolchainStatusJs {
+    pub fn toolchain_status(&self) -> ToolchainStatusJs {
         let override_path = {
             let core = self.core.lock().unwrap();
             core.prefs.app.cxx_override.clone()
@@ -3126,7 +3107,7 @@ impl State {
         status.into()
     }
 
-    pub(crate) fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
+    pub fn set_cxx_override(&self, path: Option<String>) -> ToolchainStatusJs {
         let trimmed = path
             .as_deref()
             .map(str::trim)
@@ -3154,7 +3135,7 @@ impl State {
     }
 
     /// Fast O(1) check for whether `slug` has a local Polygon package, using the in-memory index.
-    pub(crate) fn has_package(&self, slug: &str) -> bool {
+    pub fn has_package(&self, slug: &str) -> bool {
         let ws = {
             let core = self.core.lock().unwrap();
             if let Some(has) = core.index.problem_has_package(slug) {
@@ -3174,11 +3155,11 @@ impl State {
     }
 
     #[cfg(test)]
-    pub(crate) fn inspect_package(&self, slug: &str) -> PackageInspectionResultJs {
+    pub fn inspect_package(&self, slug: &str) -> PackageInspectionResultJs {
         self.inspect_package_in(slug, None)
     }
 
-    pub(crate) fn inspect_package_in(
+    pub fn inspect_package_in(
         &self,
         slug: &str,
         contest: Option<&str>,
@@ -3251,11 +3232,11 @@ impl State {
         }
     }
 
-    pub(crate) fn init_package(&self, slug: &str) -> PackageInitResultJs {
+    pub fn init_package(&self, slug: &str) -> PackageInitResultJs {
         self.init_package_with_options(slug, false, None, false)
     }
 
-    pub(crate) fn init_package_with_options(
+    pub fn init_package_with_options(
         &self,
         slug: &str,
         interactive: bool,
@@ -3315,7 +3296,7 @@ impl State {
         }
     }
 
-    pub(crate) fn start_package_build(
+    pub fn start_package_build(
         &self,
         slug: &str,
         mode: &str,
@@ -3553,7 +3534,7 @@ impl State {
         ActionResult::ok()
     }
 
-    pub(crate) fn cancel_package_build(&self) -> ActionResult {
+    pub fn cancel_package_build(&self) -> ActionResult {
         let mut slot = self.package_build.lock().unwrap();
         if let Some(ref flag) = slot.cancel_flag {
             flag.store(true, Ordering::Relaxed);
@@ -3562,7 +3543,7 @@ impl State {
         ActionResult::ok()
     }
 
-    pub(crate) fn package_build_status(&self) -> PackageBuildStatusJs {
+    pub fn package_build_status(&self) -> PackageBuildStatusJs {
         let mut slot = self.package_build.lock().unwrap();
         let live_cells_json = if slot.live_cells.is_empty() {
             None
@@ -3588,7 +3569,7 @@ impl State {
         }
     }
 
-    pub(crate) fn resolve_package_file(
+    pub fn resolve_package_file(
         &self,
         slug: &str,
         rel_path: &str,
@@ -3637,7 +3618,7 @@ impl State {
         Ok(canonical)
     }
 
-    pub(crate) fn inspect_test_case(
+    pub fn inspect_test_case(
         &self,
         slug: &str,
         selector: &str,
@@ -3694,7 +3675,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_package_checker(&self, slug: &str, checker: &str) -> ActionResult {
+    pub fn set_package_checker(&self, slug: &str, checker: &str) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -3714,7 +3695,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_solution_config(
+    pub fn set_solution_config(
         &self,
         slug: &str,
         name: &str,
@@ -3741,7 +3722,7 @@ impl State {
         }
     }
 
-    pub(crate) fn create_package_source(
+    pub fn create_package_source(
         &self,
         slug: &str,
         kind: &str,
@@ -3805,7 +3786,7 @@ impl State {
         }
     }
 
-    pub(crate) fn add_hand_test(
+    pub fn add_hand_test(
         &self,
         slug: &str,
         name: Option<&str>,
@@ -3854,7 +3835,7 @@ impl State {
         }
     }
 
-    pub(crate) fn add_generator_test(
+    pub fn add_generator_test(
         &self,
         slug: &str,
         generator: &str,
@@ -3905,7 +3886,7 @@ impl State {
         }
     }
 
-    pub(crate) fn update_generator_test(
+    pub fn update_generator_test(
         &self,
         slug: &str,
         rule_index: u32,
@@ -3943,7 +3924,7 @@ impl State {
         }
     }
 
-    pub(crate) fn remove_test_rule(&self, slug: &str, rule_index: u32) -> ActionResult {
+    pub fn remove_test_rule(&self, slug: &str, rule_index: u32) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -3963,7 +3944,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_solution(&self, slug: &str, name: &str) -> ActionResult {
+    pub fn delete_solution(&self, slug: &str, name: &str) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -3985,7 +3966,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_generator(
+    pub fn delete_generator(
         &self,
         slug: &str,
         filename: &str,
@@ -4012,7 +3993,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_self_test(&self, slug: &str, rel_path: &str) -> ActionResult {
+    pub fn delete_self_test(&self, slug: &str, rel_path: &str) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -4028,7 +4009,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_interactor(&self, slug: &str) -> ActionResult {
+    pub fn delete_interactor(&self, slug: &str) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -4050,7 +4031,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_package_runs(&self, slug: &str, runs: Option<u32>) -> ActionResult {
+    pub fn set_package_runs(&self, slug: &str, runs: Option<u32>) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -4072,7 +4053,7 @@ impl State {
         }
     }
 
-    pub(crate) fn upsert_subtask(
+    pub fn upsert_subtask(
         &self,
         slug: &str,
         id: &str,
@@ -4117,7 +4098,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_subtask(
+    pub fn delete_subtask(
         &self,
         slug: &str,
         subtask_id: &str,
@@ -4144,7 +4125,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_test_subtask(
+    pub fn set_test_subtask(
         &self,
         slug: &str,
         rule_index: u32,
@@ -4165,7 +4146,7 @@ impl State {
         }
     }
 
-    pub(crate) fn set_solution_scoring(
+    pub fn set_solution_scoring(
         &self,
         slug: &str,
         name: &str,
@@ -4228,7 +4209,7 @@ impl State {
         }
     }
 
-    pub(crate) fn delete_sample(&self, slug: &str, sample_index: u32) -> ActionResult {
+    pub fn delete_sample(&self, slug: &str, sample_index: u32) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -4257,7 +4238,7 @@ impl State {
         self.save_samples(slug, remaining)
     }
 
-    pub(crate) fn normalize_dirty_inputs(&self, slug: &str) -> NormalizeDirtyResultJs {
+    pub fn normalize_dirty_inputs(&self, slug: &str) -> NormalizeDirtyResultJs {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return NormalizeDirtyResultJs {
                 ok: false,
@@ -4311,7 +4292,7 @@ impl State {
     }
 
     /// Restores the original bytes from the most recent `normalize_dirty_inputs` call for `slug`.
-    pub(crate) fn undo_normalize_dirty_inputs(&self, slug: &str) -> ActionResult {
+    pub fn undo_normalize_dirty_inputs(&self, slug: &str) -> ActionResult {
         let Some(ws) = self.core.lock().unwrap().workspace.clone() else {
             return ActionResult::err("no_workspace", "no workspace open");
         };
@@ -4339,7 +4320,7 @@ impl State {
 
     /// Bounded read of a package file inside `problems/<slug>/` for the lightweight quick-editor.
     /// Never loads files larger than 256 KiB into memory.
-    pub(crate) fn read_package_file(&self, slug: &str, rel_path: &str) -> PackageFileContentJs {
+    pub fn read_package_file(&self, slug: &str, rel_path: &str) -> PackageFileContentJs {
         const MAX_QUICK_EDIT_BYTES: u64 = 256 * 1024;
         let canonical = match self.resolve_package_file(slug, rel_path) {
             Ok(p) => p,
@@ -4404,7 +4385,7 @@ impl State {
 
     /// Atomically saves a package file inside `problems/<slug>/` (max 256 KiB, sandboxed,
     /// conflict-checked against `expected_hash`, watcher self-write suppressed).
-    pub(crate) fn save_package_file(
+    pub fn save_package_file(
         &self,
         slug: &str,
         rel_path: &str,
@@ -4531,7 +4512,7 @@ impl State {
     // ---- Phase 3B: Polygon import & OJ package export ----------------------------------
 
     /// Fast pre-check before opening the native file picker for Polygon ZIP import.
-    pub(crate) fn validate_polygon_import_writable(&self) -> Result<(), (String, String, String)> {
+    pub fn validate_polygon_import_writable(&self) -> Result<(), (String, String, String)> {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return Err((
@@ -4552,7 +4533,7 @@ impl State {
 
     /// Imports a Polygon single-problem or contest ZIP into the open workspace, refreshing
     /// the in-memory index and invalidating preview caches on success.
-    pub(crate) fn import_polygon(
+    pub fn import_polygon(
         &self,
         zip_path: &Path,
         target_id: Option<String>,
@@ -4641,12 +4622,7 @@ impl State {
 
     /// Exports a DOMjudge or Hydro minimal-set OJ package (strict verification gate enabled,
     /// `force: false`) into `build/packages/` inside the open workspace.
-    pub(crate) fn export_oj_package(
-        &self,
-        format: &str,
-        target: &str,
-        id: &str,
-    ) -> ExportOjResultJs {
+    pub fn export_oj_package(&self, format: &str, target: &str, id: &str) -> ExportOjResultJs {
         let Some(fmt) = xcpc_packages::OjFormat::parse(format) else {
             return ExportOjResultJs {
                 ok: false,
@@ -4733,7 +4709,7 @@ impl State {
 
     // ---- Phase 3B+: Polling-free async batch task streaming ----------------------------
 
-    pub(crate) fn start_batch_build(
+    pub fn start_batch_build(
         self: &Arc<Self>,
         ids: Vec<String>,
         mode: String,
@@ -5068,10 +5044,7 @@ impl State {
         BatchStartResultJs::ok(my_task_id)
     }
 
-    pub(crate) fn start_batch_export(
-        self: &Arc<Self>,
-        req: BatchExportRequestJs,
-    ) -> BatchStartResultJs {
+    pub fn start_batch_export(self: &Arc<Self>, req: BatchExportRequestJs) -> BatchStartResultJs {
         let unique_ids = dedup_ids_preserve_order(&req.problem_ids);
         if unique_ids.is_empty() {
             return BatchStartResultJs::err("invalid_argument", "请至少选择一道题目。");
@@ -5565,7 +5538,7 @@ impl State {
         BatchStartResultJs::ok(my_task_id)
     }
 
-    pub(crate) fn cancel_batch_task(&self) -> ActionResult {
+    pub fn cancel_batch_task(&self) -> ActionResult {
         let mut slot = self.batch_task.lock().unwrap();
         if let Some(ref flag) = slot.cancel_flag {
             flag.store(true, Ordering::Relaxed);
@@ -5574,11 +5547,11 @@ impl State {
         ActionResult::ok()
     }
 
-    pub(crate) fn batch_task_status(&self) -> BatchTaskSnapshotJs {
+    pub fn batch_task_status(&self) -> BatchTaskSnapshotJs {
         self.batch_task.lock().unwrap().snapshot.clone()
     }
 
-    pub(crate) fn batch_event_receiver(
+    pub fn batch_event_receiver(
         &self,
         task_id: u32,
     ) -> (
@@ -5986,7 +5959,7 @@ fn interpolate_anchor(anchors: &[SourceAnchor], line: u32) -> Option<PreviewLoca
 impl State {
     // ---- Phase 3D: Sanitizer, external trial run, adopt & contest readiness audit ------
 
-    pub(crate) fn load_sanitizer_report(&self, slug: &str) -> JsonReportResultJs {
+    pub fn load_sanitizer_report(&self, slug: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return JsonReportResultJs::err("no_workspace", "no workspace open");
@@ -6005,7 +5978,7 @@ impl State {
         }
     }
 
-    pub(crate) fn sanitize_problem(
+    pub fn sanitize_problem(
         &self,
         slug: &str,
         tests: Option<Vec<String>>,
@@ -6048,7 +6021,7 @@ impl State {
         }
     }
 
-    pub(crate) fn run_external_problem_solutions(
+    pub fn run_external_problem_solutions(
         &self,
         slug: &str,
         files: &[PathBuf],
@@ -6084,7 +6057,7 @@ impl State {
         }
     }
 
-    pub(crate) fn run_external_contest_solutions(
+    pub fn run_external_contest_solutions(
         &self,
         contest_id: &str,
         dir: &Path,
@@ -6120,7 +6093,7 @@ impl State {
         }
     }
 
-    pub(crate) fn adopt_external_solution(
+    pub fn adopt_external_solution(
         &self,
         slug: &str,
         source_file: &Path,
@@ -6169,7 +6142,7 @@ impl State {
         }
     }
 
-    pub(crate) fn audit_contest(&self, contest_id: &str) -> JsonReportResultJs {
+    pub fn audit_contest(&self, contest_id: &str) -> JsonReportResultJs {
         let ws = self.core.lock().unwrap().workspace.clone();
         let Some(ws) = ws else {
             return JsonReportResultJs::err("no_workspace", "no workspace open");

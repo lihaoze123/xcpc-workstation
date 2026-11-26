@@ -11,13 +11,12 @@ use std::io::BufReader;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use nsh_core::JsonValue;
-use nsh_core::element::ImageSrc;
+use serde_json::Value as JsonValue;
 use xcpc_domain::ASSET_MARKDOWN_DOCS;
 use xcpc_engine::Compiled;
 use xcpc_storage::{Workspace, content_hash, write_atomic};
 
-use crate::cache::{LayerKind, PIXELS};
+use crate::cache::{LayerKind, PIXELS, RgbaPixels};
 use crate::prefs::snapshots_dir;
 use crate::types::{ColdStartSnapshotJs, PreviewLayer, PreviewPage};
 
@@ -207,7 +206,7 @@ pub(crate) fn save_cold_start_snapshot(
     let (Some(data_dir), Some(ws), Some(compiled)) = (data_dir, ws, compiled) else {
         return false;
     };
-    let Ok(meta_val) = meta_json.parse::<JsonValue>() else {
+    let Ok(meta_val) = serde_json::from_str::<JsonValue>(meta_json) else {
         return false;
     };
     let Some(obj) = meta_val.as_object() else {
@@ -332,7 +331,10 @@ pub(crate) fn save_cold_start_snapshot(
     root["pageSizes"] = JsonValue::Array(page_sizes_json);
     root["rendered"] = JsonValue::Array(rendered_json);
 
-    let serialized = format!("{root:#}\n");
+    let serialized = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&root).unwrap_or_default()
+    );
     if write_atomic(&dir.join(SNAPSHOT_META_FILE), serialized.as_bytes()).is_err() {
         return false;
     }
@@ -364,7 +366,7 @@ pub(crate) fn load_cold_start_snapshot(
     let (data_dir, ws) = (data_dir?, ws?);
     let dir = snapshots_dir(data_dir);
     let text = std::fs::read_to_string(dir.join(SNAPSHOT_META_FILE)).ok()?;
-    let val: JsonValue = text.parse().ok()?;
+    let val: JsonValue = serde_json::from_str(&text).ok()?;
     let obj = val.as_object()?;
 
     if obj.get("version").and_then(JsonValue::as_u64) != Some(SNAPSHOT_FORMAT_VERSION) {
@@ -420,7 +422,7 @@ pub(crate) fn load_cold_start_snapshot(
     }
 
     let rendered = obj.get("rendered").and_then(JsonValue::as_array)?;
-    let mut decoded: Vec<(usize, String, ImageSrc, usize)> = Vec::new();
+    let mut decoded: Vec<(usize, String, RgbaPixels, usize)> = Vec::new();
     for item in rendered.iter().take(MAX_SNAPSHOT_PAGES) {
         let Some(item_obj) = item.as_object() else {
             continue;
@@ -448,7 +450,7 @@ pub(crate) fn load_cold_start_snapshot(
         };
         let byte_len = rgba.len();
         let key = format!("{owner_id}:snapshot:p{page_idx}");
-        let src = ImageSrc::rgba(w, h, rgba);
+        let src = RgbaPixels::new(w, h, rgba);
         decoded.push((page_idx, key, src, byte_len));
     }
 
@@ -483,5 +485,5 @@ pub(crate) fn load_cold_start_snapshot(
 }
 
 fn empty_obj() -> JsonValue {
-    "{}".parse().expect("valid empty JSON object")
+    JsonValue::Object(serde_json::Map::new())
 }

@@ -16,7 +16,8 @@ use nsh_core::element::ImageSrc;
 use nsh_core::geometry::relative;
 use nsh_core::prelude::*;
 
-use crate::cache::PIXELS;
+use xcpc_app::PIXELS;
+
 use crate::types::PreviewLayer;
 
 const CROSSFADE_MS: f32 = 90.0;
@@ -142,7 +143,11 @@ pub fn PageImage(props: PageImageProps, _cx: Scope<NoEvent>) -> impl IntoElement
         move |layer, _| {
             let layer = layer.get_untracked();
             let key = layer.key.clone();
-            let cached_src = PIXELS.lock().unwrap().get(&key);
+            let cached_src = PIXELS
+                .lock()
+                .unwrap()
+                .get(&key)
+                .map(|px| ImageSrc::rgba(px.width, px.height, px.data));
             let has_pixels = cached_src.is_some();
             let src = cached_src.unwrap_or_else(|| ImageSrc::from(""));
             let arrived = {

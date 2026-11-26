@@ -1,19 +1,9 @@
 //! JavaScript-facing data transfer objects (`#[derive(JsObject)]` and tri-state patch
-//! types) for `xcpc-workstation/native`.
-//!
-//! These types are reflected directly into `.nsh/types/xcpc-workstation/native.d.ts` by
-//! `nsh check`.
-
-use std::collections::BTreeMap;
+//! types) plus zero-copy `From` conversions to/from `xcpc_app` pure-Rust DTOs.
 
 use nsh_core::element::{JsHost, JsIn, JsKind, JsOwned, JsValue, PropError, TsTypes};
 use nsh_core::prelude::*;
-use xcpc_convert::publish::{self, Kind, Target};
-use xcpc_domain::{
-    BatchItemStatus, BatchReport, ContestMetaPatch, DiffKind, Language, Limits, LimitsPatch,
-    OverridePatch, Patch, ProblemMetaPatch, RatingTier, Source, TemplateOptionValue,
-    TemplateOptionsPatch,
-};
+use xcpc_domain::Patch;
 
 // ---- Preview & diagnostics -------------------------------------------------------------
 
@@ -76,27 +66,6 @@ pub struct PreviewRequest {
     /// The open file, relative to the workspace, and its text; an empty path for none.
     pub path: String,
     pub text: String,
-}
-
-impl PreviewRequest {
-    pub(crate) fn target(&self) -> Target {
-        match self.target.as_str() {
-            "contest" => Target::Contest(self.id.clone()),
-            _ => Target::Problem(self.id.clone()),
-        }
-    }
-
-    pub(crate) fn kind(&self) -> Kind {
-        if self.book == "editorial" {
-            Kind::Editorial
-        } else {
-            Kind::Statements
-        }
-    }
-
-    pub(crate) fn unsaved(&self) -> Option<(&str, &str)> {
-        (!self.path.is_empty()).then_some((self.path.as_str(), self.text.as_str()))
-    }
 }
 
 /// A diagnostic from conversion, Typst compilation, overflow checks, or `xcpc-lint`.
@@ -321,33 +290,16 @@ impl ActionResult {
     pub(crate) fn ok() -> Self {
         Self {
             ok: true,
-            error: None,
-            code: None,
-            referencing_contests: Vec::new(),
+            ..Default::default()
         }
     }
 
     pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             ok: false,
-            error: Some(message.into()),
             code: Some(code.into()),
-            referencing_contests: Vec::new(),
-        }
-    }
-
-    pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
-        let code = err.code().to_owned();
-        let message = err.human_message();
-        let referencing_contests = match err {
-            xcpc_storage::Error::Referenced { contests, .. } => contests,
-            _ => Vec::new(),
-        };
-        Self {
-            ok: false,
-            error: Some(message),
-            code: Some(code),
-            referencing_contests,
+            error: Some(message.into()),
+            ..Default::default()
         }
     }
 }
@@ -761,36 +713,6 @@ pub struct ProblemMetaPatchJs {
     pub template_options_json: Option<String>,
 }
 
-impl ProblemMetaPatchJs {
-    pub(crate) fn into_core(self) -> Result<ProblemMetaPatch, String> {
-        let template_options =
-            parse_namespaced_options_json(self.template_options_json.as_deref())?;
-        Ok(ProblemMetaPatch {
-            title: self.title,
-            group: Patch::Keep,
-            rating: self.rating,
-            tags: self.tags,
-            author: self.author,
-            limits: LimitsPatch {
-                time: self.time,
-                memory: self.memory,
-                input: self.input,
-                output: self.output,
-            },
-            sources: self.sources.map(|list| {
-                list.into_iter()
-                    .map(|s| Source {
-                        platform: s.platform,
-                        id: s.id,
-                        url: s.url,
-                    })
-                    .collect()
-            }),
-            template_options,
-        })
-    }
-}
-
 impl JsValue for ProblemMetaPatchJs {
     fn ts_type(types: &mut TsTypes) -> String {
         types.declare("ProblemMetaPatchJs", |types| {
@@ -878,32 +800,6 @@ pub struct ContestMetaPatchJs {
     pub template_options_json: Option<String>,
 }
 
-impl ContestMetaPatchJs {
-    pub(crate) fn into_core(self) -> Result<ContestMetaPatch, String> {
-        let language =
-            match self.language {
-                None => None,
-                Some(ref s) => Some(Language::parse(s).ok_or_else(|| {
-                    format!("invalid language {s:?}: expected chinese or english")
-                })?),
-            };
-        let template_options =
-            parse_namespaced_options_json(self.template_options_json.as_deref())?;
-        Ok(ContestMetaPatch {
-            name: self.name,
-            location: self.location,
-            date: self.date,
-            author: self.author,
-            language,
-            show_metadata: self.show_metadata,
-            cover: self.cover,
-            blank_pages: self.blank_pages,
-            template: self.template,
-            template_options,
-        })
-    }
-}
-
 impl JsValue for ContestMetaPatchJs {
     fn ts_type(types: &mut TsTypes) -> String {
         types.declare("ContestMetaPatchJs", |_| {
@@ -987,23 +883,6 @@ pub struct OverridePatchJs {
     pub options_json: Option<String>,
 }
 
-impl OverridePatchJs {
-    pub(crate) fn into_core(self) -> Result<OverridePatch, String> {
-        let options = parse_namespaced_options_json(self.options_json.as_deref())?;
-        Ok(OverridePatch {
-            title: self.title,
-            limits: LimitsPatch {
-                time: self.time,
-                memory: self.memory,
-                input: self.input,
-                output: self.output,
-            },
-            show_metadata: self.show_metadata,
-            options,
-        })
-    }
-}
-
 impl JsValue for OverridePatchJs {
     fn ts_type(types: &mut TsTypes) -> String {
         types.declare("OverridePatchJs", |_| {
@@ -1049,60 +928,6 @@ export interface OverridePatchJs {\n  \
         write_opt_field(host, obj, "optionsJson", &self.options_json)?;
         Ok(owned)
     }
-}
-
-/// Parses a JSON object `{ "<template-id>": { "<key>": <value | null> } }` into Core patches.
-pub(crate) fn parse_namespaced_options_json(
-    raw: Option<&str>,
-) -> Result<BTreeMap<String, TemplateOptionsPatch>, String> {
-    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
-        return Ok(BTreeMap::new());
-    };
-    let root: serde_json::Value =
-        serde_json::from_str(raw).map_err(|e| format!("invalid template options JSON: {e}"))?;
-    let Some(outer) = root.as_object() else {
-        return Err("template options JSON must be an object".into());
-    };
-    let mut out = BTreeMap::new();
-    for (tpl, val) in outer {
-        let Some(inner) = val.as_object() else {
-            return Err(format!("options for template {tpl:?} must be an object"));
-        };
-        let mut fields = TemplateOptionsPatch::new();
-        for (key, fv) in inner {
-            if fv.is_null() {
-                fields.insert(key.clone(), Patch::Clear);
-            } else {
-                let parsed = match fv {
-                    serde_json::Value::Bool(b) => TemplateOptionValue::Bool(*b),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() {
-                            TemplateOptionValue::Int(i)
-                        } else if let Some(f) = n.as_f64() {
-                            TemplateOptionValue::Float(f)
-                        } else {
-                            return Err(format!("invalid numeric value for {key:?}"));
-                        }
-                    }
-                    serde_json::Value::String(s) => TemplateOptionValue::String(s.clone()),
-                    serde_json::Value::Array(arr) => {
-                        let mut lines = Vec::with_capacity(arr.len());
-                        for item in arr {
-                            let s = item.as_str().ok_or_else(|| {
-                                format!("array option {key:?} must contain strings")
-                            })?;
-                            lines.push(s.to_owned());
-                        }
-                        TemplateOptionValue::Lines(lines)
-                    }
-                    _ => return Err(format!("unsupported option value type for {key:?}")),
-                };
-                fields.insert(key.clone(), Patch::Set(parsed));
-            }
-        }
-        out.insert(tpl.clone(), fields);
-    }
-    Ok(out)
 }
 
 fn read_opt_field<T: JsValue>(obj: JsIn<'_>, key: &str) -> Result<Option<T>, PropError> {
@@ -1153,89 +978,6 @@ fn write_patch_field<T: JsValue>(
         Patch::Set(v) => host.set_field(obj, key, v.to_js(host)?.into_raw())?,
     }
     Ok(())
-}
-
-// ---- Conversion helpers ----------------------------------------------------------------
-
-pub(crate) fn limits_to_js(limits: &Limits) -> LimitsJs {
-    LimitsJs {
-        time: limits.time.clone(),
-        memory: limits.memory.clone(),
-        input: limits.input.clone(),
-        output: limits.output.clone(),
-    }
-}
-
-pub(crate) fn source_to_js(source: &Source) -> ProblemSourceJs {
-    ProblemSourceJs {
-        platform: source.platform.clone(),
-        id: source.id.clone(),
-        url: source.url.clone(),
-    }
-}
-
-pub(crate) fn rating_tier_str(tier: RatingTier) -> &'static str {
-    match tier {
-        RatingTier::Newbie => "newbie",
-        RatingTier::Pupil => "pupil",
-        RatingTier::Specialist => "specialist",
-        RatingTier::Expert => "expert",
-        RatingTier::CandidateMaster => "candidate_master",
-        RatingTier::Master => "master",
-        RatingTier::Grandmaster => "grandmaster",
-        RatingTier::Unrated => "unrated",
-    }
-}
-
-pub(crate) fn diff_kind_str(kind: DiffKind) -> &'static str {
-    match kind {
-        DiffKind::StatementChanged => "statement_changed",
-        DiffKind::SamplesChanged => "samples_changed",
-        DiffKind::EditorialChanged => "editorial_changed",
-        DiffKind::AssetsChanged => "assets_changed",
-        DiffKind::MetaChanged => "meta_changed",
-        DiffKind::ProblemDeleted => "problem_deleted",
-    }
-}
-
-pub(crate) fn extract_report(
-    report: &publish::Report,
-) -> (Option<String>, Vec<PreviewDiagnostic>, Vec<PreviewStart>) {
-    let diagnostics = report
-        .diagnostics
-        .iter()
-        .map(|d| PreviewDiagnostic {
-            severity: d.severity.into(),
-            code: d.code.clone(),
-            message: d.message.clone(),
-            file: d.file.clone(),
-            line: d.line.map(|l| l as u32),
-            column: d.column.map(|c| c as u32),
-            page: d.page.map(|p| p.saturating_sub(1) as u32),
-        })
-        .collect();
-    let starts = report
-        .problems
-        .iter()
-        .map(|p| PreviewStart {
-            label: p.label.clone(),
-            id: p.id.clone(),
-            page: p.first.saturating_sub(1) as u32,
-            first: p.first as u32,
-            count: p.count as u32,
-        })
-        .collect();
-    let error = first_error(report);
-    (error, diagnostics, starts)
-}
-
-/// The first error, `file:line: message`.
-pub(crate) fn first_error(report: &publish::Report) -> Option<String> {
-    let d = report.diagnostics.iter().find(|d| d.is_error())?;
-    Some(match (&d.file, d.line) {
-        (Some(f), Some(l)) => format!("{f}:{l}: {}", d.message),
-        _ => d.message.clone(),
-    })
 }
 
 // ---- Editor styling -----------------------------------------------------------------
@@ -1568,16 +1310,6 @@ pub struct PackageWarningJs {
     pub path: Option<String>,
 }
 
-impl From<xcpc_packages::PackageWarning> for PackageWarningJs {
-    fn from(w: xcpc_packages::PackageWarning) -> Self {
-        Self {
-            code: w.code,
-            message: w.message,
-            path: w.path,
-        }
-    }
-}
-
 /// Result of importing a Polygon single-problem or contest ZIP (`pickAndImportPolygon` / `importPolygon`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
 pub struct PolygonImportResultJs {
@@ -1627,43 +1359,6 @@ pub struct ExportOjResultJs {
     pub detail: Option<String>,
 }
 
-impl From<xcpc_judge::DetectedCompiler> for DetectedCompilerJs {
-    fn from(c: xcpc_judge::DetectedCompiler) -> Self {
-        let kind = match c.kind {
-            xcpc_judge::CompilerKind::Gpp => "gpp",
-            xcpc_judge::CompilerKind::Clangpp => "clangpp",
-            xcpc_judge::CompilerKind::Other => "other",
-        };
-        Self {
-            name: c.name,
-            path: c.path,
-            version: c.version,
-            kind: kind.to_owned(),
-        }
-    }
-}
-
-impl From<xcpc_judge::ToolchainStatus> for ToolchainStatusJs {
-    fn from(s: xcpc_judge::ToolchainStatus) -> Self {
-        Self {
-            compilers: s.compilers.into_iter().map(Into::into).collect(),
-            active: s.active.map(Into::into),
-            override_path: s.override_path,
-            env_override: s.env_override,
-            install_guide: s.install_guide,
-            install_commands: s
-                .install_commands
-                .into_iter()
-                .map(|c| InstallCommandJs {
-                    label: c.label,
-                    command: c.command,
-                })
-                .collect(),
-            error: None,
-        }
-    }
-}
-
 // ---- Phase 3B+: Batch mutations, delete & async batch task streaming -------------------
 
 /// Per-problem outcome in a synchronous batch mutation (`batchSetGroup`, `batchEditTags`,
@@ -1694,44 +1389,6 @@ pub struct BatchMutationResultJs {
     pub code: Option<String>,
 }
 
-impl BatchMutationResultJs {
-    pub(crate) fn from_report(report: BatchReport) -> Self {
-        let items = report
-            .items
-            .into_iter()
-            .map(|item| BatchItemResultJs {
-                id: item.id,
-                status: batch_item_status_str(item.status).to_owned(),
-                code: item.code,
-                message: item.message,
-            })
-            .collect();
-        Self {
-            ok: report.ok,
-            total: report.total as u32,
-            succeeded: report.succeeded as u32,
-            skipped: report.skipped as u32,
-            failed: report.failed as u32,
-            items,
-            error: None,
-            code: None,
-        }
-    }
-
-    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            error: Some(message.into()),
-            code: Some(code.into()),
-            ..Default::default()
-        }
-    }
-
-    pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
-        Self::err(err.code(), err.human_message())
-    }
-}
-
 /// Per-problem outcome in `batchDeleteProblems`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
 pub struct BatchDeleteItemJs {
@@ -1759,53 +1416,6 @@ pub struct BatchDeleteResultJs {
     pub error: Option<String>,
     #[prop(skip_none)]
     pub code: Option<String>,
-}
-
-impl BatchDeleteResultJs {
-    pub(crate) fn from_report(report: BatchReport) -> Self {
-        let items = report
-            .items
-            .into_iter()
-            .map(|item| BatchDeleteItemJs {
-                id: item.id,
-                status: batch_item_status_str(item.status).to_owned(),
-                code: item.code,
-                message: item.message,
-                referencing_contests: item.referencing_contests,
-            })
-            .collect();
-        Self {
-            ok: report.ok,
-            total: report.total as u32,
-            deleted: report.succeeded as u32,
-            skipped: report.skipped as u32,
-            failed: report.failed as u32,
-            items,
-            error: None,
-            code: None,
-        }
-    }
-
-    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            error: Some(message.into()),
-            code: Some(code.into()),
-            ..Default::default()
-        }
-    }
-
-    pub(crate) fn from_storage_err(err: xcpc_storage::Error) -> Self {
-        Self::err(err.code(), err.human_message())
-    }
-}
-
-fn batch_item_status_str(status: BatchItemStatus) -> &'static str {
-    match status {
-        BatchItemStatus::Ok => "ok",
-        BatchItemStatus::Skipped => "skipped",
-        BatchItemStatus::Failed => "failed",
-    }
 }
 
 /// Request payload for `startBatchExport`.
@@ -1839,26 +1449,6 @@ pub struct BatchStartResultJs {
     pub error: Option<String>,
     #[prop(skip_none)]
     pub code: Option<String>,
-}
-
-impl BatchStartResultJs {
-    pub(crate) fn ok(task_id: u32) -> Self {
-        Self {
-            ok: true,
-            task_id,
-            error: None,
-            code: None,
-        }
-    }
-
-    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            task_id: 0,
-            error: Some(message.into()),
-            code: Some(code.into()),
-        }
-    }
 }
 
 /// Per-problem progress/result entry in an async batch build or export task.
@@ -1938,17 +1528,6 @@ pub struct BatchTaskEventJs {
     pub code: Option<String>,
 }
 
-impl BatchTaskEventJs {
-    pub(crate) fn closed(task_id: u32, snapshot: BatchTaskSnapshotJs) -> Self {
-        Self {
-            kind: "closed".to_owned(),
-            task_id,
-            snapshot,
-            ..Default::default()
-        }
-    }
-}
-
 // ---- Phase 3D: Sanitizer, external trial run, adopt & contest readiness audit ----------
 
 /// Result of picking one or more files via the native file dialog.
@@ -1976,24 +1555,20 @@ pub struct JsonReportResultJs {
     pub code: Option<String>,
 }
 
-impl JsonReportResultJs {
-    pub(crate) fn ok(report_json: Option<String>, markdown: Option<String>) -> Self {
-        Self {
-            ok: true,
-            report_json,
-            markdown,
-            error: None,
-            code: None,
-        }
+impl BatchTaskEventJs {
+    pub(crate) fn closed(task_id: u32, snapshot: BatchTaskSnapshotJs) -> Self {
+        xcpc_app::BatchTaskEventJs::closed(task_id, snapshot.into()).into()
     }
+}
 
+impl JsonReportResultJs {
     pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             ok: false,
+            code: Some(code.into()),
+            error: Some(message.into()),
             report_json: None,
             markdown: None,
-            error: Some(message.into()),
-            code: Some(code.into()),
         }
     }
 }
@@ -2010,17 +1585,6 @@ pub struct AdoptSolutionResultJs {
     pub error: Option<String>,
     #[prop(skip_none)]
     pub code: Option<String>,
-}
-
-impl AdoptSolutionResultJs {
-    pub(crate) fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            error: Some(message.into()),
-            code: Some(code.into()),
-            ..Default::default()
-        }
-    }
 }
 
 /// Result of saving a Markdown report via the native save dialog.
@@ -2441,4 +2005,2944 @@ pub struct PluginPickFileResultJs {
     pub content_base64: Option<String>,
     #[prop(skip_none)]
     pub error: Option<String>,
+}
+
+// ---- Theme override DTOs --------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct ThemeColorEntryJs {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct ThemeOverridesJs {
+    pub light_colors: Vec<ThemeColorEntryJs>,
+    pub dark_colors: Vec<ThemeColorEntryJs>,
+    pub radius: Option<f64>,
+    pub editor_font_family: Option<String>,
+    pub editor_font_size: Option<f64>,
+    pub editor_line_height: Option<f64>,
+    /// Absolute path of the active global `theme.toml`, if present.
+    pub active_path: Option<String>,
+}
+
+// ---- Conversions between xcpc_app DTOs and JS DTOs -------------------------------------
+
+impl From<xcpc_app::PreviewLayer> for PreviewLayer {
+    fn from(v: xcpc_app::PreviewLayer) -> Self {
+        Self {
+            key: v.key,
+            left: v.left,
+            top: v.top,
+            width: v.width,
+            height: v.height,
+        }
+    }
+}
+
+impl From<PreviewLayer> for xcpc_app::PreviewLayer {
+    fn from(v: PreviewLayer) -> Self {
+        Self {
+            key: v.key,
+            left: v.left,
+            top: v.top,
+            width: v.width,
+            height: v.height,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewPage> for PreviewPage {
+    fn from(v: xcpc_app::PreviewPage) -> Self {
+        Self {
+            width: v.width,
+            height: v.height,
+            layers: v.layers.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<PreviewPage> for xcpc_app::PreviewPage {
+    fn from(v: PreviewPage) -> Self {
+        Self {
+            width: v.width,
+            height: v.height,
+            layers: v.layers.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<xcpc_app::MathPreviewJs> for MathPreviewJs {
+    fn from(v: xcpc_app::MathPreviewJs) -> Self {
+        Self {
+            key: v.key,
+            width: v.width,
+            height: v.height,
+            error: v.error,
+        }
+    }
+}
+
+impl From<MathPreviewJs> for xcpc_app::MathPreviewJs {
+    fn from(v: MathPreviewJs) -> Self {
+        Self {
+            key: v.key,
+            width: v.width,
+            height: v.height,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewView> for PreviewView {
+    fn from(v: xcpc_app::PreviewView) -> Self {
+        Self {
+            page: v.page,
+            x: v.x,
+            y: v.y,
+            width: v.width,
+            height: v.height,
+        }
+    }
+}
+
+impl From<PreviewView> for xcpc_app::PreviewView {
+    fn from(v: PreviewView) -> Self {
+        Self {
+            page: v.page,
+            x: v.x,
+            y: v.y,
+            width: v.width,
+            height: v.height,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewRequest> for PreviewRequest {
+    fn from(v: xcpc_app::PreviewRequest) -> Self {
+        Self {
+            target: v.target,
+            id: v.id,
+            book: v.book,
+            path: v.path,
+            text: v.text,
+        }
+    }
+}
+
+impl From<PreviewRequest> for xcpc_app::PreviewRequest {
+    fn from(v: PreviewRequest) -> Self {
+        Self {
+            target: v.target,
+            id: v.id,
+            book: v.book,
+            path: v.path,
+            text: v.text,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewDiagnostic> for PreviewDiagnostic {
+    fn from(v: xcpc_app::PreviewDiagnostic) -> Self {
+        Self {
+            severity: v.severity,
+            code: v.code,
+            message: v.message,
+            file: v.file,
+            line: v.line,
+            column: v.column,
+            page: v.page,
+        }
+    }
+}
+
+impl From<PreviewDiagnostic> for xcpc_app::PreviewDiagnostic {
+    fn from(v: PreviewDiagnostic) -> Self {
+        Self {
+            severity: v.severity,
+            code: v.code,
+            message: v.message,
+            file: v.file,
+            line: v.line,
+            column: v.column,
+            page: v.page,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewStart> for PreviewStart {
+    fn from(v: xcpc_app::PreviewStart) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            page: v.page,
+            first: v.first,
+            count: v.count,
+        }
+    }
+}
+
+impl From<PreviewStart> for xcpc_app::PreviewStart {
+    fn from(v: PreviewStart) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            page: v.page,
+            first: v.first,
+            count: v.count,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewResult> for PreviewResult {
+    fn from(v: xcpc_app::PreviewResult) -> Self {
+        Self {
+            pages: v.pages.into_iter().map(Into::into).collect(),
+            error: v.error,
+            diagnostics: v.diagnostics.into_iter().map(Into::into).collect(),
+            starts: v.starts.into_iter().map(Into::into).collect(),
+            compile_ms: v.compile_ms,
+            render_ms: v.render_ms,
+            rendered: v.rendered,
+        }
+    }
+}
+
+impl From<PreviewResult> for xcpc_app::PreviewResult {
+    fn from(v: PreviewResult) -> Self {
+        Self {
+            pages: v.pages.into_iter().map(Into::into).collect(),
+            error: v.error,
+            diagnostics: v.diagnostics.into_iter().map(Into::into).collect(),
+            starts: v.starts.into_iter().map(Into::into).collect(),
+            compile_ms: v.compile_ms,
+            render_ms: v.render_ms,
+            rendered: v.rendered,
+        }
+    }
+}
+
+impl From<xcpc_app::SourceLocationJs> for SourceLocationJs {
+    fn from(v: xcpc_app::SourceLocationJs) -> Self {
+        Self {
+            file: v.file,
+            line: v.line,
+            column: v.column,
+        }
+    }
+}
+
+impl From<SourceLocationJs> for xcpc_app::SourceLocationJs {
+    fn from(v: SourceLocationJs) -> Self {
+        Self {
+            file: v.file,
+            line: v.line,
+            column: v.column,
+        }
+    }
+}
+
+impl From<xcpc_app::PreviewLocationJs> for PreviewLocationJs {
+    fn from(v: xcpc_app::PreviewLocationJs) -> Self {
+        Self {
+            page: v.page,
+            y_pt: v.y_pt,
+            exact: v.exact,
+        }
+    }
+}
+
+impl From<PreviewLocationJs> for xcpc_app::PreviewLocationJs {
+    fn from(v: PreviewLocationJs) -> Self {
+        Self {
+            page: v.page,
+            y_pt: v.y_pt,
+            exact: v.exact,
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceProblem> for WorkspaceProblem {
+    fn from(v: xcpc_app::WorkspaceProblem) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            statement: v.statement,
+            editorial: v.editorial,
+        }
+    }
+}
+
+impl From<WorkspaceProblem> for xcpc_app::WorkspaceProblem {
+    fn from(v: WorkspaceProblem) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            statement: v.statement,
+            editorial: v.editorial,
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceItem> for WorkspaceItem {
+    fn from(v: xcpc_app::WorkspaceItem) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            title: v.title,
+            statement: v.statement,
+            editorial: v.editorial,
+        }
+    }
+}
+
+impl From<WorkspaceItem> for xcpc_app::WorkspaceItem {
+    fn from(v: WorkspaceItem) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            title: v.title,
+            statement: v.statement,
+            editorial: v.editorial,
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceContest> for WorkspaceContest {
+    fn from(v: xcpc_app::WorkspaceContest) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            frozen: v.frozen,
+            archived: v.archived,
+            items: v.items.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<WorkspaceContest> for xcpc_app::WorkspaceContest {
+    fn from(v: WorkspaceContest) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            frozen: v.frozen,
+            archived: v.archived,
+            items: v.items.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceInfo> for WorkspaceInfo {
+    fn from(v: xcpc_app::WorkspaceInfo) -> Self {
+        Self {
+            root: v.root,
+            read_only: v.read_only,
+            training_enabled: v.training_enabled,
+            snippets_enabled: v.snippets_enabled,
+            last_workspace_missing: v.last_workspace_missing,
+            error: v.error,
+            problems: v.problems.into_iter().map(Into::into).collect(),
+            contests: v.contests.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<WorkspaceInfo> for xcpc_app::WorkspaceInfo {
+    fn from(v: WorkspaceInfo) -> Self {
+        Self {
+            root: v.root,
+            read_only: v.read_only,
+            training_enabled: v.training_enabled,
+            snippets_enabled: v.snippets_enabled,
+            last_workspace_missing: v.last_workspace_missing,
+            error: v.error,
+            problems: v.problems.into_iter().map(Into::into).collect(),
+            contests: v.contests.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<xcpc_app::PdfFreshnessJs> for PdfFreshnessJs {
+    fn from(v: xcpc_app::PdfFreshnessJs) -> Self {
+        Self {
+            rel_path: v.rel_path,
+            abs_path: v.abs_path,
+            exists: v.exists,
+            fresh: v.fresh,
+        }
+    }
+}
+
+impl From<PdfFreshnessJs> for xcpc_app::PdfFreshnessJs {
+    fn from(v: PdfFreshnessJs) -> Self {
+        Self {
+            rel_path: v.rel_path,
+            abs_path: v.abs_path,
+            exists: v.exists,
+            fresh: v.fresh,
+        }
+    }
+}
+
+impl From<xcpc_app::ExportBookStatusJs> for ExportBookStatusJs {
+    fn from(v: xcpc_app::ExportBookStatusJs) -> Self {
+        Self {
+            statements: v.statements.into(),
+            editorial: v.editorial.into(),
+        }
+    }
+}
+
+impl From<ExportBookStatusJs> for xcpc_app::ExportBookStatusJs {
+    fn from(v: ExportBookStatusJs) -> Self {
+        Self {
+            statements: v.statements.into(),
+            editorial: v.editorial.into(),
+        }
+    }
+}
+
+impl From<xcpc_app::PickedFolder> for PickedFolder {
+    fn from(v: xcpc_app::PickedFolder) -> Self {
+        Self {
+            cancelled: v.cancelled,
+            path: v.path,
+            workspace_root: v.workspace_root,
+            is_workspace: v.is_workspace,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PickedFolder> for xcpc_app::PickedFolder {
+    fn from(v: PickedFolder) -> Self {
+        Self {
+            cancelled: v.cancelled,
+            path: v.path,
+            workspace_root: v.workspace_root,
+            is_workspace: v.is_workspace,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceFile> for WorkspaceFile {
+    fn from(v: xcpc_app::WorkspaceFile) -> Self {
+        Self {
+            path: v.path,
+            text: v.text,
+            hash: v.hash,
+            read_only: v.read_only,
+            error: v.error,
+        }
+    }
+}
+
+impl From<WorkspaceFile> for xcpc_app::WorkspaceFile {
+    fn from(v: WorkspaceFile) -> Self {
+        Self {
+            path: v.path,
+            text: v.text,
+            hash: v.hash,
+            read_only: v.read_only,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::SaveResult> for SaveResult {
+    fn from(v: xcpc_app::SaveResult) -> Self {
+        Self {
+            ok: v.ok,
+            hash: v.hash,
+            conflict: v.conflict,
+            error: v.error,
+        }
+    }
+}
+
+impl From<SaveResult> for xcpc_app::SaveResult {
+    fn from(v: SaveResult) -> Self {
+        Self {
+            ok: v.ok,
+            hash: v.hash,
+            conflict: v.conflict,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::WatchEventJs> for WatchEventJs {
+    fn from(v: xcpc_app::WatchEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            paths: v.paths,
+        }
+    }
+}
+
+impl From<WatchEventJs> for xcpc_app::WatchEventJs {
+    fn from(v: WatchEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            paths: v.paths,
+        }
+    }
+}
+
+impl From<xcpc_app::ActionResult> for ActionResult {
+    fn from(v: xcpc_app::ActionResult) -> Self {
+        Self {
+            ok: v.ok,
+            error: v.error,
+            code: v.code,
+            referencing_contests: v.referencing_contests,
+        }
+    }
+}
+
+impl From<ActionResult> for xcpc_app::ActionResult {
+    fn from(v: ActionResult) -> Self {
+        Self {
+            ok: v.ok,
+            error: v.error,
+            code: v.code,
+            referencing_contests: v.referencing_contests,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemSourceJs> for ProblemSourceJs {
+    fn from(v: xcpc_app::ProblemSourceJs) -> Self {
+        Self {
+            platform: v.platform,
+            id: v.id,
+            url: v.url,
+        }
+    }
+}
+
+impl From<ProblemSourceJs> for xcpc_app::ProblemSourceJs {
+    fn from(v: ProblemSourceJs) -> Self {
+        Self {
+            platform: v.platform,
+            id: v.id,
+            url: v.url,
+        }
+    }
+}
+
+impl From<xcpc_app::LimitsJs> for LimitsJs {
+    fn from(v: xcpc_app::LimitsJs) -> Self {
+        Self {
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+        }
+    }
+}
+
+impl From<LimitsJs> for xcpc_app::LimitsJs {
+    fn from(v: LimitsJs) -> Self {
+        Self {
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemSearchQuery> for ProblemSearchQuery {
+    fn from(v: xcpc_app::ProblemSearchQuery) -> Self {
+        Self {
+            text: v.text,
+            tags: v.tags,
+            rating_min: v.rating_min,
+            rating_max: v.rating_max,
+            platform: v.platform,
+            group: v.group,
+            ungrouped_only: v.ungrouped_only,
+        }
+    }
+}
+
+impl From<ProblemSearchQuery> for xcpc_app::ProblemSearchQuery {
+    fn from(v: ProblemSearchQuery) -> Self {
+        Self {
+            text: v.text,
+            tags: v.tags,
+            rating_min: v.rating_min,
+            rating_max: v.rating_max,
+            platform: v.platform,
+            group: v.group,
+            ungrouped_only: v.ungrouped_only,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemSummaryJs> for ProblemSummaryJs {
+    fn from(v: xcpc_app::ProblemSummaryJs) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            group: v.group,
+            rating: v.rating,
+            tags: v.tags,
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            has_editorial: v.has_editorial,
+            has_solutions: v.has_solutions,
+            statement_path: v.statement_path,
+            package_status: v.package_status,
+            contest_ids: v.contest_ids,
+            training_status: v.training_status,
+        }
+    }
+}
+
+impl From<ProblemSummaryJs> for xcpc_app::ProblemSummaryJs {
+    fn from(v: ProblemSummaryJs) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            group: v.group,
+            rating: v.rating,
+            tags: v.tags,
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            has_editorial: v.has_editorial,
+            has_solutions: v.has_solutions,
+            statement_path: v.statement_path,
+            package_status: v.package_status,
+            contest_ids: v.contest_ids,
+            training_status: v.training_status,
+        }
+    }
+}
+
+impl From<xcpc_app::GroupSummaryJs> for GroupSummaryJs {
+    fn from(v: xcpc_app::GroupSummaryJs) -> Self {
+        Self {
+            name: v.name,
+            count: v.count,
+            declared: v.declared,
+        }
+    }
+}
+
+impl From<GroupSummaryJs> for xcpc_app::GroupSummaryJs {
+    fn from(v: GroupSummaryJs) -> Self {
+        Self {
+            name: v.name,
+            count: v.count,
+            declared: v.declared,
+        }
+    }
+}
+
+impl From<xcpc_app::WorkspaceFacets> for WorkspaceFacets {
+    fn from(v: xcpc_app::WorkspaceFacets) -> Self {
+        Self {
+            tags: v.tags,
+            platforms: v.platforms,
+            groups: v.groups.into_iter().map(Into::into).collect(),
+            ungrouped_count: v.ungrouped_count,
+            total_count: v.total_count,
+        }
+    }
+}
+
+impl From<WorkspaceFacets> for xcpc_app::WorkspaceFacets {
+    fn from(v: WorkspaceFacets) -> Self {
+        Self {
+            tags: v.tags,
+            platforms: v.platforms,
+            groups: v.groups.into_iter().map(Into::into).collect(),
+            ungrouped_count: v.ungrouped_count,
+            total_count: v.total_count,
+        }
+    }
+}
+
+impl From<xcpc_app::SamplePairJs> for SamplePairJs {
+    fn from(v: xcpc_app::SamplePairJs) -> Self {
+        Self {
+            name: v.name,
+            input: v.input,
+            output: v.output,
+        }
+    }
+}
+
+impl From<SamplePairJs> for xcpc_app::SamplePairJs {
+    fn from(v: SamplePairJs) -> Self {
+        Self {
+            name: v.name,
+            input: v.input,
+            output: v.output,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemDetailJs> for ProblemDetailJs {
+    fn from(v: xcpc_app::ProblemDetailJs) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            group: v.group,
+            rating: v.rating,
+            tags: v.tags,
+            author: v.author,
+            limits: v.limits.into(),
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            statement: v.statement.into(),
+            statements: v.statements.into_iter().map(Into::into).collect(),
+            editorial: v.editorial.into(),
+            has_editorial: v.has_editorial,
+            samples: v.samples.into_iter().map(Into::into).collect(),
+            solutions: v.solutions,
+            referencing_contests: v.referencing_contests,
+            template_options_json: v.template_options_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<ProblemDetailJs> for xcpc_app::ProblemDetailJs {
+    fn from(v: ProblemDetailJs) -> Self {
+        Self {
+            id: v.id,
+            title: v.title,
+            group: v.group,
+            rating: v.rating,
+            tags: v.tags,
+            author: v.author,
+            limits: v.limits.into(),
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            statement: v.statement.into(),
+            statements: v.statements.into_iter().map(Into::into).collect(),
+            editorial: v.editorial.into(),
+            has_editorial: v.has_editorial,
+            samples: v.samples.into_iter().map(Into::into).collect(),
+            solutions: v.solutions,
+            referencing_contests: v.referencing_contests,
+            template_options_json: v.template_options_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::ContestItemDetailJs> for ContestItemDetailJs {
+    fn from(v: xcpc_app::ContestItemDetailJs) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            missing: v.missing,
+            title: v.title,
+            original_title: v.original_title,
+            limits: v.limits.into(),
+            original_limits: v.original_limits.into(),
+            show_metadata: v.show_metadata,
+            default_show_metadata: v.default_show_metadata,
+            overridden_title: v.overridden_title,
+            overridden_time: v.overridden_time,
+            overridden_memory: v.overridden_memory,
+            overridden_input: v.overridden_input,
+            overridden_output: v.overridden_output,
+            overridden_show_metadata: v.overridden_show_metadata,
+            statement: v.statement,
+            editorial: v.editorial,
+            rating: v.rating,
+            tags: v.tags,
+            options_json: v.options_json,
+            original_options_json: v.original_options_json,
+            override_options_json: v.override_options_json,
+            package_status: v.package_status,
+        }
+    }
+}
+
+impl From<ContestItemDetailJs> for xcpc_app::ContestItemDetailJs {
+    fn from(v: ContestItemDetailJs) -> Self {
+        Self {
+            label: v.label,
+            id: v.id,
+            missing: v.missing,
+            title: v.title,
+            original_title: v.original_title,
+            limits: v.limits.into(),
+            original_limits: v.original_limits.into(),
+            show_metadata: v.show_metadata,
+            default_show_metadata: v.default_show_metadata,
+            overridden_title: v.overridden_title,
+            overridden_time: v.overridden_time,
+            overridden_memory: v.overridden_memory,
+            overridden_input: v.overridden_input,
+            overridden_output: v.overridden_output,
+            overridden_show_metadata: v.overridden_show_metadata,
+            statement: v.statement,
+            editorial: v.editorial,
+            rating: v.rating,
+            tags: v.tags,
+            options_json: v.options_json,
+            original_options_json: v.original_options_json,
+            override_options_json: v.override_options_json,
+            package_status: v.package_status,
+        }
+    }
+}
+
+impl From<xcpc_app::ContestDetailJs> for ContestDetailJs {
+    fn from(v: xcpc_app::ContestDetailJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            location: v.location,
+            date: v.date,
+            author: v.author,
+            language: v.language,
+            template: v.template,
+            effective_template: v.effective_template,
+            has_contest_template: v.has_contest_template,
+            contest_template_json: v.contest_template_json,
+            template_options_json: v.template_options_json,
+            show_metadata: v.show_metadata,
+            cover: v.cover,
+            has_cover: v.has_cover,
+            blank_pages: v.blank_pages,
+            frozen: v.frozen,
+            archived: v.archived,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<ContestDetailJs> for xcpc_app::ContestDetailJs {
+    fn from(v: ContestDetailJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            location: v.location,
+            date: v.date,
+            author: v.author,
+            language: v.language,
+            template: v.template,
+            effective_template: v.effective_template,
+            has_contest_template: v.has_contest_template,
+            contest_template_json: v.contest_template_json,
+            template_options_json: v.template_options_json,
+            show_metadata: v.show_metadata,
+            cover: v.cover,
+            has_cover: v.has_cover,
+            blank_pages: v.blank_pages,
+            frozen: v.frozen,
+            archived: v.archived,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::RatingBucketJs> for RatingBucketJs {
+    fn from(v: xcpc_app::RatingBucketJs) -> Self {
+        Self {
+            tier: v.tier,
+            count: v.count,
+        }
+    }
+}
+
+impl From<RatingBucketJs> for xcpc_app::RatingBucketJs {
+    fn from(v: RatingBucketJs) -> Self {
+        Self {
+            tier: v.tier,
+            count: v.count,
+        }
+    }
+}
+
+impl From<xcpc_app::TagCountJs> for TagCountJs {
+    fn from(v: xcpc_app::TagCountJs) -> Self {
+        Self {
+            tag: v.tag,
+            count: v.count,
+        }
+    }
+}
+
+impl From<TagCountJs> for xcpc_app::TagCountJs {
+    fn from(v: TagCountJs) -> Self {
+        Self {
+            tag: v.tag,
+            count: v.count,
+        }
+    }
+}
+
+impl From<xcpc_app::ContestStatsJs> for ContestStatsJs {
+    fn from(v: xcpc_app::ContestStatsJs) -> Self {
+        Self {
+            problem_count: v.problem_count,
+            rating_distribution: v.rating_distribution.into_iter().map(Into::into).collect(),
+            tag_counts: v.tag_counts.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<ContestStatsJs> for xcpc_app::ContestStatsJs {
+    fn from(v: ContestStatsJs) -> Self {
+        Self {
+            problem_count: v.problem_count,
+            rating_distribution: v.rating_distribution.into_iter().map(Into::into).collect(),
+            tag_counts: v.tag_counts.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::FreezeResultJs> for FreezeResultJs {
+    fn from(v: xcpc_app::FreezeResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            frozen: v.frozen,
+            outputs: v.outputs,
+            diagnostics: v.diagnostics.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<FreezeResultJs> for xcpc_app::FreezeResultJs {
+    fn from(v: FreezeResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            frozen: v.frozen,
+            outputs: v.outputs,
+            diagnostics: v.diagnostics.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::UnfreezeProblemDiffJs> for UnfreezeProblemDiffJs {
+    fn from(v: xcpc_app::UnfreezeProblemDiffJs) -> Self {
+        Self {
+            label: v.label,
+            problem_id: v.problem_id,
+            kinds: v.kinds,
+            changed_files: v.changed_files,
+        }
+    }
+}
+
+impl From<UnfreezeProblemDiffJs> for xcpc_app::UnfreezeProblemDiffJs {
+    fn from(v: UnfreezeProblemDiffJs) -> Self {
+        Self {
+            label: v.label,
+            problem_id: v.problem_id,
+            kinds: v.kinds,
+            changed_files: v.changed_files,
+        }
+    }
+}
+
+impl From<xcpc_app::UnfreezeDiffResultJs> for UnfreezeDiffResultJs {
+    fn from(v: xcpc_app::UnfreezeDiffResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            diffs: v.diffs.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<UnfreezeDiffResultJs> for xcpc_app::UnfreezeDiffResultJs {
+    fn from(v: UnfreezeDiffResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            diffs: v.diffs.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::FuzzyHitJs> for FuzzyHitJs {
+    fn from(v: xcpc_app::FuzzyHitJs) -> Self {
+        Self {
+            kind: v.kind,
+            id: v.id,
+            title: v.title,
+            contest_id: v.contest_id,
+            label: v.label,
+            visit_key: v.visit_key,
+            archived: v.archived,
+            score: v.score,
+        }
+    }
+}
+
+impl From<FuzzyHitJs> for xcpc_app::FuzzyHitJs {
+    fn from(v: FuzzyHitJs) -> Self {
+        Self {
+            kind: v.kind,
+            id: v.id,
+            title: v.title,
+            contest_id: v.contest_id,
+            label: v.label,
+            visit_key: v.visit_key,
+            archived: v.archived,
+            score: v.score,
+        }
+    }
+}
+
+impl From<xcpc_app::AppPrefsJs> for AppPrefsJs {
+    fn from(v: xcpc_app::AppPrefsJs) -> Self {
+        Self {
+            recent_workspaces: v.recent_workspaces,
+            split_ratio: v.split_ratio,
+            last_space: v.last_space,
+            last_target: v.last_target,
+            last_id: v.last_id,
+            last_label: v.last_label,
+            last_book: v.last_book,
+            props_open: v.props_open,
+            language: v.language,
+            cxx_override: v.cxx_override,
+            library_sidebar_open: v.library_sidebar_open,
+            library_group_by: v.library_group_by,
+            library_checker_mirror_url: v.library_checker_mirror_url,
+            library_checker_local_repo_path: v.library_checker_local_repo_path,
+        }
+    }
+}
+
+impl From<AppPrefsJs> for xcpc_app::AppPrefsJs {
+    fn from(v: AppPrefsJs) -> Self {
+        Self {
+            recent_workspaces: v.recent_workspaces,
+            split_ratio: v.split_ratio,
+            last_space: v.last_space,
+            last_target: v.last_target,
+            last_id: v.last_id,
+            last_label: v.last_label,
+            last_book: v.last_book,
+            props_open: v.props_open,
+            language: v.language,
+            cxx_override: v.cxx_override,
+            library_sidebar_open: v.library_sidebar_open,
+            library_group_by: v.library_group_by,
+            library_checker_mirror_url: v.library_checker_mirror_url,
+            library_checker_local_repo_path: v.library_checker_local_repo_path,
+        }
+    }
+}
+
+impl From<xcpc_app::DialogLabelsJs> for DialogLabelsJs {
+    fn from(v: xcpc_app::DialogLabelsJs) -> Self {
+        Self {
+            title: v.title,
+            button_label: v.button_label,
+            filter_label: v.filter_label,
+        }
+    }
+}
+
+impl From<DialogLabelsJs> for xcpc_app::DialogLabelsJs {
+    fn from(v: DialogLabelsJs) -> Self {
+        Self {
+            title: v.title,
+            button_label: v.button_label,
+            filter_label: v.filter_label,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemMetaPatchJs> for ProblemMetaPatchJs {
+    fn from(v: xcpc_app::ProblemMetaPatchJs) -> Self {
+        Self {
+            title: v.title,
+            rating: v.rating,
+            tags: v.tags,
+            author: v.author,
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+            sources: v.sources.map(|xs| xs.into_iter().map(Into::into).collect()),
+            template_options_json: v.template_options_json,
+        }
+    }
+}
+
+impl From<ProblemMetaPatchJs> for xcpc_app::ProblemMetaPatchJs {
+    fn from(v: ProblemMetaPatchJs) -> Self {
+        Self {
+            title: v.title,
+            rating: v.rating,
+            tags: v.tags,
+            author: v.author,
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+            sources: v.sources.map(|xs| xs.into_iter().map(Into::into).collect()),
+            template_options_json: v.template_options_json,
+        }
+    }
+}
+
+impl From<xcpc_app::ContestMetaPatchJs> for ContestMetaPatchJs {
+    fn from(v: xcpc_app::ContestMetaPatchJs) -> Self {
+        Self {
+            name: v.name,
+            location: v.location,
+            date: v.date,
+            author: v.author,
+            language: v.language,
+            show_metadata: v.show_metadata,
+            cover: v.cover,
+            blank_pages: v.blank_pages,
+            template: v.template,
+            template_options_json: v.template_options_json,
+        }
+    }
+}
+
+impl From<ContestMetaPatchJs> for xcpc_app::ContestMetaPatchJs {
+    fn from(v: ContestMetaPatchJs) -> Self {
+        Self {
+            name: v.name,
+            location: v.location,
+            date: v.date,
+            author: v.author,
+            language: v.language,
+            show_metadata: v.show_metadata,
+            cover: v.cover,
+            blank_pages: v.blank_pages,
+            template: v.template,
+            template_options_json: v.template_options_json,
+        }
+    }
+}
+
+impl From<xcpc_app::OverridePatchJs> for OverridePatchJs {
+    fn from(v: xcpc_app::OverridePatchJs) -> Self {
+        Self {
+            title: v.title,
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+            show_metadata: v.show_metadata,
+            options_json: v.options_json,
+        }
+    }
+}
+
+impl From<OverridePatchJs> for xcpc_app::OverridePatchJs {
+    fn from(v: OverridePatchJs) -> Self {
+        Self {
+            title: v.title,
+            time: v.time,
+            memory: v.memory,
+            input: v.input,
+            output: v.output,
+            show_metadata: v.show_metadata,
+            options_json: v.options_json,
+        }
+    }
+}
+
+impl From<xcpc_app::MarkdownSpanJs> for MarkdownSpanJs {
+    fn from(v: xcpc_app::MarkdownSpanJs) -> Self {
+        Self {
+            kind: v.kind,
+            level: v.level,
+            start_line: v.start_line,
+            start_column: v.start_column,
+            end_line: v.end_line,
+            end_column: v.end_column,
+        }
+    }
+}
+
+impl From<MarkdownSpanJs> for xcpc_app::MarkdownSpanJs {
+    fn from(v: MarkdownSpanJs) -> Self {
+        Self {
+            kind: v.kind,
+            level: v.level,
+            start_line: v.start_line,
+            start_column: v.start_column,
+            end_line: v.end_line,
+            end_column: v.end_column,
+        }
+    }
+}
+
+impl From<xcpc_app::AssetReferenceJs> for AssetReferenceJs {
+    fn from(v: xcpc_app::AssetReferenceJs) -> Self {
+        Self {
+            file: v.file,
+            line: v.line,
+            width_pct: v.width_pct,
+        }
+    }
+}
+
+impl From<AssetReferenceJs> for xcpc_app::AssetReferenceJs {
+    fn from(v: AssetReferenceJs) -> Self {
+        Self {
+            file: v.file,
+            line: v.line,
+            width_pct: v.width_pct,
+        }
+    }
+}
+
+impl From<xcpc_app::ProblemAssetJs> for ProblemAssetJs {
+    fn from(v: xcpc_app::ProblemAssetJs) -> Self {
+        Self {
+            name: v.name,
+            rel_path: v.rel_path,
+            abs_path: v.abs_path,
+            thumb_path: v.thumb_path,
+            bytes: v.bytes,
+            width: v.width,
+            height: v.height,
+            referenced: v.referenced,
+            references: v.references.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ProblemAssetJs> for xcpc_app::ProblemAssetJs {
+    fn from(v: ProblemAssetJs) -> Self {
+        Self {
+            name: v.name,
+            rel_path: v.rel_path,
+            abs_path: v.abs_path,
+            thumb_path: v.thumb_path,
+            bytes: v.bytes,
+            width: v.width,
+            height: v.height,
+            referenced: v.referenced,
+            references: v.references.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<xcpc_app::CleanUnusedAssetsResultJs> for CleanUnusedAssetsResultJs {
+    fn from(v: xcpc_app::CleanUnusedAssetsResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            removed: v.removed,
+            freed_bytes: v.freed_bytes,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<CleanUnusedAssetsResultJs> for xcpc_app::CleanUnusedAssetsResultJs {
+    fn from(v: CleanUnusedAssetsResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            removed: v.removed,
+            freed_bytes: v.freed_bytes,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::ColdStartSnapshotJs> for ColdStartSnapshotJs {
+    fn from(v: xcpc_app::ColdStartSnapshotJs) -> Self {
+        Self {
+            meta_json: v.meta_json,
+            workspace: v.workspace,
+            target: v.target,
+            id: v.id,
+            book: v.book,
+            zoom: v.zoom,
+            scroll_y: v.scroll_y,
+            pages: v.pages.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ColdStartSnapshotJs> for xcpc_app::ColdStartSnapshotJs {
+    fn from(v: ColdStartSnapshotJs) -> Self {
+        Self {
+            meta_json: v.meta_json,
+            workspace: v.workspace,
+            target: v.target,
+            id: v.id,
+            book: v.book,
+            zoom: v.zoom,
+            scroll_y: v.scroll_y,
+            pages: v.pages.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<xcpc_app::AboutInfoJs> for AboutInfoJs {
+    fn from(v: xcpc_app::AboutInfoJs) -> Self {
+        Self {
+            version: v.version,
+            commit: v.commit,
+            build_date: v.build_date,
+            is_dev: v.is_dev,
+            os: v.os,
+            arch: v.arch,
+            font_source: v.font_source,
+        }
+    }
+}
+
+impl From<AboutInfoJs> for xcpc_app::AboutInfoJs {
+    fn from(v: AboutInfoJs) -> Self {
+        Self {
+            version: v.version,
+            commit: v.commit,
+            build_date: v.build_date,
+            is_dev: v.is_dev,
+            os: v.os,
+            arch: v.arch,
+            font_source: v.font_source,
+        }
+    }
+}
+
+impl From<xcpc_app::TraceStatusJs> for TraceStatusJs {
+    fn from(v: xcpc_app::TraceStatusJs) -> Self {
+        Self {
+            enabled: v.enabled,
+            event_count: v.event_count,
+            dropped_count: v.dropped_count,
+            rust_now_us: v.rust_now_us,
+        }
+    }
+}
+
+impl From<TraceStatusJs> for xcpc_app::TraceStatusJs {
+    fn from(v: TraceStatusJs) -> Self {
+        Self {
+            enabled: v.enabled,
+            event_count: v.event_count,
+            dropped_count: v.dropped_count,
+            rust_now_us: v.rust_now_us,
+        }
+    }
+}
+
+impl From<xcpc_app::TraceExportResultJs> for TraceExportResultJs {
+    fn from(v: xcpc_app::TraceExportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            path: v.path,
+            bytes: v.bytes,
+            error: v.error,
+        }
+    }
+}
+
+impl From<TraceExportResultJs> for xcpc_app::TraceExportResultJs {
+    fn from(v: TraceExportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            path: v.path,
+            bytes: v.bytes,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::DetectedCompilerJs> for DetectedCompilerJs {
+    fn from(v: xcpc_app::DetectedCompilerJs) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            version: v.version,
+            kind: v.kind,
+        }
+    }
+}
+
+impl From<DetectedCompilerJs> for xcpc_app::DetectedCompilerJs {
+    fn from(v: DetectedCompilerJs) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            version: v.version,
+            kind: v.kind,
+        }
+    }
+}
+
+impl From<xcpc_app::ToolchainStatusJs> for ToolchainStatusJs {
+    fn from(v: xcpc_app::ToolchainStatusJs) -> Self {
+        Self {
+            compilers: v.compilers.into_iter().map(Into::into).collect(),
+            active: v.active.map(Into::into),
+            override_path: v.override_path,
+            env_override: v.env_override,
+            install_guide: v.install_guide,
+            install_commands: v.install_commands.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<ToolchainStatusJs> for xcpc_app::ToolchainStatusJs {
+    fn from(v: ToolchainStatusJs) -> Self {
+        Self {
+            compilers: v.compilers.into_iter().map(Into::into).collect(),
+            active: v.active.map(Into::into),
+            override_path: v.override_path,
+            env_override: v.env_override,
+            install_guide: v.install_guide,
+            install_commands: v.install_commands.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::InstallCommandJs> for InstallCommandJs {
+    fn from(v: xcpc_app::InstallCommandJs) -> Self {
+        Self {
+            label: v.label,
+            command: v.command,
+        }
+    }
+}
+
+impl From<InstallCommandJs> for xcpc_app::InstallCommandJs {
+    fn from(v: InstallCommandJs) -> Self {
+        Self {
+            label: v.label,
+            command: v.command,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageInspectionResultJs> for PackageInspectionResultJs {
+    fn from(v: xcpc_app::PackageInspectionResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            has_package: v.has_package,
+            freshness_status: v.freshness_status,
+            inspection_json: v.inspection_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PackageInspectionResultJs> for xcpc_app::PackageInspectionResultJs {
+    fn from(v: PackageInspectionResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            has_package: v.has_package,
+            freshness_status: v.freshness_status,
+            inspection_json: v.inspection_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageInitResultJs> for PackageInitResultJs {
+    fn from(v: xcpc_app::PackageInitResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            created_files: v.created_files,
+            skipped_files: v.skipped_files,
+            updated_problem_toml: v.updated_problem_toml,
+            inspection_json: v.inspection_json,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<PackageInitResultJs> for xcpc_app::PackageInitResultJs {
+    fn from(v: PackageInitResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            created_files: v.created_files,
+            skipped_files: v.skipped_files,
+            updated_problem_toml: v.updated_problem_toml,
+            inspection_json: v.inspection_json,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageBuildStatusJs> for PackageBuildStatusJs {
+    fn from(v: xcpc_app::PackageBuildStatusJs) -> Self {
+        Self {
+            seq: v.seq,
+            running: v.running,
+            slug: v.slug,
+            mode: v.mode,
+            cancelled: v.cancelled,
+            phase: v.phase,
+            detail: v.detail,
+            completed: v.completed,
+            total: v.total,
+            report_json: v.report_json,
+            live_cells_json: v.live_cells_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PackageBuildStatusJs> for xcpc_app::PackageBuildStatusJs {
+    fn from(v: PackageBuildStatusJs) -> Self {
+        Self {
+            seq: v.seq,
+            running: v.running,
+            slug: v.slug,
+            mode: v.mode,
+            cancelled: v.cancelled,
+            phase: v.phase,
+            detail: v.detail,
+            completed: v.completed,
+            total: v.total,
+            report_json: v.report_json,
+            live_cells_json: v.live_cells_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::TestCasePreviewJs> for TestCasePreviewJs {
+    fn from(v: xcpc_app::TestCasePreviewJs) -> Self {
+        Self {
+            ok: v.ok,
+            index: v.index,
+            name: v.name,
+            tag: v.tag,
+            is_sample: v.is_sample,
+            gen_cmd: v.gen_cmd,
+            available_on_disk: v.available_on_disk,
+            size_bytes: v.size_bytes,
+            total_lines: v.total_lines,
+            total_lines_exact: v.total_lines_exact,
+            omitted_bytes: v.omitted_bytes,
+            head: v.head,
+            tail: v.tail,
+            truncated: v.truncated,
+            ans_available: v.ans_available,
+            ans_source: v.ans_source,
+            ans_size_bytes: v.ans_size_bytes,
+            ans_head: v.ans_head,
+            ans_tail: v.ans_tail,
+            ans_truncated: v.ans_truncated,
+            ans_total_lines: v.ans_total_lines,
+            std_output_available: v.std_output_available,
+            std_output_size_bytes: v.std_output_size_bytes,
+            std_output_head: v.std_output_head,
+            std_output_tail: v.std_output_tail,
+            std_output_truncated: v.std_output_truncated,
+            rule_index: v.rule_index,
+            file_rel: v.file_rel,
+            error: v.error,
+        }
+    }
+}
+
+impl From<TestCasePreviewJs> for xcpc_app::TestCasePreviewJs {
+    fn from(v: TestCasePreviewJs) -> Self {
+        Self {
+            ok: v.ok,
+            index: v.index,
+            name: v.name,
+            tag: v.tag,
+            is_sample: v.is_sample,
+            gen_cmd: v.gen_cmd,
+            available_on_disk: v.available_on_disk,
+            size_bytes: v.size_bytes,
+            total_lines: v.total_lines,
+            total_lines_exact: v.total_lines_exact,
+            omitted_bytes: v.omitted_bytes,
+            head: v.head,
+            tail: v.tail,
+            truncated: v.truncated,
+            ans_available: v.ans_available,
+            ans_source: v.ans_source,
+            ans_size_bytes: v.ans_size_bytes,
+            ans_head: v.ans_head,
+            ans_tail: v.ans_tail,
+            ans_truncated: v.ans_truncated,
+            ans_total_lines: v.ans_total_lines,
+            std_output_available: v.std_output_available,
+            std_output_size_bytes: v.std_output_size_bytes,
+            std_output_head: v.std_output_head,
+            std_output_tail: v.std_output_tail,
+            std_output_truncated: v.std_output_truncated,
+            rule_index: v.rule_index,
+            file_rel: v.file_rel,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageFileContentJs> for PackageFileContentJs {
+    fn from(v: xcpc_app::PackageFileContentJs) -> Self {
+        Self {
+            ok: v.ok,
+            content: v.content,
+            content_hash: v.content_hash,
+            size_bytes: v.size_bytes,
+            too_large: v.too_large,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<PackageFileContentJs> for xcpc_app::PackageFileContentJs {
+    fn from(v: PackageFileContentJs) -> Self {
+        Self {
+            ok: v.ok,
+            content: v.content,
+            content_hash: v.content_hash,
+            size_bytes: v.size_bytes,
+            too_large: v.too_large,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::SavePackageFileResultJs> for SavePackageFileResultJs {
+    fn from(v: xcpc_app::SavePackageFileResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            conflict: v.conflict,
+            content_hash: v.content_hash,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<SavePackageFileResultJs> for xcpc_app::SavePackageFileResultJs {
+    fn from(v: SavePackageFileResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            conflict: v.conflict,
+            content_hash: v.content_hash,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageCreateResultJs> for PackageCreateResultJs {
+    fn from(v: xcpc_app::PackageCreateResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            rel_path: v.rel_path,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<PackageCreateResultJs> for xcpc_app::PackageCreateResultJs {
+    fn from(v: PackageCreateResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            rel_path: v.rel_path,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::AddedTestResultJs> for AddedTestResultJs {
+    fn from(v: xcpc_app::AddedTestResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            rule_index: v.rule_index,
+            file_rel: v.file_rel,
+            name: v.name,
+            tag: v.tag,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<AddedTestResultJs> for xcpc_app::AddedTestResultJs {
+    fn from(v: AddedTestResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            rule_index: v.rule_index,
+            file_rel: v.file_rel,
+            name: v.name,
+            tag: v.tag,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::NormalizeDirtyResultJs> for NormalizeDirtyResultJs {
+    fn from(v: xcpc_app::NormalizeDirtyResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            fixed: v.fixed,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<NormalizeDirtyResultJs> for xcpc_app::NormalizeDirtyResultJs {
+    fn from(v: NormalizeDirtyResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            fixed: v.fixed,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::PackageWarningJs> for PackageWarningJs {
+    fn from(v: xcpc_app::PackageWarningJs) -> Self {
+        Self {
+            code: v.code,
+            message: v.message,
+            path: v.path,
+        }
+    }
+}
+
+impl From<PackageWarningJs> for xcpc_app::PackageWarningJs {
+    fn from(v: PackageWarningJs) -> Self {
+        Self {
+            code: v.code,
+            message: v.message,
+            path: v.path,
+        }
+    }
+}
+
+impl From<xcpc_app::PolygonImportResultJs> for PolygonImportResultJs {
+    fn from(v: xcpc_app::PolygonImportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            kind: v.kind,
+            id: v.id,
+            title: v.title,
+            problem_ids: v.problem_ids,
+            warnings: v.warnings.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+            detail: v.detail,
+        }
+    }
+}
+
+impl From<PolygonImportResultJs> for xcpc_app::PolygonImportResultJs {
+    fn from(v: PolygonImportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            kind: v.kind,
+            id: v.id,
+            title: v.title,
+            problem_ids: v.problem_ids,
+            warnings: v.warnings.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+            detail: v.detail,
+        }
+    }
+}
+
+impl From<xcpc_app::ExportOjResultJs> for ExportOjResultJs {
+    fn from(v: xcpc_app::ExportOjResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            format: v.format,
+            paths: v.paths,
+            reveal_path: v.reveal_path,
+            warnings: v.warnings.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+            detail: v.detail,
+        }
+    }
+}
+
+impl From<ExportOjResultJs> for xcpc_app::ExportOjResultJs {
+    fn from(v: ExportOjResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            format: v.format,
+            paths: v.paths,
+            reveal_path: v.reveal_path,
+            warnings: v.warnings.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+            detail: v.detail,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchItemResultJs> for BatchItemResultJs {
+    fn from(v: xcpc_app::BatchItemResultJs) -> Self {
+        Self {
+            id: v.id,
+            status: v.status,
+            code: v.code,
+            message: v.message,
+        }
+    }
+}
+
+impl From<BatchItemResultJs> for xcpc_app::BatchItemResultJs {
+    fn from(v: BatchItemResultJs) -> Self {
+        Self {
+            id: v.id,
+            status: v.status,
+            code: v.code,
+            message: v.message,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchMutationResultJs> for BatchMutationResultJs {
+    fn from(v: xcpc_app::BatchMutationResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            total: v.total,
+            succeeded: v.succeeded,
+            skipped: v.skipped,
+            failed: v.failed,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<BatchMutationResultJs> for xcpc_app::BatchMutationResultJs {
+    fn from(v: BatchMutationResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            total: v.total,
+            succeeded: v.succeeded,
+            skipped: v.skipped,
+            failed: v.failed,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchDeleteItemJs> for BatchDeleteItemJs {
+    fn from(v: xcpc_app::BatchDeleteItemJs) -> Self {
+        Self {
+            id: v.id,
+            status: v.status,
+            code: v.code,
+            message: v.message,
+            referencing_contests: v.referencing_contests,
+        }
+    }
+}
+
+impl From<BatchDeleteItemJs> for xcpc_app::BatchDeleteItemJs {
+    fn from(v: BatchDeleteItemJs) -> Self {
+        Self {
+            id: v.id,
+            status: v.status,
+            code: v.code,
+            message: v.message,
+            referencing_contests: v.referencing_contests,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchDeleteResultJs> for BatchDeleteResultJs {
+    fn from(v: xcpc_app::BatchDeleteResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            total: v.total,
+            deleted: v.deleted,
+            skipped: v.skipped,
+            failed: v.failed,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<BatchDeleteResultJs> for xcpc_app::BatchDeleteResultJs {
+    fn from(v: BatchDeleteResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            total: v.total,
+            deleted: v.deleted,
+            skipped: v.skipped,
+            failed: v.failed,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchExportRequestJs> for BatchExportRequestJs {
+    fn from(v: xcpc_app::BatchExportRequestJs) -> Self {
+        Self {
+            format: v.format,
+            problem_ids: v.problem_ids,
+            title: v.title,
+            language: v.language,
+            book: v.book,
+            output_path: v.output_path,
+        }
+    }
+}
+
+impl From<BatchExportRequestJs> for xcpc_app::BatchExportRequestJs {
+    fn from(v: BatchExportRequestJs) -> Self {
+        Self {
+            format: v.format,
+            problem_ids: v.problem_ids,
+            title: v.title,
+            language: v.language,
+            book: v.book,
+            output_path: v.output_path,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchStartResultJs> for BatchStartResultJs {
+    fn from(v: xcpc_app::BatchStartResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            task_id: v.task_id,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<BatchStartResultJs> for xcpc_app::BatchStartResultJs {
+    fn from(v: BatchStartResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            task_id: v.task_id,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchTaskItemJs> for BatchTaskItemJs {
+    fn from(v: xcpc_app::BatchTaskItemJs) -> Self {
+        Self {
+            problem_id: v.problem_id,
+            status: v.status,
+            verified: v.verified,
+            elapsed_ms: v.elapsed_ms,
+            phase: v.phase,
+            detail: v.detail,
+            code: v.code,
+            message: v.message,
+            output_path: v.output_path,
+        }
+    }
+}
+
+impl From<BatchTaskItemJs> for xcpc_app::BatchTaskItemJs {
+    fn from(v: BatchTaskItemJs) -> Self {
+        Self {
+            problem_id: v.problem_id,
+            status: v.status,
+            verified: v.verified,
+            elapsed_ms: v.elapsed_ms,
+            phase: v.phase,
+            detail: v.detail,
+            code: v.code,
+            message: v.message,
+            output_path: v.output_path,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchTaskSnapshotJs> for BatchTaskSnapshotJs {
+    fn from(v: xcpc_app::BatchTaskSnapshotJs) -> Self {
+        Self {
+            task_id: v.task_id,
+            running: v.running,
+            kind: v.kind,
+            cancelled: v.cancelled,
+            total: v.total,
+            completed: v.completed,
+            succeeded: v.succeeded,
+            failed: v.failed,
+            skipped: v.skipped,
+            cancelled_count: v.cancelled_count,
+            elapsed_ms: v.elapsed_ms,
+            current_problem_id: v.current_problem_id,
+            current_phase: v.current_phase,
+            current_detail: v.current_detail,
+            output_path: v.output_path,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<BatchTaskSnapshotJs> for xcpc_app::BatchTaskSnapshotJs {
+    fn from(v: BatchTaskSnapshotJs) -> Self {
+        Self {
+            task_id: v.task_id,
+            running: v.running,
+            kind: v.kind,
+            cancelled: v.cancelled,
+            total: v.total,
+            completed: v.completed,
+            succeeded: v.succeeded,
+            failed: v.failed,
+            skipped: v.skipped,
+            cancelled_count: v.cancelled_count,
+            elapsed_ms: v.elapsed_ms,
+            current_problem_id: v.current_problem_id,
+            current_phase: v.current_phase,
+            current_detail: v.current_detail,
+            output_path: v.output_path,
+            items: v.items.into_iter().map(Into::into).collect(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::BatchTaskEventJs> for BatchTaskEventJs {
+    fn from(v: xcpc_app::BatchTaskEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            task_id: v.task_id,
+            problem_id: v.problem_id,
+            index: v.index,
+            total: v.total,
+            phase: v.phase,
+            detail: v.detail,
+            item: v.item.map(Into::into),
+            snapshot: v.snapshot.into(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<BatchTaskEventJs> for xcpc_app::BatchTaskEventJs {
+    fn from(v: BatchTaskEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            task_id: v.task_id,
+            problem_id: v.problem_id,
+            index: v.index,
+            total: v.total,
+            phase: v.phase,
+            detail: v.detail,
+            item: v.item.map(Into::into),
+            snapshot: v.snapshot.into(),
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::PickedPathsJs> for PickedPathsJs {
+    fn from(v: xcpc_app::PickedPathsJs) -> Self {
+        Self {
+            cancelled: v.cancelled,
+            paths: v.paths,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PickedPathsJs> for xcpc_app::PickedPathsJs {
+    fn from(v: PickedPathsJs) -> Self {
+        Self {
+            cancelled: v.cancelled,
+            paths: v.paths,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::JsonReportResultJs> for JsonReportResultJs {
+    fn from(v: xcpc_app::JsonReportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            report_json: v.report_json,
+            markdown: v.markdown,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<JsonReportResultJs> for xcpc_app::JsonReportResultJs {
+    fn from(v: JsonReportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            report_json: v.report_json,
+            markdown: v.markdown,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::AdoptSolutionResultJs> for AdoptSolutionResultJs {
+    fn from(v: xcpc_app::AdoptSolutionResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            solution_name: v.solution_name,
+            target_rel_path: v.target_rel_path,
+            updated_problem_toml: v.updated_problem_toml,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<AdoptSolutionResultJs> for xcpc_app::AdoptSolutionResultJs {
+    fn from(v: AdoptSolutionResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            solution_name: v.solution_name,
+            target_rel_path: v.target_rel_path,
+            updated_problem_toml: v.updated_problem_toml,
+            error: v.error,
+            code: v.code,
+        }
+    }
+}
+
+impl From<xcpc_app::SaveReportResultJs> for SaveReportResultJs {
+    fn from(v: xcpc_app::SaveReportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            path: v.path,
+            error: v.error,
+        }
+    }
+}
+
+impl From<SaveReportResultJs> for xcpc_app::SaveReportResultJs {
+    fn from(v: SaveReportResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            path: v.path,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::ResolvedProblemUrlJs> for ResolvedProblemUrlJs {
+    fn from(v: xcpc_app::ResolvedProblemUrlJs) -> Self {
+        Self {
+            ok: v.ok,
+            platform: v.platform,
+            problem_key: v.problem_key,
+            suggested_slug: v.suggested_slug,
+            title: v.title,
+            tags: v.tags,
+            rating: v.rating,
+            url: v.url,
+            existing_problem_id: v.existing_problem_id,
+            error: v.error,
+        }
+    }
+}
+
+impl From<ResolvedProblemUrlJs> for xcpc_app::ResolvedProblemUrlJs {
+    fn from(v: ResolvedProblemUrlJs) -> Self {
+        Self {
+            ok: v.ok,
+            platform: v.platform,
+            problem_key: v.problem_key,
+            suggested_slug: v.suggested_slug,
+            title: v.title,
+            tags: v.tags,
+            rating: v.rating,
+            url: v.url,
+            existing_problem_id: v.existing_problem_id,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::CreateProblemFromUrlResultJs> for CreateProblemFromUrlResultJs {
+    fn from(v: xcpc_app::CreateProblemFromUrlResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            existed: v.existed,
+            code: v.code,
+            error: v.error,
+        }
+    }
+}
+
+impl From<CreateProblemFromUrlResultJs> for xcpc_app::CreateProblemFromUrlResultJs {
+    fn from(v: CreateProblemFromUrlResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            existed: v.existed,
+            code: v.code,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginCredentialFieldJs> for PluginCredentialFieldJs {
+    fn from(v: xcpc_app::PluginCredentialFieldJs) -> Self {
+        Self {
+            name: v.name,
+            label: v.label,
+            secret: v.secret,
+            has_value: v.has_value,
+            description: v.description,
+            placeholder: v.placeholder,
+        }
+    }
+}
+
+impl From<PluginCredentialFieldJs> for xcpc_app::PluginCredentialFieldJs {
+    fn from(v: PluginCredentialFieldJs) -> Self {
+        Self {
+            name: v.name,
+            label: v.label,
+            secret: v.secret,
+            has_value: v.has_value,
+            description: v.description,
+            placeholder: v.placeholder,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginSummaryJs> for PluginSummaryJs {
+    fn from(v: xcpc_app::PluginSummaryJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            version: v.version,
+            description: v.description,
+            origin: v.origin,
+            enabled: v.enabled,
+            pending_trust: v.pending_trust,
+            overrides_builtin: v.overrides_builtin,
+            has_network: v.has_network,
+            capabilities: v.capabilities,
+            domains: v.domains,
+            workspace_read: v.workspace_read,
+            has_ui: v.has_ui,
+            is_linked: v.is_linked,
+            link_target: v.link_target,
+            source_repo: v.source_repo,
+            credentials: v.credentials.into_iter().map(Into::into).collect(),
+            handle: v.handle,
+            last_error: v.last_error,
+        }
+    }
+}
+
+impl From<PluginSummaryJs> for xcpc_app::PluginSummaryJs {
+    fn from(v: PluginSummaryJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            version: v.version,
+            description: v.description,
+            origin: v.origin,
+            enabled: v.enabled,
+            pending_trust: v.pending_trust,
+            overrides_builtin: v.overrides_builtin,
+            has_network: v.has_network,
+            capabilities: v.capabilities,
+            domains: v.domains,
+            workspace_read: v.workspace_read,
+            has_ui: v.has_ui,
+            is_linked: v.is_linked,
+            link_target: v.link_target,
+            source_repo: v.source_repo,
+            credentials: v.credentials.into_iter().map(Into::into).collect(),
+            handle: v.handle,
+            last_error: v.last_error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginRepoConfigJs> for PluginRepoConfigJs {
+    fn from(v: xcpc_app::PluginRepoConfigJs) -> Self {
+        Self {
+            url: v.url,
+            name: v.name,
+        }
+    }
+}
+
+impl From<PluginRepoConfigJs> for xcpc_app::PluginRepoConfigJs {
+    fn from(v: PluginRepoConfigJs) -> Self {
+        Self {
+            url: v.url,
+            name: v.name,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginsOverviewJs> for PluginsOverviewJs {
+    fn from(v: xcpc_app::PluginsOverviewJs) -> Self {
+        Self {
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            repos: v.repos.into_iter().map(Into::into).collect(),
+            auto_sync_on_startup: v.auto_sync_on_startup,
+            last_synced_at: v.last_synced_at,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginsOverviewJs> for xcpc_app::PluginsOverviewJs {
+    fn from(v: PluginsOverviewJs) -> Self {
+        Self {
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            repos: v.repos.into_iter().map(Into::into).collect(),
+            auto_sync_on_startup: v.auto_sync_on_startup,
+            last_synced_at: v.last_synced_at,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::ExportPluginResultJs> for ExportPluginResultJs {
+    fn from(v: xcpc_app::ExportPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            path: v.path,
+            error: v.error,
+        }
+    }
+}
+
+impl From<ExportPluginResultJs> for xcpc_app::ExportPluginResultJs {
+    fn from(v: ExportPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            path: v.path,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::InstallPluginResultJs> for InstallPluginResultJs {
+    fn from(v: xcpc_app::InstallPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            plugin_id: v.plugin_id,
+            overview: v.overview.map(Into::into),
+            error: v.error,
+        }
+    }
+}
+
+impl From<InstallPluginResultJs> for xcpc_app::InstallPluginResultJs {
+    fn from(v: InstallPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            plugin_id: v.plugin_id,
+            overview: v.overview.map(Into::into),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::RepoPluginPermissionJs> for RepoPluginPermissionJs {
+    fn from(v: xcpc_app::RepoPluginPermissionJs) -> Self {
+        Self {
+            domains: v.domains,
+            workspace_read: v.workspace_read,
+        }
+    }
+}
+
+impl From<RepoPluginPermissionJs> for xcpc_app::RepoPluginPermissionJs {
+    fn from(v: RepoPluginPermissionJs) -> Self {
+        Self {
+            domains: v.domains,
+            workspace_read: v.workspace_read,
+        }
+    }
+}
+
+impl From<xcpc_app::RepoPluginEntryJs> for RepoPluginEntryJs {
+    fn from(v: xcpc_app::RepoPluginEntryJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            version: v.version,
+            description: v.description,
+            download_url: v.download_url,
+            sha256: v.sha256,
+            capabilities: v.capabilities,
+            has_ui: v.has_ui,
+            official: v.official,
+            permissions: v.permissions.map(Into::into),
+        }
+    }
+}
+
+impl From<RepoPluginEntryJs> for xcpc_app::RepoPluginEntryJs {
+    fn from(v: RepoPluginEntryJs) -> Self {
+        Self {
+            id: v.id,
+            name: v.name,
+            version: v.version,
+            description: v.description,
+            download_url: v.download_url,
+            sha256: v.sha256,
+            capabilities: v.capabilities,
+            has_ui: v.has_ui,
+            official: v.official,
+            permissions: v.permissions.map(Into::into),
+        }
+    }
+}
+
+impl From<xcpc_app::RepoCatalogResultJs> for RepoCatalogResultJs {
+    fn from(v: xcpc_app::RepoCatalogResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            name: v.name,
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<RepoCatalogResultJs> for xcpc_app::RepoCatalogResultJs {
+    fn from(v: RepoCatalogResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            name: v.name,
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::RepoFetchErrorJs> for RepoFetchErrorJs {
+    fn from(v: xcpc_app::RepoFetchErrorJs) -> Self {
+        Self {
+            repo_url: v.repo_url,
+            repo_name: v.repo_name,
+            error: v.error,
+        }
+    }
+}
+
+impl From<RepoFetchErrorJs> for xcpc_app::RepoFetchErrorJs {
+    fn from(v: RepoFetchErrorJs) -> Self {
+        Self {
+            repo_url: v.repo_url,
+            repo_name: v.repo_name,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::AggregatedRepoPluginJs> for AggregatedRepoPluginJs {
+    fn from(v: xcpc_app::AggregatedRepoPluginJs) -> Self {
+        Self {
+            repo_url: v.repo_url,
+            repo_name: v.repo_name,
+            entry: v.entry.into(),
+        }
+    }
+}
+
+impl From<AggregatedRepoPluginJs> for xcpc_app::AggregatedRepoPluginJs {
+    fn from(v: AggregatedRepoPluginJs) -> Self {
+        Self {
+            repo_url: v.repo_url,
+            repo_name: v.repo_name,
+            entry: v.entry.into(),
+        }
+    }
+}
+
+impl From<xcpc_app::PluginRepoCatalogJs> for PluginRepoCatalogJs {
+    fn from(v: xcpc_app::PluginRepoCatalogJs) -> Self {
+        Self {
+            ok: v.ok,
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            errors: v.errors.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginRepoCatalogJs> for xcpc_app::PluginRepoCatalogJs {
+    fn from(v: PluginRepoCatalogJs) -> Self {
+        Self {
+            ok: v.ok,
+            plugins: v.plugins.into_iter().map(Into::into).collect(),
+            errors: v.errors.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::VerifyPluginResultJs> for VerifyPluginResultJs {
+    fn from(v: xcpc_app::VerifyPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            message: v.message,
+            error: v.error,
+        }
+    }
+}
+
+impl From<VerifyPluginResultJs> for xcpc_app::VerifyPluginResultJs {
+    fn from(v: VerifyPluginResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            message: v.message,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PlatformSyncReportJs> for PlatformSyncReportJs {
+    fn from(v: xcpc_app::PlatformSyncReportJs) -> Self {
+        Self {
+            platform: v.platform,
+            handle: v.handle,
+            ok: v.ok,
+            account_synced: v.account_synced,
+            summary_synced: v.summary_synced,
+            submissions_synced: v.submissions_synced,
+            rating_history_synced: v.rating_history_synced,
+            contests_synced: v.contests_synced,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PlatformSyncReportJs> for xcpc_app::PlatformSyncReportJs {
+    fn from(v: PlatformSyncReportJs) -> Self {
+        Self {
+            platform: v.platform,
+            handle: v.handle,
+            ok: v.ok,
+            account_synced: v.account_synced,
+            summary_synced: v.summary_synced,
+            submissions_synced: v.submissions_synced,
+            rating_history_synced: v.rating_history_synced,
+            contests_synced: v.contests_synced,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::SyncReportJs> for SyncReportJs {
+    fn from(v: xcpc_app::SyncReportJs) -> Self {
+        Self {
+            ok: v.ok,
+            synced_at: v.synced_at,
+            platforms: v.platforms.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<SyncReportJs> for xcpc_app::SyncReportJs {
+    fn from(v: SyncReportJs) -> Self {
+        Self {
+            ok: v.ok,
+            synced_at: v.synced_at,
+            platforms: v.platforms.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::TrainingSubmissionsQueryJs> for TrainingSubmissionsQueryJs {
+    fn from(v: xcpc_app::TrainingSubmissionsQueryJs) -> Self {
+        Self {
+            by_problem: v.by_problem,
+            platform: v.platform,
+            verdict: v.verdict,
+            unsolved_only: v.unsolved_only,
+            min_rating: v.min_rating,
+            max_rating: v.max_rating,
+            tag: v.tag,
+            search: v.search,
+            limit: v.limit,
+            offset: v.offset,
+        }
+    }
+}
+
+impl From<TrainingSubmissionsQueryJs> for xcpc_app::TrainingSubmissionsQueryJs {
+    fn from(v: TrainingSubmissionsQueryJs) -> Self {
+        Self {
+            by_problem: v.by_problem,
+            platform: v.platform,
+            verdict: v.verdict,
+            unsolved_only: v.unsolved_only,
+            min_rating: v.min_rating,
+            max_rating: v.max_rating,
+            tag: v.tag,
+            search: v.search,
+            limit: v.limit,
+            offset: v.offset,
+        }
+    }
+}
+
+impl From<xcpc_app::IngestProblemRequestJs> for IngestProblemRequestJs {
+    fn from(v: xcpc_app::IngestProblemRequestJs) -> Self {
+        Self {
+            url: v.url,
+            platform: v.platform,
+            problem_key: v.problem_key,
+            id: v.id,
+            title: v.title,
+            tags: v.tags,
+            rating: v.rating,
+            initial_status: v.initial_status,
+        }
+    }
+}
+
+impl From<IngestProblemRequestJs> for xcpc_app::IngestProblemRequestJs {
+    fn from(v: IngestProblemRequestJs) -> Self {
+        Self {
+            url: v.url,
+            platform: v.platform,
+            problem_key: v.problem_key,
+            id: v.id,
+            title: v.title,
+            tags: v.tags,
+            rating: v.rating,
+            initial_status: v.initial_status,
+        }
+    }
+}
+
+impl From<xcpc_app::IngestProblemResultJs> for IngestProblemResultJs {
+    fn from(v: xcpc_app::IngestProblemResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            created: v.created,
+            title: v.title,
+            code: v.code,
+            error: v.error,
+        }
+    }
+}
+
+impl From<IngestProblemResultJs> for xcpc_app::IngestProblemResultJs {
+    fn from(v: IngestProblemResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            problem_id: v.problem_id,
+            created: v.created,
+            title: v.title,
+            code: v.code,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::ManualLogResultJs> for ManualLogResultJs {
+    fn from(v: xcpc_app::ManualLogResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            library_problem_id: v.library_problem_id,
+            created_in_library: v.created_in_library,
+            error: v.error,
+        }
+    }
+}
+
+impl From<ManualLogResultJs> for xcpc_app::ManualLogResultJs {
+    fn from(v: ManualLogResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            library_problem_id: v.library_problem_id,
+            created_in_library: v.created_in_library,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::EditorialSummaryJs> for EditorialSummaryJs {
+    fn from(v: xcpc_app::EditorialSummaryJs) -> Self {
+        Self {
+            problem_id: v.problem_id,
+            title: v.title,
+            rating: v.rating,
+            tags: v.tags,
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            excerpt: v.excerpt,
+            updated_at: v.updated_at,
+        }
+    }
+}
+
+impl From<EditorialSummaryJs> for xcpc_app::EditorialSummaryJs {
+    fn from(v: EditorialSummaryJs) -> Self {
+        Self {
+            problem_id: v.problem_id,
+            title: v.title,
+            rating: v.rating,
+            tags: v.tags,
+            sources: v.sources.into_iter().map(Into::into).collect(),
+            excerpt: v.excerpt,
+            updated_at: v.updated_at,
+        }
+    }
+}
+
+impl From<xcpc_app::EditorialListResultJs> for EditorialListResultJs {
+    fn from(v: xcpc_app::EditorialListResultJs) -> Self {
+        Self {
+            items: v.items.into_iter().map(Into::into).collect(),
+            total: v.total,
+            available_tags: v.available_tags,
+            error: v.error,
+        }
+    }
+}
+
+impl From<EditorialListResultJs> for xcpc_app::EditorialListResultJs {
+    fn from(v: EditorialListResultJs) -> Self {
+        Self {
+            items: v.items.into_iter().map(Into::into).collect(),
+            total: v.total,
+            available_tags: v.available_tags,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginUiHtmlJs> for PluginUiHtmlJs {
+    fn from(v: xcpc_app::PluginUiHtmlJs) -> Self {
+        Self {
+            ok: v.ok,
+            html: v.html,
+            plugin_id: v.plugin_id,
+            workspace_read: v.workspace_read,
+            error: v.error,
+            error_code: v.error_code,
+        }
+    }
+}
+
+impl From<PluginUiHtmlJs> for xcpc_app::PluginUiHtmlJs {
+    fn from(v: PluginUiHtmlJs) -> Self {
+        Self {
+            ok: v.ok,
+            html: v.html,
+            plugin_id: v.plugin_id,
+            workspace_read: v.workspace_read,
+            error: v.error,
+            error_code: v.error_code,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginWorkspaceResultJs> for PluginWorkspaceResultJs {
+    fn from(v: xcpc_app::PluginWorkspaceResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            data_json: v.data_json,
+            error: v.error,
+            error_code: v.error_code,
+        }
+    }
+}
+
+impl From<PluginWorkspaceResultJs> for xcpc_app::PluginWorkspaceResultJs {
+    fn from(v: PluginWorkspaceResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            data_json: v.data_json,
+            error: v.error,
+            error_code: v.error_code,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginRenderPngResultJs> for PluginRenderPngResultJs {
+    fn from(v: xcpc_app::PluginRenderPngResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            png_base64: v.png_base64,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginRenderPngResultJs> for xcpc_app::PluginRenderPngResultJs {
+    fn from(v: PluginRenderPngResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            png_base64: v.png_base64,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginKvResultJs> for PluginKvResultJs {
+    fn from(v: xcpc_app::PluginKvResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            found: v.found,
+            value_json: v.value_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginKvResultJs> for xcpc_app::PluginKvResultJs {
+    fn from(v: PluginKvResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            found: v.found,
+            value_json: v.value_json,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginWatchEventJs> for PluginWatchEventJs {
+    fn from(v: xcpc_app::PluginWatchEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            paths: v.paths,
+            changed_plugin_ids: v.changed_plugin_ids,
+        }
+    }
+}
+
+impl From<PluginWatchEventJs> for xcpc_app::PluginWatchEventJs {
+    fn from(v: PluginWatchEventJs) -> Self {
+        Self {
+            kind: v.kind,
+            paths: v.paths,
+            changed_plugin_ids: v.changed_plugin_ids,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginPickFileResultJs> for PluginPickFileResultJs {
+    fn from(v: xcpc_app::PluginPickFileResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            name: v.name,
+            text: v.text,
+            content_base64: v.content_base64,
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginPickFileResultJs> for xcpc_app::PluginPickFileResultJs {
+    fn from(v: PluginPickFileResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            name: v.name,
+            text: v.text,
+            content_base64: v.content_base64,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::ThemeColorEntryJs> for ThemeColorEntryJs {
+    fn from(v: xcpc_app::ThemeColorEntryJs) -> Self {
+        Self {
+            key: v.key,
+            value: v.value,
+        }
+    }
+}
+
+impl From<ThemeColorEntryJs> for xcpc_app::ThemeColorEntryJs {
+    fn from(v: ThemeColorEntryJs) -> Self {
+        Self {
+            key: v.key,
+            value: v.value,
+        }
+    }
+}
+
+impl From<xcpc_app::ThemeOverridesJs> for ThemeOverridesJs {
+    fn from(v: xcpc_app::ThemeOverridesJs) -> Self {
+        Self {
+            light_colors: v.light_colors.into_iter().map(Into::into).collect(),
+            dark_colors: v.dark_colors.into_iter().map(Into::into).collect(),
+            radius: v.radius,
+            editor_font_family: v.editor_font_family,
+            editor_font_size: v.editor_font_size,
+            editor_line_height: v.editor_line_height,
+            active_path: v.active_path,
+        }
+    }
+}
+
+impl From<ThemeOverridesJs> for xcpc_app::ThemeOverridesJs {
+    fn from(v: ThemeOverridesJs) -> Self {
+        Self {
+            light_colors: v.light_colors.into_iter().map(Into::into).collect(),
+            dark_colors: v.dark_colors.into_iter().map(Into::into).collect(),
+            radius: v.radius,
+            editor_font_family: v.editor_font_family,
+            editor_font_size: v.editor_font_size,
+            editor_line_height: v.editor_line_height,
+            active_path: v.active_path,
+        }
+    }
 }
