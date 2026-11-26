@@ -2,6 +2,28 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0-beta.2] - 2026-11-26
+
+全栈性能优化版本：彻底修复切换版式选项（如题目类型）及日常操作出现 6–11 秒主线程卡死的问题，并补齐 IPC 性能追踪与自动化性能回归门禁。
+
+### 性能优化
+
+- **消除 UI 主线程同步阻塞（`apps/desktop`）**：
+  - `State::info()` 改为直接读取内存索引 `WorkspaceIndex`，不再在每次刷新时全盘重读工作区所有题目与比赛。
+  - `inspect_package` 与 `export_status` 迁移至后台线程异步执行（带目标与序号防竞态保护），题库菜单改用 O(1) `has_package` 查询；`search_problems` 与 `contest_detail` 不再持 `core` 锁或在 UI 线程逐题全量 SHA-256 哈希 `tests/`。
+  - 为题面模板、板子书（TRD）模板与比赛/板子书专属模板增加基于 `(len, mtime)` 指纹的 schema 缓存，修改题目属性时不再重复编译所有 Typst 模板。
+  - 后台工作区重扫与批量构建索引刷新移出 `core` 锁，消除偶发 UI 停顿；补齐题目包变更后的内存索引刷新。
+- **消除隐藏视图响应式雪崩与命令面板卡顿（`apps/desktop/src/ui`）**：
+  - 新增 `activeRevision(active)`，未激活的隐藏空间不再随全局 `revision()` 同步重算或触发隐藏预览编译。
+  - `CommandPalette` 缓存模板/板子书列表与插件命令并提供 O(1) 查找，消除逐键与逐行同步 IPC。
+- **核心 I/O、哈希与数据库查询优化（`crates/*`）**：
+  - `Workspace::resolve()` 改为逐段 `symlink_metadata` 校验，仅在遇到符号链接时才回退 `canonicalize()`，大幅降低 Windows / 同步盘环境下的磁盘系统调用开销。
+  - `compute_package_hash` 与 `check_dirty_inputs` 改为 64KB 流式读取并引入有界 `(path, len, mtime)` stat 缓存；实时预览跳过无用的数据包全量哈希（`xcpc check` 与定稿检查保持不变）。
+  - `xcpc-sync` 为 `(LOWER(platform), LOWER(problem_key))` 新增表达式索引，避免 SQLite 全表扫描；优化训练日志派生为 $O(L + P)$；为 `mitex::convert_math`、引擎 `canonical_root` 与反查字形 `Span` 补充缓存。
+- **可观测性与回归门禁**：
+  - 前端 `preview` 单例接入零开销录制期 `Proxy` 自动追踪全部同步/异步 IPC，Rust 侧补齐核心路径追踪 span，`scripts/trace-analyze.py` 新增未归因卡顿分析。
+  - 新增多项确定性 Rust/UI 性能回归测试与静态同步重型 IPC 禁用门禁。
+
 ## [0.5.0-beta.1] - 2026-11-26
 
 Phase 5（5A–5C）首个预览版：围绕赛前准备与赛时翻阅，推出**活体板子书（Living TRD）与可验证算法模板库**——代码、数学说明、自动化验板与印刷级 PDF 排版同源联动。

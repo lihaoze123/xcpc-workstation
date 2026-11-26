@@ -1,8 +1,8 @@
 {
   "name": "XCPC Workstation",
   "id": "dev.xcpc.workstation",
-  "version": "0.5.0-beta.1",
-  "build": 10,
+  "version": "0.5.0-beta.2",
+  "build": 11,
   "rust": ".",
   "capabilities": {
     "webview": {
