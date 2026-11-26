@@ -5,6 +5,7 @@
 import { Canvas, computed, effect, signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { Segmented } from "../kit";
+import { SectionEmpty } from "../layout";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor, token, type Tier } from "../theme";
 import {
@@ -166,11 +167,7 @@ export function RatingChartCard(props: { series: readonly PlatformRatingSeries[]
       <If
         when={points().length > 0}
         else={
-          <View style={{ height: CHART_H, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("training.rating.empty")}
-            </Text>
-          </View>
+          <SectionEmpty message={t("training.rating.empty")} style={{ height: CHART_H }} />
         }
       >
         <Canvas

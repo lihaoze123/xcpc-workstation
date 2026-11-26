@@ -8,6 +8,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
+import { EmptyState } from "../layout";
 import { Modal } from "../Modal";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO } from "../theme";
@@ -226,22 +227,20 @@ export function PackageQuickEditModal(props: {
         <If
           when={!tooLarge()}
           else={
-            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[12] }}>
-              <Icon name="fileText" size="lg" tone="muted-foreground" />
-              <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-secondary-foreground">
-                {`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
-              </Text>
-              <If when={props.relPath}>
-                {(rel) => (
+            <EmptyState
+              icon="fileText"
+              title={`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
+              action={
+                props.relPath ? (
                   <Btn
                     label={t("build.quickEdit.openExternal")}
                     icon="folderOpen"
                     variant="primary"
-                    onPress={() => props.onOpenExternal(rel())}
+                    onPress={() => props.onOpenExternal(props.relPath!)}
                   />
-                )}
-              </If>
-            </View>
+                ) : undefined
+              }
+            />
           }
         >
           <View style={{ flex: 1, minHeight: 0 }}>

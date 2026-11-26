@@ -18,7 +18,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn, Segmented, tip } from "../kit";
-import { EmptyState } from "../layout";
+import { EmptyState, FilterEmpty, PageLoading, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { compilerMissing, dialog, ensureToolchainLoaded, goSettings, onExternalChange, preview, type UiError } from "../store";
 import { showToast } from "../Toast";
@@ -1965,7 +1965,22 @@ export function BuildConsole(props: {
 
                     {/* Scrollable Compact Single-Line Test Rows (with optional collapsible OI subtask headers) */}
                     <Scroll style={{ flex: 1, minHeight: 0 }}>
-                      <Each of={matrixSubtaskGroups()} key={(g) => g.key}>
+                      <If
+                        when={displayedTableRows().length > 0}
+                        else={
+                          <If
+                            when={onlyAnomalyRows()}
+                            else={<SectionEmpty message={t("build.tests.empty")} />}
+                          >
+                            <FilterEmpty
+                              message={t("build.tests.empty")}
+                              onClear={() => onlyAnomalyRows.set(false)}
+                              clearLabel={t("build.filter.clear")}
+                            />
+                          </If>
+                        }
+                      >
+                        <Each of={matrixSubtaskGroups()} key={(g) => g.key}>
                         {(group) => {
                           const isGrouped = () => subtasks().length > 0;
                           const isCollapsed = () => isGrouped() && Boolean(collapsedSubtasks()[group().key]);
@@ -2105,7 +2120,9 @@ export function BuildConsole(props: {
                                           {row().name}
                                         </Text>
                                         <If when={row().validator_ok === false}>
-                                          <Icon name="triangleAlert" size="sm" tone="destructive" />
+                                          <View tooltip={tip(row().validator_message || t("build.tests.validatorFailed"))}>
+                                            <Icon name="triangleAlert" size="sm" tone="destructive" />
+                                          </View>
                                         </If>
                                         <If when={row().size_bytes > 0}>
                                           <Text style={{ fontSize: FONT_SIZE.caption, fontVariant: ["tabular-nums"], flexShrink: 0 }} class="text-muted-foreground">
@@ -2146,7 +2163,8 @@ export function BuildConsole(props: {
                             </View>
                           );
                         }}
-                      </Each>
+                        </Each>
+                      </If>
                     </Scroll>
                   </View>
                 </Scroll>
@@ -3353,11 +3371,7 @@ export function BuildConsole(props: {
                 <Scroll style={{ flex: 1 }} contentStyle={{ paddingTop: SPACE[16], paddingBottom: SPACE[24], paddingLeft: SPACE[20], paddingRight: SPACE[20], gap: SPACE[12] }}>
                   <If
                     when={sanitizerReport()}
-                    else={
-                      <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
-                        {t("build.sanitize.running")}
-                      </Text>
-                    }
+                    else={<PageLoading active={true} />}
                   >
                     {(rep) => {
                       const mainName = () => solutionSpecs().find((sp) => sp.is_main)?.name;
@@ -3450,9 +3464,12 @@ export function BuildConsole(props: {
                   <If
                     when={testerSubs().length > 0}
                     else={
-                      <Text style={{ fontSize: FONT_SIZE.body, padding: SPACE[8] }} class="text-secondary-foreground">
-                        {t("build.external.running")}
-                      </Text>
+                      <If
+                        when={externalRunning()}
+                        else={<SectionEmpty message={t("build.external.empty")} />}
+                      >
+                        <PageLoading active={true} />
+                      </If>
                     }
                   >
                     <View style={{ height: CONTROL.lg, paddingLeft: SPACE[8], paddingRight: SPACE[8], flexDirection: "row", alignItems: "center", gap: SPACE[12] }}>

@@ -9,6 +9,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { locale, t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn, tip } from "../kit";
+import { EmptyState } from "../layout";
 import { errorOf, preview, type UiError } from "../store";
 import { editorFontSize, editorLineHeight, editorMono, MONO, popoverShadow } from "../theme";
 import {
@@ -269,18 +270,18 @@ export function InlineFileEditor(props: {
       <If
         when={!tooLarge()}
         else={
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[12] }}>
-            <Icon name="fileText" size="lg" tone="muted-foreground" />
-            <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-secondary-foreground">
-              {`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
-            </Text>
-            <Btn
-              label={t("build.quickEdit.openExternal")}
-              icon="folderOpen"
-              variant="primary"
-              onPress={() => props.onOpenExternal(props.relPath)}
-            />
-          </View>
+          <EmptyState
+            icon="fileText"
+            title={`${t("build.quickEdit.tooLarge")} (${formatBytesCompact(sizeBytes())})`}
+            action={
+              <Btn
+                label={t("build.quickEdit.openExternal")}
+                icon="folderOpen"
+                variant="primary"
+                onPress={() => props.onOpenExternal(props.relPath)}
+              />
+            }
+          />
         }
       >
         <View style={{ flex: 1, minHeight: 0 }}>

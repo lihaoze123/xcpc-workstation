@@ -740,12 +740,16 @@ function ContestPanel(props: { id: string; active: boolean }) {
                       </Text>
                       <View
                         tooltip={
-                          x().item.packageStatus && x().item.packageStatus !== "verified_fresh"
-                            ? tip(x().item.packageStatus === "failed" ? t("library.package.failed") : t("library.package.unverified"))
-                            : undefined
+                          x().item.missing
+                            ? tip(t("contests.missingProblemTooltip"))
+                            : x().item.packageStatus && x().item.packageStatus !== "verified_fresh"
+                              ? tip(x().item.packageStatus === "failed" ? t("library.package.failed") : t("library.package.unverified"))
+                              : undefined
                         }
                       >
-                        <StatusMark kind={markForPackageStatus(x().item.packageStatus)} />
+                        <If when={x().item.missing} else={<StatusMark kind={markForPackageStatus(x().item.packageStatus)} />}>
+                          <Icon name="triangleAlert" size="sm" tone="destructive" />
+                        </If>
                       </View>
                       <Text
                         style={{ width: 110, ...TYPE.caption, textAlign: "right", fontVariant: ["tabular-nums"] }}

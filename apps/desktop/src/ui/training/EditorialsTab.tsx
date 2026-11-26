@@ -8,7 +8,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, Chip, IconBtn, RatingBadge, tip } from "../kit";
-import { DetailHeader, EmptyState } from "../layout";
+import { DetailHeader, EmptyState, FilterEmpty, SectionEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
 import { info, openStudio } from "../store";
@@ -338,16 +338,12 @@ export function EditorialsTab(props: EditorialsTabProps) {
                 <If
                   when={props.items.length > 0}
                   else={
-                    <View
-                      testID="training-editorials-no-match"
-                      style={{ padding: SPACE[24], alignItems: "center", gap: SPACE[4] }}
-                    >
-                      <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                        {t("training.editorials.noMatchTitle")}
-                      </Text>
-                      <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                        {t("training.editorials.noMatchDesc")}
-                      </Text>
+                    <View testID="training-editorials-no-match" style={{ flex: 1 }}>
+                      <FilterEmpty
+                        message={t("training.editorials.noMatchTitle")}
+                        clearLabel={t("training.submissions.clearFilters")}
+                        onClear={() => props.onFilterChange({ ...DEFAULT_EDITORIAL_FILTER })}
+                      />
                     </View>
                   }
                 >
@@ -457,11 +453,7 @@ export function EditorialsTab(props: EditorialsTabProps) {
               <If
                 when={selectedItem()}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[24] }}>
-                    <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
-                      {t("training.editorials.selectHint")}
-                    </Text>
-                  </View>
+                  <SectionEmpty message={t("training.editorials.selectHint")} style={{ flex: 1 }} />
                 }
               >
                 {(cur) => (

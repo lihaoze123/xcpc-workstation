@@ -31,9 +31,11 @@ import {
   type PreviewView,
   type SourceLocationJs,
 } from "xcpc-workstation/native";
+import { ErrorDisplay } from "../ErrorDisplay";
 import { Icon, type IconName } from "../Icon";
 import { t } from "../i18n";
-import { DelayedSpinner, tip } from "../kit";
+import { tip } from "../kit";
+import { PageLoading } from "../layout";
 import {
   BASE_SCALE,
   DEFAULT_PAGE,
@@ -1394,35 +1396,27 @@ export function PreviewCanvas(props: {
 
       {/* Initial compile >150 ms loading indicator */}
       <If when={pages().length === 0 && !failure() && !!key()}>
-        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-          <DelayedSpinner active={true} size={18} />
-        </View>
+        <PageLoading active={true} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, pointerEvents: "none" }} />
       </If>
 
       {/* Typesetting failure overlay */}
       <If when={pages().length === 0 ? failure() : undefined}>
         {(f) => (
-          <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[8] }}>
-            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold, lineHeight: LINE_HEIGHT.strong }} class="text-secondary-foreground">
-              {t("preview.typesetFailed")}
-            </Text>
-            <If when={!!f().message}>
-              <Text
-                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, textAlign: "center", maxWidth: 420, numberOfLines: 3, textOverflow: "ellipsis" }}
-                class="text-muted-foreground"
-              >
-                {f().message}
-              </Text>
-            </If>
-            <If when={f().file}>
-              <Text
-                style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.body, textDecorationLine: props.onDiagnostic ? "underline" : "none" }}
-                class={props.onDiagnostic ? "text-primary" : "text-muted-foreground"}
-                onPress={() => props.onDiagnostic?.(f())}
-              >
-                {`${f().file}${f().line ? `:${f().line}` : ""}`}
-              </Text>
-            </If>
+          <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: SPACE[32] }}>
+            <ErrorDisplay
+              align="center"
+              error={{ code: "pdf_compile_failed", error: f().message || undefined }}
+              locate={
+                f().file
+                  ? [
+                      {
+                        label: `${f().file}${f().line ? `:${f().line}` : ""}`,
+                        onPress: () => props.onDiagnostic?.(f()),
+                      },
+                    ]
+                  : undefined
+              }
+            />
           </View>
         )}
       </If>

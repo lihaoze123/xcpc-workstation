@@ -27,6 +27,7 @@ import { ErrorDisplay } from "../ErrorDisplay";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, createTransientValue, IconBtn, tip } from "../kit";
+import { EmptyState, PageLoading } from "../layout";
 import { Modal } from "../Modal";
 import { colorTransition, overlayTransition, panelTransition } from "../motion";
 import { errorOf, preview, revision, type UiError } from "../store";
@@ -90,6 +91,7 @@ export function AssetsGalleryModal(props: {
   onLocateReference: (file: string, line: number) => void;
 }) {
   const assets = signal<ProblemAssetJs[]>([]);
+  const loaded = signal(false);
   const localRev = signal(0);
   const mode = signal<"grid" | "lightbox">("grid");
   const lightboxMounted = signal(false);
@@ -129,10 +131,12 @@ export function AssetsGalleryModal(props: {
         renaming.set(undefined);
         confirmingDelete.set(undefined);
         error.set(undefined);
+        loaded.set(false);
       } else {
         error.set(undefined);
         confirmingDelete.set(undefined);
         renaming.set(undefined);
+        loaded.set(false);
       }
     });
   });
@@ -157,6 +161,7 @@ export function AssetsGalleryModal(props: {
       .then((list) => {
         if (seq !== listSeq) return;
         assets.set(list);
+        loaded.set(true);
         const cur = untracked(selectedIndex);
         if (list.length === 0) {
           selectedIndex.set(0);
@@ -166,7 +171,10 @@ export function AssetsGalleryModal(props: {
         }
       })
       .catch(() => {
-        if (seq === listSeq) assets.set([]);
+        if (seq === listSeq) {
+          assets.set([]);
+          loaded.set(true);
+        }
       });
   });
 
@@ -635,28 +643,21 @@ export function AssetsGalleryModal(props: {
             <If
               when={assets().length > 0}
               else={
-                <View
-                  style={{
-                    minHeight: 320,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: SPACE[8],
-                    padding: SPACE[32],
-                  }}
+                <If
+                  when={loaded()}
+                  else={<PageLoading active={true} style={{ minHeight: 320 }} />}
                 >
-                  <View
-                    class="bg-muted"
-                    style={{ width: 44, height: 44, borderRadius: RADIUS.lg, alignItems: "center", justifyContent: "center" }}
-                  >
-                    <Icon name="image" size="lg" tone="muted-foreground" />
-                  </View>
-                  <Text style={{ fontSize: FONT_SIZE.body }} class="text-secondary-foreground">
-                    {t("assets.empty")}
-                  </Text>
-                  <If when={!props.readOnly}>
-                    <Btn label={t("assets.importImage")} icon="plus" variant="primary" size="sm" onPress={() => void handleImport()} />
-                  </If>
-                </View>
+                  <EmptyState
+                    icon="image"
+                    title={t("assets.empty")}
+                    action={
+                      !props.readOnly ? (
+                        <Btn label={t("assets.importImage")} icon="plus" variant="primary" size="sm" onPress={() => void handleImport()} />
+                      ) : undefined
+                    }
+                    style={{ minHeight: 320 }}
+                  />
+                </If>
               }
             >
               <View

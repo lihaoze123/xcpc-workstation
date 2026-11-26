@@ -205,7 +205,9 @@ function Row(props: {
         {props.title}
       </Text>
       <If when={props.missing}>
-        <Icon name="triangleAlert" size="sm" tone="destructive" />
+        <View tooltip={tip(t("contests.missingSuffix", { title: props.title }))}>
+          <Icon name="triangleAlert" size="sm" tone="destructive" />
+        </View>
       </If>
       <If when={!props.isCover && !props.missing}>
         <StatusMark kind={props.mark ?? "none"} />

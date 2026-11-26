@@ -9,6 +9,7 @@ import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Chip, tip } from "../kit";
+import { EmptyState, FilterEmpty } from "../layout";
 import { colorTransition } from "../motion";
 import { cardShadow } from "../theme";
 import { showToast } from "../Toast";
@@ -205,24 +206,22 @@ export function ContestsTab(props: {
       <If
         when={grouped().length > 0}
         else={
-          <View
-            testID="training-contests-empty"
-            class="bg-card border border-border"
-            style={{
-              borderRadius: RADIUS.lg,
-              padding: SPACE[32],
-              alignItems: "center",
-              justifyContent: "center",
-              gap: SPACE[6],
-              boxShadow: cardShadow(),
-            }}
-          >
-            <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-              {t("training.contests.emptyTitle")}
-            </Text>
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("training.contests.emptyDesc")}
-            </Text>
+          <View testID="training-contests-empty" style={{ flex: 1 }}>
+            <If
+              when={props.platformFilter !== ""}
+              else={
+                <EmptyState
+                  icon="trophy"
+                  title={t("training.contests.emptyTitle")}
+                  hint={t("training.contests.emptyDesc")}
+                />
+              }
+            >
+              <FilterEmpty
+                message={t("training.contests.emptyTitle")}
+                onClear={() => props.onPlatformChange("")}
+              />
+            </If>
           </View>
         }
       >

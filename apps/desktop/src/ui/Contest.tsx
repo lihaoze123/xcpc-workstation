@@ -206,9 +206,7 @@ export function UnfreezeDialog() {
             </Scroll>
           </View>
         </If>
-        <If when={displayedError()}>
-          <ErrorDisplay error={displayedError()} />
-        </If>
+        <ErrorDisplay error={displayedError()} slot />
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: SPACE[8] }}>
           <Btn label={t("common.cancel")} variant="ghost" onPress={close} />
           <Btn label={t("contests.reopen")} variant="primary" disabled={diffFailed() || info().readOnly} onPress={confirm} testID="confirm-unfreeze" />

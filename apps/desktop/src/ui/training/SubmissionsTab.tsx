@@ -9,6 +9,7 @@ import { Preview } from "xcpc-workstation/native";
 import { t } from "../i18n";
 import { Icon } from "../Icon";
 import { Btn, IconBtn, RatingBadge, Segmented, tip } from "../kit";
+import { EmptyState, FilterEmpty } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { colorTransition } from "../motion";
 import { info, openStudio, preview, refresh } from "../store";
@@ -485,24 +486,23 @@ export function SubmissionsTab(props: {
         <If
           when={props.page.items.length > 0}
           else={
-            <View
-              testID="training-submissions-empty"
-              class="bg-card border border-border"
-              style={{
-                borderRadius: RADIUS.lg,
-                padding: SPACE[32],
-                alignItems: "center",
-                justifyContent: "center",
-                gap: SPACE[6],
-                boxShadow: cardShadow(),
-              }}
-            >
-              <Text style={{ fontSize: FONT_SIZE.body, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                {t("training.submissions.emptyTitle")}
-              </Text>
-              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                {t("training.submissions.emptyDesc")}
-              </Text>
+            <View testID="training-submissions-empty" style={{ flex: 1 }}>
+              <If
+                when={activeFilterCount()}
+                else={
+                  <EmptyState
+                    icon="activity"
+                    title={t("training.empty.title")}
+                    hint={t("training.submissions.emptyDesc")}
+                  />
+                }
+              >
+                <FilterEmpty
+                  message={t("training.submissions.emptyTitle")}
+                  clearLabel={t("training.submissions.clearFilters")}
+                  onClear={clearFilters}
+                />
+              </If>
             </View>
           }
         >

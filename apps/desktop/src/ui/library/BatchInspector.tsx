@@ -8,6 +8,7 @@ import type { BatchTaskItemJs, BatchTaskSnapshotJs, GroupSummaryJs, ProblemSumma
 import { t } from "../i18n";
 import { Icon, type IconName, type IconTone } from "../Icon";
 import { Btn, DelayedSpinner, tip } from "../kit";
+import { ErrorDisplay } from "../ErrorDisplay";
 import { DetailHeader } from "../layout";
 import { errorCopy } from "../logic";
 import { AppMenu, type MenuEntry } from "../Menu";
@@ -311,11 +312,14 @@ export function BatchInspector(props: {
                   trackClass="h-1.5 rounded-full bg-muted overflow-hidden"
                   indicatorClass="h-full rounded-full bg-primary"
                 />
-                {snap().error && (
-                  <Text style={{ fontSize: FONT_SIZE.caption }} class="text-destructive">
-                    {errorCopy(snap().code, snap().error).message}
-                  </Text>
-                )}
+                <ErrorDisplay
+                  error={
+                    snap().error
+                      ? { code: snap().code ?? undefined, error: snap().error ?? undefined }
+                      : undefined
+                  }
+                  slot
+                />
               </View>
 
               {/* Per-problem live results list */}

@@ -22,6 +22,7 @@ import { Input } from "nsh/base";
 import { Icon, type IconName, type IconSize } from "../Icon";
 import { locale, t, type Locale, type MessageKey } from "../i18n";
 import { Kbd, tip } from "../kit";
+import { SectionEmpty } from "../layout";
 import { colorTransition, overlayTransition } from "../motion";
 import { popoverShadow } from "../theme";
 
@@ -659,13 +660,7 @@ export function SlashPopover(props: {
             else={
               <If
                 when={props.items.length > 0}
-                else={
-                  <View style={{ paddingTop: SPACE[12], paddingBottom: SPACE[12], alignItems: "center" }}>
-                    <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                      {t("slash.noMatch")}
-                    </Text>
-                  </View>
-                }
+                else={<SectionEmpty message={t("slash.noMatch")} style={{ paddingVertical: SPACE[12] }} />}
               >
                 <View style={{ gap: ROW_GAP }}>
                   <Each of={props.items} key={(cmd) => cmd.id}>

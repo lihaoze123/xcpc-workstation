@@ -17,7 +17,7 @@ import { Btn, Chevron, Chip, IconBtn, RatingBadge, Segmented, tip } from "./kit"
 import { locale, t } from "./i18n";
 import { Icon } from "./Icon";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
-import { DetailHeader, EmptyState, Toolbar } from "./layout";
+import { DetailHeader, EmptyState, FilterEmpty, Toolbar } from "./layout";
 import {
   applyRowSelection,
   EMPTY_SELECTION,
@@ -797,12 +797,7 @@ export function LibraryView(props: { active: boolean }) {
 
   const emptyElement = () =>
     filtered() ? (
-      <EmptyState
-        icon="searchX"
-        title={t("library.emptyFilteredTitle")}
-        hint={t("library.emptyFilteredHint")}
-        action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clearFilters} />}
-      />
+      <FilterEmpty message={t("library.emptyFilteredTitle")} onClear={clearFilters} />
     ) : (
       <EmptyState
         icon="libraryBig"

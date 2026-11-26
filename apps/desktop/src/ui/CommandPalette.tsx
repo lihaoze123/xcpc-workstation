@@ -8,6 +8,7 @@ import { Command, type CommandEntry, type CommandItem, type CommandRef } from "n
 import { t } from "./i18n";
 import { Kbd } from "./kit";
 import { Icon, type IconName } from "./Icon";
+import { FilterEmpty } from "./layout";
 import { buildPaletteItems, shortcutForSpace } from "./logic";
 import { TITLE_BAR } from "./TitleBar";
 import { backdropTransition, overlayTransform, overlayTransition } from "./motion";
@@ -586,12 +587,19 @@ function PaletteBody() {
         </View>
       )}
       empty={
-        <View style={{ height: 72, alignItems: "center", justifyContent: "center", gap: SPACE[6] }}>
-          <Icon name="searchX" size="lg" tone="muted-foreground" />
-          <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
-            {t("common.searchNotFound", { query: built().query || query().trim() })}
-          </Text>
-        </View>
+        <FilterEmpty
+          message={t("common.searchNotFound", { query: built().query || query().trim() })}
+          onClear={
+            query().trim().length > 0
+              ? () => {
+                  query.set("");
+                  cmdRef?.focus();
+                }
+              : undefined
+          }
+          clearLabel={t("common.clear")}
+          style={{ flex: 0, height: 72, paddingVertical: SPACE[0] }}
+        />
       }
     />
   );

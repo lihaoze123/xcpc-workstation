@@ -21,7 +21,7 @@ import { Btn, Chip, Chevron, RatingBadge, tip } from "./kit";
 import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { Icon } from "./Icon";
-import { EmptyState, Spacer } from "./layout";
+import { EmptyState, FilterEmpty, Spacer } from "./layout";
 import { TIER_RANGES, togglePickProblem, type TierName } from "./logic";
 import { AppMenu, type MenuEntry } from "./Menu";
 import { DialogHeader } from "./Modal";
@@ -387,12 +387,7 @@ export function PickProblemsBody(props: { contestId: string }) {
           when={rows().length > 0}
           else={
             <View style={{ height: PICK_LIST_HEIGHT }}>
-              <EmptyState
-                icon="searchX"
-                title={t("library.emptyFilteredTitle")}
-                hint={t("pickProblems.emptyFilteredHint")}
-                action={<Btn label={t("library.filter.clear")} icon="filterX" onPress={clearFilters} />}
-              />
+              <FilterEmpty message={t("library.emptyFilteredTitle")} onClear={clearFilters} />
             </View>
           }
         >

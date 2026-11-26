@@ -561,9 +561,7 @@ function LayoutPane(props: { active: boolean }) {
         </Section>
       </If>
 
-      <If when={err()}>
-        <ErrorDisplay error={err()} onDismiss={() => err.set(undefined)} />
-      </If>
+      <ErrorDisplay error={err()} slot onDismiss={() => err.set(undefined)} />
 
       <ForkTemplateModal
         open={forkOpen()}

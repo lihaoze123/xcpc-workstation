@@ -5,9 +5,8 @@
 import { batch, computed, effect, Scroll, signal, Text, View } from "nsh";
 import type { RepoPluginEntryJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
-import { Icon } from "./Icon";
 import { Btn } from "./kit";
-import { GUTTER, Spacer, Toolbar } from "./layout";
+import { EmptyState, GUTTER, PageLoading, Spacer, Toolbar } from "./layout";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
 import {
   activeToolId,
@@ -300,22 +299,27 @@ export function ToolsView(props: { active?: boolean }) {
               <If
                 when={recommended().length > 0}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[32], gap: SPACE[8] }}>
-                    <Icon name="squareCode" size="lg" tone="muted-foreground" />
-                    <Text style={{ fontSize: FONT_SIZE.strong, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                      {t("tools.emptyTitle")}
-                    </Text>
-                    <Text style={{ fontSize: FONT_SIZE.caption, textAlign: "center", maxWidth: 360 }} class="text-secondary-foreground">
-                      {t("tools.emptyDesc")}
-                    </Text>
-                    <Btn
-                      variant="outline"
-                      size="sm"
-                      icon="settings"
-                      label={t("tools.managePlugins")}
-                      onPress={() => goSettings("plugins")}
-                    />
-                  </View>
+                  <If
+                    when={loadingRecommended()}
+                    else={
+                      <EmptyState
+                        icon="squareCode"
+                        title={t("tools.emptyTitle")}
+                        hint={t("tools.emptyDesc")}
+                        action={
+                          <Btn
+                            variant="outline"
+                            size="sm"
+                            icon="settings"
+                            label={t("tools.managePlugins")}
+                            onPress={() => goSettings("plugins")}
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <PageLoading active={true} />
+                  </If>
                 }
               >
                 <View style={{ flex: 1, minHeight: 0, flexDirection: "column" }}>

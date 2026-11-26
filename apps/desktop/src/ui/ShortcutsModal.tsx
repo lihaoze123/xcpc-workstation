@@ -7,6 +7,7 @@ import { Input } from "nsh/base";
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
 import { IconBtn, Kbd, keyLabel } from "./kit";
+import { FilterEmpty } from "./layout";
 import { shortcutForSpace, type Space } from "./logic";
 import { Modal } from "./Modal";
 import { hasWorkspace, info } from "./store";
@@ -299,12 +300,11 @@ export function ShortcutsList(props: {
       <If
         when={groups().length > 0}
         else={
-          <View style={{ height: 96, alignItems: "center", justifyContent: "center", gap: SPACE[6] }}>
-            <Icon name="searchX" size="lg" tone="muted-foreground" />
-            <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
-              {t("common.searchNotFound", { query: query().trim() })}
-            </Text>
-          </View>
+          <FilterEmpty
+            message={t("common.searchNotFound", { query: query().trim() })}
+            onClear={() => setQuery("")}
+            clearLabel={t("common.clear")}
+          />
         }
       >
         <Each of={groups()} key={(g) => g.id}>

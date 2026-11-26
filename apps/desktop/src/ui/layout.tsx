@@ -4,7 +4,9 @@
 // top-aligned with the title. Empty states are an icon, one sentence and one way on.
 
 import { Text, View, type JSX, type StyleProp, type ViewStyle } from "nsh";
+import { t } from "./i18n";
 import { Icon, type IconName } from "./Icon";
+import { DelayedSpinner, FOCUS_RING } from "./kit";
 import { cardShadow, panelShadow } from "./theme";
 import { CONTROL, GUTTER, RADIUS, SPACE, TOOLBAR, TYPE } from "./tokens";
 
@@ -148,6 +150,71 @@ export function EmptyState(props: { icon: IconName; title: string; hint?: string
         )}
       </View>
       {props.action && <View style={{ marginTop: SPACE[24] }}>{props.action}</View>}
+    </View>
+  );
+}
+
+/** Filter-yielded empty state (Phase 6F §3): no icon, one quiet sentence + text button to clear filters. */
+export function FilterEmpty(props: {
+  message: string;
+  onClear?: () => void;
+  clearLabel?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View
+      style={[
+        {
+          flex: 1,
+          flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: SPACE[8],
+          paddingHorizontal: SPACE[16],
+          paddingVertical: SPACE[24],
+        },
+        props.style,
+      ]}
+    >
+      <Text style={TYPE.caption} class="text-secondary-foreground">
+        {props.message}
+      </Text>
+      {props.onClear && (
+        <View
+          onPress={() => props.onClear!()}
+          class={`hover:bg-muted active:bg-accent ${FOCUS_RING}`}
+          style={{
+            paddingHorizontal: SPACE[6],
+            paddingVertical: SPACE[2],
+            borderRadius: RADIUS.xs,
+          }}
+        >
+          <Text style={TYPE.caption} class="text-primary">
+            {props.clearLabel ?? t("library.filter.clear")}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** Block / card / panel-level empty state (Phase 6F §3): a single muted line, no icon. */
+export function SectionEmpty(props: { message: string; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[{ paddingHorizontal: SPACE[16], paddingVertical: SPACE[20], alignItems: "center", justifyContent: "center" }, props.style]}>
+      <Text style={TYPE.caption} class="text-muted-foreground">
+        {props.message}
+      </Text>
+    </View>
+  );
+}
+
+/** Page-level loading state (Phase 6F §3): centered `DelayedSpinner` (appears only after 150ms). */
+export function PageLoading(props: { active: boolean; size?: number; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[{ flex: 1, alignItems: "center", justifyContent: "center" }, props.style]}>
+      <DelayedSpinner active={props.active} size={props.size ?? 18} />
     </View>
   );
 }

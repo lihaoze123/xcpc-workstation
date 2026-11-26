@@ -8,7 +8,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
 import { Btn, Chip, createTransientFlag, DelayedSpinner, Lock, Segmented } from "../kit";
-import { DetailHeader, EmptyState, GUTTER, Spacer, Toolbar } from "../layout";
+import { DetailHeader, EmptyState, FilterEmpty, GUTTER, Spacer, Toolbar } from "../layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "../Menu";
 import { Modal } from "../Modal";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
@@ -326,21 +326,14 @@ export function SnippetsView(props: { active: boolean }) {
               <If
                 when={filteredSnippets().length > 0}
                 else={
-                  <EmptyState
-                    icon="searchX"
-                    title={t("snippets.filterEmptyTitle")}
-                    action={
-                      <Btn
-                        variant="outline"
-                        icon="filterX"
-                        label={t("snippets.filterEmptyClear")}
-                        onPress={() => {
-                          query.set("");
-                          statusFilter.set("all");
-                          tagFilter.set("");
-                        }}
-                      />
-                    }
+                  <FilterEmpty
+                    message={t("snippets.filterEmptyTitle")}
+                    clearLabel={t("snippets.filterEmptyClear")}
+                    onClear={() => {
+                      query.set("");
+                      statusFilter.set("all");
+                      tagFilter.set("");
+                    }}
                   />
                 }
               >

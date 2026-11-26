@@ -5,6 +5,7 @@
 
 import { computed, Text, View } from "nsh";
 import { t } from "../i18n";
+import { FilterEmpty, SectionEmpty } from "../layout";
 import { ratingTier } from "../logic";
 import { cardShadow, tierColor } from "../theme";
 import { isEn, zhEn } from "./locale";
@@ -175,11 +176,16 @@ export function DistributionsRow(props: {
         <If
           when={visibleTags().length > 0}
           else={
-            <View style={{ minHeight: 140, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-                {t("training.tags.empty")}
-              </Text>
-            </View>
+            <If
+              when={props.tagMinRating !== null}
+              else={<SectionEmpty message={t("training.tags.empty")} style={{ minHeight: 140 }} />}
+            >
+              <FilterEmpty
+                message={t("training.tags.empty")}
+                onClear={() => props.onTagMinRatingChange(null)}
+                style={{ minHeight: 140 }}
+              />
+            </If>
           }
         >
           <View style={{ gap: SPACE[6] }}>

@@ -10,6 +10,7 @@ import {
   type SeriesOptions,
 } from "nsh-o11y";
 import { t } from "../i18n";
+import { SectionEmpty } from "../layout";
 import { cardShadow, token } from "../theme";
 import { zhEn } from "./locale";
 import type { DifficultyTrendPoint } from "./types";
@@ -223,11 +224,7 @@ export function DifficultyTrendCard(props: { points: readonly DifficultyTrendPoi
       <If
         when={ratedPoints().length > 0}
         else={
-          <View style={{ height: CHART_H, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("training.trend.empty")}
-            </Text>
-          </View>
+          <SectionEmpty message={t("training.trend.empty")} style={{ height: CHART_H }} />
         }
       >
         <TimeSeriesChart

@@ -9,7 +9,7 @@ import type { PluginSummaryJs, PluginsOverviewJs } from "xcpc-workstation/native
 import { t, type MessageKey } from "./i18n";
 import { Icon } from "./Icon";
 import { Btn, DelayedSpinner, tip } from "./kit";
-import { Section, SectionRow } from "./layout";
+import { Section, SectionEmpty, SectionRow } from "./layout";
 import { AppMenu, MoreTrigger, type MenuEntry } from "./Menu";
 import { DialogHeader, Modal } from "./Modal";
 import { PluginRepoBrowserModal } from "./PluginRepoBrowserModal";
@@ -584,6 +584,11 @@ function ToolPluginRow(props: {
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[8], flexShrink: 0 }}>
+          <If when={!!p().lastError}>
+            <View tooltip={tip(p().lastError!)}>
+              <Icon name="triangleAlert" size="sm" tone="destructive" />
+            </View>
+          </If>
           <If
             when={isPendingTrust(p())}
             else={
@@ -619,15 +624,6 @@ function ToolPluginRow(props: {
       </View>
 
       <CredentialRows plugin={p()} onReload={props.onReload} />
-      <If when={!!p().lastError}>
-        <Text
-          style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, numberOfLines: 1, textOverflow: "ellipsis" }}
-          class="text-destructive"
-          tooltip={tip(p().lastError!)}
-        >
-          {p().lastError}
-        </Text>
-      </If>
     </View>
   );
 }
@@ -845,11 +841,7 @@ export function PluginsPane() {
       {/* Section 1: OJ Accounts & Sync */}
       <Section title={t("settings.plugins.ojAccountsSection")}>
         <If when={ojPlugins().length === 0}>
-          <View style={{ padding: SPACE[12] }}>
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("settings.plugins.empty")}
-            </Text>
-          </View>
+          <SectionEmpty message={t("settings.plugins.empty")} />
         </If>
         <Each
           of={ojPlugins() as ExtendedPluginSummary[]}
@@ -946,11 +938,7 @@ export function PluginsPane() {
         }
       >
         <If when={toolPlugins().length === 0}>
-          <View style={{ padding: SPACE[12] }}>
-            <Text style={{ fontSize: FONT_SIZE.caption }} class="text-muted-foreground">
-              {t("settings.plugins.empty")}
-            </Text>
-          </View>
+          <SectionEmpty message={t("settings.plugins.empty")} />
         </If>
         <Each
           of={toolPlugins() as ExtendedPluginSummary[]}

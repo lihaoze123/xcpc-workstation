@@ -239,7 +239,7 @@ export function Samples(props: { problemId: string; readOnly: boolean; onSaved: 
                 <Btn label={t("samples.add")} icon="plus" onPress={addSample} />
               </View>
             </If>
-            <ErrorDisplay error={error()} onDismiss={() => error.set(undefined)} />
+            <ErrorDisplay error={error()} slot onDismiss={() => error.set(undefined)} />
           </View>
         </Scroll>
       </If>

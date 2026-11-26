@@ -7,6 +7,7 @@ import { Preview } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t } from "../i18n";
 import { Btn, createTransientFlag, IconBtn } from "../kit";
+import { SectionEmpty } from "../layout";
 import { Modal } from "../Modal";
 import { bundlerModalOpen, preview } from "../store";
 import { MONO, monoFont } from "../theme";
@@ -242,11 +243,7 @@ export function BundlerModal() {
               <If
                 when={Boolean(result()?.code)}
                 else={
-                  <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACE[16] }}>
-                    <Text style={{ fontSize: FONT_SIZE.body, textAlign: "center" }} class="text-muted-foreground">
-                      {t("snippets.bundler.outputPlaceholder")}
-                    </Text>
-                  </View>
+                  <SectionEmpty message={t("snippets.bundler.outputPlaceholder")} style={{ flex: 1 }} />
                 }
               >
                 <Editor

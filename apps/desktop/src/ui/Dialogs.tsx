@@ -4,6 +4,7 @@
 import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type InputRef, type KeyEvent, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
 import { Btn, Chip, DelayedSpinner, Segmented } from "./kit";
+import { SectionEmpty } from "./layout";
 import type { ResolvedProblemUrlJs } from "xcpc-workstation/native";
 import { t } from "./i18n";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -543,7 +544,10 @@ function AddToContest(props: { problemId: string }) {
       <View style={{ padding: SPACE[12], paddingBottom: SPACE[12] }}>
         <DialogHeader icon="listPlus" title={t("dialogs.addToContest.title")} description={t("dialogs.addToContest.desc")} />
       </View>
-      <If when={contests().length > 0}>
+      <If
+        when={contests().length > 0}
+        else={<SectionEmpty message={t("contests.emptyTitle")} />}
+      >
         <Scroll style={{ maxHeight: 280 }}>
           <View style={{ gap: SPACE[2] }}>
             <Each of={contests()} key={(c) => c.id}>
@@ -1284,7 +1288,10 @@ function BatchAddToContest(props: { problemIds: readonly string[] }) {
           description={t("dialogs.batchAddToContest.desc", { count: props.problemIds.length })}
         />
       </View>
-      <If when={contests().length > 0}>
+      <If
+        when={contests().length > 0}
+        else={<SectionEmpty message={t("contests.emptyTitle")} />}
+      >
         <Scroll style={{ maxHeight: 280 }}>
           <View style={{ gap: SPACE[2] }}>
             <Each of={contests()} key={(c) => c.id}>

@@ -8,6 +8,7 @@ import type { PreviewRequest } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { t, type MessageKey } from "../i18n";
 import { Btn, Chip, createTransientFlag, DelayedSpinner, IconBtn, Segmented, tip } from "../kit";
+import { SectionEmpty } from "../layout";
 import { InsetPanel } from "../layout";
 import { AppMenu, type MenuEntry } from "../Menu";
 import { PreviewCanvas, type CanvasController } from "../studio/PreviewCanvas";
@@ -494,9 +495,7 @@ export function SnippetStudio(props: { active: boolean }) {
                       <If
                         when={unifiedVerifyRows().length > 0}
                         else={
-                          <Text style={{ fontSize: FONT_SIZE.body }} class="text-muted-foreground">
-                            {t("snippets.studio.noVerifyCases")}
-                          </Text>
+                          <SectionEmpty message={t("snippets.studio.noVerifyCases")} />
                         }
                       >
                         <Each of={unifiedVerifyRows()} key={(row, i) => `${i}:${row.spec.kind}:${row.target}`}>
