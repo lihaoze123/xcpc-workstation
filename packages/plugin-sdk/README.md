@@ -32,6 +32,14 @@ export default defineConfig({
 });
 ```
 
+## WebView Host Environment
+
+When running a pure-Web `<WebView>` tool (`ui_entry = "ui.html"`), the desktop host automatically injects:
+
+- **Theme tokens & fonts**: `--xcpc-*` CSS custom properties (`data-theme="light|dark"`), plus bundled `Inter` and `JetBrains Mono` `@font-face` declarations via `data:` URIs (for Canvas2D/SVG rendering, trigger a redraw on `document.fonts.ready`).
+- **Low-specificity base CSS**: `:where(...)` rules for thin 6px scrollbars, light/dark-aware `<select>` arrows, and button font inheritance / `white-space: nowrap`, keeping Linux WebKitGTK and Windows WebView2 consistent while remaining effortless to override.
+- **Cross-platform capabilities & lifecycle**: `xcpc.clipboard.writeImage` writes both native bitmap (`CF_DIB` on Windows) and `PNG`; idle `<WebView>` instances are unmounted ~15s after leaving the Tools view to reclaim memory, so persist user state with `xcpc.storage`.
+
 ## Full Documentation
 
 See the complete plugin authoring guide (architecture, sandbox boundaries, CLI workflow, and runnable examples):

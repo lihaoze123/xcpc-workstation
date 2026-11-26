@@ -4,17 +4,17 @@
 
 | 维度 | 选型 |
 | :--- | :--- |
-| 平台 | **只在 Linux 上开发和验收**。macOS / Windows 不验收，但能低成本避免的平台特有写法要避免。Web 版远期待定 |
-| 应用框架 | **NSH 0.6（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
+| 平台 | 以 Linux 为主要开发与视觉回归基线，同时提供 **Windows 原生发行版**（支持 Windows 路径规范化去 `\\?\` 前缀、静默 Job Object 评测、WebView2 沙箱与原生 `CF_DIB`+`"PNG"` 剪贴板）。macOS 暂不验收，Web 版远期待定 |
+| 应用框架 | **NSH 0.7（[`nsh.dev`](https://nsh.dev/)）**：Rust Core + TSX UI，`nsh init --template mixed` |
 | UI 组件 | **以 `nsh/base` 为基础**，需要时可以基于 NSH 自己写组件（如预览页面的 `PageImage`）：`Canvas`、`Editor`、`RichEditor`、`DiffView`、`DataTable`、`Command`、`SplitView`、`plot` 等。[`hero-nsh`](https://c-w-xiaohei.github.io/hero-nsh/) 只作样式参考，不作为依赖。视觉规范见 [design-system.md](./design-system.md) |
-| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译、`fontdb` 加载字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF |
-| 题面字体 | Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供；release 构建内嵌 Latin Modern 与 JetBrains Mono，见 [statement-style.md](./statement-style.md#17-字体) |
+| 排版引擎 | 嵌入原生 Rust `typst`：`comemo` 增量编译（有界回收 `evict(2)`）、文档与数学引擎共享 `Arc<FontStore>` 与 `Arc<LazyHash<Library>>`、按需解码内嵌字体、`typst-render` 输出像素缓冲（预览）或 PNG、`typst-pdf` 导出 PDF |
+| 题面字体 | Latin Modern（正文、数学、样例与行内等宽）、JetBrains Mono（代码块）和方正（`foundertype-ctex-fonts`），由 `flake.nix` 锁定并通过 `XCPC_FONT_DIRS` 提供；release 构建内嵌 Latin Modern 与 JetBrains Mono，Windows 未设 `XCPC_FONT_DIRS` 时定向加载核心 CJK 字体并在遇自定义字体名时透明扩展扫描系统字体，见 [statement-style.md](./statement-style.md#17-字体) |
 | 格式转换 | `pulldown-cmark`（GFM + `ENABLE_MATH`）+ `mitex`；LaTeX 输入用 `tylax`；导出为 Markdown 用 `typlite`/`tylax` |
 | 持久化 | 开放的、人类可读的目录（单一事实源，兼容 Git）+ SQLite 派生数据 |
 | 凭据 | 系统钥匙串（`keyring`） |
 | Agent 接口 | `xcpc mcp`（stdio）+ `xcpc <subcommand> --json` |
 | 视觉基准 | `tectonic` 编译参考模板，生成基准 PDF |
-| 题目包（Phase 3） | 本机原生 `g++` / `clang++`（自动探测，可覆写）+ 内置最新版 `testlib.h`；轻量进程监控（Linux `rlimit`/`rusage`、Windows Job Object） |
+| 题目包（Phase 3） | 本机原生 `g++` / `clang++`（自动探测，可覆写）+ 内置最新版 `testlib.h`；轻量进程监控（Linux `rlimit`/`rusage`、Windows `CREATE_NO_WINDOW` + Job Object 真实峰值内存/MLE + `-DFOR_LINUX` + CRLF→LF 归一） |
 
 ## 2. 总体结构
 
@@ -265,7 +265,7 @@ Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`
 - **原子写入**：先写临时文件，再 rename 替换。
 - **冻结只读**：`is_frozen = true` 的比赛及其快照禁止一切写入，写操作返回明确的错误码。解冻只开放给 GUI 和 CLI（需二次确认），不开放给 MCP。
 - **只读模式**：`xcpc mcp --read-only`。
-- **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越。**唯一明确例外**：`import_polygon` 允许只读打开任意本地绝对 `.zip` 路径（强制校验 `.zip` 扩展名并对压缩包内全部条目实施 Zip Slip 路径穿越防护与原子暂存），所有写入操作仍严格限制在工作区目录内。
+- **路径沙箱**：所有文件访问限制在工作区内，防止路径穿越；跨平台统一通过 `xcpc-storage` 的 `canonicalize_clean` 剥离 Windows `\\?\` verbatim 前缀，确保相对路径校验与工作区边界判定在 Windows 与 Linux 行为一致。**唯一明确例外**：`import_polygon` 允许只读打开任意本地绝对 `.zip` 路径（强制校验 `.zip` 扩展名并对压缩包内全部条目实施 Zip Slip 路径穿越防护与原子暂存），所有写入操作仍严格限制在工作区目录内。
 
 ### 7.4 错误文案集中化（Phase 2.5）
 
@@ -276,4 +276,13 @@ Phase 1 的三个工具参数相同：`target`（`problem` / `contest`）、`id`
 
 - **核心底座**：`crates/xcpc-trace`（Rust 侧零开销 Span + 内存环形缓冲 + Chrome Trace / Perfetto JSON 合并导出）、`crates/xcpc-app`（增量拉取 `o11y_poll_delta` 与 `PixelCache` 命中率统计）与桌面端 `apps/desktop/src/ui/o11y/`（基于 `nsh-o11y` 的独立多窗口诊断面板）。
 - **常态轻量层（Always-On Ring）**：始终开启，不启 `rAF` 轮询、不写磁盘。Rust 侧与 JS 侧各自在固定容量内存环（日志 `5,000` 条、慢事件 `1,000` 条）中记录结构化日志与慢操作/错误事件（编译/光栅化/IPC `> 50ms` 或异常），供打开诊断窗口后即时回溯。
-- **激活全量层（Live Diagnostics）**：仅在独立诊断窗口打开，或启动设置 `XCPC_TRACE=1` / `XCPC_O11Y=1` 时激活。以 `200ms` 节拍增量拉取 Rust Span、日志与像素缓存指标，合并 JS 帧间隔（过滤 `> 120ms` 空闲间隙）与交互 INP，驱动 `TimeSeriesChart`（4 面板联动）、`TraceWaterfall` / `TraceComparison` 与 `LogView`；窗口关闭后立即停掉定时器与 `rAF` 退回常态层。
+- **激活全量层（Live Diagnostics）**：仅在独立诊断窗口打开，或启动设置 `XCPC_TRACE=1` / `XCPC_O11Y=1` 时激活。以 `1000ms` 节拍增量拉取 Rust Span、日志与像素缓存指标，合并 JS 帧间隔（过滤 `> 120ms` 空闲间隙）与交互 INP，驱动 `TimeSeriesChart`（4 面板联动）、`TraceWaterfall` / `TraceComparison` 与 `LogView`；窗口关闭后立即停掉定时器与 `rAF` 退回常态层。
+
+### 7.6 内存预算与空闲回收策略
+
+- **共享与按需加载**：`xcpc-engine` 在主排版引擎与数学公式引擎之间共享单一 `Arc<FontStore>` 与 `Arc<LazyHash<Library>>`，内嵌字体按需延迟解码；每次排版后执行 `comemo::evict(2)` 限制增量缓存代际膨胀。
+- **像素缓存与光栅化池**：`xcpc-app` 将 `PixelCache` 预算控制在 `48 MiB`，切换目标文档时立即驱逐旧文档瓦片与 `comemo` 缓存，并复用常驻 `RasterPool` 避免重复建池开销。
+- **分层空闲回收（`reclaim_memory`）**：
+  - 离开工作室 `4s` 后回收像素缓存、AST 缓存与 `comemo`，并在 Windows 上执行 `HeapCompact` 与空闲工作集修剪（活跃工作室中不触发工作集修剪，避免缺页抖动）；
+  - 离开非工作室预览 `6s` 后回收 AST 缓存；关闭诊断窗口 `300ms` 后回收诊断相关瞬态内存；
+  - 离开「工具」空间 `15s` 后自动卸载空闲的插件 `<WebView>` 实例（状态通过 `xcpc.storage` 持久化），释放 WebView2 / WebKitGTK 子进程内存。

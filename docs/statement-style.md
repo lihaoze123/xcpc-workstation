@@ -74,7 +74,7 @@
 | 仿宋（`\fangsong`） | 方正仿宋 `FZFangSong-Z02` | 同上 |
 
 - 方正字体包来自 `github:brsvh/chinese-fonts-overlay`，在 `flake.nix` 中锁定版本。开发环境通过 `XCPC_FONT_DIRS` 提供字体目录，引擎**优先**从这些目录加载字体，保证在任何机器上排版结果一致；release 构建同时内嵌 Latin Modern 与 JetBrains Mono 字体作为兜底。
-- 设置了 `XCPC_FONT_DIRS` 时，引擎默认只加载该目录集合（以及 release 构建内嵌的 Latin Modern / JetBrains Mono），不扫描系统字体，保证跨机器排版与视觉回归确定性；CLI 可额外传入 `--system-fonts`。当 `XCPC_FONT_DIRS` 未设置或为空时（独立打包或 Windows 分发场景），引擎自动扫描可执行文件同级的 `fonts/` 目录并开启系统字体回退，按角色依次查找方正字体 → 思源 / Noto CJK → Windows 常见中文字体（`SimSun` / `SimHei` / `KaiTi` / `FangSong` 等），若发生替换则在编译诊断中给出非致命警告。
+- 设置了 `XCPC_FONT_DIRS` 时，引擎默认只加载该目录集合（以及 release 构建内嵌的 Latin Modern / JetBrains Mono），不扫描系统字体，保证跨机器排版与视觉回归确定性；CLI 可额外传入 `--system-fonts`。当 `XCPC_FONT_DIRS` 未设置或为空时（独立打包或 Windows 分发场景），引擎自动扫描可执行文件同级的 `fonts/` 目录并开启系统字体回退，按角色依次查找方正字体 → 思源 / Noto CJK → Windows 常见中文字体（`SimSun` / `SimHei` / `KaiTi` / `FangSong` 等），若发生替换则在编译诊断中给出非致命警告。在 Windows 上默认仅定向加载核心中文字体文件以控制启动耗时与内存占用；当模板显式指定其他已安装系统字体且首次编译出现 `unknown font family` 时，Core 会透明扩展扫描完整系统字体库并自动重试。
 
 ## 2. 模板与声明式定制
 

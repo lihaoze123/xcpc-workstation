@@ -18,7 +18,7 @@ XCPC Workstation 的所有插件安全边界均在 Rust Core（`xcpc-plugin`）�
 
 在用户显式放行之前，Core 会拒绝该插件的所有调用并返回错误码 `PLUGIN_UNTRUSTED`。放行方式有两种：
 
-1. 在桌面端「设置 → 插件」或触发调用时弹出的权限确认框中点击信任；
+1. 在桌面端安装后自动弹出（或前往「设置 → 插件」与触发调用时弹出）的权限确认框中核对并点击信任；
 2. 在终端执行：
    ```bash
    xcpc plugin trust <plugin-id>
@@ -68,7 +68,7 @@ Core 会持久化记录每个已安装插件的来源仓库（`source_repo`）�
 }
 ```
 
-在底层 WebKitGTK / WebView2 策略层硬性禁止 WebView 发起任何直接网络请求或外部导航。
+在底层 WebKitGTK / WebView2 策略层硬性禁止 WebView 发起任何直接网络请求或外部导航（仅放行宿主受控的本地壳文档 `about:blank` / WebView2 `data:text/html`，不授予任何 `http:` / `https:` 域名权限）。
 
 ### 第二层：受控外层壳 + Sandboxed Iframe + 严格 CSP
 

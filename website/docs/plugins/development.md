@@ -329,6 +329,15 @@ document.getElementById("export")!.addEventListener("click", async () => {
 
 > 若无需 Vite 构建，可直接手写单文件 `ui.html`，在 `<script>` 中访问全局 `window.xcpc`。
 
+### 纯 Web `<WebView>` 宿主环境约定
+
+运行 `ui_entry = "ui.html"` 工具时，桌面宿主会自动提供以下环境保障，确保插件在 Linux（WebKitGTK）与 Windows（WebView2）上表现一致：
+
+- **内嵌字体与主题变量**：自动注入 `--xcpc-*` 主题变量（`data-theme="light|dark"`）以及 `Inter` 与 `JetBrains Mono` 的内联 `@font-face`（`font-src data:`）。若插件在 Canvas2D / SVG 中使用宿主字体，建议在 `document.fonts.ready` 后触发一次重绘。
+- **低优先级基础样式（`:where(...)`）**：宿主以零优先级（`:where(...)`）注入 `6px` 细滚动条、适配浅色/深色主题的 `<select>` 下拉箭头，以及按钮的字体继承与 `white-space: nowrap`，避免 Windows WebView2 原生控件突兀，同时插件任意自定义 CSS 选择器均可无阻覆盖。
+- **全高画布布局**：纯 Web 插件上方不叠放重复的宿主顶栏，插件自带工具栏直接作为主顶栏展示；用户可通过左侧栏底部按钮折叠插件列表以获得更宽画布。
+- **跨平台剪贴板与空闲回收**：`xcpc.clipboard.writeImage(pngBase64)` 在 Windows 上自动写入 `CF_DIB` 位图与 `"PNG"` 双格式，确保直接粘贴到常见编辑器、聊天软件与绘图工具均生效。为控制常驻内存，用户离开「工具」空间约 15 秒后宿主会自动卸载空闲 `<WebView>` 实例，因此请始终使用 `xcpc.storage` 持久化需要保留的编辑状态。
+
 ---
 
 ## 6. 向 `xcpc-plugins` 社区上架

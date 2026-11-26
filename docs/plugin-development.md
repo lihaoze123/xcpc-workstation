@@ -1,6 +1,6 @@
 # 插件开发指南（Plugin Development Guide）
 
-本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.4.0-beta.1` 与 `@xcpc/plugin-sdk` `v0.2.0`）。
+本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.6.0-beta.2` 与 `@xcpc/plugin-sdk` `v0.2.0`）。
 
 > **防漂移约定**：本文档只阐述架构模型、安全边界、开发工作流与最小可运行示例，**不复制**详尽的字段表与方法签名。所有权威 API 契约与清单字段以仓内类型定义和 Schema 为准：
 > - QuickJS 宿主 API 与插件导出契约：[packages/plugin-sdk/host.d.ts](../packages/plugin-sdk/host.d.ts)
@@ -35,8 +35,10 @@
 ### 模式 C：纯 Web 自定义界面工具（`<WebView>` `tool`）
 
 - 在模式 B 基础上声明 `ui_entry = "ui.html"`（可同时保留 `index.js` 作为 QuickJS 计算/CLI/MCP 后端，并可搭配 `commands` 在命令面板中一键打开）。
-- 桌面端将 `ui.html` 加载进隔离的 `<WebView>`，并注入类型化的 `window.xcpc` 能力桥接（含 `runTool`、`storage`、`workspace`、`oj.listAccounts`、`clipboard`、`files`）与可选的宿主主题 CSS 变量（`--xcpc-*` 与 `data-theme="light|dark"`）。
-- 宿主只管能力不管样式：你可以使用原生 HTML/TS/CSS、Canvas2D、SVG，或通过 Vite 打包 Preact/React 等任意标准前端框架。官方插件 `graph-editor`、`math-bitwise` 即为此模式。
+- 桌面端将 `ui.html` 加载进隔离的 `<WebView>`，不叠放重复的宿主顶栏（插件自带工具栏直接贴顶占满主内容区，左侧插件栏支持用户折叠以扩大画布），并注入：
+  - 类型化的 `window.xcpc` 能力桥接（含 `runTool`、`storage`、`workspace`、`oj.listAccounts`、`clipboard`、`files`；其中 `clipboard.writeImage` 在 Windows 上同时写入 `CF_DIB` 与 `"PNG"` 双格式，确保粘贴至编辑器、聊天软件与绘图工具均生效）；
+  - 可选的宿主主题 CSS 变量（`--xcpc-*` 与 `data-theme="light|dark"`）、应用内嵌字体 `@font-face`（`Inter` 与 `JetBrains Mono`，经 `data:` 内联提供，Canvas/SVG 重绘建议监听 `document.fonts.ready`）以及低优先级 `:where(...)` 基础样式（`6px` 细滚动条、适配深浅主题的 `<select>` 下拉箭头、按钮字体继承与不折行），消除 Linux WebKitGTK 与 Windows WebView2 的控件观感差异且不影响插件自定义样式覆盖。
+- 宿主只管能力不管样式：你可以使用原生 HTML/TS/CSS、Canvas2D、SVG，或通过 Vite 打包 Preact/React 等任意标准前端框架。为控制桌面端内存，离开「工具」空间超过 15 秒后宿主会自动卸载空闲 `<WebView>` 实例，请通过 `xcpc.storage` 持久化可恢复状态。官方插件 `graph-editor`、`math-bitwise`、`codesnap` 即为此模式。
 
 > 除上述三种主形态外，`manifest.toml` 还支持 `commands`、`importer`、`exporter`、`credentials` 扩展点，详见 [`manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json) 与 [`host.d.ts`](../packages/plugin-sdk/host.d.ts)。
 
@@ -57,7 +59,7 @@
 
 ### 2.2 三层 WebView 隔离
 
-1. **原生能力封锁**：桌面端 [`apps/desktop/nsh.json`](../apps/desktop/nsh.json) 声明 `capabilities.webview.hosts = []`，在 WebKitGTK / WebView2 策略层硬性禁止 WebView 发起任何直接网络请求或外部导航。
+1. **原生能力封锁**：桌面端 [`apps/desktop/nsh.json`](../apps/desktop/nsh.json) 声明 `capabilities.webview.hosts = []`，在 WebKitGTK / WebView2 策略层硬性禁止 WebView 发起任何直接网络请求或外部导航（仅放行本地宿主受控壳文档 `about:blank` / WebView2 `data:text/html`）。
 2. **受控外层壳 + Sandboxed Iframe**：宿主生成受控外层 HTML 壳，在字节 0 注入严格 CSP：
    ```text
    default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';

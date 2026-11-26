@@ -51,7 +51,7 @@ title: 常见问题与排障
    ```
 2. **了解字体加载优先级**：
    - Release 构建已内嵌 Latin Modern（西文/数学/行内等宽）与 JetBrains Mono（代码块），但**不包含中文字体**；
-   - 运行时优先加载环境变量 `XCPC_FONT_DIRS` 指定的目录；未设置 `XCPC_FONT_DIRS` 时，自动扫描可执行文件旁的 `fonts/` 目录并回退至系统已安装字体（含中文字体回退链）。
+   - 运行时优先加载环境变量 `XCPC_FONT_DIRS` 指定的目录；未设置 `XCPC_FONT_DIRS` 时，自动扫描可执行文件旁的 `fonts/` 目录并回退至系统已安装字体（Windows 默认按需加载核心中文字体以保持低内存，模板引用其他系统字体时自动扩展扫描全量系统字体）。
 3. **补充中文字体**：
    - 推荐在系统中安装思源宋体 / 思源黑体（如 Ubuntu/Debian 安装 `fonts-noto-cjk`，Arch 安装 `noto-fonts-cjk`），或将方正/自定义中文字体 `.ttf`/`.otf` 放入可执行文件同级的 `fonts/` 目录；
    - 若手动指定自定义字体目录，可设置 `XCPC_FONT_DIRS=/path/to/fonts1:/path/to/fonts2`（Windows 下用 `;` 分隔）。

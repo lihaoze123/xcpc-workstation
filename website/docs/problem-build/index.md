@@ -23,6 +23,7 @@ XCPC Workstation 内置完整的题目构建、数据校验与多平台导出管
   1. 题目目录 `<problem_dir>/testlib.h`
   2. 工作区根目录 `<workspace>/testlib.h`
   3. 随程序内嵌的最新 `testlib.h`（自动物化到缓存头文件目录，开箱即用）
+- **跨平台静默执行与资源限制**：Linux 下通过 `rlimit`/`rusage` 统计并限制资源；Windows 下静默拉起编译器与评测子进程（不弹出控制台窗口），通过 Windows Job Object 实施真实的峰值内存统计与 MLE 判定，编译 `testlib.h` 目标时自动附带 `-DFOR_LINUX` 兼容标志，并在比对前规范化输出的换行符（CRLF → LF）。
 
 ### 三级内容哈希缓存
 

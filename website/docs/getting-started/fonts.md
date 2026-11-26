@@ -32,7 +32,7 @@ XCPC Workstation 内置了西文与等宽字体，安装后即可在无 TeX 环�
 
 1. **未设置 `XCPC_FONT_DIRS`（独立安装包默认行为）**：
    - 首先扫描**可执行文件同级的 `fonts/` 目录**（如果存在）。
-   - 然后扫描操作系统已安装的系统字体，并叠加二进制内置的 Latin Modern 与 JetBrains Mono。
+   - 然后叠加二进制内置的 Latin Modern 与 JetBrains Mono 并启用系统字体回退。在 **Windows** 上，为兼顾冷启动速度与低内存占用，默认仅按需加载核心中文字体文件（`SimSun`、`SimHei`、`KaiTi`、`FangSong` 等）；若自定义模板引用了其他已安装的系统字体，引擎在首次未命中时会自动扩展扫描全部系统字体并透明重试。
 2. **设置了 `XCPC_FONT_DIRS`（确定性排版模式）**：
    - 只扫描 `XCPC_FONT_DIRS` 指定的目录列表（Linux 用 `:` 分隔，Windows 用 `;` 分隔）以及二进制内置字体，**默认不扫描系统字体**，从而保证不同机器或 CI 环境下产出完全一致的 PDF。
    - 如需在指定 `XCPC_FONT_DIRS` 的同时仍然允许读取系统字体，可在 CLI 附加全局参数 `--system-fonts`。
