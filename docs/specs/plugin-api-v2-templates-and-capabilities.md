@@ -1,7 +1,7 @@
 # 插件 API 增强规格：排版模板扩展、工作区读写与宿主底层能力
 
-日期：2026-11-28  
-状态：设计已对齐，待分阶段实施
+> 状态：已确认（2026-11-28 `/grill-me` 共识），待分阶段实施。  
+> 关联文档：[plugin-development.md](../plugin-development.md)、[phase-4d-plugin-sdk-and-ecosystem.md](./phase-4d-plugin-sdk-and-ecosystem.md)、[template-deprivilege-and-render-contract.md](./template-deprivilege-and-render-contract.md)、[architecture.md](../architecture.md)、[roadmap.md](../roadmap.md)。
 
 本文档定义 XCPC Workstation 插件体系在 Phase 4D 基础上的下一阶段能力增强，覆盖三个经对齐的核心支柱：
 
@@ -86,13 +86,12 @@ kind = "trd"
   - `contest.toml` 的 `template` 字段；
   - `trd.toml` 的 `template` 字段；
   - `xcpc build/render --template` 覆写与单题预览模板选择。
-- **与现有来源并存**：
-  - 内置预设：`olymp-classic`、`cnoi-classic`、`minimal`、`trd-book`、`trd-compact`；
-  - 工作区模板：`templates/<name>.typ`（ID 为 `<name>`）；
+- **与现有来源并存**（保持与 [template-deprivilege-and-render-contract.md](./template-deprivilege-and-render-contract.md) 一致的「去预设特权」模型）：
+  - 工作区模板：`templates/<name>.typ`（含初始化时从 `olymp-classic`、`cnoi-classic`、`minimal`、`trd-book`、`trd-compact` 等预设种子落盘的文件，ID 为 `<name>`）；
   - 本场/本册专属：`contests/<id>/template.typ`、`trds/<id>/template.typ`（ID 为 `local`）；
   - 插件模板：`plugin:<plugin-id>/<tpl-id>`。
 - **`TemplateInfo` 扩展**（`crates/xcpc-domain`）：
-  - 增加 `source: TemplateSource`（`Builtin | Workspace | Local | Plugin { plugin_id, plugin_name, template_id }`），前端模板选择器据此分组展示（内置 / 工作区 / 插件提供）并在下拉项显示来源标签。
+  - 增加 `source: TemplateSource`（`Workspace | Local | Plugin { plugin_id, plugin_name, template_id }`），前端模板选择器据此分组展示（工作区模板 / 本场专属 / 插件提供）并在下拉项显示来源标签。
 - **缓存失效**：`xcpc-app` 的模板列表与 schema 缓存监听插件变更事件（安装、卸载、启用/禁用、热重载），自动失效重算。
 
 ### 1.4 缺失处理、一键复制到工作区与冻结快照

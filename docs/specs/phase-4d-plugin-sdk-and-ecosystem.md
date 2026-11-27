@@ -73,3 +73,9 @@ SDK tarball `xcpc-plugin-sdk.tgz` 随 `xcpc-plugins` 的 `official-latest` Relea
 
 - 默认官方源：`https://github.com/lihaoze123/xcpc-plugins/releases/download/official-latest/index.json`（自动迁移旧版 `raw.githubusercontent.com/.../main/index.json` 配置，支持 `XCPC_OFFICIAL_PLUGIN_REPO` 覆写与 GUI「恢复官方仓库」）。
 - GitHub Actions（`.github/workflows/release.yml`）使用 `XCPC_SKIP_EMBED_FONTS=1` 构建 `xcpc` CLI，执行 `npm run typecheck`、`scripts/build-index.mjs`（构建官方 4 插件 + 拉取校验 `registry.toml` 社区条目）与 `npm pack` 生成 `xcpc-plugin-sdk.tgz`，最终通过 `gh release upload official-latest ... --clobber` 零停机原子更新。
+
+---
+
+## 6. 后续演进
+
+- 插件 API 下一阶段增强（排版模板扩展、工作区读写扩展与宿主底层能力补齐）见 [plugin-api-v2-templates-and-capabilities.md](./plugin-api-v2-templates-and-capabilities.md)。

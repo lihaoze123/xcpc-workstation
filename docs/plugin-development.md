@@ -341,3 +341,4 @@ document.getElementById("export")!.addEventListener("click", async () => {
 - Vite 单文件打包插件 `xcpcPlugin(options?)`：[`packages/plugin-sdk/vite.d.ts`](../packages/plugin-sdk/vite.d.ts)
 - 插件清单完整字段与约束：[`packages/plugin-sdk/manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json)
 - Phase 4D 架构规格与设计背景：[`docs/specs/phase-4d-plugin-sdk-and-ecosystem.md`](./specs/phase-4d-plugin-sdk-and-ecosystem.md)
+- 下一阶段插件 API 增强规格（待实现：模板插件、工作区读写与宿主底层能力）：[`docs/specs/plugin-api-v2-templates-and-capabilities.md`](./specs/plugin-api-v2-templates-and-capabilities.md)
