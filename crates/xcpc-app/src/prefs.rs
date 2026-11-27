@@ -64,8 +64,7 @@ impl StoredPrefs {
 
     /// Prepends `root` to `recent_workspaces`, deduplicating and capping length.
     pub(crate) fn remember_workspace(&mut self, root: &Path) {
-        let cleaned = xcpc_storage::strip_verbatim_prefix(root);
-        let entry = cleaned.display().to_string();
+        let entry = normalize_workspace_entry(root);
         if entry.is_empty() {
             return;
         }
@@ -225,12 +224,16 @@ fn normalize_library_group_by(raw: Option<&str>) -> Option<String> {
     }
 }
 
+fn normalize_workspace_entry(path: &Path) -> String {
+    let normalized = xcpc_storage::canonicalize_clean(path)
+        .unwrap_or_else(|_| xcpc_storage::strip_verbatim_prefix(path));
+    normalized.display().to_string()
+}
+
 fn dedup_recent(list: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(list.len().min(MAX_RECENT_WORKSPACES));
     for item in list {
-        let cleaned = xcpc_storage::strip_verbatim_prefix(Path::new(&item))
-            .display()
-            .to_string();
+        let cleaned = normalize_workspace_entry(Path::new(&item));
         if !cleaned.is_empty() && !out.contains(&cleaned) {
             out.push(cleaned);
             if out.len() >= MAX_RECENT_WORKSPACES {

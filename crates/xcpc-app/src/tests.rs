@@ -1170,7 +1170,11 @@ fn fuzzy_jump_frecency_and_prefs_persistence() {
     .unwrap();
     let migrated = Preview::new(Some(legacy_data.0.display().to_string()));
     assert_eq!(migrated.recent_workspaces().len(), 1);
-    assert_eq!(migrated.recent_workspaces()[0], ws.0.display().to_string());
+    let expected_ws = xcpc_storage::canonicalize_clean(&ws.0)
+        .unwrap_or_else(|_| ws.0.clone())
+        .display()
+        .to_string();
+    assert_eq!(migrated.recent_workspaces()[0], expected_ws);
 
     // Verify invalid split_ratio is safely clamped.
     migrated.save_prefs(AppPrefsJs {
