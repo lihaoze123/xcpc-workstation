@@ -2333,8 +2333,11 @@ capabilities = ["tool"]
     let good_dir = tmp.path().join("pack-me");
     init_plugin_scaffold(&good_dir, ScaffoldKind::Tool).unwrap();
     let packed = crate::pack_plugin_dir(&good_dir, None).unwrap();
-    assert_eq!(packed.output_path, tmp.path().join("pack-me-0.1.0.zip"));
     assert!(packed.output_path.is_file());
+    assert_eq!(
+        std::fs::canonicalize(&packed.output_path).unwrap(),
+        std::fs::canonicalize(tmp.path().join("pack-me-0.1.0.zip")).unwrap()
+    );
     assert!(!good_dir.join("pack-me-0.1.0.zip").exists());
 }
 
