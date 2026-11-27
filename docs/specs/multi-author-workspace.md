@@ -88,4 +88,4 @@
 - 不引入工作区类型区分（`personal` / `contest`）或按类型裁剪界面。
 - 不支持单比赛根目录扁平化格式或比赛内嵌私有题目目录（`contests/<id>/problems/`）。
 - 不支持跨工作区活引用、跨仓库依赖或 Git submodule 专用集成。
-- 不在应用内构建用户账号、权限、评论、在线协同或冲突合并 UI（Git 协作完全交由 Git 本身）。
+- 不在应用内构建用户账号、权限、评论、在线协同或复杂三方冲突合并 UI；应用内仅提供极简的领域化纯 Git 主干闭环与离线盲验/目录流转，详见 [workspace-vcs-and-handoff.md](./workspace-vcs-and-handoff.md)。

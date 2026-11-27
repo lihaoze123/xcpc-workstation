@@ -403,7 +403,7 @@
 - **更多社区 OJ 插件**（洛谷 / 牛客 / QOJ / LeetCode 等，基于 Phase 4A 的 `oj_source` + `credentials` 插件协议按需扩展，无需宿主硬编码）。
 - **Competitive Companion（`:10043`）按需监听**（若后续有从杂牌 OJ 批量抓样例的刚需，可作为默认关闭的可选开关独立补充）。
 - **题单（`sheets/*.toml`）**。
-- 跨工作区轻量流转：从外部目录导入题目/比赛（复制到当前工作区，ID 冲突时提示重命名或拒绝覆盖；不做跨工作区活引用与血缘追踪）。
+- **极简领域化 Git 与离线盲验流转**（Spec 见 [specs/workspace-vcs-and-handoff.md](./specs/workspace-vcs-and-handoff.md)，2026-11-28 `/grill-me` 确认）：以系统 `git` CLI 轻量 wrapper 构建 `crates/xcpc-vcs`，在零新增主导航与零新增配置字段的前提下补齐桌面端极简主干闭环（克隆/初始化、按题目归组提交、静默后台 `fetch`、主干同步与冲突中止、源码 `DiffView` 与安全历史恢复，MCP 仅暴露只读查询）；同步补齐极薄的「导出盲验包（ZIP，无剧透 PDF + 按题号样例）」与「从 XCPC 题目目录导入」，不做在线服务端、跨仓同步协议、分支管理与平台 PR API。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。
 - 双语并排校对与语义级 Diff。
 - 更多主题预设和定制体系。
