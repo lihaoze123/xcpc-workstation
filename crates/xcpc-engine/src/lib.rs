@@ -886,6 +886,27 @@ fn resolve_cjk_fonts(book: &FontBook) -> (String, Option<String>) {
         };
         source.push_str(&format!("#let {var} = \"{family}\"\n"));
     }
+    // Latin Modern 2.004 (Nix / Debian `lmodern`) names the 10pt optical size
+    // `"Latin Modern Roman"` / `"Latin Modern Sans"`, whereas Latin Modern 2.006
+    // (CTAN `lm.zip`, bundled in release builds) names it `"Latin Modern Roman 10"` /
+    // `"Latin Modern Sans 10"`. Export the resolved 10pt families via `/xcpc/fonts.typ`.
+    for &(var, candidates) in &[
+        (
+            "lm-roman-10",
+            &["Latin Modern Roman", "Latin Modern Roman 10"][..],
+        ),
+        (
+            "lm-sans-10",
+            &["Latin Modern Sans", "Latin Modern Sans 10"][..],
+        ),
+    ] {
+        let family = candidates
+            .iter()
+            .copied()
+            .find(|name| book.select_family(&name.to_lowercase()).next().is_some())
+            .unwrap_or(candidates[0]);
+        source.push_str(&format!("#let {var} = \"{family}\"\n"));
+    }
     let warning = (!fallbacks.is_empty()).then(|| {
         format!(
             "FounderType CJK font(s) missing; using fallback: {}",
@@ -1058,6 +1079,19 @@ mod tests {
         let opts = FontOptions::from_env_with(None, Some(&macos_dir));
         assert_eq!(opts.dirs, vec![res_fonts]);
         assert!(opts.system);
+    }
+
+    #[test]
+    fn resolve_cjk_fonts_exports_latin_modern_10pt_for_2004_and_2006() {
+        let book_2004 = fake_book(&["Latin Modern Roman", "Latin Modern Sans", "Songti SC"]);
+        let (src_2004, _) = resolve_cjk_fonts(&book_2004);
+        assert!(src_2004.contains("#let lm-roman-10 = \"Latin Modern Roman\""));
+        assert!(src_2004.contains("#let lm-sans-10 = \"Latin Modern Sans\""));
+
+        let book_2006 = fake_book(&["Latin Modern Roman 10", "Latin Modern Sans 10", "Songti SC"]);
+        let (src_2006, _) = resolve_cjk_fonts(&book_2006);
+        assert!(src_2006.contains("#let lm-roman-10 = \"Latin Modern Roman 10\""));
+        assert!(src_2006.contains("#let lm-sans-10 = \"Latin Modern Sans 10\""));
     }
 
     #[test]

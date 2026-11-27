@@ -2,7 +2,7 @@
 // 导出 `#let schema = (kind: "trd", ...)` 与 `#let render(doc)`，可自由编辑定制。
 // 版式参数与出处见 docs/statement-style.md §5.1，全部以正文字号 s 的倍数表示。
 
-#import "/xcpc/fonts.typ": cjk-hei, cjk-song
+#import "/xcpc/fonts.typ": cjk-hei, cjk-song, lm-sans-10
 
 #let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
 
@@ -81,7 +81,7 @@
 #let code-pitch = 1.2 // 代码行距 = 1.2 × 代码字号
 #let text-pitch = 1.3 // 正文行距 = 1.3 s
 
-#let sans = with-cjk("Latin Modern Sans", cjk-hei)
+#let sans = with-cjk(lm-sans-10, cjk-hei)
 #let mono = with-cjk("JetBrains Mono", cjk-hei)
 
 #let parse-len(s, fallback) = {

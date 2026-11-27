@@ -172,17 +172,17 @@
 
 // ---- Fonts ----------------------------------------------------------------------------
 
-#import "/xcpc/fonts.typ": cjk-fangsong, cjk-hei, cjk-kai, cjk-song
+#import "/xcpc/fonts.typ": cjk-fangsong, cjk-hei, cjk-kai, cjk-song, lm-roman-10, lm-sans-10
 
 // Latin Modern ships optical sizes; fontspec picks 10 below 11pt, 12 up to 15pt, 17 above.
-#let optical(family, size) = family + if size < tex(11) { "" } else if size < tex(15) { " 12" } else { " 17" }
+#let optical(family, base10, size) = if size < tex(11) { base10 } else if size < tex(15) { family + " 12" } else { family + " 17" }
 #let with-cjk(latin, cjk) = ((name: latin, covers: "latin-in-cjk"), cjk)
 
-#let serif(size: sizes.normal, cjk: cjk-song, body) = text(font: with-cjk(optical("Latin Modern Roman", size), cjk), size: size, body)
+#let serif(size: sizes.normal, cjk: cjk-song, body) = text(font: with-cjk(optical("Latin Modern Roman", lm-roman-10, size), cjk), size: size, body)
 #let kai(size: sizes.normal, body) = serif(size: size, cjk: cjk-kai, body)
-#let sans(size: sizes.normal, body) = text(font: with-cjk(optical("Latin Modern Sans", size), cjk-hei), size: size, body)
+#let sans(size: sizes.normal, body) = text(font: with-cjk(optical("Latin Modern Sans", lm-sans-10, size), cjk-hei), size: size, body)
 // Bold sans exists only at the 10pt design size; CJK bold is FZ Hei.
-#let bold-sans(size, body) = text(font: with-cjk("Latin Modern Sans", cjk-hei), weight: "bold", size: size, body)
+#let bold-sans(size, body) = text(font: with-cjk(lm-sans-10, cjk-hei), weight: "bold", size: size, body)
 #let mono-font = with-cjk("Latin Modern Mono 12", cjk-fangsong)
 #let code-font = with-cjk("JetBrains Mono", cjk-fangsong)
 #let mono(body) = text(font: mono-font, body)
@@ -289,7 +289,7 @@
   sample-layout-state.update(sample-layout)
   [#metadata((label: label, title: title)) <xcpc-problem>]
   let head = if label == none or label == "" { [#title] } else { [#word("problem") #label. #title] }
-  block(sticky: true, below: 3mm, context text(font: with-cjk("Latin Modern Sans", cjk-hei-state.get()), weight: "bold", size: sizes.LARGE, head))
+  block(sticky: true, below: 3mm, context text(font: with-cjk(lm-sans-10, cjk-hei-state.get()), weight: "bold", size: sizes.LARGE, head))
   if show-metadata {
     // No file name: standard input and output, which the reference sets as file names.
     let file(name, key) = mono(if name == none { word(key) } else { name })
@@ -320,7 +320,7 @@
     v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
   }
   align(center, {
-    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
+    text(font: with-cjk(optical("Latin Modern Roman", lm-roman-10, sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ 试题册]
     v(1.5em)
     text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
     v(1em)
@@ -371,7 +371,7 @@
     v(1.57 * sizes.normal + 2em + tex(9) + 4cm)
   }
   align(center, {
-    text(font: with-cjk(optical("Latin Modern Roman", sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
+    text(font: with-cjk(optical("Latin Modern Roman", lm-roman-10, sizes.LARGE), cjk-hei), size: sizes.LARGE, ..strut(sizes.LARGE))[#name \ #word("editorial")]
     v(1.5em)
     text(..strut(sizes.large), kai(size: sizes.large, if author == none { "出题人" } else { author }))
     v(1em)
