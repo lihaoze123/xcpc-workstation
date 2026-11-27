@@ -539,11 +539,14 @@ fn watcher_suppresses_self_writes_and_surfaces_external_edits() {
         .state
         .watch_session()
         .expect("watcher should be active");
+    // macOS FSEvents can batch initial directory-creation events past 180ms under parallel
+    // test load; give it a wider drain window before testing self-write suppression.
+    let drain_ms = if cfg!(target_os = "macos") { 600 } else { 180 };
     while session
         .rx
         .lock()
         .unwrap()
-        .recv_timeout(Duration::from_millis(180))
+        .recv_timeout(Duration::from_millis(drain_ms))
         .is_ok()
     {}
 
