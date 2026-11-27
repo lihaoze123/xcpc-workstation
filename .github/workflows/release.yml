@@ -101,7 +101,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v1
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled OTF fonts
         run: |
@@ -257,7 +257,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v1
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled OTF fonts
         shell: pwsh
@@ -345,7 +345,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v1
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled OTF fonts
         run: |

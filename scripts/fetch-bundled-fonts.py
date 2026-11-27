@@ -43,7 +43,7 @@ REQUIRED_FONTS = {
 ARCHIVES = [
     (
         "https://mirrors.ctan.org/fonts/lm.zip",
-        "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.006otf.zip",
+        "https://ctan.math.illinois.edu/fonts/lm.zip",
     ),
     (
         "https://mirrors.ctan.org/fonts/lm-math.zip",

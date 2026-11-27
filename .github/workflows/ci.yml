@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v2
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled fonts
         run: |
@@ -75,7 +75,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v2
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled fonts
         run: |
@@ -137,7 +137,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/xcpc-bundled-fonts
-          key: xcpc-bundled-fonts-v2
+          key: xcpc-bundled-fonts-${{ runner.os }}-v3
 
       - name: Fetch bundled fonts
         run: |
