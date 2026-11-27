@@ -2080,8 +2080,11 @@ fn plugin_cli_default_init_kind_https_guard_repo_catalog_and_install_by_id() {
     );
     let pack_json = parse_json_stdout(&pack);
     let zip_path = Path::new(pack_json["output_path"].as_str().unwrap());
-    assert_eq!(zip_path, tmp.path().join("alpha-beta-0.1.0.zip"));
     assert!(zip_path.is_file());
+    assert_eq!(
+        fs::canonicalize(zip_path).unwrap(),
+        fs::canonicalize(tmp.path().join("alpha-beta-0.1.0.zip")).unwrap()
+    );
     let zip_bytes = fs::read(zip_path).unwrap();
     let zip_sha = pack_json["sha256"].as_str().unwrap().to_string();
 
