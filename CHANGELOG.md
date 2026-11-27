@@ -2,6 +2,26 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-beta.3] - 2026-11-28
+
+macOS（Apple Silicon `arm64`）端正式发布支持与字体回退增强版本：新增 macOS 桌面端 `.dmg` / `.tar.gz` 与独立 CLI 打包、应用内自动更新及 CI 覆盖，并修复 macOS 下的语言检测、Homebrew GCC 发现、沙箱内存限制与中文字体回退问题。
+
+### macOS 平台支持与运行时适配
+
+- **Apple Silicon (`arm64`) 完整构建与分发**：新增 `packaging/macos/build-dmg.sh` 拖拽安装镜像脚本，扩展 `scripts/package.sh --target macos` 与 GitHub Actions `ci.yml` / `release.yml`，同步产出 `.dmg` 安装镜像、`.tar.gz`（接入 `nsh/updater` 自动更新）及独立 `xcpc` CLI 包（`.app/Contents/MacOS/xcpc` 内同时附带 CLI），并预留可选 Apple Developer ID 签名与 `notarytool` 公证钩子。
+- **Finder 启动语言检测与字体目录发现**：macOS 从 Finder/Dock 启动缺少 `LANG`/`LC_ALL` 时通过 `defaults read -g AppleLanguages` 读取系统语言；兼容 `.app/Contents/Resources/fonts` 字体目录扫描。
+- **Homebrew GCC 优先发现与沙箱适配**：`xcpc-judge` 在 macOS 上自动补充扫描 `/opt/homebrew/bin` 与 `/usr/local/bin` 下的版本化 `g++-*`（按主版本号降序）并优先于 Apple Clang 选用，以完整支持 `<bits/stdc++.h>`；评测运行器在 macOS 上跳过与 `dyld` 共享缓存冲突的 `RLIMIT_AS`，由 `ru_maxrss` 精确判定 MLE。
+- **工作区路径去重**：规范化历史工作区记录中的符号链接路径，避免 macOS `/var` 与 `/private/var` 映射导致最近工作区重复。
+
+### 排版引擎与跨平台字体修复
+
+- **macOS 中文字体回退链补全**：为 `cjk-hei`、`cjk-kai`、`cjk-fangsong` 补充 `Hiragino Sans GB`、`Heiti SC`、`STHeiti`、`Songti SC` 与 `STSong` 回退项，消除未安装按需下载字体时的 `unknown font family` 警告。
+- **Latin Modern 10pt 字族名自适应与缓存刷新**：`/xcpc/fonts.typ` 按实际加载字库动态解析 Latin Modern 2.004 与 2.006 的 10pt 字族名；刷新 CI/Release 字体缓存并移除字族名不匹配的备用镜像。
+
+### 文档与生态
+
+- **中英双语文档站与 macOS 安装指南**：新增英文文档站与语言切换入口，同步更新双语安装文档中的 macOS `.dmg`/`.tar.gz`、Gatekeeper `xattr -cr`、CLI 软链与 `brew install gcc` 说明；将插件 SDK 包名统一为 `@xcpc-workstation/plugin-sdk`。
+
 ## [0.6.0-beta.2] - 2026-11-27
 
 Windows 平台体验深度修复与极致内存优化版本：解决 Windows 路径前缀越界、出题包评测终端弹窗与校验失败、WebView2 插件桥接与图片剪贴板失效、分段控件与诊断标题栏对齐问题，并将桌面端常规常驻内存压低 70%–90%。
