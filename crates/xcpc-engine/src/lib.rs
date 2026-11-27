@@ -86,6 +86,7 @@ const CJK_ROLES: &[(&str, &[&str])] = &[
             "SimSun",
             "NSimSun",
             "Songti SC",
+            "STSong",
         ],
     ),
     (
@@ -97,6 +98,11 @@ const CJK_ROLES: &[(&str, &[&str])] = &[
             "SimHei",
             "Microsoft YaHei",
             "PingFang SC",
+            "Hiragino Sans GB",
+            "Heiti SC",
+            "STHeiti",
+            "Songti SC",
+            "STSong",
         ],
     ),
     (
@@ -109,6 +115,8 @@ const CJK_ROLES: &[(&str, &[&str])] = &[
             "Source Han Serif SC",
             "Noto Serif CJK SC",
             "SimSun",
+            "Songti SC",
+            "STSong",
         ],
     ),
     (
@@ -120,6 +128,8 @@ const CJK_ROLES: &[(&str, &[&str])] = &[
             "Source Han Serif SC",
             "Noto Serif CJK SC",
             "SimSun",
+            "Songti SC",
+            "STSong",
         ],
     ),
 ];
