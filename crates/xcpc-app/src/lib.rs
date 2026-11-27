@@ -79,8 +79,9 @@ impl AppController {
     }
 
     /// Returns raw font file bytes for JetBrains Mono (Regular, Medium, Bold, Italic,
-    /// BoldItalic) discovered from `XCPC_FONT_DIRS` and the executable's sibling `fonts/`
-    /// directory, ready to pass to `registerFont(bytes)`.
+    /// BoldItalic) discovered from `XCPC_FONT_DIRS`, the executable's sibling `fonts/`
+    /// directory, and (on macOS `.app` bundles) `Contents/Resources/fonts`, ready to pass
+    /// to `registerFont(bytes)`.
     pub fn ui_fonts() -> Vec<Vec<u8>> {
         let mut dirs = Vec::new();
         if let Some(env_dirs) = std::env::var_os("XCPC_FONT_DIRS").filter(|v| !v.is_empty()) {
@@ -89,9 +90,10 @@ impl AppController {
         if let Ok(exe) = std::env::current_exe()
             && let Some(parent) = exe.parent()
         {
-            let sibling = parent.join("fonts");
-            if sibling.is_dir() {
-                dirs.push(sibling);
+            for candidate in app_font_dirs(parent) {
+                if candidate.is_dir() {
+                    dirs.push(candidate);
+                }
             }
         }
         load_ui_fonts_from(&dirs)
@@ -105,7 +107,10 @@ impl AppController {
                 format!("环境变量 XCPC_FONT_DIRS（{count} 个目录）")
             } else if std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join("fonts").is_dir()))
+                .and_then(|p| {
+                    p.parent()
+                        .map(|d| app_font_dirs(d).into_iter().any(|dir| dir.is_dir()))
+                })
                 .unwrap_or(false)
             {
                 "应用内置字体目录 + 系统字体".to_owned()
@@ -1603,6 +1608,49 @@ fn scan_ui_fonts_dir(
     }
 }
 
+/// Candidate app-bundled font directories relative to the executable's parent directory.
+/// Includes `<exe_dir>/fonts` on all platforms, plus `../Resources/fonts` when running
+/// from inside a macOS `.app/Contents/MacOS` bundle.
+fn app_font_dirs(exe_dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![exe_dir.join("fonts")];
+    if exe_dir.file_name().and_then(|n| n.to_str()) == Some("MacOS")
+        && let Some(contents) = exe_dir.parent()
+        && contents.file_name().and_then(|n| n.to_str()) == Some("Contents")
+    {
+        out.push(contents.join("Resources").join("fonts"));
+    }
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn macos_user_locale() -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleLanguages"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_macos_apple_languages(&stdout)
+}
+
+/// Parses the first preferred language from `defaults read -g AppleLanguages` output,
+/// e.g. `(\n    "zh-Hans-CN",\n    "en-US"\n)`.
+pub fn parse_macos_apple_languages(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        let trimmed = line.trim().trim_end_matches(',');
+        if trimmed.is_empty() || trimmed == "(" || trimmed == ")" {
+            continue;
+        }
+        let cleaned = trimmed.trim_matches('"').trim();
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_owned());
+        }
+    }
+    None
+}
+
 #[cfg(windows)]
 fn windows_user_locale() -> Option<String> {
     #[link(name = "kernel32")]
@@ -1635,6 +1683,13 @@ pub fn detect_system_locale() -> &'static str {
             return normalize_system_locale(&val);
         }
     }
+
+    // macOS `.app` bundles launched from Finder/Dock do not inherit shell `LANG`/`LC_ALL`.
+    #[cfg(target_os = "macos")]
+    if let Some(raw) = macos_user_locale() {
+        return normalize_system_locale(&raw);
+    }
+
     "en"
 }
 

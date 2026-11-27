@@ -6,16 +6,44 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 | Platform | Recommended Artifact | Notes |
 | :--- | :--- | :--- |
+| **macOS (Apple Silicon / arm64)** | `xcpc-workstation-*-macos-arm64.dmg` | Drag-to-Applications disk image; bundles the `xcpc` CLI inside the `.app` and supports in-app auto-updates. |
+| **macOS (Apple Silicon / arm64)** | `xcpc-workstation-*-macos-arm64.tar.gz` | Portable `.app` archive used for in-app auto-updates or manual extraction. |
 | **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64-setup.exe` | Per-user Inno Setup installer; requires no administrator privileges, adds `xcpc` to user `PATH` by default (optional), and supports in-app auto-updates. |
 | **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64.zip` | Portable archive; extract to any user-writable directory. Includes `XCPC Workstation.exe` and `xcpc.exe`, with in-app auto-update support. |
 | **Debian / Ubuntu (amd64)** | `xcpc-workstation_*_amd64.deb` | System package; declares GTK4 and WebKitGTK 6.0 dependencies automatically and installs the desktop app plus `/usr/bin/xcpc`. |
 | **Arch Linux (x86_64)** | `xcpc-workstation-*-x86_64.pkg.tar.zst` | Local `pacman` package; declares `gtk4` and `webkitgtk-6.0` dependencies automatically and installs the desktop app plus `/usr/bin/xcpc`. |
 | **Linux Generic (x86_64)** | `xcpc-workstation-*-linux-x86_64.AppImage` / `.tar.gz` | Make the AppImage executable and run directly; `.tar.gz` runs after extraction and supports in-app auto-updates. |
-| **CLI / MCP Only** | `xcpc-cli-*-{linux,windows}-x86_64.{tar.gz,zip}` | Contains only the headless `xcpc` binary with no GUI library dependencies; ideal for servers, CI, and MCP clients. |
+| **CLI / MCP Only** | `xcpc-cli-*-{macos-arm64,linux-x86_64,windows-x86_64}.{tar.gz,zip}` | Contains only the headless `xcpc` binary with no GUI library dependencies; ideal for servers, CI, and MCP clients. |
 
 ---
 
 ## Platform Installation Steps
+
+=== "macOS (Apple Silicon)"
+
+    **Option 1: `.dmg` Disk Image (Recommended)**
+
+    1. Download and open `xcpc-workstation-<version>-macos-arm64.dmg`.
+    2. Drag `XCPC Workstation.app` into the `Applications` folder.
+    3. To expose the bundled `xcpc` CLI on your `PATH`, create a symlink:
+
+    ```bash
+    ln -sf "/Applications/XCPC Workstation.app/Contents/MacOS/xcpc" /opt/homebrew/bin/xcpc
+    xcpc --version
+    ```
+
+    **Option 2: Portable `.tar.gz` Archive**
+
+    ```bash
+    tar -xzf xcpc-workstation-*-macos-arm64.tar.gz -C /Applications
+    ```
+
+    !!! note "First-Launch Gatekeeper Notice"
+        Unnotarized builds are ad-hoc signed. When downloaded via a browser, macOS attaches a quarantine attribute that may display `"XCPC Workstation.app" is damaged and can't be opened`. After copying the app to `/Applications`, clear the quarantine flag once:
+
+        ```bash
+        xattr -cr "/Applications/XCPC Workstation.app"
+        ```
 
 === "Windows"
 
@@ -97,11 +125,11 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 The desktop client includes built-in update checks, which can be triggered manually under **Settings → About**.
 
-- **In-place auto-update supported**: Windows per-user installer (`setup.exe`), Windows portable `.zip` (extracted to a user-writable directory), and Linux `.tar.gz` (extracted to a user-writable directory).
+- **In-place auto-update supported**: macOS `.app` (installed from `.dmg` into `/Applications` or extracted from `.tar.gz`), Windows per-user installer (`setup.exe`), Windows portable `.zip` (extracted to a user-writable directory), and Linux `.tar.gz` (extracted to a user-writable directory).
 - **System packages & read-only bundles**: Debian / Ubuntu `.deb` and Arch Linux `.pkg.tar.zst` install under `/opt/xcpc-workstation/`; upgrade by downloading the new package and installing via `apt` or `pacman`. Linux `AppImage` runs from a read-only mount; replace it with the new release from [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases).
 - **Development builds**: Builds run from source have automatic updates disabled by default.
 
 ## Optional Environment Dependencies
 
-- **C++ Compiler (for problem authoring & snippet verification)**: If you plan to use [Problem Authoring & Export](../problem-build/index.md) or [Three-Source Automated Verification](../templates-trd/verification.md), ensure `g++` or `clang++` is installed locally (configurable via the `XCPC_CXX` environment variable or **Settings → Toolchain** in the desktop app). Pure statement authoring and PDF publishing do not require a C++ compiler.
+- **C++ Compiler (for problem authoring & snippet verification)**: If you plan to use [Problem Authoring & Export](../problem-build/index.md) or [Three-Source Automated Verification](../templates-trd/verification.md), ensure `g++` or `clang++` is installed locally (configurable via the `XCPC_CXX` environment variable or **Settings → Toolchain** in the desktop app). On macOS, installing GNU GCC via `brew install gcc` is recommended for full `<bits/stdc++.h>` support; the desktop app automatically discovers versioned `g++-*` binaries in `/opt/homebrew/bin` and prefers them over Apple Clang. Pure statement authoring and PDF publishing do not require a C++ compiler.
 - **CJK Fonts**: Release packages bundle Latin Modern and JetBrains Mono, and Chinese text automatically falls back to system fonts. To match the Founder font typography of the `olymp.sty` reference template, see [Font Configuration](./fonts.md).

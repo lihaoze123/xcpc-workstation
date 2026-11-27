@@ -3,7 +3,7 @@
 # UPX compression is disabled by default for public releases (pass --upx to opt in).
 # Run inside `nix develop` (or in CI with XCPC_FONT_DIRS set).
 #
-#   scripts/package.sh [--target <linux|windows|all>] [--out <DIR>] [--upx|--no-upx]
+#   scripts/package.sh [--target <linux|windows|macos|all>] [--out <DIR>] [--upx|--no-upx]
 set -euo pipefail
 
 usage() {
@@ -11,11 +11,11 @@ usage() {
 Usage: scripts/package.sh [OPTIONS]
 
 Options:
-  --target <linux|windows|all>  Target platform(s) to package [default: linux]
-  --out <DIR>                   Output directory for archives [default: target/dist]
-  --upx                         Enable UPX executable compression (off by default)
-  --no-upx                      Disable UPX executable compression (default)
-  -h, --help                    Show this help message
+  --target <linux|windows|macos|all>  Target platform(s) to package [default: linux]
+  --out <DIR>                         Output directory for archives [default: target/dist]
+  --upx                               Enable UPX executable compression (off by default)
+  --no-upx                            Disable UPX executable compression (default)
+  -h, --help                          Show this help message
 EOF
 }
 
@@ -56,9 +56,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$target" in
-  linux|windows|all) ;;
+  linux|windows|macos|all) ;;
   *)
-    echo "error: invalid --target '$target' (expected linux, windows, or all)" >&2
+    echo "error: invalid --target '$target' (expected linux, windows, macos, or all)" >&2
     exit 2
     ;;
 esac
@@ -113,13 +113,21 @@ summary_file="$stage/summary.tsv"
 
 cd "$repo_root"
 
+file_size() {
+  if stat -c %s "$1" >/dev/null 2>&1; then
+    stat -c %s "$1"
+  else
+    stat -f %z "$1"
+  fi
+}
+
 compress_bin() {
   local bin=$1
   local platform=$2
   local raw_bytes after_bytes
 
-  raw_bytes=$(stat -c %s "$bin")
-  if [[ $use_upx -eq 1 ]]; then
+  raw_bytes=$(file_size "$bin")
+  if [[ $use_upx -eq 1 && "$platform" != "macos" ]]; then
     if [[ "$platform" == "windows" ]]; then
       upx -q --best --lzma "$bin" >/dev/null 2>&1 \
         || upx -q --best --lzma --compress-resources=0 "$bin" >/dev/null 2>&1 \
@@ -131,7 +139,7 @@ compress_bin() {
     fi
     upx -t "$bin" >/dev/null
   fi
-  after_bytes=$(stat -c %s "$bin")
+  after_bytes=$(file_size "$bin")
   echo "$raw_bytes $after_bytes"
 }
 
@@ -247,7 +255,55 @@ package_windows() {
 
   local desk_archive="$out_dir/xcpc-workstation-${app_version}-windows-x86_64.zip"
   zip_dir "$desk_stage" "$app_name" "$desk_archive"
-  record_summary "desktop (windows)" "$desk_raw" "$desk_upx" "$(stat -c %s "$desk_archive")" "$desk_archive"
+  record_summary "desktop (windows)" "$desk_raw" "$desk_upx" "$(file_size "$desk_archive")" "$desk_archive"
+}
+
+package_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "error: --target macos must be run on macOS" >&2
+    exit 1
+  fi
+  echo "==> Packaging macOS arm64 CLI (xcpc)..."
+  cargo build --release -p xcpc-mcp --target aarch64-apple-darwin
+  local cli_stage="$stage/macos-cli"
+  mkdir -p "$cli_stage"
+  cp "$repo_root/target/aarch64-apple-darwin/release/xcpc" "$cli_stage/xcpc"
+  chmod +x "$cli_stage/xcpc"
+  local cli_raw
+  cli_raw=$(file_size "$cli_stage/xcpc")
+
+  local cli_archive="$out_dir/xcpc-cli-${app_version}-macos-arm64.tar.gz"
+  GZIP=-9 tar -C "$cli_stage" -czf "$cli_archive" xcpc
+  record_summary "cli (macos)" "$cli_raw" "$cli_raw" "$(file_size "$cli_archive")" "$cli_archive"
+
+  echo "==> Packaging macOS arm64 desktop (.app, .tar.gz, .dmg)..."
+  local desk_stage="$stage/macos-desktop"
+  mkdir -p "$desk_stage"
+  (cd "$repo_root/apps/desktop" && nsh package --target macos --arch arm64 --app-version "$app_version" --icon "$app_icon" -o "$desk_stage")
+
+  local app_bundle
+  app_bundle=$(find "$desk_stage" -mindepth 1 -maxdepth 1 -type d -name '*.app' | head -n 1)
+  [[ -n "$app_bundle" ]] || { echo "error: packaged macOS .app bundle not found in $desk_stage" >&2; exit 1; }
+  local app_name
+  app_name=$(basename "$app_bundle")
+
+  # Bundle xcpc CLI inside .app/Contents/MacOS/ beside the desktop binary and re-sign ad-hoc.
+  cp "$cli_stage/xcpc" "$app_bundle/Contents/MacOS/xcpc"
+  chmod +x "$app_bundle/Contents/MacOS/xcpc"
+  codesign --force --deep --sign - "$app_bundle"
+
+  local desk_raw=0
+  while IFS= read -r -d '' bin; do
+    desk_raw=$((desk_raw + $(file_size "$bin")))
+  done < <(find "$app_bundle/Contents/MacOS" -maxdepth 1 -type f -print0)
+
+  local desk_archive="$out_dir/xcpc-workstation-${app_version}-macos-arm64.tar.gz"
+  COPYFILE_DISABLE=1 GZIP=-9 tar -C "$desk_stage" -czf "$desk_archive" "$app_name"
+  record_summary "desktop (macos tar.gz)" "$desk_raw" "$desk_raw" "$(file_size "$desk_archive")" "$desk_archive"
+
+  "$repo_root/packaging/macos/build-dmg.sh" "$app_bundle" "$app_version" "$out_dir" arm64
+  local dmg_path="$out_dir/xcpc-workstation-${app_version}-macos-arm64.dmg"
+  record_summary "desktop (macos dmg)" "$desk_raw" "$desk_raw" "$(file_size "$dmg_path")" "$dmg_path"
 }
 
 if [[ "$target" == "linux" || "$target" == "all" ]]; then
@@ -255,6 +311,9 @@ if [[ "$target" == "linux" || "$target" == "all" ]]; then
 fi
 if [[ "$target" == "windows" || "$target" == "all" ]]; then
   package_windows
+fi
+if [[ "$target" == "macos" ]]; then
+  package_macos
 fi
 
 echo

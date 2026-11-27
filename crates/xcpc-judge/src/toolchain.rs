@@ -244,18 +244,40 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
 
     // Scan PATH first so the first occurrence in PATH (e.g. NixOS gcc-wrapper before unwrapped
     // gcc) is preserved when deduplicating by (name, version).
+    let mut search_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    // macOS `.app` bundles launched from Finder/Dock do not inherit Homebrew's PATH.
+    if cfg!(target_os = "macos") {
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            let dir = PathBuf::from(extra);
+            if !search_dirs.contains(&dir) && dir.is_dir() {
+                search_dirs.push(dir);
+            }
+        }
+    }
+
+    // On macOS, Homebrew installs GNU GCC as versioned `g++-<N>` (e.g. `g++-15`, `g++-14`)
+    // while `/usr/bin/g++` is Apple Clang (which lacks `<bits/stdc++.h>`). Scan versioned
+    // `g++-<N>` (highest version first) before falling back to `g++` / `clang++`.
+    if cfg!(target_os = "macos") {
+        for dir in &search_dirs {
+            for candidate in versioned_gpp_candidates(dir) {
+                try_add(&candidate);
+            }
+        }
+    }
+
     let names: &[&str] = if cfg!(windows) {
         &["g++.exe", "clang++.exe"]
     } else {
         &["g++", "clang++"]
     };
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for name in names {
-            for dir in std::env::split_paths(&path_var) {
-                let candidate = dir.join(name);
-                if candidate.is_file() {
-                    try_add(&candidate);
-                }
+    for name in names {
+        for dir in &search_dirs {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                try_add(&candidate);
             }
         }
     }
@@ -278,6 +300,16 @@ pub fn detect_toolchain(cxx_override: Option<&Path>) -> ToolchainStatus {
         None
     };
 
+    // On macOS, prefer real GNU GCC (Homebrew) over Apple Clang when both are present,
+    // since competitive programming solutions commonly `#include <bits/stdc++.h>`.
+    if cfg!(target_os = "macos") {
+        compilers.sort_by_key(|c| match c.kind {
+            CompilerKind::Gpp => 0,
+            CompilerKind::Clangpp => 1,
+            CompilerKind::Other => 2,
+        });
+    }
+
     let active = if override_path.is_some() || env_override.is_some() {
         explicit_active
     } else {
@@ -298,12 +330,12 @@ fn platform_install_commands() -> Vec<InstallCommand> {
     if cfg!(target_os = "macos") {
         return vec![
             InstallCommand {
-                label: "macOS".to_owned(),
-                command: "xcode-select --install".to_owned(),
+                label: "Homebrew (推荐)".to_owned(),
+                command: "brew install gcc".to_owned(),
             },
             InstallCommand {
-                label: "Homebrew".to_owned(),
-                command: "brew install gcc".to_owned(),
+                label: "macOS Command Line Tools".to_owned(),
+                command: "xcode-select --install".to_owned(),
             },
         ];
     }
@@ -408,12 +440,49 @@ pub fn resolve_active_compiler(cxx_override: Option<&Path>) -> Result<DetectedCo
     Err(JudgeError::NoCompiler)
 }
 
+/// Discovers versioned Homebrew/GNU `g++-<major>` binaries inside `dir`, ordered from
+/// newest major version to oldest (e.g. `g++-15`, `g++-14`, `g++-13`).
+pub(crate) fn versioned_gpp_candidates(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(u32, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if let Some(suffix) = name.strip_prefix("g++-")
+            && !suffix.is_empty()
+            && suffix.bytes().all(|b| b.is_ascii_digit())
+            && let Ok(major) = suffix.parse::<u32>()
+        {
+            found.push((major, path));
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
 fn resolve_in_path(p: &Path) -> Option<PathBuf> {
     if p.components().count() > 1 || p.is_absolute() {
         return p.is_file().then(|| p.to_path_buf());
     }
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|v| std::env::split_paths(&v).collect())
+        .unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            let dir = PathBuf::from(extra);
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    for dir in dirs {
         let candidate = dir.join(p);
         if candidate.is_file() {
             return Some(candidate);
@@ -465,7 +534,7 @@ fn probe_compiler(path: &Path) -> Option<DetectedCompiler> {
 
 fn platform_install_guide() -> &'static str {
     if cfg!(target_os = "macos") {
-        "运行 `xcode-select --install` 安装 Apple Clang，或通过 Homebrew 安装 GCC：`brew install gcc`。"
+        "推荐通过 Homebrew 安装 GNU GCC（`brew install gcc`，完整支持 `<bits/stdc++.h>`），或运行 `xcode-select --install` 安装 Apple Clang。"
     } else if cfg!(windows) {
         "推荐安装 MSYS2（https://www.msys2.org/）后执行 `pacman -S mingw-w64-ucrt-x86_64-gcc`，并将 `C:\\msys64\\ucrt64\\bin` 加入 PATH，或在上方手动指定 `g++.exe` 路径。"
     } else {
@@ -886,5 +955,26 @@ mod install_command_tests {
         assert_eq!(labels("ID=\"fedora\"\n", false), ["Fedora"]);
         assert_eq!(labels("ID=nixos\n", true), ["Nix"]);
         assert_eq!(linux_install_commands(None, false).len(), 3);
+    }
+
+    #[test]
+    fn versioned_gpp_candidates_orders_newest_first_and_ignores_non_numeric() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "g++-12",
+            "g++-15",
+            "g++-14",
+            "g++-foo",
+            "g++-",
+            "g++",
+            "clang++-18",
+        ] {
+            std::fs::write(dir.path().join(name), b"").unwrap();
+        }
+        let found: Vec<String> = super::versioned_gpp_candidates(dir.path())
+            .into_iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned))
+            .collect();
+        assert_eq!(found, ["g++-15", "g++-14", "g++-12"]);
     }
 }

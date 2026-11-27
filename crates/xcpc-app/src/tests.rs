@@ -1771,6 +1771,41 @@ fn ui_fonts_loads_jetbrains_mono_and_prefers_ttf_over_otf() {
 }
 
 #[test]
+fn parse_macos_apple_languages_extracts_first_locale() {
+    let zh_plist = "(\n    \"zh-Hans-CN\",\n    \"en-US\"\n)\n";
+    let first = crate::parse_macos_apple_languages(zh_plist).unwrap();
+    assert_eq!(first, "zh-Hans-CN");
+    assert_eq!(crate::normalize_system_locale(&first), "zh-CN");
+
+    let en_plist = "(\n    en-US,\n    zh-Hans-CN\n)\n";
+    let first_en = crate::parse_macos_apple_languages(en_plist).unwrap();
+    assert_eq!(first_en, "en-US");
+    assert_eq!(crate::normalize_system_locale(&first_en), "en");
+
+    assert_eq!(crate::parse_macos_apple_languages("(\n)\n"), None);
+}
+
+#[test]
+fn app_font_dirs_includes_macos_bundle_resources() {
+    use std::path::PathBuf;
+    let macos_bin = PathBuf::from("/Applications/XCPC Workstation.app/Contents/MacOS");
+    let dirs = crate::app_font_dirs(&macos_bin);
+    assert_eq!(
+        dirs,
+        vec![
+            PathBuf::from("/Applications/XCPC Workstation.app/Contents/MacOS/fonts"),
+            PathBuf::from("/Applications/XCPC Workstation.app/Contents/Resources/fonts"),
+        ]
+    );
+
+    let linux_bin = PathBuf::from("/opt/xcpc");
+    assert_eq!(
+        crate::app_font_dirs(&linux_bin),
+        vec![PathBuf::from("/opt/xcpc/fonts")]
+    );
+}
+
+#[test]
 fn image_import_enforces_security_boundaries_and_unique_names() {
     let (dir, preview) = init_temp_preview("image-import");
     assert!(preview.create_problem("p1".into(), "Graph".into()).ok);

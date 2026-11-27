@@ -6,16 +6,44 @@
 
 | 平台 | 推荐产物 | 说明 |
 | :--- | :--- | :--- |
+| **macOS (Apple Silicon / arm64)** | `xcpc-workstation-*-macos-arm64.dmg` | 拖拽安装镜像（拖入 `/Applications`），应用包内附带 `xcpc` CLI，支持应用内自动更新。 |
+| **macOS (Apple Silicon / arm64)** | `xcpc-workstation-*-macos-arm64.tar.gz` | 便携 `.app` 压缩包，供应用内自动更新与自定义目录解压使用。 |
 | **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64-setup.exe` | Inno Setup 每用户安装器，免管理员权限，默认将 `xcpc` 加入用户 `PATH`（可选取消），支持应用内自动更新。 |
 | **Windows (x86_64)** | `xcpc-workstation-*-windows-x86_64.zip` | 绿色便携包，解压至用户可写目录即用，内置 `XCPC Workstation.exe` 与 `xcpc.exe`，支持应用内自动更新。 |
 | **Debian / Ubuntu (amd64)** | `xcpc-workstation_*_amd64.deb` | 系统级安装包，自动声明 GTK4 与 WebKitGTK 6.0 依赖，安装桌面端与 `/usr/bin/xcpc`。 |
 | **Arch Linux (x86_64)** | `xcpc-workstation-*-x86_64.pkg.tar.zst` | `pacman` 本地包，自动声明 `gtk4` 与 `webkitgtk-6.0` 依赖，安装桌面端与 `/usr/bin/xcpc`。 |
 | **Linux 通用 (x86_64)** | `xcpc-workstation-*-linux-x86_64.AppImage` / `.tar.gz` | AppImage 赋予执行权限即可运行；`.tar.gz` 解压后运行，支持应用内自动更新。 |
-| **纯 CLI / MCP** | `xcpc-cli-*-{linux,windows}-x86_64.{tar.gz,zip}` | 仅包含无头 `xcpc` 二进制，无需图形库依赖，适合服务器、CI 与 MCP 客户端。 |
+| **纯 CLI / MCP** | `xcpc-cli-*-{macos-arm64,linux-x86_64,windows-x86_64}.{tar.gz,zip}` | 仅包含无头 `xcpc` 二进制，无需图形库依赖，适合服务器、CI 与 MCP 客户端。 |
 
 ---
 
 ## 分平台安装步骤
+
+=== "macOS (Apple Silicon)"
+
+    **方式一：`.dmg` 安装镜像（推荐）**
+
+    1. 下载 `xcpc-workstation-<version>-macos-arm64.dmg` 并双击挂载。
+    2. 将 `XCPC Workstation.app` 拖入 `Applications` 文件夹。
+    3. 如需在终端直接使用 `xcpc` 命令行工具，可将其软链至 `PATH`：
+
+    ```bash
+    ln -sf "/Applications/XCPC Workstation.app/Contents/MacOS/xcpc" /opt/homebrew/bin/xcpc
+    xcpc --version
+    ```
+
+    **方式二：`.tar.gz` 便携包**
+
+    ```bash
+    tar -xzf xcpc-workstation-*-macos-arm64.tar.gz -C /Applications
+    ```
+
+    !!! note "首次启动 Gatekeeper 提示"
+        当前未经过 Apple 公证的构建使用 ad-hoc 签名，从浏览器下载后 macOS 会附加隔离属性，双击可能提示「已损坏，无法打开」。拖入 `/Applications` 后在终端执行一次以下命令移除隔离属性即可正常打开：
+
+        ```bash
+        xattr -cr "/Applications/XCPC Workstation.app"
+        ```
 
 === "Windows"
 
@@ -97,11 +125,11 @@
 
 桌面端内置自动更新检查功能，可在 **「设置 → 关于」** 中手动触发检查更新。
 
-- **支持应用内就地更新的形态**：Windows 每用户安装器（`setup.exe`）、Windows 绿色便携包（`.zip` 用户可写目录解压版）与 Linux `.tar.gz` 用户可写目录解压版。
+- **支持应用内就地更新的形态**：macOS `.app`（`.dmg` 拖入 `/Applications` 或 `.tar.gz` 解压版）、Windows 每用户安装器（`setup.exe`）、Windows 绿色便携包（`.zip` 用户可写目录解压版）与 Linux `.tar.gz` 用户可写目录解压版。
 - **系统包与只读运行形态**：Debian / Ubuntu `.deb` 与 Arch Linux `.pkg.tar.zst` 安装在 `/opt/xcpc-workstation/` 下，更新时请下载新版本包并通过 `apt` 或 `pacman` 升级；Linux `AppImage` 运行在只读挂载环境，请从 [GitHub Releases](https://github.com/lihaoze123/xcpc-workstation/releases) 下载新版替换。
 - **开发构建**：从源码运行的开发构建默认不启用自动更新。
 
 ## 可选环境依赖
 
-- **C++ 编译器（用于题目构建与算法模板验证）**：如果需要使用 [题目构建与导出](../problem-build/index.md) 或 [三源自动验证](../templates-trd/verification.md)，请确保本机已安装 `g++` 或 `clang++`（可通过环境变量 `XCPC_CXX` 或桌面端 **「设置 → 工具链」** 指定路径）。纯题面编写与 PDF 出版不需要 C++ 编译器。
+- **C++ 编译器（用于题目构建与算法模板验证）**：如果需要使用 [题目构建与导出](../problem-build/index.md) 或 [三源自动验证](../templates-trd/verification.md)，请确保本机已安装 `g++` 或 `clang++`（可通过环境变量 `XCPC_CXX` 或桌面端 **「设置 → 工具链」** 指定路径）。macOS 推荐通过 `brew install gcc` 安装 GNU GCC（完整支持 `<bits/stdc++.h>`，桌面端会自动扫描 `/opt/homebrew/bin` 下的 `g++-*` 并优先选用）。纯题面编写与 PDF 出版不需要 C++ 编译器。
 - **中文字体**：安装包已内置 Latin Modern 与 JetBrains Mono，中文默认自动回退到系统字体。若需要与 `olymp.sty` 基准一致的方正字体效果，请参阅 [字体配置](./fonts.md)。

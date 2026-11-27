@@ -370,6 +370,17 @@ impl FontOptions {
             if sibling.is_dir() {
                 dirs.push(sibling);
             }
+            // macOS `.app` bundles place executables in `Contents/MacOS/` and resources in
+            // `Contents/Resources/`.
+            if dir.file_name().and_then(|n| n.to_str()) == Some("MacOS")
+                && let Some(contents) = dir.parent()
+                && contents.file_name().and_then(|n| n.to_str()) == Some("Contents")
+            {
+                let res_fonts = contents.join("Resources").join("fonts");
+                if res_fonts.is_dir() {
+                    dirs.push(res_fonts);
+                }
+            }
         }
         Self { dirs, system: true }
     }
@@ -1024,6 +1035,19 @@ mod tests {
         let from_empty_env = FontOptions::from_env_with(Some(OsStr::new("")), Some(dir.path()));
         assert_eq!(from_empty_env.dirs, vec![sibling]);
         assert!(from_empty_env.system);
+    }
+
+    #[test]
+    fn from_env_discovers_macos_bundle_resources_fonts() {
+        let dir = tempfile::tempdir().unwrap();
+        let macos_dir = dir.path().join("App.app/Contents/MacOS");
+        let res_fonts = dir.path().join("App.app/Contents/Resources/fonts");
+        std::fs::create_dir_all(&macos_dir).unwrap();
+        std::fs::create_dir_all(&res_fonts).unwrap();
+
+        let opts = FontOptions::from_env_with(None, Some(&macos_dir));
+        assert_eq!(opts.dirs, vec![res_fonts]);
+        assert!(opts.system);
     }
 
     #[test]

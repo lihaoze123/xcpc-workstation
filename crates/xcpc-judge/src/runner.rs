@@ -669,8 +669,10 @@ fn run_process_unix(
     // Compute rlimits for the child process.
     // Virtual address space (RLIMIT_AS) gets headroom over RSS limit so C++ runtime
     // mappings don't cause false MLE, while ru_maxrss enforces the exact memory limit.
+    // On macOS (especially Apple Silicon), `dyld` shared cache and virtual memory
+    // reservations cause `RLIMIT_AS` to fail or abort normal programs; rely on `ru_maxrss`.
     let mem_bytes = limits.memory_limit_kib.saturating_mul(1024);
-    let as_limit_bytes = if limits.disable_as_limit {
+    let as_limit_bytes = if limits.disable_as_limit || cfg!(target_os = "macos") {
         0
     } else {
         mem_bytes
@@ -1412,7 +1414,7 @@ fn run_interactive_unix(
     use std::os::unix::process::CommandExt;
 
     let mem_bytes = limits.memory_limit_kib.saturating_mul(1024);
-    let as_limit_bytes = if limits.disable_as_limit {
+    let as_limit_bytes = if limits.disable_as_limit || cfg!(target_os = "macos") {
         0
     } else {
         mem_bytes
