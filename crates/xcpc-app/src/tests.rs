@@ -615,8 +615,11 @@ fn watcher_shuts_down_cleanly_on_switch_and_drop() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let rx1 = s1.rx.clone();
     std::thread::spawn(move || {
-        let res = rx1.lock().unwrap().recv();
-        let _ = done_tx.send(res.is_err());
+        // Drain any initial OS watcher events (e.g. macOS FSEvents creation events)
+        // until the channel disconnects on workspace switch.
+        let guard = rx1.lock().unwrap();
+        while guard.recv().is_ok() {}
+        let _ = done_tx.send(true);
     });
 
     // Switching workspace drops old watcher and wakes the blocked receiver immediately.
@@ -634,8 +637,9 @@ fn watcher_shuts_down_cleanly_on_switch_and_drop() {
     let (drop_tx, drop_rx) = std::sync::mpsc::channel();
     let rx2 = s2.rx.clone();
     std::thread::spawn(move || {
-        let res = rx2.lock().unwrap().recv();
-        let _ = drop_tx.send(res.is_err());
+        let guard = rx2.lock().unwrap();
+        while guard.recv().is_ok() {}
+        let _ = drop_tx.send(true);
     });
 
     drop(preview);
