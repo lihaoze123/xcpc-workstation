@@ -1140,6 +1140,11 @@ fn watcher_ignores_internal_paths_and_filters_self_writes() {
             .unwrap();
     let tracked_ws = ws.with_write_tracker(live_tracker);
 
+    // Drain initial FSEvents creation events on macOS before testing self-write suppression.
+    if cfg!(target_os = "macos") {
+        while rx.recv_timeout(Duration::from_millis(600)).is_ok() {}
+    }
+
     // 1. Self-write via tracked Workspace must NOT emit any WatchEvent.
     tracked_ws
         .write("problems/two-sum/statement.md", b"self save\n")
@@ -1378,7 +1383,7 @@ fn list_assets_generates_cached_thumbnails_for_png_and_svg_and_falls_back_safely
     assert_eq!((big.width, big.height), (Some(600), Some(400)));
     let big_thumb = big.thumb_path.as_ref().expect("expected PNG thumbnail");
     assert!(big_thumb.is_file());
-    assert!(big_thumb.starts_with(dir.path().join(".xcpc/thumbs")));
+    assert!(big_thumb.starts_with(ws.root().join(".xcpc/thumbs")));
     let (tw, th) = read_image_dimensions(big_thumb).unwrap();
     assert!(tw <= 336 && th <= 336, "thumb too big: {tw}x{th}");
 
