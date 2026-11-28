@@ -78,6 +78,39 @@ pub struct RunLimits {
     pub disable_as_limit: bool,
 }
 
+/// Computes the default wall-clock watchdog limit from a CPU time limit.
+///
+/// On Windows (AV scanning) and macOS (`syspolicyd` / XProtect cold-start scan on freshly
+/// compiled Mach-O binaries), add extra wall-clock headroom while keeping CPU limits strict.
+fn default_wall_limit_ms(time_limit_ms: u64) -> u64 {
+    if cfg!(any(windows, target_os = "macos")) {
+        time_limit_ms
+            .saturating_mul(2)
+            .saturating_add(4000)
+            .max(6000)
+    } else {
+        time_limit_ms
+            .saturating_mul(2)
+            .saturating_add(2000)
+            .max(3000)
+    }
+}
+
+/// Computes the interactive idleness timeout (strictly above `time_limit_ms` so legitimate
+/// CPU-bound work hits `TLE` instead of being misclassified as `ILE`, with extra cold-start
+/// headroom on macOS/Windows).
+fn interactive_idle_limit_ms(limits: &RunLimits) -> u64 {
+    let pad_ms = if cfg!(any(windows, target_os = "macos")) {
+        3500
+    } else {
+        1500
+    };
+    limits
+        .time_limit_ms
+        .saturating_add(pad_ms)
+        .min(limits.wall_limit_ms)
+}
+
 impl RunLimits {
     /// Builds limits from `problem.toml`'s `time` and `memory` strings (defaults: 1s, 256MB).
     pub fn from_problem_limits(time: Option<&str>, memory: Option<&str>) -> Result<Self> {
@@ -89,21 +122,7 @@ impl RunLimits {
             Some(m) => parse_memory_limit_kib(m)?,
             None => 256 * 1024,
         };
-        // Wall-clock watchdog: at least 2x time_limit + 2000ms so sleeping/deadlocked
-        // programs are killed cleanly without cutting off legitimate CPU-bound runs early.
-        // On Windows, freshly compiled unsigned binaries can incur brief AV cold-start
-        // scanning latency, so add extra wall-clock headroom while keeping CPU limits strict.
-        let wall_limit_ms = if cfg!(windows) {
-            time_limit_ms
-                .saturating_mul(2)
-                .saturating_add(4000)
-                .max(6000)
-        } else {
-            time_limit_ms
-                .saturating_mul(2)
-                .saturating_add(2000)
-                .max(3000)
-        };
+        let wall_limit_ms = default_wall_limit_ms(time_limit_ms);
         Ok(Self {
             time_limit_ms,
             memory_limit_kib,
@@ -1552,13 +1571,7 @@ fn run_interactive_unix(
         String::from_utf8_lossy(&buf).into_owned()
     });
 
-    // Idleness limit: always strictly above `time_limit_ms` (so legitimate CPU work between
-    // queries never triggers false ILE even when `time_limit_ms > 5s`), while still detecting
-    // deadlocks (e.g. forgotten flush) promptly.
-    let idle_limit_ms = limits
-        .time_limit_ms
-        .saturating_add(1500)
-        .min(limits.wall_limit_ms);
+    let idle_limit_ms = interactive_idle_limit_ms(&limits);
     let wall_limit_ms = limits.wall_limit_ms;
 
     let terminate_sol = |pid: libc::pid_t| unsafe {
@@ -1931,10 +1944,7 @@ fn run_interactive_windows(
         String::from_utf8_lossy(&buf).into_owned()
     });
 
-    let idle_limit_ms = limits
-        .time_limit_ms
-        .saturating_add(1500)
-        .min(limits.wall_limit_ms);
+    let idle_limit_ms = interactive_idle_limit_ms(&limits);
     let wall_limit_ms = limits.wall_limit_ms;
 
     let mut sol_status = None;
@@ -2118,7 +2128,7 @@ pub fn run_multi_run_interactive(
             time_limit_ms: rem_cpu,
             memory_limit_kib: limits.memory_limit_kib,
             fsize_limit_bytes: limits.fsize_limit_bytes,
-            wall_limit_ms: rem_cpu.saturating_mul(2).saturating_add(2000).max(3000),
+            wall_limit_ms: default_wall_limit_ms(rem_cpu),
             disable_as_limit: limits.disable_as_limit,
         };
         let res = run_interactive(
@@ -2236,7 +2246,7 @@ pub fn run_multi_run_process(
             time_limit_ms: rem_cpu,
             memory_limit_kib: limits.memory_limit_kib,
             fsize_limit_bytes: limits.fsize_limit_bytes,
-            wall_limit_ms: rem_cpu.saturating_mul(2).saturating_add(2000).max(3000),
+            wall_limit_ms: default_wall_limit_ms(rem_cpu),
             disable_as_limit: limits.disable_as_limit,
         };
         let res = run_process(
