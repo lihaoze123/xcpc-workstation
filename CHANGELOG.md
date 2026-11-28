@@ -2,6 +2,24 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0-beta.2] - 2026-11-28
+
+Phase 7 第二个测试版：支持**独立题解排版模板**与**离线内置 Touying 0.8 演示引擎**，配套官方 `editorial-slides` 题解演示模板插件，并补齐 macOS 交互评测冷启动超时余量。
+
+### 新增功能
+
+- **独立题解模板（`TemplateKind::Editorial`）**：
+  - 插件模板清单与 `#let schema` 新增 `kind = "editorial"`，工作区（`workspace.toml`）与比赛（`contest.toml`）支持独立配置 `editorial-template`，试题册保持 A4 出版版式的同时题解可独立选用演示文稿等专属模板。
+  - 冻结比赛时独立归档题解插件模板及配套资源/字体至 `snapshot/editorial-template/`，确保离线完全可复现。
+  - 桌面端「设置」与比赛「版式」检查器新增独立的题解模板选择、参数编辑与「复制到工作区」能力；CLI 与 MCP 同步支持 `editorial_template`。
+- **离线内置 Touying 0.8 与 `World::today`**：
+  - `xcpc-engine` 离线内嵌 `@preview/touying:0.8.0`（含 `uniwarn:0.1.1`、`meander:0.4.4`），支持断网环境零延迟编译题解演示文稿。
+  - 实现 `World::today`（含纯内存片段世界），修复模板内 `datetime.today()` 编译报错。
+
+### 修复
+
+- **评测器（macOS）**：为交互评测空闲与墙钟超时增加 macOS 冷启动余量，消除 CI 偶发超时波动。
+
 ## [0.7.0-beta.1] - 2026-11-28
 
 Phase 7（Plugin API v2）首个测试版：推出**声明式排版模板插件**、统一且受控的**工作区读写能力**与**纯内存 Typst / LaTeX 数学渲染、内存 ZIP 与 SHA-256** 等宿主底层扩展，同步升级 `@xcpc-workstation/plugin-sdk` 至 `v0.3.0`。
