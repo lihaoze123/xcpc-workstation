@@ -1,6 +1,6 @@
 # 插件 API 增强规格：排版模板扩展、工作区读写与宿主底层能力
 
-> 状态：已确认（2026-11-28 `/grill-me` 共识），待分阶段实施。  
+> 状态：已确认并排入 **Phase 7（7A / 7B / 7C，目标 `v0.7.0` 与 `plugin-sdk v0.3.0`）**（2026-11-28 `/grill-me` 共识）。
 > 关联文档：[plugin-development.md](../plugin-development.md)、[phase-4d-plugin-sdk-and-ecosystem.md](./phase-4d-plugin-sdk-and-ecosystem.md)、[template-deprivilege-and-render-contract.md](./template-deprivilege-and-render-contract.md)、[architecture.md](../architecture.md)、[roadmap.md](../roadmap.md)。
 
 本文档定义 XCPC Workstation 插件体系在 Phase 4D 基础上的下一阶段能力增强，覆盖三个经对齐的核心支柱：
@@ -220,11 +220,11 @@ workspace_write = true
 
 ---
 
-## 5. 建议分阶段实施路线
+## 5. Phase 7 分阶段实施路线
 
-- **阶段 1：排版模板扩展（最高优先级）**
+- **Phase 7A：排版模板扩展（最高优先级）**
   - `xcpc-plugin` 清单扩展与体积/路径校验 → `xcpc-engine` `/plugins/<id>/...` 虚拟挂载与按需字体加载 → `xcpc-convert` / `xcpc-app` 模板发现、`plugin:` 解析、Eject 复制与冻结快照 → 桌面端模板选择器分组与缺失引导 → `xcpc plugin init --kind template` / `check` / `pack` 与全套测试/文档。
-- **阶段 2：工作区读写扩展**
+- **Phase 7B：工作区读写扩展**
   - 统一 `WorkspaceReader` / `WorkspaceWriter` trait（`xcpc-plugin`）与 Core 实现（`xcpc-app`）→ QuickJS 与 WebView 桥接接入 → `workspace_write` 信任门与冻结/`--read-only` 单测 → SDK 与文档更新。
-- **阶段 3：宿主底层能力补齐**
-  - `xcpc-engine` 纯内存片段渲染接口 → `host.render.{renderTypst,renderMath}`、`host.archive.*`、`host.crypto.sha256` → WebView `render` 与 `files.{saveBinary,pickFiles}` → 边界/防炸弹单测与 SDK/文档更新。
+- **Phase 7C：宿主底层能力补齐**
+  - `xcpc-engine` 纯内存片段渲染接口 → `host.render.{renderTypst,renderMath}`、`host.archive.*`、`host.crypto.sha256` → WebView `render` 与 `files.{saveBinary,pickFiles}` → 边界/防炸弹单测与 SDK/文档更新；收口统一发布 `plugin-sdk v0.3.0` 与 `v0.7.0`。

@@ -1,6 +1,8 @@
-# Phase 6H 规格：Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进
+# 规格：Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进（原 Phase 6H，已延后）
 
-2026-11-27 `/grill-me` 对齐确认，作为 Phase 6 的下一步（排在 6D–6G 与 `v0.6.0-beta.2` Windows 体验对齐之后）。目标是在**保留 NSH 原生控件、中文 IME 与 `<WebView>` 插件融合优势**的前提下，将桌面端 Typst 实时预览的光栅化与缩放管线从 `typst-render`（`tiny-skia` CPU）平滑演进为基于 Vello（Sparse Strips）的 GPU 矢量渲染，并最终通过 NSH 上游 `nsh-gpu`（`GpuView`）实现零拷贝实时矢量缩放。
+> 状态：**整体延后至「待定与远期」**（2026-11-28 排期对齐确认）。Phase 6 在 6A–6G（`v0.6.0-beta.3`）收口；本规格（含 6H.1 与 6H.2）待上游 `longbridge/nsh` 合入 Windows D3D12 `GpuView` 且 `nsh-gpu` 与 Vello 对齐同一 `wgpu` 主版本后再统一评估重启。
+
+2026-11-27 `/grill-me` 对齐确认。目标是在**保留 NSH 原生控件、中文 IME 与 `<WebView>` 插件融合优势**的前提下，将桌面端 Typst 实时预览的光栅化与缩放管线从 `typst-render`（`tiny-skia` CPU）平滑演进为基于 Vello（Sparse Strips）的 GPU 矢量渲染，并最终通过 NSH 上游 `nsh-gpu`（`GpuView`）实现零拷贝实时矢量缩放。
 
 ---
 

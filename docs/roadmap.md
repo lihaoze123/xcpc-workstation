@@ -343,9 +343,9 @@
 
 **不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
 
-## Phase 6：增强 o11y、全面整体打磨与渲染引擎演进（6A–6G 已完成至 v0.6.0-beta.2；6H 待实施）
+## Phase 6：增强 o11y 与全面整体打磨（已完成，6A–6G 至 v0.6.0-beta.3）
 
-2026-11-26 对齐确认，**6A / 6A.5 / 6B / 6C**（规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)）与 **6D–6G** 均已在 `v0.6.0-beta.1` 完成落地，`v0.6.0-beta.2` 补齐了 Windows 全量体验对齐（路径规范化、静默 Job Object 评测、原生剪贴板、内存极致优化至 ~76 MB、WebView2 插件字体与样式一致性）；下一步为 **6H（Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进）**：
+2026-11-26 对齐确认，**6A / 6A.5 / 6B / 6C**（规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)）与 **6D–6G** 均已在 `v0.6.0-beta.1` 完成落地，`v0.6.0-beta.2`–`beta.3` 补齐了 Windows 全量体验对齐（路径规范化、静默 Job Object 评测、原生剪贴板、内存极致优化至 ~76 MB、WebView2 插件字体与样式一致性）与发布打磨。原计划的 **6H（Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进）** 已于 2026-11-28 确认**整体延后至「待定与远期」**，待上游 `longbridge/nsh` 与 `wgpu`/Vello 稳定对齐后再重启，Phase 6 至此收口。
 
 ### Phase 6A：升级 NSH v0.7.1、清理自造轮子与原生 `<Editor>` 复测
 
@@ -388,23 +388,57 @@
 
 2026-11-26 对齐确认，详细规格见 [specs/phase-6g-motion.md](./specs/phase-6g-motion.md)：动效只说明来去与关联，同级切换保持瞬间；工作室进出严格对称、下层不做视差；非虚拟列表增删与折叠区块经 `ViewRef.animateLayout` 弹簧过渡（前置验证不过则不做）；有锚点的浮层从触发元素的角长出，关闭只快速淡出；动效收成 3 档弹簧 + 2 档时长 Token，减少动态效果集中降级；拖拽松手续接指针速度、零跳动；用开发专用慢放开关逐项录屏验收。
 
-### Phase 6H：Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进（待实施）
-
-2026-11-27 `/grill-me` 对齐确认，详细规格见 [specs/phase-6h-vello-preview.md](./specs/phase-6h-vello-preview.md)。留在 NSH 架构内，分 **6H.1 → 6H.2** 两步升级桌面端实时预览渲染管线：
-
-1. **6H.1（解耦 Vello 渲染器 + `RgbaPixels`，立即可落地）**：在 `xcpc-engine` 内以可选 feature `vello-preview` 实现直连 `typst::layout::Frame` 的 Sparse Strips（`vello_gpu` + `vello_cpu`）转换器与按 `page_fingerprint` 缓存的矢量场景（支持字形、形状/渐变/裁剪、轻量 `Tiling` 与 `resvg` SVG，罕见原语如彩色位图/SVG 字形与内嵌 PDF 自动单页回退 `typst-render` 并记 `WARN`），经 `RgbaPixels` 喂给现有 `PageImage`；仅用于桌面端实时预览，不影响 `xcpc` CLI / MCP / PDF 导出。设置硬性前置 PoC 量化门控（复杂/高倍缩放 P95 提速 ≥ 2×、13 页 `olymp-ref` 画质无退化、Windows 离开工作室空闲释放 GPU 上下文后内存 ≤ 100 MB；若 6H.1 GPU 读回收益不明显则先落 `vello_cpu`）。
-2. **6H.2（`nsh-gpu` 零拷贝直连，上游前置条件就绪后实施）**：待 `longbridge/nsh` 合入 Windows D3D12 `GpuView` 并对齐 `wgpu` 主版本后，复用 6H.1 的矢量场景缓存实现 `<GpuPageView>`，直接绘入 `GpuFrame::target(&wgpu::TextureView)`，撤掉 512px 分块瓦片与 48 MiB `PIXELS` 缓存，实现手势期实时无损矢量缩放（无 GPU 环境静默回退 `PageImage`）。不在「设置」页新增开关，仅在独立诊断窗口展示生效后端与回退计数，并保留 `XCPC_PREVIEW_RENDERER` 环境变量排障。
-
 **不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器、NSH `CanvasOp` 路径回放方案（A1）、`reflexo` 跨进程矢量 IR、替换 CLI/PDF 渲染器、设置页渲染后端开关。
+
+## Phase 7：插件 API v2（排版模板扩展、工作区读写与宿主底层能力）（待实施，目标 v0.7.0）
+
+2026-11-28 `/grill-me` 对齐确认并正式排期，详细规格见 [specs/plugin-api-v2-templates-and-capabilities.md](./specs/plugin-api-v2-templates-and-capabilities.md)。在 Phase 4D 基础上按 **7A → 7B → 7C** 三步连续落地，收口统一发布 `@xcpc-workstation/plugin-sdk` `v0.3.0` 与 `v0.7.0`：
+
+### Phase 7A：排版模板扩展（最高优先级）
+
+- 纯声明式 Typst 资源包（`capabilities = ["template"]`、`[[templates]]`、`font_dirs`，复用 `#let schema`，免信任弹窗，同时支持题面与 TRD 模板）；
+- `xcpc-engine` 只读虚拟挂载 `/plugins/<plugin-id>/...` 并按需加载配套字体（单字体 `25 MiB` / 总包 `64 MiB` 上限）；
+- 以 `plugin:<plugin-id>/<tpl-id>` 活引用，缺失时返回 `PLUGIN_TEMPLATE_NOT_FOUND` 并提供引导，支持一键「复制到工作区」（Eject）脱离插件依赖，冻结比赛时将插件模板与资源一并快照进 `snapshot/`；
+- 同步补齐桌面端模板选择器分组与 `xcpc plugin init --kind template` / `check` / `pack`。
+
+### Phase 7B：工作区与内容扩展
+
+- 统一拉齐 QuickJS 与 WebView 两侧 `workspace_read` 只读投影（题目完整元数据与样例、比赛、算法模板、TRD，不暴露宿主机绝对路径）；
+- 新增触发信任门的受控领域级写权限 `workspace_write`（仅开放 `createProblem` / `updateProblem` / `setSamples` / `upsertSnippet`，禁止删除与比赛解冻，严格遵守 `--read-only`、原子写入与冻结保护）。
+
+### Phase 7C：宿主底层能力补齐
+
+- 独立无磁盘纯内存 `xcpc-engine` + MiTeX 驱动的 `renderTypst` / `renderMath`（带长度、超时与像素护栏）；
+- QuickJS 内存 ZIP 归档读写（`host.archive.*`，防 Zip Slip / ZIP Bomb）与 `host.crypto.sha256`；
+- WebView `files.saveBinary` / `files.pickFiles`（维持不开放剪贴板读取与 `openExternal` 的安全边界）；
+- 同步更新 `packages/plugin-sdk`（`v0.3.0`）、`docs/plugin-development.md` 与 `website/docs*/plugins/`。
+
+**不做**（Phase 7 整体）：模板插件 QuickJS 编译期钩子或 AST 改写器、原始文件系统路径暴露、删除题目/比赛或比赛解冻写接口、剪贴板读取、`openExternal`、新增侵入式主界面 UI 插槽。
+
+## Phase 8：极简领域化 Git 与离线盲验流转（待实施，目标 v0.8.0）
+
+2026-11-28 `/grill-me` 对齐确认并正式排期，详细规格见 [specs/workspace-vcs-and-handoff.md](./specs/workspace-vcs-and-handoff.md)。在**零新增主导航**与**零新增配置字段**前提下，按 **8A → 8B** 两步推进：
+
+### Phase 8A：极薄离线流转（`crates/xcpc-packages`）
+
+- **导出盲验包（ZIP）**：严格白名单脱敏打包（仅含 `<比赛标题>-试题册.pdf` 与按题号命名的 `samples/A/...`，零剧透、不暴露内部 `slug`），提供比赛导出菜单、`xcpc export blind` 与 MCP `export_blind_bundle`；盲验人发回的代码直接对接现有「试跑验题人代码」闭环。
+- **从 XCPC 题目目录导入**：支持安全合入外部单题目录（含路径穿越与符号链接逃逸校验、slug 冲突防静默覆盖），提供题库导入菜单与 `xcpc import dir`。
+
+### Phase 8B：极简领域化 Git 主干闭环（`crates/xcpc-vcs`）
+
+- 以系统 `git` CLI 轻量 wrapper 构建 `crates/xcpc-vcs`（零 C 依赖、复用本机 SSH / GCM / 代理、沿用「设置 → 工具链」探测）；
+- 桌面端补齐品牌页「从 Git 仓库克隆」、顶栏右侧「版本状态胶囊」与锚点「版本面板」（按题目/比赛/模板归组提交、隐藏暂存区双栏）、低频后台静默 `fetch`、显式主干同步与轻量冲突中止（`rebase --abort`）、以及单题/比赛工作室「历史」源码 `DiffView` 与原子安全恢复；
+- `xcpc-mcp` 仅暴露只读查询（`vcs_status` / `vcs_log` / `vcs_diff`），所有写操作永远由人触发。
+
+**不做**（Phase 8 整体）：`libgit2` / `gix`、分支管理 UI、应用内三方冲突合并编辑器、历史版本 PDF 视觉 Diff、Git 托管平台 PR API、自建协作服务端与跨仓同步协议、新增任何工作区/题目/比赛配置字段。
 
 ## 待定与远期（尚未排期）
 
+- **Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进（原 Phase 6H，2026-11-28 确认整体延后）**（规格见 [specs/phase-6h-vello-preview.md](./specs/phase-6h-vello-preview.md)）：保留两阶段设计（`xcpc-engine` 可选 feature `vello-preview` 解耦 Sparse Strips 转换器与按页矢量场景缓存 → 接入 `nsh-gpu` `<GpuPageView>` 零拷贝直连，撤掉 512px 分块瓦片与 48 MiB `PIXELS` 缓存）。**重启前置条件**：上游 `longbridge/nsh` 合入 Windows D3D12 `GpuView` 后端且 `nsh-gpu` 与 Vello 对齐同一 `wgpu` 主版本后再统一评估重启。
 - **远期（原候选 Phase 3E）：Lemon-like 本地比赛求解器与 XCPC 反作弊审计**（概念 Spec 见 [specs/local-contest-solver-concept.md](./specs/local-contest-solver-concept.md)，2026-11-24 确认排到远期）：定义开放提交归档协议（`submissions.jsonl` + `codes/`，兼容传统 Lemon 选手目录），Linux 原生轻量沙箱（`bwrap` / namespace + 断网 + 只读工作目录，fail-closed）运行不可信选手代码，支持 ICPC / OI / IOI 赛制与断点续测；引入三道防线反作弊与分层审计模型，产出离线 HTML 成绩单与审计报告、CSV 及 XCPCIO / Resolver 滚榜 JSON。
 - **更多社区 OJ 插件**（洛谷 / 牛客 / QOJ / LeetCode 等，基于 Phase 4A 的 `oj_source` + `credentials` 插件协议按需扩展，无需宿主硬编码）。
-- **插件 API 增强：排版模板扩展、工作区读写与宿主底层能力**（Spec 见 [specs/plugin-api-v2-templates-and-capabilities.md](./specs/plugin-api-v2-templates-and-capabilities.md)，2026-11-28 `/grill-me` 确认，按三阶段落地）：① **排版模板扩展（优先）**：纯声明式 Typst 资源包（`capabilities = ["template"]`、`[[templates]]`、`font_dirs`，复用 `#let schema`，免信任弹窗，同时支持题面与 TRD 模板），`xcpc-engine` 只读虚拟挂载 `/plugins/<plugin-id>/...` 并按需加载配套字体（单字体 `25 MiB` / 总包 `64 MiB` 上限），以 `plugin:<plugin-id>/<tpl-id>` 活引用，缺失时明确报错引导，支持一键「复制到工作区」脱离插件依赖，冻结比赛时将插件模板一并快照进 `snapshot/`；② **工作区与内容扩展**：统一补全 QuickJS 与 WebView 两侧 `workspace_read`（题目完整元数据与样例、比赛、算法模板、TRD），并新增触发信任门的受控 `workspace_write` 领域级写权限（仅开放 `createProblem` / `updateProblem` / `setSamples` / `upsertSnippet`，禁止删除与比赛解冻，遵守 `--read-only` 与冻结保护）；③ **宿主底层能力补齐**：独立纯内存 `xcpc-engine` + MiTeX 驱动的 `renderTypst` / `renderMath`、内存 ZIP 归档读写（防 Zip Slip / ZIP Bomb）与 `crypto.sha256`，以及 WebView `files.saveBinary` / `pickFiles`（维持不开放剪贴板读取与 `openExternal` 的安全边界）。
 - **Competitive Companion（`:10043`）按需监听**（若后续有从杂牌 OJ 批量抓样例的刚需，可作为默认关闭的可选开关独立补充）。
 - **题单（`sheets/*.toml`）**。
-- **极简领域化 Git 与离线盲验流转**（Spec 见 [specs/workspace-vcs-and-handoff.md](./specs/workspace-vcs-and-handoff.md)，2026-11-28 `/grill-me` 确认）：以系统 `git` CLI 轻量 wrapper 构建 `crates/xcpc-vcs`，在零新增主导航与零新增配置字段的前提下补齐桌面端极简主干闭环（克隆/初始化、按题目归组提交、静默后台 `fetch`、主干同步与冲突中止、源码 `DiffView` 与安全历史恢复，MCP 仅暴露只读查询）；同步补齐极薄的「导出盲验包（ZIP，无剧透 PDF + 按题号样例）」与「从 XCPC 题目目录导入」，不做在线服务端、跨仓同步协议、分支管理与平台 PR API。
 - DOMjudge / Hydro 包的导入，以及 FPS / QOJ 包的导入导出。
 - 双语并排校对与语义级 Diff。
 - 更多主题预设和定制体系。
@@ -412,7 +446,7 @@
 - Web 版。
 - 选手开发调试环境：复用 `Toolchain` 层帮选手配好本机编译器、clangd、调试器（只保证版本一致，不在可复现契约之内）。
 - 题目包的更多语言（Python 等，经 `Language` 层加入）。
-- 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到；矢量 GPU 预览已升级排入 Phase 6H）：
+- 预览性能的遗留项（2026-11-20 的优化之后，延迟已经感知不到；矢量 GPU 预览已延后至本节等待上游稳定）：
   - 100 页以上的文档每次编辑的增量编译要 45ms 以上：看 Typst 能否只从改动的那页往后重新分页，或者整本预览时只编译当前题（单题聚焦预览）。
 
 ## 备选路线：真 TeX + rtex（已验证，暂不采用）

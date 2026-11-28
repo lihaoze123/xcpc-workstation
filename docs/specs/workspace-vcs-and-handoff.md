@@ -1,6 +1,6 @@
 # Spec：极简领域化 Git 与离线盲验流转
 
-> 状态：已确认（2026-11-28，`/grill-me` 深度对齐）
+> 状态：已确认并排入 **Phase 8（8A / 8B，目标 `v0.8.0`）**（2026-11-28 `/grill-me` 深度对齐）
 > 关联文档：[product.md](../product.md)、[architecture.md](../architecture.md)、[multi-author-workspace.md](./multi-author-workspace.md)、[roadmap.md](../roadmap.md)、[design-system.md](../design-system.md)
 
 ## 1. 背景与原则
@@ -159,15 +159,15 @@ Core 将 `git status --porcelain=v2 -z` 与 `git log --name-status` 的路径按
 
 ## 7. 分步实施与验收清单
 
-### 实施顺序
+### 实施顺序（Phase 8A → 8B）
 
-1. **Step 1（`crates/xcpc-vcs` + 只读 MCP + 桌面端极简主干闭环）**：
+1. **Phase 8A（`crates/xcpc-packages` 极薄离线流转，先快速交付）**：
+   - 实现盲验包脱敏导出（Core + CLI + MCP + 比赛导出菜单）；
+   - 实现从 XCPC 题目目录导入（Core + CLI + 题库导入菜单）。
+2. **Phase 8B（`crates/xcpc-vcs` + 只读 MCP + 桌面端极简主干闭环）**：
    - 实现 `xcpc-vcs`（`git` 工具链探测、状态与领域归组、克隆/初始化/远端关联、归组提交、`fetch`、主干同步与冲突中止、单题/比赛历史与源码 Diff、原子安全恢复）；
    - 接入 `xcpc-mcp` 三个只读工具（`vcs_status`、`vcs_log`、`vcs_diff`）；
    - 桌面端补齐「设置 → 工具链」`git` 探测、品牌页「从 Git 仓库克隆」、顶栏版本状态胶囊与版本面板、工作室历史 Diff 视图与低频后台静默 `fetch`。
-2. **Step 2（`crates/xcpc-packages` 极薄离线流转）**：
-   - 实现盲验包脱敏导出（Core + CLI + MCP + 比赛导出菜单）；
-   - 实现从 XCPC 题目目录导入（Core + CLI + 题库导入菜单）。
 
 ### 验收剧本
 
