@@ -2,6 +2,26 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0-beta.1] - 2026-11-28
+
+Phase 7（Plugin API v2）首个测试版：推出**声明式排版模板插件**、统一且受控的**工作区读写能力**与**纯内存 Typst / LaTeX 数学渲染、内存 ZIP 与 SHA-256** 等宿主底层扩展，同步升级 `@xcpc-workstation/plugin-sdk` 至 `v0.3.0`。
+
+### 新增功能
+
+- **排版模板插件（Phase 7A）**：
+  - 支持纯声明式 Typst 模板插件（`capabilities = ["template"]`、`[[templates]]`、`font_dirs`），复用标准 `#let render(doc)` 与 `#let schema` 契约，纯模板插件免 `index.js` 且免敏感权限信任弹窗，同时支持题面与团队参考手册（TRD）模板。
+  - `xcpc-engine` 新增 `/plugins/<plugin-id>/...` 只读沙箱虚拟挂载与零拷贝 `LayeredFontStore` 按需字体加载（单字体上限 25 MiB、解压总包上限 64 MiB）。
+  - 支持 `plugin:<plugin-id>/<template-id>` 活引用、桌面端模板选择器按工作区/插件分组、缺失插件引导（`PLUGIN_TEMPLATE_NOT_FOUND`）、一键「复制到工作区」（Eject）以及冻结比赛/TRD 时将插件模板与配套资源/字体完整归档进 `snapshot/template/`。
+  - 新增 CLI `xcpc plugin init --kind template`、`xcpc template eject`、`xcpc template schema plugin:<id>/<tpl>` 及 `xcpc build|render --template` 覆盖参数。
+- **统一工作区读投影与受控领域级写权限（Phase 7B）**：
+  - QuickJS 与 WebView 共享同一套 `StorageWorkspaceBridge`，拉齐 8 个只读投影接口（`listProblems` / `getProblem` / `listContests` / `getContest` / `listSnippets` / `getSnippet` / `listTrds` / `getTrd`），绝不暴露宿主机绝对路径。
+  - 新增触发 Core 信任门的 `[permissions].workspace_write = true` 领域级写权限，仅开放 `createProblem`、`updateProblem`、`setSamples` 与 `upsertSnippet`（严格禁止删除题目/模板与比赛解冻，遵守 `--read-only`、`toml_edit` 保留未知字段、单题 ≤ 64 样例与单文件 ≤ 2 MiB 限制）；权限升级自动重置 `pending_trust = true`，桌面端信任弹窗清晰警示写权限边界。
+- **宿主底层能力与 SDK `v0.3.0`（Phase 7C）**：
+  - 新增独立无磁盘纯内存 `xcpc-engine` + MiTeX 驱动的 `renderTypst` / `renderMath`（QuickJS 与 WebView 双向可用，64 KiB 源码上限、2000ms 超时、4096×4096 像素上限，支持 `svg`/`png` 与 `light`/`dark`）。
+  - QuickJS 新增内存 ZIP 归档（`host.archive.{listZip, readZip, createZip}`，防 Zip Slip、拒绝软链、20 MiB 输入 / 50 MiB 解压 / 1000 条目防炸弹护栏）与 `host.crypto.sha256`。
+  - WebView 新增 `window.xcpc.files.saveBinary`（≤ 50 MiB，原子写入）与 `window.xcpc.files.pickFiles`（默认单文件 10 MiB / 总计 30 MiB），继续封闭剪贴板读取与 `openExternal`。
+  - 升级 `@xcpc-workstation/plugin-sdk` 至 `v0.3.0`，同步更新 `host.d.ts`、`ui.d.ts`、`manifest.schema.json`、内部开发指南与中英双语文档站。
+
 ## [0.6.0] - 2026-11-28
 
 Phase 6 正式版：升级至 **NSH 0.7.1** 与多窗口 **`nsh-o11y` 开发者诊断面板**，完成桌面端设计系统、排版字体、状态完备性与物理弹簧动效的体系化打磨，并补齐 **Linux / Windows / macOS（Apple Silicon）** 三平台完整体验、极致内存优化与中英双语文档站。

@@ -390,7 +390,7 @@
 
 **不做**（Phase 6 整体）：`ServiceMap` / `FlameGraph` / `LatencyHeatmap`、滚动磁盘日志文件、独立 1,000 题 CI 自动化压测基建、未经实测直接用 `editor-core` 重写编辑器、NSH `CanvasOp` 路径回放方案（A1）、`reflexo` 跨进程矢量 IR、替换 CLI/PDF 渲染器、设置页渲染后端开关。
 
-## Phase 7：插件 API v2（排版模板扩展、工作区读写与宿主底层能力）（已完成，目标 v0.7.0）
+## Phase 7：插件 API v2（排版模板扩展、工作区读写与宿主底层能力）（已完成，v0.7.0-beta.1）
 
 2026-11-28 `/grill-me` 对齐确认并正式排期，详细规格见 [specs/plugin-api-v2-templates-and-capabilities.md](./specs/plugin-api-v2-templates-and-capabilities.md)。在 Phase 4D 基础上按 **7A → 7B → 7C** 三步连续落地，收口统一发布 `@xcpc-workstation/plugin-sdk` `v0.3.0` 与 `v0.7.0`：
 
