@@ -160,6 +160,7 @@ pub(crate) fn validate_module(
 fn parse_schema(dict: &Dict) -> TemplateSchema {
     let kind = match get_str(dict, "kind").as_deref() {
         Some("trd") => TemplateKind::Trd,
+        Some("editorial") => TemplateKind::Editorial,
         _ => TemplateKind::Statement,
     };
     let name = get_localized(dict, "name");

@@ -5089,6 +5089,7 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
             let default_tpl = ws
                 .default_template()
                 .unwrap_or_else(|| "olymp-classic".into());
+            let default_editorial_tpl = ws.default_editorial_template();
             let workspace_options = ws.workspace_template_options();
             if cli.json {
                 println!(
@@ -5096,6 +5097,7 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                     serde_json::to_string_pretty(&json!({
                         "ok": true,
                         "default": default_tpl,
+                        "default_editorial": default_editorial_tpl,
                         "workspace_options": workspace_options,
                         "templates": templates,
                         "presets": presets,
@@ -5104,7 +5106,14 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                 );
             } else {
                 for tpl in &templates {
-                    let mark = if tpl.id == default_tpl { "*" } else { " " };
+                    let is_def = tpl.id == default_tpl;
+                    let is_ed = default_editorial_tpl.as_deref() == Some(tpl.id.as_str());
+                    let mark = match (is_def, is_ed) {
+                        (true, true) => "*E",
+                        (true, false) => "* ",
+                        (false, true) => " E",
+                        (false, false) => "  ",
+                    };
                     println!(
                         "{mark}\t{}\t{}\t{}\t{} field(s)",
                         tpl.id,

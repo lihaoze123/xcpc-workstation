@@ -174,8 +174,8 @@ impl World for MemoryFragmentWorld {
         self.fonts.font(index)
     }
 
-    fn today(&self, _offset: Option<TypstDuration>) -> Option<Datetime> {
-        None
+    fn today(&self, offset: Option<TypstDuration>) -> Option<Datetime> {
+        crate::current_datetime(offset)
     }
 }
 

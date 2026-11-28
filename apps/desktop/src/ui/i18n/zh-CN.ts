@@ -360,6 +360,10 @@ export const zhCN = {
   "settings.layout.preambleTooltip": "在外部编辑器中打开 templates/preamble.typ，配置对整个工作区生效的全局样式与宏",
   "settings.layout.defaultParamsTitle": "默认版式参数",
   "settings.layout.defaultParamsDesc": "对当前模板生效的工作区级默认值；每场比赛可在比赛的「版式」属性中单独覆写。",
+  "settings.layout.editorialTemplateTitle": "默认题解模板",
+  "settings.layout.editorialTemplateDesc": "可选为题解单独指定模板（如演示文稿插件）；留空则默认跟随题面模板。",
+  "settings.layout.editorialParamsTitle": "题解版式参数",
+  "settings.layout.editorialParamsDesc": "对当前题解模板生效的工作区级默认值；单场比赛可在「版式」属性中单独覆写。",
 
   "settings.appearance.themeMode": "主题模式",
   "settings.appearance.themeModeDesc": "浅色、深色或跟随系统",
@@ -478,6 +482,9 @@ export const zhCN = {
 
   // ── Template Options & Modals ──────────────────────────────────────────────
   "template.label": "模板",
+  "template.editorialLabel": "题解模板",
+  "template.followStatementNamed": "跟随题面模板（{name}）",
+  "template.followDefaultNamed": "跟随默认（{name}）",
   "template.addFromPresetEllipsis": "从预设添加模板…",
   "template.ejectToWorkspace": "复制到工作区",
   "template.ejectToWorkspaceTooltip": "将该插件模板及资源复制到工作区 templates/ 目录，脱离插件依赖并自由修改",

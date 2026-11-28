@@ -524,3 +524,183 @@ fn phase7a_plugin_template_render_eject_missing_and_frozen_snapshot() {
             .any(|d| d.code.as_deref() == Some(crate::publish::PLUGIN_TEMPLATE_NOT_FOUND))
     );
 }
+
+#[test]
+fn editorial_template_kind_precedence_and_frozen_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws_root = dir.path().join("ws");
+    let ws = xcpc_storage::init_workspace(&ws_root).unwrap();
+    ws.create_problem("a-plus-b", "A + B Problem").unwrap();
+    ws.write(
+        "problems/a-plus-b/statement.md",
+        b"Given $a, b$, output $a+b$.\n",
+    )
+    .unwrap();
+    ws.write("problems/a-plus-b/samples/01.in", b"1 2\n")
+        .unwrap();
+    ws.write("problems/a-plus-b/samples/01.ans", b"3\n")
+        .unwrap();
+    ws.write(
+        "problems/a-plus-b/editorial.md",
+        b"## Statement\n\nAdd $a$ and $b$.\n\n## Complexity\n\n$O(1)$ time.\n",
+    )
+    .unwrap();
+
+    // Create an editorial-only plugin template.
+    let plugin_root = dir.path().join("plugins/editorial-slides");
+    std::fs::create_dir_all(plugin_root.join("templates")).unwrap();
+    std::fs::write(
+        plugin_root.join("templates/slides.typ"),
+        r##"#import "/xcpc/fonts.typ": cjk-hei, lm-sans-10
+
+#let schema = (
+  kind: "editorial",
+  name: (zh: "题解演示", en: "Editorial Slides"),
+  fields: (
+    (key: "accent", label: "Accent", type: "color", scope: "book", default: "#0B6989"),
+  ),
+)
+
+#let render(doc) = {
+  set page(width: 16cm, height: 9cm, margin: 1cm)
+  set text(font: (lm-sans-10, cjk-hei), size: 11pt)
+  show math.equation: set text(font: "Latin Modern Math")
+  for p in doc.problems {
+    [#metadata((label: p.label)) <xcpc-tutorial>]
+    [= #p.title]
+    p.body
+  }
+}
+"##,
+    )
+    .unwrap();
+
+    let mount = xcpc_engine::PluginMount {
+        plugin_id: "editorial-slides".into(),
+        plugin_name: "Editorial Slides".into(),
+        version: "0.1.0".into(),
+        root: plugin_root,
+        font_dirs: Vec::new(),
+        templates: vec![xcpc_engine::PluginTemplateEntry {
+            id: "slides".into(),
+            entry: "templates/slides.typ".into(),
+            kind: Some(xcpc_domain::TemplateKind::Editorial),
+            name: Some("Editorial Slides".into()),
+            description: Some("Slide deck editorial layout".into()),
+        }],
+    };
+
+    let mut engine = crate::publish::engine(&ws, &xcpc_engine::FontOptions::from_env());
+    engine.set_plugin_mounts(vec![mount]);
+
+    // 1. TemplateKind::Editorial stays isolated from Statement-only listing.
+    let stmt_only =
+        crate::publish::list_templates_by_kind(&ws, &engine, xcpc_domain::TemplateKind::Statement);
+    assert!(
+        !stmt_only
+            .iter()
+            .any(|t| t.id == "plugin:editorial-slides/slides")
+    );
+    let ed_only =
+        crate::publish::list_templates_by_kind(&ws, &engine, xcpc_domain::TemplateKind::Editorial);
+    assert!(
+        ed_only
+            .iter()
+            .any(|t| t.id == "plugin:editorial-slides/slides")
+    );
+    let both = crate::publish::list_statement_and_editorial_templates(&ws, &engine);
+    assert!(both.iter().any(|t| t.id == "olymp-classic"));
+    assert!(
+        both.iter()
+            .any(|t| t.id == "plugin:editorial-slides/slides")
+    );
+
+    // 2. Contest with statement template = olymp-classic and editorial-template = plugin:...
+    ws.write(
+        "contests/round1/contest.toml",
+        b"name = \"Round 1\"\nlanguage = \"english\"\ntemplate = \"olymp-classic\"\neditorial-template = \"plugin:editorial-slides/slides\"\n\n[[problem]]\nid = \"a-plus-b\"\nlabel = \"A\"\n",
+    )
+    .unwrap();
+
+    let (stmt_compiled, stmt_doc, stmt_report) = crate::publish::check(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Contest("round1".into()),
+        crate::publish::Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        stmt_report.ok,
+        "stmt diagnostics: {:?}",
+        stmt_report.diagnostics
+    );
+    assert!(stmt_compiled.is_some());
+    assert!(
+        stmt_doc
+            .expect("stmt doc")
+            .source
+            .contains("/templates/olymp-classic.typ")
+    );
+
+    let (ed_compiled, ed_doc, ed_report) = crate::publish::check(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Contest("round1".into()),
+        crate::publish::Kind::Editorial,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(ed_report.ok, "ed diagnostics: {:?}", ed_report.diagnostics);
+    assert!(ed_compiled.is_some());
+    assert!(
+        ed_doc
+            .expect("ed doc")
+            .source
+            .contains("/plugins/editorial-slides/templates/slides.typ")
+    );
+
+    // 3. Freeze archives both statement template and distinct editorial plugin template!
+    let frozen = crate::publish::freeze_contest(&ws, &mut engine, "round1").unwrap();
+    assert!(
+        frozen.frozen,
+        "freeze report: {:?}",
+        frozen.report.diagnostics
+    );
+    assert!(
+        ws_root
+            .join("contests/round1/snapshot/editorial-template.toml")
+            .is_file()
+    );
+    assert!(
+        ws_root
+            .join("contests/round1/snapshot/editorial-template/templates/slides.typ")
+            .is_file()
+    );
+
+    // Unmount all plugins -> frozen contest editorial STILL compiles offline!
+    engine.set_plugin_mounts(Vec::new());
+    let (frozen_ed, frozen_ed_doc, frozen_ed_report) = crate::publish::check(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Contest("round1".into()),
+        crate::publish::Kind::Editorial,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        frozen_ed_report.ok,
+        "frozen editorial report: {:?}",
+        frozen_ed_report.diagnostics
+    );
+    assert!(frozen_ed.is_some());
+    assert!(
+        frozen_ed_doc
+            .expect("frozen ed doc")
+            .source
+            .contains("/contests/round1/snapshot/editorial-template/templates/slides.typ")
+    );
+}

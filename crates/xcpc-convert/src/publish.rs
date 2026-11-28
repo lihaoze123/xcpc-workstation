@@ -163,15 +163,29 @@ pub fn document_with_engine(
                                       diag_file: String|
      -> (Option<String>, Option<crate::Diagnostic>) {
         book.preamble = ws.load_preamble();
+        let contest_editorial_template = contest_meta
+            .and_then(|m| m.editorial_template.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         let contest_template = contest_meta
             .and_then(|m| m.template.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let name = template_override
-            .map(str::to_owned)
-            .or_else(|| contest_template.map(str::to_owned))
-            .or_else(|| ws.default_template())
-            .unwrap_or_else(|| "olymp-classic".into());
+        let name = if kind == Kind::Editorial {
+            template_override
+                .map(str::to_owned)
+                .or_else(|| contest_editorial_template.map(str::to_owned))
+                .or_else(|| ws.default_editorial_template())
+                .or_else(|| contest_template.map(str::to_owned))
+                .or_else(|| ws.default_template())
+                .unwrap_or_else(|| "olymp-classic".into())
+        } else {
+            template_override
+                .map(str::to_owned)
+                .or_else(|| contest_template.map(str::to_owned))
+                .or_else(|| ws.default_template())
+                .unwrap_or_else(|| "olymp-classic".into())
+        };
         if let Some((plugin_id, template_id)) = parse_plugin_template_ref(&name) {
             if let Some((mount, tpl_entry)) =
                 engine.and_then(|e| e.find_plugin_template(plugin_id, template_id))
@@ -261,31 +275,40 @@ pub fn document_with_engine(
             let mut extra_font_key: Option<String> = None;
             let mut extra_font_dirs: Vec<PathBuf> = Vec::new();
             let err = if contest.meta.frozen && template_override.is_none() {
-                let snap = ws.load_snapshot_template(id);
-                let snap_bundle_entry =
-                    snap.as_ref()
+                let ed_snap = (kind == Kind::Editorial)
+                    .then(|| ws.load_snapshot_editorial_template(id))
+                    .flatten();
+                let ed_bundle_entry =
+                    ed_snap
+                        .as_ref()
                         .and_then(|s| s.entry.as_deref())
                         .and_then(|entry_rel| {
-                            let rel = format!("contests/{id}/snapshot/template/{entry_rel}");
+                            let rel =
+                                format!("contests/{id}/snapshot/editorial-template/{entry_rel}");
                             ws.resolve(&rel).ok().filter(|p| p.is_file()).map(|_| rel)
                         });
-                let snap_tpl_rel = format!("contests/{id}/snapshot/template.typ");
-                let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
-                if let Some(bundle_rel) = snap_bundle_entry {
-                    book.template_name = snap
+                let ed_tpl_rel = format!("contests/{id}/snapshot/editorial-template.typ");
+                let has_ed_tpl = kind == Kind::Editorial
+                    && ed_snap.is_some()
+                    && ws.resolve(&ed_tpl_rel).is_ok_and(|p| p.is_file());
+
+                if let Some(bundle_rel) = ed_bundle_entry {
+                    book.template_name = ed_snap
                         .as_ref()
                         .map(|s| s.template.clone())
                         .unwrap_or_else(|| "local".into());
-                    book.template_options =
-                        snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+                    book.template_options = ed_snap
+                        .as_ref()
+                        .map(|s| s.options.clone())
+                        .unwrap_or_default();
                     book.preamble = ws.load_snapshot_preamble(id);
                     book.template_import = Some(format!("/{bundle_rel}"));
-                    if let Some(s) = &snap
+                    if let Some(s) = &ed_snap
                         && !s.font_dirs.is_empty()
                     {
-                        extra_font_key = Some(format!("contest-snap:{id}"));
+                        extra_font_key = Some(format!("contest-snap-ed:{id}"));
                         for dir in &s.font_dirs {
-                            let rel = format!("contests/{id}/snapshot/template/{dir}");
+                            let rel = format!("contests/{id}/snapshot/editorial-template/{dir}");
                             if let Ok(abs) = ws.resolve(&rel)
                                 && abs.is_dir()
                             {
@@ -294,30 +317,86 @@ pub fn document_with_engine(
                         }
                     }
                     None
-                } else if has_snap_tpl {
-                    book.template_name = snap
+                } else if has_ed_tpl {
+                    book.template_name = ed_snap
                         .as_ref()
                         .map(|s| s.template.clone())
                         .unwrap_or_else(|| "local".into());
-                    book.template_options =
-                        snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+                    book.template_options = ed_snap
+                        .as_ref()
+                        .map(|s| s.options.clone())
+                        .unwrap_or_default();
                     book.preamble = ws.load_snapshot_preamble(id);
-                    book.template_import = Some(format!("/{snap_tpl_rel}"));
+                    book.template_import = Some(format!("/{ed_tpl_rel}"));
                     None
                 } else {
-                    book.template_import = None;
-                    Some(crate::Diagnostic {
-                        error: true,
-                        code: Some(MISSING_TEMPLATE.into()),
-                        message: format!(
-                            "定稿比赛「{id}」缺少快照模板文件 {snap_tpl_rel}，无法复现排版"
-                        ),
-                        file: format!("contests/{id}/contest.toml"),
-                        line: 1,
-                        column: 1,
-                    })
+                    let snap = ws.load_snapshot_template(id);
+                    let snap_bundle_entry = snap
+                        .as_ref()
+                        .and_then(|s| s.entry.as_deref())
+                        .and_then(|entry_rel| {
+                            let rel = format!("contests/{id}/snapshot/template/{entry_rel}");
+                            ws.resolve(&rel).ok().filter(|p| p.is_file()).map(|_| rel)
+                        });
+                    let snap_tpl_rel = format!("contests/{id}/snapshot/template.typ");
+                    let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
+                    if let Some(bundle_rel) = snap_bundle_entry {
+                        book.template_name = snap
+                            .as_ref()
+                            .map(|s| s.template.clone())
+                            .unwrap_or_else(|| "local".into());
+                        book.template_options =
+                            snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+                        book.preamble = ws.load_snapshot_preamble(id);
+                        book.template_import = Some(format!("/{bundle_rel}"));
+                        if let Some(s) = &snap
+                            && !s.font_dirs.is_empty()
+                        {
+                            extra_font_key = Some(format!("contest-snap:{id}"));
+                            for dir in &s.font_dirs {
+                                let rel = format!("contests/{id}/snapshot/template/{dir}");
+                                if let Ok(abs) = ws.resolve(&rel)
+                                    && abs.is_dir()
+                                {
+                                    extra_font_dirs.push(abs);
+                                }
+                            }
+                        }
+                        None
+                    } else if has_snap_tpl {
+                        book.template_name = snap
+                            .as_ref()
+                            .map(|s| s.template.clone())
+                            .unwrap_or_else(|| "local".into());
+                        book.template_options =
+                            snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+                        book.preamble = ws.load_snapshot_preamble(id);
+                        book.template_import = Some(format!("/{snap_tpl_rel}"));
+                        None
+                    } else {
+                        book.template_import = None;
+                        Some(crate::Diagnostic {
+                            error: true,
+                            code: Some(MISSING_TEMPLATE.into()),
+                            message: format!(
+                                "定稿比赛「{id}」缺少快照模板文件 {snap_tpl_rel}，无法复现排版"
+                            ),
+                            file: format!("contests/{id}/contest.toml"),
+                            line: 1,
+                            column: 1,
+                        })
+                    }
                 }
-            } else if template_override.is_none() && ws.has_contest_template(id) {
+            } else if template_override.is_none()
+                && !(kind == Kind::Editorial
+                    && (contest
+                        .meta
+                        .editorial_template
+                        .as_deref()
+                        .is_some_and(|s| !s.trim().is_empty())
+                        || ws.default_editorial_template().is_some()))
+                && ws.has_contest_template(id)
+            {
                 book.template_name = "local".into();
                 book.template_import = Some(format!("/contests/{id}/template.typ"));
                 let mut opts = contest
@@ -331,11 +410,17 @@ pub fn document_with_engine(
                 book.preamble = ws.load_preamble();
                 None
             } else {
-                let diag_file = if contest
-                    .meta
-                    .template
-                    .as_deref()
-                    .is_some_and(|s| !s.trim().is_empty())
+                let diag_file = if (kind == Kind::Editorial
+                    && contest
+                        .meta
+                        .editorial_template
+                        .as_deref()
+                        .is_some_and(|s| !s.trim().is_empty()))
+                    || contest
+                        .meta
+                        .template
+                        .as_deref()
+                        .is_some_and(|s| !s.trim().is_empty())
                 {
                     format!("contests/{id}/contest.toml")
                 } else {
@@ -596,6 +681,13 @@ pub fn document_problems_with_engine(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
+        .or_else(|| {
+            if opts.kind == Kind::Editorial {
+                ws.default_editorial_template()
+            } else {
+                None
+            }
+        })
         .or_else(|| ws.default_template())
         .unwrap_or_else(|| "olymp-classic".into());
 
@@ -1271,7 +1363,7 @@ pub fn freeze_contest(
     };
     let archive = SnapshotTemplateArchive {
         meta: SnapshotTemplateMeta {
-            template: eff_template,
+            template: eff_template.clone(),
             has_custom_template: true,
             has_preamble: preamble_bytes.is_some(),
             plugin_id,
@@ -1286,11 +1378,124 @@ pub fn freeze_contest(
         plugin_bundle_files,
     };
 
-    ws.freeze_commit_with_template(
+    // If the contest resolves a distinct editorial template, archive it separately so
+    // frozen editorial PDFs reproduce offline identically to statement snapshots.
+    let eff_editorial_explicit = contest
+        .meta
+        .editorial_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| ws.default_editorial_template());
+    let editorial_archive = if editorial_pdf.is_some()
+        && let Some(ed_tpl) = eff_editorial_explicit
+        && ed_tpl != eff_template
+    {
+        let mut ed_plugin_meta: Option<(String, String, String, Vec<String>)> = None;
+        let mut ed_bundle_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let mut ed_opts = ws
+            .workspace_template_options()
+            .remove(&ed_tpl)
+            .unwrap_or_default();
+        if let Some(c_opts) = contest.meta.template_options.get(&ed_tpl) {
+            for (k, v) in c_opts {
+                ed_opts.insert(k.clone(), v.clone());
+            }
+        }
+        let (ed_import_path, ed_tpl_bytes) =
+            if let Some((pid, tid)) = parse_plugin_template_ref(&ed_tpl) {
+                let Some((mount, tpl_entry)) = engine.find_plugin_template(pid, tid) else {
+                    return Err(Error::NotFound(format!("plugin template {ed_tpl:?}")));
+                };
+                ed_bundle_files = collect_plugin_bundle_files(mount)?;
+                let rel_font_dirs = relative_font_dirs(mount);
+                let import_path = format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry);
+                ed_plugin_meta = Some((
+                    mount.plugin_id.clone(),
+                    mount.version.clone(),
+                    tpl_entry.entry.clone(),
+                    rel_font_dirs,
+                ));
+                (import_path, None)
+            } else {
+                let rel = format!("templates/{ed_tpl}.typ");
+                let bytes = ws.read_bytes(&rel)?;
+                (format!("/{rel}"), Some(bytes))
+            };
+        fold_legacy_contest_options(&contest.meta, &mut ed_opts);
+
+        let mut ed_assets: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let ed_schema = engine.inspect_template_schema(&ed_import_path);
+        for field in &ed_schema.fields {
+            if field.scope == TemplateFieldScope::Book
+                && field.field_type == TemplateFieldType::Image
+                && let Some(TemplateOptionValue::String(rel_path)) = ed_opts.get(&field.key)
+            {
+                let trimmed = rel_path.trim().trim_start_matches('/');
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(img_bytes) = ws.read_bytes(trimmed) {
+                    let raw_name = Path::new(trimmed)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("asset.bin");
+                    let mut filename = format!("ed-{raw_name}");
+                    let mut idx = 2u32;
+                    while ed_assets.contains_key(&filename)
+                        || archive.assets.contains_key(&filename)
+                    {
+                        let p = Path::new(raw_name);
+                        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
+                        let ext = p
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| format!(".{e}"))
+                            .unwrap_or_default();
+                        filename = format!("ed-{stem}-{idx}{ext}");
+                        idx += 1;
+                    }
+                    ed_assets.insert(filename.clone(), img_bytes);
+                    ed_opts.insert(
+                        field.key.clone(),
+                        TemplateOptionValue::String(format!(
+                            "contests/{contest_id}/snapshot/assets/{filename}"
+                        )),
+                    );
+                }
+            }
+        }
+        let (ed_pid, ed_pver, ed_entry, ed_fdirs) = match ed_plugin_meta {
+            Some((pid, ver, ent, fdirs)) => (Some(pid), Some(ver), Some(ent), fdirs),
+            None => (None, None, None, Vec::new()),
+        };
+        Some(SnapshotTemplateArchive {
+            meta: SnapshotTemplateMeta {
+                template: ed_tpl,
+                has_custom_template: true,
+                has_preamble: archive.meta.has_preamble,
+                plugin_id: ed_pid,
+                plugin_version: ed_pver,
+                entry: ed_entry,
+                font_dirs: ed_fdirs,
+                options: ed_opts,
+            },
+            custom_template_bytes: ed_tpl_bytes,
+            preamble_bytes: None,
+            assets: ed_assets,
+            plugin_bundle_files: ed_bundle_files,
+        })
+    } else {
+        None
+    };
+
+    ws.freeze_commit_with_templates(
         contest_id,
         &statements_pdf,
         editorial_pdf.as_deref(),
         Some(&archive),
+        editorial_archive.as_ref(),
     )?;
 
     let mut outputs = vec![format!("contests/{contest_id}/snapshot/{contest_id}.pdf")];
@@ -1575,7 +1780,8 @@ pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
     out
 }
 
-/// Lists workspace and plugin templates filtered by [`TemplateKind`] (`Statement` vs `Trd`).
+/// Lists workspace and plugin templates filtered by [`TemplateKind`] (`Statement`,
+/// `Editorial`, or `Trd`).
 pub fn list_templates_by_kind(
     ws: &Workspace,
     engine: &Engine,
@@ -1584,6 +1790,18 @@ pub fn list_templates_by_kind(
     list_templates(ws, engine)
         .into_iter()
         .filter(|t| t.kind == kind)
+        .collect()
+}
+
+/// Lists workspace and plugin templates suitable for statements or editorials
+/// (`TemplateKind::Statement` or `TemplateKind::Editorial`, excluding `Trd`).
+pub fn list_statement_and_editorial_templates(
+    ws: &Workspace,
+    engine: &Engine,
+) -> Vec<TemplateInfo> {
+    list_templates(ws, engine)
+        .into_iter()
+        .filter(|t| matches!(t.kind, TemplateKind::Statement | TemplateKind::Editorial))
         .collect()
 }
 

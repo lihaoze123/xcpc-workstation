@@ -253,13 +253,14 @@ pub struct TemplateField {
 
 /// Which document family a Typst template belongs to (`"statement"` vs `"trd"`).
 ///
-/// Used to keep statement/editorial templates and TRD templates isolated in UI dropdowns
-/// and template listings.
+/// Used to keep statement templates, editorial-only templates, and TRD templates
+/// isolated in UI dropdowns and template listings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TemplateKind {
     #[default]
     Statement,
+    Editorial,
     Trd,
 }
 
@@ -267,6 +268,7 @@ impl TemplateKind {
     pub fn as_str(self) -> &'static str {
         match self {
             TemplateKind::Statement => "statement",
+            TemplateKind::Editorial => "editorial",
             TemplateKind::Trd => "trd",
         }
     }
@@ -727,6 +729,11 @@ pub struct ContestMeta {
     /// `templates/<name>.typ` in the workspace).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    /// Optional editorial-specific template name (e.g. `"plugin:editorial-slides/warsaw"`).
+    /// When omitted, editorial builds fall back to workspace `editorial-template` or the
+    /// contest's effective statement template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editorial_template: Option<String>,
     /// Contest-level template options, namespaced by template ID (`[template-options.<tpl>]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub template_options: TemplateOptionsMap,
@@ -1114,6 +1121,8 @@ pub struct ContestMetaPatch {
     pub blank_pages: Option<bool>,
     #[serde(default)]
     pub template: Patch<String>,
+    #[serde(default)]
+    pub editorial_template: Patch<String>,
     #[serde(default)]
     pub template_options: BTreeMap<String, TemplateOptionsPatch>,
 }

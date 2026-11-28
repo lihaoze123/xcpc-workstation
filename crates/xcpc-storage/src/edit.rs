@@ -85,6 +85,27 @@ impl Workspace {
         template: &Patch<String>,
         options: &BTreeMap<String, TemplateOptionsPatch>,
     ) -> Result<()> {
+        self.update_workspace_templates(template, &Patch::Keep, options)
+    }
+
+    /// Partially updates `workspace.toml`'s `editorial-template` and `[template-options.<tpl>]`
+    /// via `toml_edit`, preserving comments, key order, and unknown fields.
+    pub fn update_workspace_editorial_template(
+        &self,
+        editorial_template: &Patch<String>,
+        options: &BTreeMap<String, TemplateOptionsPatch>,
+    ) -> Result<()> {
+        self.update_workspace_templates(&Patch::Keep, editorial_template, options)
+    }
+
+    /// Partially updates `workspace.toml`'s `template`, `editorial-template`, and
+    /// `[template-options.<tpl>]` via `toml_edit`.
+    pub fn update_workspace_templates(
+        &self,
+        template: &Patch<String>,
+        editorial_template: &Patch<String>,
+        options: &BTreeMap<String, TemplateOptionsPatch>,
+    ) -> Result<()> {
         self.check_writable(WORKSPACE_FILE)?;
         let raw = match self.read_text(WORKSPACE_FILE) {
             Ok(s) => s,
@@ -107,6 +128,21 @@ impl Workspace {
             }
             Patch::Clear => {
                 root.remove("template");
+            }
+        }
+        match editorial_template {
+            Patch::Keep => {}
+            Patch::Set(name) => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    root.remove("editorial-template");
+                } else {
+                    check_template_ref(trimmed)?;
+                    set_scalar(root, "editorial-template", Value::from(trimmed));
+                }
+            }
+            Patch::Clear => {
+                root.remove("editorial-template");
             }
         }
         if !options.is_empty() {
@@ -1400,6 +1436,26 @@ impl Workspace {
         pdf_editorial: Option<&[u8]>,
         template_archive: Option<&SnapshotTemplateArchive>,
     ) -> Result<Contest> {
+        self.freeze_commit_with_templates(
+            contest_id,
+            pdf_statements,
+            pdf_editorial,
+            template_archive,
+            None,
+        )
+    }
+
+    /// Low-level atomic freeze commit archiving both statement and optional distinct
+    /// editorial template bundles (`snapshot/editorial-template.toml`,
+    /// `snapshot/editorial-template.typ`, `snapshot/editorial-template/...`).
+    pub fn freeze_commit_with_templates(
+        &self,
+        contest_id: &str,
+        pdf_statements: &[u8],
+        pdf_editorial: Option<&[u8]>,
+        template_archive: Option<&SnapshotTemplateArchive>,
+        editorial_template_archive: Option<&SnapshotTemplateArchive>,
+    ) -> Result<Contest> {
         check_id(contest_id)?;
         if self.is_read_only() {
             return Err(Error::ReadOnly);
@@ -1484,6 +1540,39 @@ impl Workspace {
                 }
                 if !archive.plugin_bundle_files.is_empty() {
                     let tpl_dir = stage_dir.join("template");
+                    fs::create_dir_all(&tpl_dir).map_err(|e| io(&snapshot_rel, e))?;
+                    for (rel_file, bytes) in &archive.plugin_bundle_files {
+                        validate_bundle_rel_path(rel_file)?;
+                        let target = tpl_dir.join(rel_file);
+                        if let Some(parent) = target.parent() {
+                            fs::create_dir_all(parent).map_err(|e| io(&snapshot_rel, e))?;
+                        }
+                        write_atomic(&target, bytes).map_err(|e| io(&snapshot_rel, e))?;
+                    }
+                }
+            }
+            if let Some(archive) = editorial_template_archive {
+                let meta_text = toml::to_string(&archive.meta)
+                    .expect("snapshot editorial template meta serializes");
+                write_atomic(
+                    &stage_dir.join("editorial-template.toml"),
+                    meta_text.as_bytes(),
+                )
+                .map_err(|e| io(&snapshot_rel, e))?;
+                if let Some(tpl_bytes) = &archive.custom_template_bytes {
+                    write_atomic(&stage_dir.join("editorial-template.typ"), tpl_bytes)
+                        .map_err(|e| io(&snapshot_rel, e))?;
+                }
+                if !archive.assets.is_empty() {
+                    let assets_dir = stage_dir.join("assets");
+                    fs::create_dir_all(&assets_dir).map_err(|e| io(&snapshot_rel, e))?;
+                    for (filename, bytes) in &archive.assets {
+                        write_atomic(&assets_dir.join(filename), bytes)
+                            .map_err(|e| io(&snapshot_rel, e))?;
+                    }
+                }
+                if !archive.plugin_bundle_files.is_empty() {
+                    let tpl_dir = stage_dir.join("editorial-template");
                     fs::create_dir_all(&tpl_dir).map_err(|e| io(&snapshot_rel, e))?;
                     for (rel_file, bytes) in &archive.plugin_bundle_files {
                         validate_bundle_rel_path(rel_file)?;
@@ -2087,6 +2176,21 @@ fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) 
         }
         Patch::Clear => {
             root.remove("template");
+        }
+    }
+    match &patch.editorial_template {
+        Patch::Keep => {}
+        Patch::Set(t) => {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
+                root.remove("editorial-template");
+            } else {
+                check_template_ref(trimmed)?;
+                set_scalar(root, "editorial-template", Value::from(trimmed));
+            }
+        }
+        Patch::Clear => {
+            root.remove("editorial-template");
         }
     }
     if !patch.template_options.is_empty() {

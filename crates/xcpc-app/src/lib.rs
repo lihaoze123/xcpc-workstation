@@ -690,6 +690,20 @@ impl AppController {
             .update_workspace_template(template, clear_template, options_json)
     }
 
+    /// Updates `workspace.toml`'s default `editorial-template` and `[template-options.<tpl>]`.
+    pub fn update_workspace_editorial_template(
+        &self,
+        editorial_template: Option<String>,
+        clear_editorial_template: bool,
+        options_json: Option<String>,
+    ) -> ActionResult {
+        self.state.update_workspace_editorial_template(
+            editorial_template,
+            clear_editorial_template,
+            options_json,
+        )
+    }
+
     /// Forks a workspace template `source` into `templates/<newName>.typ`.
     pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
         self.state.fork_template(&source, &new_name)

@@ -1451,9 +1451,34 @@ impl World for Engine {
         }
     }
 
-    fn today(&self, _offset: Option<TypstDuration>) -> Option<Datetime> {
-        None
+    fn today(&self, offset: Option<TypstDuration>) -> Option<Datetime> {
+        current_datetime(offset)
     }
+}
+
+/// Computes the current civil date from `SystemTime::now()` shifted by Typst's optional
+/// UTC offset (pure std, zero external crates). Required by packages such as
+/// `@preview/touying` that evaluate `datetime.today()` at module import time.
+pub(crate) fn current_datetime(offset: Option<TypstDuration>) -> Option<Datetime> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    let shift_secs = offset.map(|d| d.seconds().round() as i64).unwrap_or(0);
+    let secs = now.saturating_add(shift_secs);
+    let days = secs.div_euclid(86_400);
+    // Howard Hinnant's civil_from_days algorithm (valid for all proleptic Gregorian dates).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u8;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u8;
+    let year = (y + i64::from(m <= 2)) as i32;
+    Datetime::from_ymd(year, m, d)
 }
 
 #[cfg(test)]
@@ -1706,6 +1731,33 @@ $ r = markul(|G| - 1, #<len>) #annot(<len>, pos: right, dx: 1em)[len] $
                 compiled.warnings
             );
         }
+    }
+
+    #[test]
+    fn bundled_touying_and_pinit_compile_offline() {
+        let dir = seeded_presets_dir();
+        let mut engine = Engine::new(&FontOptions::from_env(), Some(dir.path().to_path_buf()));
+        engine.set_main(
+            r#"#import "/xcpc/fonts.typ": lm-sans-10
+#import "@preview/touying:0.8.0": *
+#import "@preview/pinit:0.2.2": *
+#import themes.simple: *
+
+#set text(font: lm-sans-10)
+#show math.equation: set text(font: "Latin Modern Math")
+#show: simple-theme.with(aspect-ratio: "16-9")
+
+= A. Demo
+
+== Slide One
+
+$ #pin(1) a + b #pin(2) $
+#pause
+#pinit-highlight(1, 2)
+"#,
+        );
+        let compiled = engine.compile().unwrap();
+        assert_eq!(compiled.page_count(), 3);
     }
 
     #[test]

@@ -505,6 +505,10 @@ pub struct ContestDetailJs {
     pub template: Option<String>,
     /// Effective resolved template ID (contest override -> workspace default -> `"olymp-classic"`).
     pub effective_template: String,
+    /// Explicit editorial template ID on this contest (`null` means inheriting workspace editorial default or statement template).
+    pub editorial_template: Option<String>,
+    /// Effective resolved editorial template ID.
+    pub effective_editorial_template: String,
     /// True when `contests/<id>/template.typ` exists and takes precedence over `templates/*.typ`.
     pub has_contest_template: bool,
     /// JSON-serialized `TemplateInfo` evaluated from `contests/<id>/template.typ` when present.
@@ -734,6 +738,7 @@ pub struct ContestMetaPatchJs {
     pub cover: Patch<bool>,
     pub blank_pages: Option<bool>,
     pub template: Patch<String>,
+    pub editorial_template: Patch<String>,
     pub template_options_json: Option<String>,
 }
 
@@ -758,6 +763,7 @@ impl ContestMetaPatchJs {
             cover: self.cover,
             blank_pages: self.blank_pages,
             template: self.template,
+            editorial_template: self.editorial_template,
             template_options,
         })
     }

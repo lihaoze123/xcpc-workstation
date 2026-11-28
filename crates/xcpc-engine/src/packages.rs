@@ -2,9 +2,10 @@
 //!
 //! Loading order for `VirtualRoot::Package(spec)`:
 //! 1. Built-in offline fallback bundles (`@preview/cetz:0.5.3`, `@preview/oxifmt:1.0.0`,
-//!    `@preview/pinit:0.2.2`, `@preview/mannot:0.4.0`, `@preview/tiptoe:0.4.0`) so the
-//!    example workspace and common drawing/annotation packages compile instantaneously
-//!    and deterministically even without internet access.
+//!    `@preview/pinit:0.2.2`, `@preview/mannot:0.4.0`, `@preview/tiptoe:0.4.0`,
+//!    `@preview/touying:0.8.0`, `@preview/uniwarn:0.1.1`, `@preview/meander:0.4.4`) so the
+//!    example workspace and common drawing/annotation/presentation packages compile
+//!    instantaneously and deterministically even without internet access.
 //! 2. Standard Typst package directories (`TYPST_PACKAGE_PATH` / `$XDG_DATA_HOME/typst/packages`
 //!    for `@local`, `TYPST_PACKAGE_CACHE_PATH` / `$XDG_CACHE_HOME/typst/packages` for cached
 //!    `@preview` packages).
@@ -78,6 +79,33 @@ const BUNDLED_PACKAGES: &[BundledPackage] = &[
             patch: 0,
         },
         tar_gz: include_bytes!("../packages/preview/tiptoe-0.4.0.tar.gz"),
+    },
+    BundledPackage {
+        name: "touying",
+        version: PackageVersion {
+            major: 0,
+            minor: 8,
+            patch: 0,
+        },
+        tar_gz: include_bytes!("../packages/preview/touying-0.8.0.tar.gz"),
+    },
+    BundledPackage {
+        name: "uniwarn",
+        version: PackageVersion {
+            major: 0,
+            minor: 1,
+            patch: 1,
+        },
+        tar_gz: include_bytes!("../packages/preview/uniwarn-0.1.1.tar.gz"),
+    },
+    BundledPackage {
+        name: "meander",
+        version: PackageVersion {
+            major: 0,
+            minor: 4,
+            patch: 4,
+        },
+        tar_gz: include_bytes!("../packages/preview/meander-0.4.4.tar.gz"),
     },
 ];
 

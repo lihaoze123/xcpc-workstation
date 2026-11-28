@@ -502,6 +502,11 @@ pub struct ContestDetailJs {
     pub template: Option<String>,
     /// Effective resolved template ID (contest override -> workspace default -> `"olymp-classic"`).
     pub effective_template: String,
+    /// Explicit editorial template ID on this contest (`null` means inheriting workspace editorial default or statement template).
+    #[prop(skip_none)]
+    pub editorial_template: Option<String>,
+    /// Effective resolved editorial template ID.
+    pub effective_editorial_template: String,
     /// True when `contests/<id>/template.typ` exists and takes precedence over `templates/*.typ`.
     pub has_contest_template: bool,
     /// JSON-serialized `TemplateInfo` evaluated from `contests/<id>/template.typ` when present.
@@ -797,6 +802,7 @@ pub struct ContestMetaPatchJs {
     pub cover: Patch<bool>,
     pub blank_pages: Option<bool>,
     pub template: Patch<String>,
+    pub editorial_template: Patch<String>,
     pub template_options_json: Option<String>,
 }
 
@@ -820,6 +826,8 @@ export interface ContestMetaPatchJs {\n  \
   blankPages?: boolean;\n  \
   /** Template ID (`null` restores workspace default). */\n  \
   template?: string | null;\n  \
+  /** Editorial template ID (`null` clears to inherit workspace editorial default or statement template). */\n  \
+  editorialTemplate?: string | null;\n  \
   /** JSON-encoded namespaced template options patch: `{ [tpl]: { [key]: value | null } }`. */\n  \
   templateOptionsJson?: string;\n\
 }"
@@ -841,6 +849,7 @@ export interface ContestMetaPatchJs {\n  \
             cover: read_patch_field(value, "cover")?,
             blank_pages: read_opt_field(value, "blankPages")?,
             template: read_patch_field(value, "template")?,
+            editorial_template: read_patch_field(value, "editorialTemplate")?,
             template_options_json: read_opt_field(value, "templateOptionsJson")?,
         })
     }
@@ -857,6 +866,7 @@ export interface ContestMetaPatchJs {\n  \
         write_patch_field(host, obj, "cover", &self.cover)?;
         write_opt_field(host, obj, "blankPages", &self.blank_pages)?;
         write_patch_field(host, obj, "template", &self.template)?;
+        write_patch_field(host, obj, "editorialTemplate", &self.editorial_template)?;
         write_opt_field(
             host,
             obj,
@@ -2831,6 +2841,8 @@ impl From<xcpc_app::ContestDetailJs> for ContestDetailJs {
             language: v.language,
             template: v.template,
             effective_template: v.effective_template,
+            editorial_template: v.editorial_template,
+            effective_editorial_template: v.effective_editorial_template,
             has_contest_template: v.has_contest_template,
             contest_template_json: v.contest_template_json,
             template_options_json: v.template_options_json,
@@ -2857,6 +2869,8 @@ impl From<ContestDetailJs> for xcpc_app::ContestDetailJs {
             language: v.language,
             template: v.template,
             effective_template: v.effective_template,
+            editorial_template: v.editorial_template,
+            effective_editorial_template: v.effective_editorial_template,
             has_contest_template: v.has_contest_template,
             contest_template_json: v.contest_template_json,
             template_options_json: v.template_options_json,
@@ -3138,6 +3152,7 @@ impl From<xcpc_app::ContestMetaPatchJs> for ContestMetaPatchJs {
             cover: v.cover,
             blank_pages: v.blank_pages,
             template: v.template,
+            editorial_template: v.editorial_template,
             template_options_json: v.template_options_json,
         }
     }
@@ -3155,6 +3170,7 @@ impl From<ContestMetaPatchJs> for xcpc_app::ContestMetaPatchJs {
             cover: v.cover,
             blank_pages: v.blank_pages,
             template: v.template,
+            editorial_template: v.editorial_template,
             template_options_json: v.template_options_json,
         }
     }

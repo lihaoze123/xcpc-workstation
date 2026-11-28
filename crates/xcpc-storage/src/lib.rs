@@ -874,6 +874,18 @@ impl Workspace {
             .map(str::to_owned)
     }
 
+    /// Reads the optional `editorial-template = "<name>"` setting from `workspace.toml`.
+    pub fn default_editorial_template(&self) -> Option<String> {
+        let raw = fs::read_to_string(self.root.join(WORKSPACE_FILE)).ok()?;
+        let table: toml::Table = toml::from_str(&raw).ok()?;
+        table
+            .get("editorial-template")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Reads `[template-options.<template>]` defaults from `workspace.toml`.
     pub fn workspace_template_options(&self) -> TemplateOptionsMap {
         #[derive(serde::Deserialize, Default)]
@@ -1181,6 +1193,18 @@ impl Workspace {
     pub fn load_snapshot_template(&self, contest_id: &str) -> Option<SnapshotTemplateMeta> {
         check_id(contest_id).ok()?;
         let rel = format!("contests/{contest_id}/snapshot/template.toml");
+        let raw = self.read_text(&rel).ok()?;
+        toml::from_str(&raw).ok()
+    }
+
+    /// Reads archived editorial template metadata from
+    /// `contests/<id>/snapshot/editorial-template.toml` if present.
+    pub fn load_snapshot_editorial_template(
+        &self,
+        contest_id: &str,
+    ) -> Option<SnapshotTemplateMeta> {
+        check_id(contest_id).ok()?;
+        let rel = format!("contests/{contest_id}/snapshot/editorial-template.toml");
         let raw = self.read_text(&rel).ok()?;
         toml::from_str(&raw).ok()
     }

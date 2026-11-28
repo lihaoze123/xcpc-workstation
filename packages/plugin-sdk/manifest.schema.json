@@ -85,9 +85,9 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["statement", "trd"],
+            "enum": ["statement", "editorial", "trd"],
             "default": "statement",
-            "description": "Target document kind for this template."
+            "description": "Target document kind for this template (statement, editorial, or trd)."
           },
           "name": {
             "type": "string",

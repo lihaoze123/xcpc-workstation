@@ -31,11 +31,17 @@ import { MONO } from "./theme";
 
 import { CONTROL, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, RADIUS, SPACE } from "./tokens";
 const ADD_PRESET_ID = "__add_preset__";
+const FOLLOW_DEFAULT_ID = "__follow_default__";
 
-/** Dropdown selector for choosing a workspace template (`templates/*.typ`). */
+/** Dropdown selector for choosing a workspace or plugin template. */
 export function TemplatePicker(props: {
   templates: TemplateInfo[];
   value: string;
+  label?: string;
+  testId?: string;
+  followLabel?: string;
+  following?: boolean;
+  onFollow?: () => void;
   inheritedLabel?: string;
   overridden?: boolean;
   readOnly?: boolean;
@@ -45,35 +51,49 @@ export function TemplatePicker(props: {
 }) {
   const current = computed(() => props.templates.find((t) => t.id === props.value));
   const currentName = () => {
+    if (props.following && props.followLabel) return props.followLabel;
     const c = current();
     return c ? resolveLocalized(c.name) || c.id : props.value;
   };
   const currentDesc = () => {
+    if (props.following) return "";
     const c = current();
     return c?.description ? resolveLocalized(c.description) : "";
   };
   const entries = computed<MenuEntry[]>(() => {
+    const list: MenuEntry[] = [];
+    if (props.followLabel && props.onFollow) {
+      list.push({
+        id: FOLLOW_DEFAULT_ID,
+        label: props.followLabel,
+        checked: !!props.following,
+      });
+      if (props.templates.length > 0) {
+        list.push({ separator: true, id: "sep-follow-default" });
+      }
+    }
     const workspaceList: MenuEntry[] = [];
     const pluginList: MenuEntry[] = [];
     for (const tpl of props.templates) {
+      const isChecked = !props.following && tpl.id === props.value;
       if (tpl.source?.kind === "plugin") {
         pluginList.push({
           id: tpl.id,
           label: resolveLocalized(tpl.name) || tpl.id,
           note: tpl.source.plugin_name,
-          checked: tpl.id === props.value,
+          checked: isChecked,
         });
       } else {
         workspaceList.push({
           id: tpl.id,
           label: resolveLocalized(tpl.name) || tpl.id,
-          checked: tpl.id === props.value,
+          checked: isChecked,
         });
       }
     }
-    const list: MenuEntry[] = [...workspaceList];
+    list.push(...workspaceList);
     if (pluginList.length > 0) {
-      if (list.length > 0) list.push({ separator: true, id: "sep-plugin-templates" });
+      if (workspaceList.length > 0) list.push({ separator: true, id: "sep-plugin-templates" });
       list.push(...pluginList);
     }
     if (props.onAddFromPreset) {
@@ -92,7 +112,7 @@ export function TemplatePicker(props: {
       {/* token-exempt: compact field header row */}
       <View style={{ flexDirection: "row", alignItems: "center", height: 18 }}>
         <Text style={{ flex: 1, fontSize: FONT_SIZE.caption }} class="text-secondary-foreground">
-          {t("template.label")}
+          {props.label ?? t("template.label")}
         </Text>
         <If when={props.overridden && !props.readOnly && !!props.onRestore}>
           <IconBtn icon="rotateCcw" size="sm" tooltip={tip(props.inheritedLabel ?? t("template.restoreWorkspaceDefault"))} onPress={() => props.onRestore?.()} />
@@ -130,14 +150,16 @@ export function TemplatePicker(props: {
               onSelect={(id) => {
                 if (id === ADD_PRESET_ID) {
                   props.onAddFromPreset?.();
-                } else if (id !== props.value) {
+                } else if (id === FOLLOW_DEFAULT_ID) {
+                  props.onFollow?.();
+                } else if (props.following || id !== props.value) {
                   props.onChange(id);
                 }
               }}
               minWidth={220}
               trigger={
                 <View
-                  testID="template-picker"
+                  testID={props.testId ?? "template-picker"}
                   class={`border border-border bg-card hover:bg-muted active:bg-accent ${FOCUS_RING}`}
                   style={{
                     height: CONTROL.lg,

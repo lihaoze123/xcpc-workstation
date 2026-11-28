@@ -53,9 +53,12 @@ export type TemplateSource =
   | { kind: "local" }
   | { kind: "plugin"; plugin_id: string; plugin_name: string; template_id: string };
 
+export type TemplateKind = "statement" | "editorial" | "trd";
+
 export interface TemplateInfo {
   id: string;
   path: string;
+  kind?: TemplateKind;
   name: LocalizedText;
   description?: LocalizedText;
   source?: TemplateSource;
@@ -83,6 +86,7 @@ export interface PresetInfo {
 
 export interface TemplatesCatalog {
   default: string;
+  defaultEditorial: string | null;
   workspaceOptions: TemplateOptionsByTemplate;
   templates: TemplateInfo[];
   presets: PresetInfo[];
@@ -91,11 +95,24 @@ export interface TemplatesCatalog {
 
 const EMPTY_CATALOG: TemplatesCatalog = {
   default: "olymp-classic",
+  defaultEditorial: null,
   workspaceOptions: {},
   templates: [],
   presets: [],
   fonts: [],
 };
+
+/** Templates usable for problem statements (excludes editorial-only and TRD templates). */
+export function statementTemplates(catalog: TemplatesCatalog): TemplateInfo[] {
+  return catalog.templates.filter((t) => !t.kind || t.kind === "statement");
+}
+
+/** Templates usable for editorials (editorial-specific templates first, then statement templates). */
+export function editorialTemplates(catalog: TemplatesCatalog): TemplateInfo[] {
+  const ed = catalog.templates.filter((t) => t.kind === "editorial");
+  const stmt = catalog.templates.filter((t) => !t.kind || t.kind === "statement");
+  return [...ed, ...stmt];
+}
 
 /** Loads all workspace templates (`templates/*.typ`), installable preset seeds, workspace defaults, and loaded fonts. */
 export function loadTemplatesCatalog(): TemplatesCatalog {
@@ -104,6 +121,7 @@ export function loadTemplatesCatalog(): TemplatesCatalog {
     const parsed = JSON.parse(raw) as Partial<TemplatesCatalog>;
     return {
       default: typeof parsed.default === "string" && parsed.default ? parsed.default : "olymp-classic",
+      defaultEditorial: typeof parsed.defaultEditorial === "string" && parsed.defaultEditorial ? parsed.defaultEditorial : null,
       workspaceOptions: parsed.workspaceOptions && typeof parsed.workspaceOptions === "object" ? parsed.workspaceOptions : {},
       templates: Array.isArray(parsed.templates) ? parsed.templates : [],
       presets: Array.isArray(parsed.presets) ? parsed.presets : [],

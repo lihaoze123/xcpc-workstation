@@ -54,7 +54,14 @@ import {
   type SettingsSection,
   type UiError,
 } from "./store";
-import { encodeSingleOptionPatch, loadTemplatesCatalog, parsePluginTemplateRef, type TemplateOptionMap } from "./templates";
+import {
+  editorialTemplates,
+  encodeSingleOptionPatch,
+  loadTemplatesCatalog,
+  parsePluginTemplateRef,
+  statementTemplates,
+  type TemplateOptionMap,
+} from "./templates";
 import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
 import { appearanceMode, cardShadow, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_EDITOR_LIGATURES, DEFAULT_EDITOR_LINE_HEIGHT, editorFontSize, editorLigatures, editorLineHeight, editorVimMode, MONO, uiFontSource, type AppearanceMode } from "./theme";
 import {
@@ -414,8 +421,11 @@ function LayoutPane(props: { active: boolean }) {
   });
 
   const wsReadOnly = () => info().readOnly;
+  const stmtTemplates = computed(() => statementTemplates(catalog()));
+  const edTemplates = computed(() => editorialTemplates(catalog()));
   const tplId = () => catalog().default || "olymp-classic";
   const tplInfo = computed(() => catalog().templates.find((t) => t.id === tplId()));
+  const stmtDefaultName = () => (tplInfo() ? resolveLocalized(tplInfo()!.name) || tplId() : tplId());
   const pluginRef = computed(() => parsePluginTemplateRef(tplId()));
   const isPluginTemplate = computed(() => tplInfo()?.source?.kind === "plugin");
   const canInstallMissingPreset = () => !tplInfo() && !pluginRef() && catalog().presets.some((p) => p.id === tplId());
@@ -423,9 +433,51 @@ function LayoutPane(props: { active: boolean }) {
   const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
   const hasCustomOpts = computed(() => Object.keys(wsOpts()).length > 0);
 
+  // Editorial template (optional; null = follow statement template)
+  const edTplExplicit = () => catalog().defaultEditorial;
+  const edTplId = () => edTplExplicit() || tplId();
+  const edTplInfo = computed(() => catalog().templates.find((t) => t.id === edTplId()));
+  const edPluginRef = computed(() => (edTplExplicit() ? parsePluginTemplateRef(edTplExplicit()!) : null));
+  const isEdPluginTemplate = computed(() => !!edTplExplicit() && edTplInfo()?.source?.kind === "plugin");
+  const hasDistinctEditorial = () => !!edTplExplicit() && edTplExplicit() !== tplId();
+  const edWsOpts = computed<TemplateOptionMap>(() => (hasDistinctEditorial() ? (catalog().workspaceOptions[edTplId()] ?? {}) : {}));
+  const hasEdBookFields = computed(() => hasDistinctEditorial() && (edTplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
+  const hasEdCustomOpts = computed(() => Object.keys(edWsOpts()).length > 0);
+
   const apply = (res: { ok: boolean; code?: string | null; error?: string | null }, ctx: string) => {
     err.set(errorOf(res, ctx));
     if (res.ok) refresh();
+  };
+
+  const ejectEditorialPluginTemplate = () => {
+    const src = edTplInfo()?.source;
+    if (src?.kind !== "plugin" || typeof preview.ejectPluginTemplate !== "function") return;
+    const res = preview.ejectPluginTemplate(src.plugin_id, src.template_id, null);
+    if (!res.ok) {
+      err.set(errorOf(res, t("ctx.ejectPluginTemplate")));
+      return;
+    }
+    try {
+      const parsed = res.reportJson ? (JSON.parse(res.reportJson) as { name?: string }) : {};
+      if (parsed.name) {
+        apply(preview.updateWorkspaceEditorialTemplate(parsed.name, false, null), t("ctx.switchDefaultTemplate"));
+      } else {
+        refresh();
+      }
+    } catch {
+      refresh();
+    }
+  };
+
+  const resetAllEdOpts = () => {
+    const keys = Object.keys(edWsOpts());
+    if (keys.length === 0) return;
+    const clearMap: Record<string, null> = {};
+    for (const k of keys) clearMap[k] = null;
+    apply(
+      preview.updateWorkspaceEditorialTemplate(null, false, JSON.stringify({ [edTplId()]: clearMap })),
+      t("ctx.restoreDefaultLayout"),
+    );
   };
 
   const ejectCurrentPluginTemplate = () => {
@@ -467,7 +519,7 @@ function LayoutPane(props: { active: boolean }) {
       >
         <View style={{ padding: SPACE[12], gap: SPACE[12] }}>
           <TemplatePicker
-            templates={catalog().templates}
+            templates={stmtTemplates()}
             value={tplId()}
             readOnly={wsReadOnly()}
             onChange={(nextId) => apply(preview.updateWorkspaceTemplate(nextId, false, null), t("ctx.switchDefaultTemplate"))}
@@ -583,6 +635,105 @@ function LayoutPane(props: { active: boolean }) {
               onChange={(key, value) =>
                 apply(
                   preview.updateWorkspaceTemplate(null, false, encodeSingleOptionPatch(tplId(), key, value)),
+                  t("ctx.updateDefaultLayout"),
+                )
+              }
+            />
+          </View>
+        </Section>
+      </If>
+
+      <Section
+        title={t("settings.layout.editorialTemplateTitle")}
+        description={t("settings.layout.editorialTemplateDesc")}
+      >
+        <View style={{ padding: SPACE[12], gap: SPACE[12] }}>
+          <TemplatePicker
+            templates={edTemplates()}
+            value={edTplId()}
+            label={t("template.editorialLabel")}
+            testId="editorial-template-picker"
+            followLabel={t("template.followStatementNamed", { name: stmtDefaultName() })}
+            following={!edTplExplicit()}
+            onFollow={() => apply(preview.updateWorkspaceEditorialTemplate(null, true, null), t("ctx.switchDefaultTemplate"))}
+            readOnly={wsReadOnly()}
+            onChange={(nextId) => apply(preview.updateWorkspaceEditorialTemplate(nextId, false, null), t("ctx.switchDefaultTemplate"))}
+          />
+          <If when={!!edTplExplicit() && !edTplInfo()}>
+            <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Icon name="triangleAlert" size="sm" tone="destructive" />
+                <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                  {edPluginRef()
+                    ? t("template.missingPluginTitle", { pluginId: edPluginRef()!.pluginId })
+                    : t("settings.layout.missingTemplateTitle", { id: edTplId() })}
+                </Text>
+              </View>
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
+                {edPluginRef()
+                  ? t("template.missingPluginDesc", { pluginId: edPluginRef()!.pluginId })
+                  : t("settings.layout.missingTemplateDesc")}
+              </Text>
+              <If when={!wsReadOnly() && !!edPluginRef()}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
+                  <Btn
+                    variant="primary"
+                    label={t("template.openPluginsSettings")}
+                    icon="squareCode"
+                    onPress={() => goSettings("plugins")}
+                  />
+                </View>
+              </If>
+            </View>
+          </If>
+          <If when={!wsReadOnly() && hasDistinctEditorial() && !!edTplInfo()}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[8], paddingTop: SPACE[2] }}>
+              <If
+                when={isEdPluginTemplate()}
+                else={
+                  <Btn
+                    label={t("settings.layout.editTemplate")}
+                    icon="filePenLine"
+                    tooltip={tip(t("settings.layout.editTemplateTooltip"))}
+                    onPress={() => void preview.openTemplateFile(edTplId()).then((res) => !res.ok && err.set(errorOf(res, t("ctx.openTemplateFile"))))}
+                  />
+                }
+              >
+                <Btn
+                  label={t("template.ejectToWorkspace")}
+                  icon="copy"
+                  tooltip={tip(t("template.ejectToWorkspaceTooltip"))}
+                  onPress={ejectEditorialPluginTemplate}
+                />
+              </If>
+            </View>
+          </If>
+        </View>
+      </Section>
+
+      <If when={hasEdBookFields()}>
+        <Section
+          title={t("settings.layout.editorialParamsTitle")}
+          description={t("settings.layout.editorialParamsDesc")}
+          trailing={
+            <If when={!wsReadOnly() && hasEdCustomOpts()}>
+              <Btn label={t("common.restoreDefault")} icon="rotateCcw" variant="ghost" onPress={resetAllEdOpts} />
+            </If>
+          }
+        >
+          <View style={{ padding: SPACE[12] }}>
+            <TemplateOptionsEditor
+              ownerKey={`workspace-editorial:${info().root}:${edTplId()}`}
+              template={edTplInfo()}
+              scope="book"
+              baseValues={{}}
+              overrideValues={edWsOpts()}
+              fonts={catalog().fonts}
+              readOnly={wsReadOnly()}
+              restoreTooltip={t("common.restoreTemplateDefault")}
+              onChange={(key, value) =>
+                apply(
+                  preview.updateWorkspaceEditorialTemplate(null, false, encodeSingleOptionPatch(edTplId(), key, value)),
                   t("ctx.updateDefaultLayout"),
                 )
               }

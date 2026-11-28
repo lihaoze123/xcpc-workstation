@@ -362,6 +362,10 @@ export const en: Record<MessageKey, string> = {
   "settings.layout.preambleTooltip": "Open templates/preamble.typ in an external editor for workspace-wide styles and macros",
   "settings.layout.defaultParamsTitle": "Default Layout Options",
   "settings.layout.defaultParamsDesc": "Workspace defaults for this template. Individual contests can override them in Properties → Layout.",
+  "settings.layout.editorialTemplateTitle": "Default Editorial Template",
+  "settings.layout.editorialTemplateDesc": "Optionally choose a dedicated template for editorials (such as a slide deck plugin); leave unset to follow the statement template.",
+  "settings.layout.editorialParamsTitle": "Editorial Layout Options",
+  "settings.layout.editorialParamsDesc": "Workspace defaults for the selected editorial template. Individual contests can override them in Properties → Layout.",
 
   "settings.appearance.themeMode": "Theme",
   "settings.appearance.themeModeDesc": "Light, dark, or match system",
@@ -480,6 +484,9 @@ export const en: Record<MessageKey, string> = {
 
   // ── Template Options & Modals ──────────────────────────────────────────────
   "template.label": "Template",
+  "template.editorialLabel": "Editorial Template",
+  "template.followStatementNamed": "Follow statement template ({name})",
+  "template.followDefaultNamed": "Follow default ({name})",
   "template.addFromPresetEllipsis": "Add from Preset…",
   "template.ejectToWorkspace": "Copy to Workspace",
   "template.ejectToWorkspaceTooltip": "Copy this plugin template and its assets into workspace templates/ to detach from the plugin",

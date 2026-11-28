@@ -714,10 +714,12 @@ impl Server {
             .ws
             .default_template()
             .unwrap_or_else(|| "olymp-classic".into());
+        let default_editorial_tpl = self.ws.default_editorial_template();
         let workspace_options = self.ws.workspace_template_options();
         Ok(structured(json!({
             "ok": true,
             "default": default_tpl,
+            "default_editorial": default_editorial_tpl,
             "workspace_options": workspace_options,
             "templates": templates,
             "presets": presets,
@@ -751,13 +753,15 @@ impl Server {
     fn tool_set_template_options(&mut self, args: &Map<String, Value>) -> Result<Value, ToolErr> {
         reject_unknown_keys(
             args,
-            &["scope", "id", "template", "options"],
+            &["scope", "id", "template", "editorial_template", "options"],
             "set_template_options",
         )
         .map_err(|m| fail("invalid_arguments", m))?;
         let scope = req_str(args, "scope").map_err(|m| fail("invalid_arguments", m))?;
         let template_patch =
             patch_str(args, "template").map_err(|m| fail("invalid_arguments", m))?;
+        let editorial_template_patch =
+            patch_str(args, "editorial_template").map_err(|m| fail("invalid_arguments", m))?;
         let options_patch = match args.get("options") {
             None | Some(Value::Null) => BTreeMap::new(),
             Some(Value::Object(outer)) => {
@@ -774,12 +778,17 @@ impl Server {
         match scope.as_str() {
             "workspace" => {
                 self.ws
-                    .update_workspace_template(&template_patch, &options_patch)
+                    .update_workspace_templates(
+                        &template_patch,
+                        &editorial_template_patch,
+                        &options_patch,
+                    )
                     .map_err(|e| fail(e.code(), e.to_string()))?;
                 Ok(structured(json!({
                     "ok": true,
                     "scope": "workspace",
                     "default": self.ws.default_template().unwrap_or_else(|| "olymp-classic".into()),
+                    "default_editorial": self.ws.default_editorial_template(),
                     "workspace_options": self.ws.workspace_template_options(),
                 })))
             }
@@ -787,6 +796,7 @@ impl Server {
                 let id = req_str(args, "id").map_err(|m| fail("invalid_arguments", m))?;
                 let patch = ContestMetaPatch {
                     template: template_patch,
+                    editorial_template: editorial_template_patch,
                     template_options: options_patch,
                     ..Default::default()
                 };
@@ -2300,7 +2310,8 @@ fn tools() -> Value {
                 "properties": {
                     "scope": { "type": "string", "enum": ["workspace", "contest", "problem"], "description": "Target scope to update." },
                     "id": { "type": "string", "description": "Contest ID or problem ID (required when scope is \"contest\" or \"problem\")." },
-                    "template": { "type": ["string", "null"], "description": "Template ID to select (workspace or contest scope; null clears to default)." },
+                    "template": { "type": ["string", "null"], "description": "Statement template ID to select (workspace or contest scope; null clears to default)." },
+                    "editorial_template": { "type": ["string", "null"], "description": "Optional editorial-specific template ID (workspace or contest scope; null clears to inherit statement template)." },
                     "options": {
                         "type": ["object", "null"],
                         "description": "Namespaced option patch: { \"<template-id>\": { \"<key>\": value | null } }.",

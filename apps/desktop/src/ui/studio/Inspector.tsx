@@ -17,12 +17,14 @@ import { Modal } from "../Modal";
 import { colorTransition, panelExitMs, panelTransform, panelTransition } from "../tokens";
 import { activeRevision, errorOf, goSettings, info, preview, refresh, unfreezeFor, type UiError } from "../store";
 import {
+  editorialTemplates,
   encodeSingleOptionPatch,
   loadTemplatesCatalog,
   LOCAL_TEMPLATE_NAMESPACE,
   parseContestTemplateInfo,
   parseOptionsByTemplate,
   parsePluginTemplateRef,
+  statementTemplates,
   type TemplateOptionMap,
   type TemplateOptionValue,
   type TemplatesCatalog,
@@ -77,7 +79,7 @@ export function Inspector(props: {
   const catalog = computed<TemplatesCatalog>(() => {
     void rev();
     if (!everOpened()) {
-      return { default: "olymp-classic", workspaceOptions: {}, templates: [], presets: [], fonts: [] };
+      return { default: "olymp-classic", defaultEditorial: null, workspaceOptions: {}, templates: [], presets: [], fonts: [] };
     }
     return loadTemplatesCatalog();
   });
@@ -813,6 +815,8 @@ function ContestLayoutTab(props: {
   const confirmRestoreOpen = signal(false);
 
   const hasLocal = () => c().hasContestTemplate;
+  const stmtTemplates = computed(() => statementTemplates(props.catalog));
+  const edTemplates = computed(() => editorialTemplates(props.catalog));
   const effTemplateId = () => c().effectiveTemplate || props.catalog.default || "olymp-classic";
   const wsDefaultName = computed(() => {
     const defId = props.catalog.default || "olymp-classic";
@@ -827,6 +831,43 @@ function ContestLayoutTab(props: {
   const isMissingTemplate = () => !hasLocal() && !wsTplInfo();
   const canInstallMissingPreset = () => isMissingTemplate() && !pluginRef() && props.catalog.presets.some((p) => p.id === effTemplateId());
   const templateOverridden = () => !hasLocal() && !!c().template && c().template !== props.catalog.default;
+
+  // Editorial template (optional override; null inherits workspace editorial default or statement template)
+  const effEdTemplateId = () => c().effectiveEditorialTemplate || props.catalog.defaultEditorial || effTemplateId();
+  const inheritedEdId = () => props.catalog.defaultEditorial || effTemplateId();
+  const inheritedEdName = computed(() => {
+    const id = inheritedEdId();
+    const found = props.catalog.templates.find((t) => t.id === id);
+    return found ? resolveLocalized(found.name) || id : id;
+  });
+  const edTplInfo = computed(() => props.catalog.templates.find((t) => t.id === effEdTemplateId()));
+  const edPluginRef = computed(() => parsePluginTemplateRef(effEdTemplateId()));
+  const isEdPluginTemplate = computed(() => edTplInfo()?.source?.kind === "plugin");
+  const edTemplateOverridden = () => !!c().editorialTemplate;
+  const hasDistinctEditorial = () => effEdTemplateId() !== (hasLocal() ? LOCAL_TEMPLATE_NAMESPACE : effTemplateId());
+  const wsEdBookOpts = computed<TemplateOptionMap>(() => props.catalog.workspaceOptions[effEdTemplateId()] ?? {});
+  const contestEdBookOpts = computed<TemplateOptionMap>(() => parseOptionsByTemplate(c().templateOptionsJson)[effEdTemplateId()] ?? {});
+  const hasEdBookFields = computed(() => hasDistinctEditorial() && (edTplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
+
+  const ejectEditorialPluginTemplate = () => {
+    const src = edTplInfo()?.source;
+    if (src?.kind !== "plugin" || typeof preview.ejectPluginTemplate !== "function") return;
+    const res = preview.ejectPluginTemplate(src.plugin_id, src.template_id, null);
+    if (!res.ok) {
+      props.done(res);
+      return;
+    }
+    try {
+      const parsed = res.reportJson ? (JSON.parse(res.reportJson) as { name?: string }) : {};
+      if (parsed.name) {
+        meta({ editorialTemplate: parsed.name });
+      } else {
+        refresh();
+      }
+    } catch {
+      refresh();
+    }
+  };
 
   const ejectPluginTemplate = () => {
     const src = tplInfo()?.source;
@@ -872,7 +913,7 @@ function ContestLayoutTab(props: {
               else={
                 <View style={{ gap: SPACE[8] }}>
                   <TemplatePicker
-                    templates={props.catalog.templates}
+                    templates={stmtTemplates()}
                     value={effTemplateId()}
                     inheritedLabel={t("template.restoreWorkspaceDefaultNamed", { name: wsDefaultName() })}
                     overridden={templateOverridden()}
@@ -960,7 +1001,7 @@ function ContestLayoutTab(props: {
                 </View>
                 <If when={props.catalog.templates.length > 0}>
                   <TemplatePicker
-                    templates={props.catalog.templates}
+                    templates={stmtTemplates()}
                     value={effTemplateId()}
                     inheritedLabel={t("template.restoreWorkspaceDefaultNamed", { name: wsDefaultName() })}
                     overridden={templateOverridden()}
@@ -1018,8 +1059,80 @@ function ContestLayoutTab(props: {
           readOnly={locked()}
           restoreTooltip={hasLocal() ? t("common.restoreTemplateDefault") : t("common.restoreWorkspaceDefault")}
           sectioned
-          lastSection={!props.item || !hasProblemFields() ? locked() : false}
+          lastSection={false}
           onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(optsNs(), key, value) })}
+        />
+      </If>
+
+      <Section title={t("template.editorialLabel")}>
+        <View style={{ gap: SPACE[8] }}>
+          <TemplatePicker
+            templates={edTemplates()}
+            value={effEdTemplateId()}
+            label={t("template.editorialLabel")}
+            testId="contest-editorial-template-picker"
+            followLabel={t("template.followDefaultNamed", { name: inheritedEdName() })}
+            following={!c().editorialTemplate}
+            onFollow={() => meta({ editorialTemplate: null })}
+            inheritedLabel={t("template.followDefaultNamed", { name: inheritedEdName() })}
+            overridden={edTemplateOverridden()}
+            readOnly={locked()}
+            onChange={(tplId) => meta({ editorialTemplate: tplId })}
+            onRestore={() => meta({ editorialTemplate: null })}
+          />
+          <If when={hasDistinctEditorial() && !edTplInfo()}>
+            <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                <Icon name="triangleAlert" size="sm" tone="destructive" />
+                <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                  {edPluginRef()
+                    ? t("template.missingPluginTitle", { pluginId: edPluginRef()!.pluginId })
+                    : t("inspector.layout.missingTitle", { id: effEdTemplateId() })}
+                </Text>
+              </View>
+              <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
+                {edPluginRef()
+                  ? t("template.missingPluginDesc", { pluginId: edPluginRef()!.pluginId })
+                  : t("inspector.layout.missingDesc")}
+              </Text>
+              <If when={!locked() && !!edPluginRef()}>
+                <Btn
+                  variant="primary"
+                  label={t("template.openPluginsSettings")}
+                  icon="squareCode"
+                  onPress={() => goSettings("plugins")}
+                />
+              </If>
+            </View>
+          </If>
+          <If when={!locked() && hasDistinctEditorial() && isEdPluginTemplate()}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
+              <Btn
+                label={t("template.ejectToWorkspace")}
+                icon="copy"
+                tooltip={tip(t("template.ejectToWorkspaceTooltip"))}
+                onPress={ejectEditorialPluginTemplate}
+              />
+            </View>
+          </If>
+        </View>
+      </Section>
+
+      <If when={hasEdBookFields()}>
+        <TemplateOptionsEditor
+          ownerKey={`contest-editorial:${c().id}:${effEdTemplateId()}`}
+          template={edTplInfo()}
+          scope="book"
+          baseValues={wsEdBookOpts()}
+          overrideValues={contestEdBookOpts()}
+          context={bookContext()}
+          fonts={props.catalog.fonts}
+          contestId={c().id}
+          readOnly={locked()}
+          restoreTooltip={t("common.restoreWorkspaceDefault")}
+          sectioned
+          lastSection={!props.item || !hasProblemFields() ? locked() : false}
+          onChange={(key, value) => meta({ templateOptionsJson: encodeSingleOptionPatch(effEdTemplateId(), key, value) })}
         />
       </If>
 

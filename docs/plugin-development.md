@@ -43,7 +43,7 @@
 
 ### 模式 D：排版模板插件（`template`）
 
-- 在 `manifest.toml` 中声明 `capabilities = ["template"]`、`[[templates]]`（`id` / `entry` / `kind = "statement" | "trd"`）及可选 `font_dirs = ["fonts"]`，**无需提供 `index.js`**，也**不触发**敏感权限信任弹窗。
+- 在 `manifest.toml` 中声明 `capabilities = ["template"]`、`[[templates]]`（`id` / `entry` / `kind = "statement" | "editorial" | "trd"`）及可选 `font_dirs = ["fonts"]`，**无需提供 `index.js`**，也**不触发**敏感权限信任弹窗。
 - 引擎将插件目录以只读虚拟路径挂载至 `/plugins/<plugin-id>/...`，模板复用标准 `#let render(doc)` 与 `#let schema` 契约，可按需加载插件内嵌字体（单字体上限 `25 MiB`、解压总包上限 `64 MiB`）。
 - 工作区通过 `plugin:<plugin-id>/<template-id>` 活引用插件模板，支持 CLI `--template plugin:<id>/<tpl>`、`xcpc template eject` 一键复制到工作区 `templates/` 脱离插件依赖，以及在冻结比赛/TRD 时自动完整快照进 `snapshot/template/`。
 

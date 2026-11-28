@@ -1149,6 +1149,22 @@ impl Preview {
             .into()
     }
 
+    /// Updates `workspace.toml`'s default `editorial-template` and/or `[template-options.<tpl>]`.
+    pub fn update_workspace_editorial_template(
+        &self,
+        editorial_template: Option<String>,
+        clear_editorial_template: bool,
+        options_json: Option<String>,
+    ) -> ActionResult {
+        self.app
+            .update_workspace_editorial_template(
+                editorial_template,
+                clear_editorial_template,
+                options_json,
+            )
+            .into()
+    }
+
     /// Forks a workspace template `source` into `templates/<newName>.typ`.
     pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
         self.app.fork_template(source, new_name).into()

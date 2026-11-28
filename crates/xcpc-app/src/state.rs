@@ -1948,6 +1948,19 @@ impl State {
                 .or_else(|| ws.default_template())
                 .unwrap_or_else(|| "olymp-classic".into())
         };
+        let effective_editorial_template = if frozen {
+            ws.load_snapshot_editorial_template(id)
+                .map(|s| s.template)
+                .unwrap_or_else(|| effective_template.clone())
+        } else {
+            meta.editorial_template
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .or_else(|| ws.default_editorial_template())
+                .unwrap_or_else(|| effective_template.clone())
+        };
         let has_contest_template = ws.has_contest_template(id);
         let contest_template_json = if has_contest_template {
             let rel = format!("contests/{id}/template.typ");
@@ -2111,6 +2124,8 @@ impl State {
             language: meta.language.name().to_owned(),
             template: meta.template.clone(),
             effective_template,
+            editorial_template: meta.editorial_template.clone(),
+            effective_editorial_template,
             has_contest_template,
             contest_template_json,
             template_options_json,
@@ -2439,6 +2454,7 @@ impl State {
             );
             return serde_json::to_string(&serde_json::json!({
                 "default": "olymp-classic",
+                "defaultEditorial": serde_json::Value::Null,
                 "workspaceOptions": {},
                 "templates": [],
                 "presets": presets,
@@ -2468,11 +2484,7 @@ impl State {
                     let mut engine = self.math_engine.lock().unwrap();
                     engine.set_root(Some(root.clone()));
                     engine.reset_files();
-                    let templates = publish::list_templates_by_kind(
-                        &ws,
-                        &engine,
-                        xcpc_domain::TemplateKind::Statement,
-                    );
+                    let templates = publish::list_statement_and_editorial_templates(&ws, &engine);
                     let mut fonts: Vec<String> = engine
                         .font_families()
                         .into_iter()
@@ -2494,9 +2506,11 @@ impl State {
         let default_tpl = ws
             .default_template()
             .unwrap_or_else(|| "olymp-classic".into());
+        let default_editorial_tpl = ws.default_editorial_template();
         let workspace_options = ws.workspace_template_options();
         serde_json::to_string(&serde_json::json!({
             "default": default_tpl,
+            "defaultEditorial": default_editorial_tpl,
             "workspaceOptions": workspace_options,
             "templates": templates,
             "presets": presets,
@@ -2527,6 +2541,36 @@ impl State {
             Err(msg) => return ActionResult::err("invalid_argument", msg),
         };
         match ws.update_workspace_template(&tpl_patch, &options) {
+            Ok(()) => {
+                self.invalidate_cache();
+                ActionResult::ok()
+            }
+            Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub fn update_workspace_editorial_template(
+        &self,
+        editorial_template: Option<String>,
+        clear_editorial_template: bool,
+        options_json: Option<String>,
+    ) -> ActionResult {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return ActionResult::err("no_workspace", "no workspace open");
+        };
+        let tpl_patch = if clear_editorial_template {
+            Patch::Clear
+        } else if let Some(t) = editorial_template {
+            Patch::Set(t)
+        } else {
+            Patch::Keep
+        };
+        let options = match parse_namespaced_options_json(options_json.as_deref()) {
+            Ok(o) => o,
+            Err(msg) => return ActionResult::err("invalid_argument", msg),
+        };
+        match ws.update_workspace_editorial_template(&tpl_patch, &options) {
             Ok(()) => {
                 self.invalidate_cache();
                 ActionResult::ok()
