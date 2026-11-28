@@ -12,7 +12,9 @@ use xcpc_domain::{
 };
 use xcpc_judge::SnippetVerifyOptions;
 
-use crate::{Cli, Fatal, fonts, open_workspace, write_explicit_file, write_output};
+use crate::{
+    Cli, Fatal, engine_with_plugins, fonts, open_workspace, write_explicit_file, write_output,
+};
 
 #[derive(Subcommand)]
 pub(crate) enum SnippetCommand {
@@ -609,7 +611,7 @@ pub(crate) fn run_trd(cli: &Cli, action: &TrdCommand) -> Result<ExitCode, Fatal>
             Ok(ExitCode::SUCCESS)
         }
         TrdCommand::Freeze { id, strict } => {
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let statuses = xcpc_judge::all_snippet_verify_statuses(&ws).unwrap_or_default();
             let (result, report) =
                 publish::freeze_trd_with_pdf(&ws, &mut engine, id, *strict, &statuses)?;
@@ -672,7 +674,7 @@ pub(crate) fn run_trd(cli: &Cli, action: &TrdCommand) -> Result<ExitCode, Fatal>
             Ok(ExitCode::SUCCESS)
         }
         TrdCommand::Check { id } => {
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let statuses = xcpc_judge::all_snippet_verify_statuses(&ws).unwrap_or_default();
             let (_, _, report) = publish::check_trd(&ws, &mut engine, id, &statuses)?;
             if cli.json {
@@ -703,7 +705,7 @@ pub(crate) fn run_trd(cli: &Cli, action: &TrdCommand) -> Result<ExitCode, Fatal>
             out,
             emit_typst,
         } => {
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let (pdf_bytes, doc, report) = publish::compile_trd_pdf_bytes(&ws, &mut engine, id)?;
             let mut outputs = Vec::new();
             if let Some(typst_path) = emit_typst {
@@ -748,7 +750,7 @@ pub(crate) fn run_trd(cli: &Cli, action: &TrdCommand) -> Result<ExitCode, Fatal>
             scale,
             page,
         } => {
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let (compiled, _doc, report) = publish::compile_trd(&ws, &mut engine, id)?;
             let mut outputs = Vec::new();
             if let Some(compiled) = compiled {

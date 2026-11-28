@@ -30,6 +30,7 @@ import {
   brandReplayOpen,
   ensureToolchainLoaded,
   errorOf,
+  goSettings,
   info,
   openError,
   openRecent,
@@ -53,7 +54,7 @@ import {
   type SettingsSection,
   type UiError,
 } from "./store";
-import { encodeSingleOptionPatch, loadTemplatesCatalog, type TemplateOptionMap } from "./templates";
+import { encodeSingleOptionPatch, loadTemplatesCatalog, parsePluginTemplateRef, type TemplateOptionMap } from "./templates";
 import { ForkTemplateModal, InstallPresetModal, TemplateOptionsEditor, TemplatePicker } from "./TemplateOptionsEditor";
 import { appearanceMode, cardShadow, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_EDITOR_LIGATURES, DEFAULT_EDITOR_LINE_HEIGHT, editorFontSize, editorLigatures, editorLineHeight, editorVimMode, MONO, uiFontSource, type AppearanceMode } from "./theme";
 import {
@@ -415,7 +416,9 @@ function LayoutPane(props: { active: boolean }) {
   const wsReadOnly = () => info().readOnly;
   const tplId = () => catalog().default || "olymp-classic";
   const tplInfo = computed(() => catalog().templates.find((t) => t.id === tplId()));
-  const canInstallMissingPreset = () => !tplInfo() && catalog().presets.some((p) => p.id === tplId());
+  const pluginRef = computed(() => parsePluginTemplateRef(tplId()));
+  const isPluginTemplate = computed(() => tplInfo()?.source?.kind === "plugin");
+  const canInstallMissingPreset = () => !tplInfo() && !pluginRef() && catalog().presets.some((p) => p.id === tplId());
   const wsOpts = computed<TemplateOptionMap>(() => catalog().workspaceOptions[tplId()] ?? {});
   const hasBookFields = computed(() => (tplInfo()?.schema.fields ?? []).some((f) => f.scope === "book"));
   const hasCustomOpts = computed(() => Object.keys(wsOpts()).length > 0);
@@ -423,6 +426,26 @@ function LayoutPane(props: { active: boolean }) {
   const apply = (res: { ok: boolean; code?: string | null; error?: string | null }, ctx: string) => {
     err.set(errorOf(res, ctx));
     if (res.ok) refresh();
+  };
+
+  const ejectCurrentPluginTemplate = () => {
+    const src = tplInfo()?.source;
+    if (src?.kind !== "plugin" || typeof preview.ejectPluginTemplate !== "function") return;
+    const res = preview.ejectPluginTemplate(src.plugin_id, src.template_id, null);
+    if (!res.ok) {
+      err.set(errorOf(res, t("ctx.ejectPluginTemplate")));
+      return;
+    }
+    try {
+      const parsed = res.reportJson ? (JSON.parse(res.reportJson) as { name?: string }) : {};
+      if (parsed.name) {
+        apply(preview.updateWorkspaceTemplate(parsed.name, false, null), t("ctx.switchDefaultTemplate"));
+      } else {
+        refresh();
+      }
+    } catch {
+      refresh();
+    }
   };
 
   const resetAllOpts = () => {
@@ -455,30 +478,46 @@ function LayoutPane(props: { active: boolean }) {
               <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                 <Icon name="triangleAlert" size="sm" tone="destructive" />
                 <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                  {t("settings.layout.missingTemplateTitle", { id: tplId() })}
+                  {pluginRef()
+                    ? t("template.missingPluginTitle", { pluginId: pluginRef()!.pluginId })
+                    : t("settings.layout.missingTemplateTitle", { id: tplId() })}
                 </Text>
               </View>
               <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
-                {t("settings.layout.missingTemplateDesc")}
+                {pluginRef()
+                  ? t("template.missingPluginDesc", { pluginId: pluginRef()!.pluginId })
+                  : t("settings.layout.missingTemplateDesc")}
               </Text>
               <If when={!wsReadOnly()}>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
                   <If
-                    when={canInstallMissingPreset()}
+                    when={!!pluginRef()}
                     else={
-                      <Btn
-                        variant="primary"
-                        label={t("settings.layout.addFromPreset")}
-                        icon="plus"
-                        onPress={() => presetOpen.set(true)}
-                      />
+                      <If
+                        when={canInstallMissingPreset()}
+                        else={
+                          <Btn
+                            variant="primary"
+                            label={t("settings.layout.addFromPreset")}
+                            icon="plus"
+                            onPress={() => presetOpen.set(true)}
+                          />
+                        }
+                      >
+                        <Btn
+                          variant="primary"
+                          label={t("settings.layout.installFromPreset")}
+                          icon="plus"
+                          onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), t("ctx.installPresetTemplate"))}
+                        />
+                      </If>
                     }
                   >
                     <Btn
                       variant="primary"
-                      label={t("settings.layout.installFromPreset")}
-                      icon="plus"
-                      onPress={() => apply(preview.installPresetTemplate(tplId(), tplId()), t("ctx.installPresetTemplate"))}
+                      label={t("template.openPluginsSettings")}
+                      icon="squareCode"
+                      onPress={() => goSettings("plugins")}
                     />
                   </If>
                 </View>
@@ -488,7 +527,7 @@ function LayoutPane(props: { active: boolean }) {
           <If when={!wsReadOnly()}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[8], paddingTop: SPACE[2] }}>
               <Btn label={t("settings.layout.addFromPreset")} icon="plus" onPress={() => presetOpen.set(true)} />
-              <If when={!!tplInfo()}>
+              <If when={!!tplInfo() && !isPluginTemplate()}>
                 <Btn
                   label={t("settings.layout.editTemplate")}
                   icon="filePenLine"
@@ -500,6 +539,14 @@ function LayoutPane(props: { active: boolean }) {
                   icon="copy"
                   tooltip={tip(t("settings.layout.forkTemplateTooltip"))}
                   onPress={() => forkOpen.set(true)}
+                />
+              </If>
+              <If when={isPluginTemplate()}>
+                <Btn
+                  label={t("template.ejectToWorkspace")}
+                  icon="copy"
+                  tooltip={tip(t("template.ejectToWorkspaceTooltip"))}
+                  onPress={ejectCurrentPluginTemplate}
                 />
               </If>
               <Btn

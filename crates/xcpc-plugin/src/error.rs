@@ -30,6 +30,18 @@ pub enum PluginError {
         permission: String,
     },
 
+    #[error("WORKSPACE_READ_ONLY: {0}")]
+    WorkspaceReadOnly(String),
+
+    #[error("ALREADY_EXISTS: {0}")]
+    AlreadyExists(String),
+
+    #[error("CONTEST_FROZEN: {0}")]
+    ContestFrozen(String),
+
+    #[error("INVALID_ARGUMENT: {0}")]
+    InvalidArgument(String),
+
     #[error("TIMEOUT: plugin '{plugin_id}' exceeded execution limit of {timeout_ms}ms")]
     Timeout { plugin_id: String, timeout_ms: u64 },
 
@@ -83,6 +95,10 @@ impl PluginError {
             Self::HttpNotAllowed(_) => "HTTP_NOT_ALLOWED",
             Self::DomainNotAllowed { .. } => "DOMAIN_NOT_ALLOWED",
             Self::PermissionDenied { .. } => "PERMISSION_DENIED",
+            Self::WorkspaceReadOnly(_) => "WORKSPACE_READ_ONLY",
+            Self::AlreadyExists(_) => "ALREADY_EXISTS",
+            Self::ContestFrozen(_) => "CONTEST_FROZEN",
+            Self::InvalidArgument(_) => "INVALID_ARGUMENT",
             Self::Timeout { .. } => "TIMEOUT",
             Self::MemoryLimit { .. } => "MEMORY_LIMIT",
             Self::JsError(_) => "JS_ERROR",

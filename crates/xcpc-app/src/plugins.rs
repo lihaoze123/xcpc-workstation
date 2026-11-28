@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use std::str::FromStr;
 
@@ -13,10 +13,12 @@ use xcpc_domain::{
     ProblemSource, SyncedProblemStatus, TrainingLogEntry, TrainingLogStatus, TrainingStatus,
 };
 use xcpc_plugin::{
-    CommandContext, DraftSample, ExportContext, HostContext, ImportFileInput, OjContext,
-    OjPluginClient, PluginCapability, PluginManager, PluginOrigin, SandboxLimits, UreqHttpClient,
-    WorkspaceProblemDetail, WorkspaceProblemSummary, WorkspaceReader, apply_import_draft,
-    svg_to_png_base64, write_export_output,
+    CommandContext, CreateProblemInput, DraftSample, ExportContext, HostContext, ImportFileInput,
+    OjContext, OjPluginClient, PluginCapability, PluginManager, PluginOrigin, RenderMathOptions,
+    RenderTypstOptions, SandboxLimits, SetSamplesResult, StorageWorkspaceBridge,
+    UpdateProblemPatch, UpsertSnippetInput, UreqHttpClient, WorkspaceProblemDetail,
+    WorkspaceReader, WorkspaceSample, WorkspaceSnippetDetail, WorkspaceWriter, apply_import_draft,
+    render_math_snippet, render_typst_snippet, svg_to_png_base64, write_export_output,
 };
 use xcpc_storage::{CreateProblemOptions, Workspace};
 use xcpc_sync::{
@@ -54,6 +56,7 @@ fn capability_str(cap: PluginCapability) -> &'static str {
         PluginCapability::Importer => "importer",
         PluginCapability::Exporter => "exporter",
         PluginCapability::Credentials => "credentials",
+        PluginCapability::Template => "template",
     }
 }
 
@@ -389,6 +392,7 @@ impl State {
                         .collect(),
                     domains: m.permissions.domains,
                     workspace_read: m.permissions.workspace_read,
+                    workspace_write: m.permissions.workspace_write,
                     has_ui: m.ui_entry.is_some(),
                     is_linked: p.is_linked,
                     link_target: p.link_target.map(|t| t.to_string_lossy().into_owned()),
@@ -416,7 +420,10 @@ impl State {
         };
         let pm = PluginManager::new(dir);
         match pm.set_enabled(id, enabled) {
-            Ok(()) => ActionResult::ok(),
+            Ok(()) => {
+                self.sync_engine_plugin_mounts();
+                ActionResult::ok()
+            }
             Err(e) => ActionResult::err(e.code(), e.to_string()),
         }
     }
@@ -428,7 +435,10 @@ impl State {
         };
         let pm = PluginManager::new(dir);
         match pm.trust_plugin(id) {
-            Ok(()) => ActionResult::ok(),
+            Ok(()) => {
+                self.sync_engine_plugin_mounts();
+                ActionResult::ok()
+            }
             Err(e) => ActionResult::err(e.code(), e.to_string()),
         }
     }
@@ -484,6 +494,7 @@ impl State {
         match installed {
             Ok(p) => {
                 self.refresh_plugin_watcher();
+                self.sync_engine_plugin_mounts();
                 InstallPluginResultJs {
                     ok: true,
                     cancelled: false,
@@ -577,6 +588,7 @@ impl State {
                         permissions: p.permissions.map(|perm| RepoPluginPermissionJs {
                             domains: perm.domains,
                             workspace_read: perm.workspace_read,
+                            workspace_write: perm.workspace_write,
                         }),
                     })
                     .collect();
@@ -635,6 +647,7 @@ impl State {
                                 permissions: p.permissions.map(|perm| RepoPluginPermissionJs {
                                     domains: perm.domains,
                                     workspace_read: perm.workspace_read,
+                                    workspace_write: perm.workspace_write,
                                 }),
                             },
                         }
@@ -701,6 +714,7 @@ impl State {
         match pm.install_from_repo_entry_from_source(repo_url.trim(), entry, &http) {
             Ok(installed) => {
                 self.refresh_plugin_watcher();
+                self.sync_engine_plugin_mounts();
                 InstallPluginResultJs {
                     ok: true,
                     cancelled: false,
@@ -815,6 +829,7 @@ impl State {
             credentials: Arc::clone(&self.credentials),
             kv,
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits::default(),
         };
         let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -1282,22 +1297,62 @@ impl State {
         }
     }
 
-    // ---- Phase 4C: Toolbox, UI SDK, Commands, Importers & Exporters --------------------
+    // ---- Phase 4C / Phase 7: Toolbox, UI SDK, Commands, Importers & Exporters ----------
 
-    fn workspace_reader_if_allowed(
+    #[allow(clippy::type_complexity)]
+    fn workspace_bridges_if_allowed(
         &self,
         pm: &PluginManager,
         plugin_id: &str,
-    ) -> Option<Arc<dyn WorkspaceReader>> {
-        let loaded = pm.load_plugin(plugin_id).ok()?;
-        if !loaded.info.manifest.permissions.workspace_read {
-            return None;
+    ) -> (
+        Option<Arc<dyn WorkspaceReader>>,
+        Option<Arc<dyn WorkspaceWriter>>,
+        Arc<AtomicBool>,
+        Option<Workspace>,
+    ) {
+        let mutated = Arc::new(AtomicBool::new(false));
+        let Some(loaded) = pm.load_plugin(plugin_id).ok() else {
+            return (None, None, mutated, None);
+        };
+        let perms = &loaded.info.manifest.permissions;
+        if !perms.workspace_read && !perms.workspace_write {
+            return (None, None, mutated, None);
         }
         let ws = {
             let core = self.core.lock().unwrap();
             core.workspace.clone()
-        }?;
-        Some(Arc::new(DesktopWorkspaceReader(ws)))
+        };
+        let Some(ws) = ws else {
+            return (None, None, mutated, None);
+        };
+        let reader: Option<Arc<dyn WorkspaceReader>> = if perms.workspace_read {
+            Some(Arc::new(StorageWorkspaceBridge::new(ws.clone())))
+        } else {
+            None
+        };
+        let writer: Option<Arc<dyn WorkspaceWriter>> = if perms.workspace_write {
+            Some(Arc::new(TrackingWorkspaceWriter {
+                inner: StorageWorkspaceBridge::new(ws.clone()),
+                mutated: Arc::clone(&mutated),
+            }))
+        } else {
+            None
+        };
+        (reader, writer, mutated, Some(ws))
+    }
+
+    fn refresh_workspace_after_plugin_write(&self, ws: &Workspace) {
+        if let Ok(rebuilt) = xcpc_storage::WorkspaceIndex::scan(ws) {
+            let mut core = self.core.lock().unwrap();
+            if core
+                .workspace
+                .as_ref()
+                .is_some_and(|cur| cur.root() == ws.root())
+            {
+                core.index = rebuilt;
+            }
+        }
+        self.invalidate_cache();
     }
 
     pub fn plugin_list_tools(&self) -> JsonReportResultJs {
@@ -1334,8 +1389,15 @@ impl State {
             }
         };
         let pm = PluginManager::new(&dir);
-        let ws_reader = self.workspace_reader_if_allowed(&pm, plugin_id);
-        match pm.run_tool(plugin_id, tool_id, inputs, ws_reader) {
+        let (ws_reader, ws_writer, mutated, ws_opt) =
+            self.workspace_bridges_if_allowed(&pm, plugin_id);
+        let res = pm.run_tool_with_writer(plugin_id, tool_id, inputs, ws_reader, ws_writer);
+        if mutated.load(Ordering::Acquire)
+            && let Some(ref ws) = ws_opt
+        {
+            self.refresh_workspace_after_plugin_write(ws);
+        }
+        match res {
             Ok(res) => match serde_json::to_string(&res) {
                 Ok(json) => JsonReportResultJs::ok(Some(json), None),
                 Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
@@ -1363,6 +1425,7 @@ impl State {
                 html: Some(loaded.html),
                 plugin_id: Some(loaded.plugin_id),
                 workspace_read: Some(loaded.manifest.permissions.workspace_read),
+                workspace_write: Some(loaded.manifest.permissions.workspace_write),
                 error: None,
                 error_code: None,
             },
@@ -1371,6 +1434,7 @@ impl State {
                 html: None,
                 plugin_id: Some(plugin_id.to_owned()),
                 workspace_read: None,
+                workspace_write: None,
                 error: Some(err.to_string()),
                 error_code: Some(err.code().to_owned()),
             },
@@ -1504,7 +1568,28 @@ impl State {
                 ),
             );
         }
-        if !plugin.manifest.permissions.workspace_read {
+        let method_name = method.trim();
+        let is_write = matches!(
+            method_name,
+            "createProblem"
+                | "create_problem"
+                | "updateProblem"
+                | "update_problem"
+                | "setSamples"
+                | "set_samples"
+                | "upsertSnippet"
+                | "upsert_snippet"
+        );
+        if is_write {
+            if !plugin.manifest.permissions.workspace_write {
+                return err_res(
+                    "PERMISSION_DENIED",
+                    format!(
+                        "PERMISSION_DENIED: plugin '{plugin_id}' lacks permission 'workspace_write'"
+                    ),
+                );
+            }
+        } else if !plugin.manifest.permissions.workspace_read {
             return err_res(
                 "PERMISSION_DENIED",
                 format!(
@@ -1520,6 +1605,12 @@ impl State {
         let Some(ws) = ws else {
             return err_res("NO_WORKSPACE", "no workspace is open".to_owned());
         };
+        if is_write && ws.is_read_only() {
+            return err_res(
+                "WORKSPACE_READ_ONLY",
+                "WORKSPACE_READ_ONLY: workspace is open read-only".to_owned(),
+            );
+        }
 
         let parse_id_arg = |raw: Option<&str>| -> Result<String, PluginWorkspaceResultJs> {
             let text = raw.map(str::trim).unwrap_or("");
@@ -1547,139 +1638,106 @@ impl State {
             }
         };
 
-        let payload = match method.trim() {
-            "listProblems" | "list_problems" => {
-                let core = self.core.lock().unwrap();
-                let items: Vec<serde_json::Value> = core
-                    .index
-                    .problems()
-                    .into_iter()
-                    .map(|p| {
-                        serde_json::json!({
-                            "id": p.id,
-                            "title": p.title,
-                            "tags": p.tags,
-                            "rating": p.rating,
-                        })
-                    })
-                    .collect();
-                serde_json::Value::Array(items)
-            }
+        let bridge = StorageWorkspaceBridge::new(ws.clone());
+        let data_json = match method_name {
+            "listProblems" | "list_problems" => bridge
+                .list_problems()
+                .and_then(|v| Ok(serde_json::to_string(&v)?)),
             "getProblem" | "get_problem" => {
                 let id = match parse_id_arg(args_json) {
                     Ok(id) => id,
                     Err(e) => return e,
                 };
-                match ws.load_problem(&id) {
-                    Ok(p) => {
-                        let samples: Vec<_> = p
-                            .samples
-                            .iter()
-                            .map(|s| serde_json::json!({ "input": s.input, "answer": s.output }))
-                            .collect();
-                        let lang = p.default_language();
-                        let stmt_rel = p
-                            .statement(lang)
-                            .map(|s| s.file.path.clone())
-                            .unwrap_or_else(|| format!("{}/statement.md", p.dir));
-                        let statement_md = ws.read_text(&stmt_rel).unwrap_or_default();
-                        let editorial_md = ws
-                            .read_text(&format!("{}/editorial.md", p.dir))
-                            .unwrap_or_default();
-                        serde_json::json!({
-                            "id": p.id,
-                            "title": p.meta.title,
-                            "tags": p.meta.tags,
-                            "rating": p.meta.rating,
-                            "statementMd": statement_md,
-                            "editorialMd": editorial_md,
-                            "samples": samples,
-                        })
-                    }
-                    Err(xcpc_storage::Error::NotFound(_)) => serde_json::Value::Null,
-                    Err(e) => return err_res(e.code(), e.to_string()),
-                }
+                bridge
+                    .get_problem(&id)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
             }
-            "listContests" | "list_contests" => {
-                let core = self.core.lock().unwrap();
-                let items: Vec<serde_json::Value> = core
-                    .index
-                    .contests()
-                    .into_iter()
-                    .map(|(cid, meta)| {
-                        let problems: Vec<_> = meta
-                            .problems
-                            .iter()
-                            .map(|item| {
-                                let title = item
-                                    .title
-                                    .clone()
-                                    .or_else(|| {
-                                        core.index.problem(&item.id).map(|p| p.title.clone())
-                                    })
-                                    .unwrap_or_else(|| item.id.clone());
-                                serde_json::json!({
-                                    "label": item.label,
-                                    "id": item.id,
-                                    "title": title,
-                                })
-                            })
-                            .collect();
-                        serde_json::json!({
-                            "id": cid,
-                            "name": meta.name,
-                            "date": meta.date,
-                            "location": meta.location,
-                            "frozen": meta.frozen,
-                            "archived": meta.archived,
-                            "problemCount": problems.len(),
-                            "items": problems,
-                        })
-                    })
-                    .collect();
-                serde_json::Value::Array(items)
-            }
+            "listContests" | "list_contests" => bridge
+                .list_contests()
+                .and_then(|v| Ok(serde_json::to_string(&v)?)),
             "getContest" | "get_contest" => {
                 let id = match parse_id_arg(args_json) {
                     Ok(id) => id,
                     Err(e) => return e,
                 };
-                match ws.load_contest(&id) {
-                    Ok(c) => {
-                        let problems: Vec<_> = c
-                            .meta
-                            .problems
-                            .iter()
-                            .map(|item| {
-                                let title = item
-                                    .title
-                                    .clone()
-                                    .or_else(|| {
-                                        ws.load_problem(&item.id).ok().map(|p| p.meta.title)
-                                    })
-                                    .unwrap_or_else(|| item.id.clone());
-                                serde_json::json!({
-                                    "label": item.label,
-                                    "id": item.id,
-                                    "title": title,
-                                })
-                            })
-                            .collect();
-                        serde_json::json!({
-                            "id": c.id,
-                            "name": c.meta.name,
-                            "date": c.meta.date,
-                            "location": c.meta.location,
-                            "author": c.meta.author,
-                            "language": c.meta.language.name(),
-                            "frozen": c.meta.frozen,
-                            "archived": c.meta.archived,
-                            "items": problems,
-                        })
-                    }
-                    Err(xcpc_storage::Error::NotFound(_)) => serde_json::Value::Null,
-                    Err(e) => return err_res(e.code(), e.to_string()),
+                bridge
+                    .get_contest(&id)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "listSnippets" | "list_snippets" => bridge
+                .list_snippets()
+                .and_then(|v| Ok(serde_json::to_string(&v)?)),
+            "getSnippet" | "get_snippet" => {
+                let id = match parse_id_arg(args_json) {
+                    Ok(id) => id,
+                    Err(e) => return e,
+                };
+                bridge
+                    .get_snippet(&id)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "listTrds" | "list_trds" => bridge
+                .list_trds()
+                .and_then(|v| Ok(serde_json::to_string(&v)?)),
+            "getTrd" | "get_trd" => {
+                let id = match parse_id_arg(args_json) {
+                    Ok(id) => id,
+                    Err(e) => return e,
+                };
+                bridge
+                    .get_trd(&id)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "createProblem" | "create_problem" => {
+                let raw = args_json.unwrap_or("{}");
+                let input: CreateProblemInput = match serde_json::from_str(raw) {
+                    Ok(v) => v,
+                    Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid argsJson: {e}")),
+                };
+                bridge
+                    .create_problem(input)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "updateProblem" | "update_problem" => {
+                #[derive(serde::Deserialize)]
+                struct Args {
+                    id: String,
+                    patch: UpdateProblemPatch,
                 }
+                let raw = args_json.unwrap_or("{}");
+                let args: Args = match serde_json::from_str(raw) {
+                    Ok(v) => v,
+                    Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid argsJson: {e}")),
+                };
+                bridge
+                    .update_problem(&args.id, args.patch)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "setSamples" | "set_samples" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct Args {
+                    problem_id: String,
+                    samples: Vec<WorkspaceSample>,
+                }
+                let raw = args_json.unwrap_or("{}");
+                let args: Args = match serde_json::from_str(raw) {
+                    Ok(v) => v,
+                    Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid argsJson: {e}")),
+                };
+                bridge
+                    .set_samples(&args.problem_id, args.samples)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
+            }
+            "upsertSnippet" | "upsert_snippet" => {
+                let raw = args_json.unwrap_or("{}");
+                let input: UpsertSnippetInput = match serde_json::from_str(raw) {
+                    Ok(v) => v,
+                    Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid argsJson: {e}")),
+                };
+                bridge
+                    .upsert_snippet(input)
+                    .and_then(|v| Ok(serde_json::to_string(&v)?))
             }
             other => {
                 return err_res(
@@ -1689,14 +1747,147 @@ impl State {
             }
         };
 
-        match serde_json::to_string(&payload) {
-            Ok(data_json) => PluginWorkspaceResultJs {
-                ok: true,
-                data_json: Some(data_json),
-                error: None,
-                error_code: None,
+        match data_json {
+            Ok(data_json) => {
+                if is_write {
+                    self.refresh_workspace_after_plugin_write(&ws);
+                }
+                PluginWorkspaceResultJs {
+                    ok: true,
+                    data_json: Some(data_json),
+                    error: None,
+                    error_code: None,
+                }
+            }
+            Err(err) => err_res(err.code(), err.to_string()),
+        }
+    }
+
+    pub fn plugin_render_typst(
+        &self,
+        plugin_id: &str,
+        source: &str,
+        opts_json: Option<&str>,
+    ) -> PluginWorkspaceResultJs {
+        let err_res = |code: &str, msg: String| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(msg),
+            error_code: Some(code.to_owned()),
+        };
+
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return err_res("DATA_DIR", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let plugins = match pm.list_plugins() {
+            Ok(list) => list,
+            Err(err) => return err_res(err.code(), err.to_string()),
+        };
+        let Some(plugin) = plugins.into_iter().find(|p| p.manifest.id == plugin_id) else {
+            return err_res(
+                "PLUGIN_NOT_FOUND",
+                format!("PLUGIN_NOT_FOUND: plugin '{plugin_id}' not found"),
+            );
+        };
+        if !plugin.enabled {
+            return err_res(
+                "PLUGIN_DISABLED",
+                format!("PLUGIN_DISABLED: plugin '{plugin_id}' is disabled"),
+            );
+        }
+        if plugin.pending_trust {
+            return err_res(
+                "PLUGIN_UNTRUSTED",
+                format!(
+                    "PLUGIN_UNTRUSTED: plugin '{plugin_id}' requires user trust before execution"
+                ),
+            );
+        }
+
+        let opts: RenderTypstOptions = match opts_json.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(raw) => match serde_json::from_str(raw) {
+                Ok(v) => v,
+                Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid optsJson: {e}")),
             },
-            Err(err) => err_res("SERIALIZE_ERROR", err.to_string()),
+            None => RenderTypstOptions::default(),
+        };
+        match render_typst_snippet(source, &opts) {
+            Ok(rendered) => match serde_json::to_string(&rendered) {
+                Ok(data_json) => PluginWorkspaceResultJs {
+                    ok: true,
+                    data_json: Some(data_json),
+                    error: None,
+                    error_code: None,
+                },
+                Err(err) => err_res("SERIALIZE_ERROR", err.to_string()),
+            },
+            Err(err) => err_res(err.code(), err.to_string()),
+        }
+    }
+
+    pub fn plugin_render_math(
+        &self,
+        plugin_id: &str,
+        latex: &str,
+        opts_json: Option<&str>,
+    ) -> PluginWorkspaceResultJs {
+        let err_res = |code: &str, msg: String| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(msg),
+            error_code: Some(code.to_owned()),
+        };
+
+        let dir = match self.effective_data_dir() {
+            Ok(d) => d,
+            Err(err) => return err_res("DATA_DIR", err),
+        };
+        let pm = PluginManager::new(&dir);
+        let plugins = match pm.list_plugins() {
+            Ok(list) => list,
+            Err(err) => return err_res(err.code(), err.to_string()),
+        };
+        let Some(plugin) = plugins.into_iter().find(|p| p.manifest.id == plugin_id) else {
+            return err_res(
+                "PLUGIN_NOT_FOUND",
+                format!("PLUGIN_NOT_FOUND: plugin '{plugin_id}' not found"),
+            );
+        };
+        if !plugin.enabled {
+            return err_res(
+                "PLUGIN_DISABLED",
+                format!("PLUGIN_DISABLED: plugin '{plugin_id}' is disabled"),
+            );
+        }
+        if plugin.pending_trust {
+            return err_res(
+                "PLUGIN_UNTRUSTED",
+                format!(
+                    "PLUGIN_UNTRUSTED: plugin '{plugin_id}' requires user trust before execution"
+                ),
+            );
+        }
+
+        let opts: RenderMathOptions = match opts_json.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(raw) => match serde_json::from_str(raw) {
+                Ok(v) => v,
+                Err(e) => return err_res("INVALID_ARGUMENT", format!("invalid optsJson: {e}")),
+            },
+            None => RenderMathOptions::default(),
+        };
+        match render_math_snippet(latex, &opts) {
+            Ok(rendered) => match serde_json::to_string(&rendered) {
+                Ok(data_json) => PluginWorkspaceResultJs {
+                    ok: true,
+                    data_json: Some(data_json),
+                    error: None,
+                    error_code: None,
+                },
+                Err(err) => err_res("SERIALIZE_ERROR", err.to_string()),
+            },
+            Err(err) => err_res(err.code(), err.to_string()),
         }
     }
 
@@ -1759,8 +1950,15 @@ impl State {
             }
         };
         let pm = PluginManager::new(&dir);
-        let ws_reader = self.workspace_reader_if_allowed(&pm, plugin_id);
-        match pm.run_command(plugin_id, command_id, payload, ws_reader) {
+        let (ws_reader, ws_writer, mutated, ws_opt) =
+            self.workspace_bridges_if_allowed(&pm, plugin_id);
+        let res = pm.run_command_with_writer(plugin_id, command_id, payload, ws_reader, ws_writer);
+        if mutated.load(Ordering::Acquire)
+            && let Some(ref ws) = ws_opt
+        {
+            self.refresh_workspace_after_plugin_write(ws);
+        }
+        match res {
             Ok(action) => match serde_json::to_string(&action) {
                 Ok(json) => JsonReportResultJs::ok(Some(json), None),
                 Err(err) => JsonReportResultJs::err("serialize", err.to_string()),
@@ -1934,53 +2132,48 @@ impl State {
     }
 }
 
-struct DesktopWorkspaceReader(Workspace);
+struct TrackingWorkspaceWriter {
+    inner: StorageWorkspaceBridge,
+    mutated: Arc<AtomicBool>,
+}
 
-impl WorkspaceReader for DesktopWorkspaceReader {
-    fn list_problems(&self) -> xcpc_plugin::Result<Vec<WorkspaceProblemSummary>> {
-        let ids = self
-            .0
-            .list_problems()
-            .map_err(|e| xcpc_plugin::PluginError::InvalidPackage(e.to_string()))?;
-        let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Ok(p) = self.0.load_problem(&id) {
-                out.push(WorkspaceProblemSummary {
-                    id,
-                    title: p.meta.title,
-                    tags: p.meta.tags,
-                    difficulty: p.meta.rating.map(|r| r.to_string()),
-                });
-            }
-        }
+impl WorkspaceWriter for TrackingWorkspaceWriter {
+    fn create_problem(
+        &self,
+        input: CreateProblemInput,
+    ) -> xcpc_plugin::Result<WorkspaceProblemDetail> {
+        let out = self.inner.create_problem(input)?;
+        self.mutated.store(true, Ordering::Release);
         Ok(out)
     }
 
-    fn get_problem(&self, id: &str) -> xcpc_plugin::Result<Option<WorkspaceProblemDetail>> {
-        let problem = match self.0.load_problem(id) {
-            Ok(p) => p,
-            Err(xcpc_storage::Error::NotFound(_)) => return Ok(None),
-            Err(e) => return Err(xcpc_plugin::PluginError::InvalidPackage(e.to_string())),
-        };
-        let lang = problem.default_language();
-        let stmt_rel = problem
-            .statement(lang)
-            .map(|s| s.file.path.clone())
-            .unwrap_or_else(|| format!("{}/statement.md", problem.dir));
-        let statement_md = self.0.read_text(&stmt_rel).ok();
-        let editorial_md = self
-            .0
-            .read_text(&format!("{}/editorial.md", problem.dir))
-            .ok();
+    fn update_problem(
+        &self,
+        id: &str,
+        patch: UpdateProblemPatch,
+    ) -> xcpc_plugin::Result<WorkspaceProblemDetail> {
+        let out = self.inner.update_problem(id, patch)?;
+        self.mutated.store(true, Ordering::Release);
+        Ok(out)
+    }
 
-        Ok(Some(WorkspaceProblemDetail {
-            id: id.to_owned(),
-            title: problem.meta.title,
-            tags: problem.meta.tags,
-            difficulty: problem.meta.rating.map(|r| r.to_string()),
-            statement_md,
-            editorial_md,
-        }))
+    fn set_samples(
+        &self,
+        problem_id: &str,
+        samples: Vec<WorkspaceSample>,
+    ) -> xcpc_plugin::Result<SetSamplesResult> {
+        let out = self.inner.set_samples(problem_id, samples)?;
+        self.mutated.store(true, Ordering::Release);
+        Ok(out)
+    }
+
+    fn upsert_snippet(
+        &self,
+        input: UpsertSnippetInput,
+    ) -> xcpc_plugin::Result<WorkspaceSnippetDetail> {
+        let out = self.inner.upsert_snippet(input)?;
+        self.mutated.store(true, Ordering::Release);
+        Ok(out)
     }
 }
 
@@ -2326,10 +2519,19 @@ impl PluginFileWatcher {
                     let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
                         return false;
                     };
-                    matches!(
+                    if matches!(
                         name,
                         "manifest.toml" | "index.js" | "ui.html" | "ui.js" | "plugin_links.json"
-                    )
+                    ) {
+                        return true;
+                    }
+                    let lower = name.to_ascii_lowercase();
+                    lower.ends_with(".typ")
+                        || lower.ends_with(".ttf")
+                        || lower.ends_with(".otf")
+                        || lower.ends_with(".ttc")
+                        || lower.ends_with(".svg")
+                        || lower.ends_with(".png")
                 };
 
                 loop {
@@ -2472,6 +2674,7 @@ impl State {
         match pm.uninstall_plugin(id.trim()) {
             Ok(true) => {
                 self.refresh_plugin_watcher();
+                self.sync_engine_plugin_mounts();
                 InstallPluginResultJs {
                     ok: true,
                     cancelled: false,

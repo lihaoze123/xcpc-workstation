@@ -695,6 +695,20 @@ impl AppController {
         self.state.fork_template(&source, &new_name)
     }
 
+    pub fn eject_plugin_template(
+        &self,
+        plugin_id: String,
+        template_id: String,
+        target_name: Option<String>,
+    ) -> JsonReportResultJs {
+        self.state
+            .eject_plugin_template(&plugin_id, &template_id, target_name.as_deref())
+    }
+
+    pub fn sync_plugin_mounts(&self) {
+        self.state.sync_engine_plugin_mounts();
+    }
+
     /// Installs a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into
     /// `templates/<targetName>.typ` (defaulting to `<presetId>`).
     pub fn install_preset_template(
@@ -1278,6 +1292,30 @@ impl AppController {
     /// Renders an SVG string to a PNG image (base64-encoded) via `resvg` + `tiny-skia`.
     pub fn plugin_render_svg_png(svg: String, scale: Option<f64>) -> PluginRenderPngResultJs {
         State::plugin_render_svg_png(&svg, scale)
+    }
+
+    /// Renders an untrusted Typst snippet inside an isolated pure-memory engine on behalf of an
+    /// enabled, trusted plugin.
+    pub fn plugin_render_typst(
+        &self,
+        plugin_id: String,
+        source: String,
+        opts_json: Option<String>,
+    ) -> PluginWorkspaceResultJs {
+        self.state
+            .plugin_render_typst(&plugin_id, &source, opts_json.as_deref())
+    }
+
+    /// Converts LaTeX math via MiTeX and renders it inside an isolated pure-memory engine on behalf
+    /// of an enabled, trusted plugin.
+    pub fn plugin_render_math(
+        &self,
+        plugin_id: String,
+        latex: String,
+        opts_json: Option<String>,
+    ) -> PluginWorkspaceResultJs {
+        self.state
+            .plugin_render_math(&plugin_id, &latex, opts_json.as_deref())
     }
 
     /// Lists commands registered by enabled plugins matching `context` (`"global" | "problem" | "contest"`).

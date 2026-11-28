@@ -21,6 +21,19 @@ pub enum PluginCapability {
     Importer,
     Exporter,
     Credentials,
+    Template,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateSpec {
+    pub id: String,
+    pub entry: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<xcpc_domain::TemplateKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +42,8 @@ pub struct PluginPermissions {
     pub domains: Vec<String>,
     #[serde(default)]
     pub workspace_read: bool,
+    #[serde(default)]
+    pub workspace_write: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +144,10 @@ pub struct PluginManifest {
     pub importers: Vec<ImporterSpec>,
     #[serde(default)]
     pub exporters: Vec<ExporterSpec>,
+    #[serde(default)]
+    pub templates: Vec<TemplateSpec>,
+    #[serde(default)]
+    pub font_dirs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +156,8 @@ pub struct PluginPermissionSummary {
     pub domains: Vec<String>,
     pub credentials: Vec<String>,
     pub workspace_read: bool,
+    #[serde(default)]
+    pub workspace_write: bool,
 }
 
 impl PluginManifest {
@@ -151,6 +172,22 @@ impl PluginManifest {
         Self::from_toml_str(&raw)
     }
 
+    /// Returns `true` when the plugin declares any QuickJS-backed capability and therefore
+    /// requires a script `entry` file on disk. Pure `template` plugins do not need `index.js`.
+    pub fn requires_script_entry(&self) -> bool {
+        if self.capabilities.is_empty() {
+            return true;
+        }
+        self.capabilities
+            .iter()
+            .any(|c| *c != PluginCapability::Template)
+            || !self.tools.is_empty()
+            || !self.commands.is_empty()
+            || !self.importers.is_empty()
+            || !self.exporters.is_empty()
+            || self.ui_entry.is_some()
+    }
+
     pub fn validate(&self) -> Result<()> {
         validate_plugin_id(&self.id)?;
         if self.name.trim().is_empty() {
@@ -163,7 +200,9 @@ impl PluginManifest {
                 "manifest.version cannot be empty".into(),
             ));
         }
-        validate_relative_entry(&self.entry, "entry")?;
+        if self.requires_script_entry() || !self.entry.trim().is_empty() {
+            validate_relative_entry(&self.entry, "entry")?;
+        }
         if let Some(ref ui) = self.ui_entry {
             validate_relative_entry(ui, "ui_entry")?;
         }
@@ -174,6 +213,31 @@ impl PluginManifest {
                     "invalid domain rule '{domain}'"
                 )));
             }
+        }
+        if self.has_capability(PluginCapability::Template) && self.templates.is_empty() {
+            return Err(PluginError::ManifestInvalid(
+                "template capability requires at least one [[templates]] entry".into(),
+            ));
+        }
+        let mut seen_tpl_ids = std::collections::HashSet::new();
+        for tpl in &self.templates {
+            validate_plugin_id(&tpl.id)?;
+            if !seen_tpl_ids.insert(tpl.id.as_str()) {
+                return Err(PluginError::ManifestInvalid(format!(
+                    "duplicate template id '{}' in plugin '{}'",
+                    tpl.id, self.id
+                )));
+            }
+            validate_relative_entry(&tpl.entry, "templates[].entry")?;
+            if !tpl.entry.to_ascii_lowercase().ends_with(".typ") {
+                return Err(PluginError::ManifestInvalid(format!(
+                    "template '{}' entry '{}' must end with '.typ'",
+                    tpl.id, tpl.entry
+                )));
+            }
+        }
+        for font_dir in &self.font_dirs {
+            validate_relative_entry(font_dir, "font_dirs")?;
         }
         Ok(())
     }
@@ -188,6 +252,7 @@ impl PluginManifest {
             domains: self.permissions.domains.clone(),
             credentials: self.credentials.iter().map(|c| c.key.clone()).collect(),
             workspace_read: self.permissions.workspace_read,
+            workspace_write: self.permissions.workspace_write,
         }
     }
 
@@ -201,11 +266,13 @@ impl PluginManifest {
 }
 
 /// Returns `true` if a non-builtin plugin with this manifest declares any sensitive permission
-/// (network domains, credentials, or workspace read access) and therefore requires explicit user trust.
+/// (network domains, credentials, workspace read, or workspace write access) and therefore
+/// requires explicit user trust.
 pub fn requires_trust(manifest: &PluginManifest) -> bool {
     !manifest.permissions.domains.is_empty()
         || !manifest.credentials.is_empty()
         || manifest.permissions.workspace_read
+        || manifest.permissions.workspace_write
 }
 
 pub fn validate_plugin_id(id: &str) -> Result<()> {

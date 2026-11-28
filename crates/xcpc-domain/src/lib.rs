@@ -316,17 +316,34 @@ pub struct PresetInfo {
     pub description: LocalizedText,
 }
 
+/// Origin of a discovered template (`templates/*.typ`, contest/TRD local, or plugin bundle).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TemplateSource {
+    #[default]
+    Workspace,
+    Local,
+    Plugin {
+        plugin_id: String,
+        plugin_name: String,
+        template_id: String,
+    },
+}
+
 /// Metadata and declarative schema for one template file on disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemplateInfo {
     pub id: String,
     #[serde(default)]
     pub kind: TemplateKind,
-    /// Workspace-relative path (e.g. `"templates/olymp-classic.typ"` or `"contests/c1/template.typ"`).
+    /// Workspace-relative path (e.g. `"templates/olymp-classic.typ"` or `"contests/c1/template.typ"`)
+    /// or virtual plugin mount path (`"/plugins/<plugin-id>/<entry>"`).
     pub path: String,
     pub name: LocalizedText,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<LocalizedText>,
+    #[serde(default)]
+    pub source: TemplateSource,
     pub schema: TemplateSchema,
 }
 
@@ -862,6 +879,34 @@ pub fn check_id(id: &str) -> Result<(), InvalidId> {
     } else {
         Err(InvalidId(id.to_owned()))
     }
+}
+
+/// Parses a plugin template reference of the form `"plugin:<plugin_id>/<template_id>"`.
+///
+/// Both `<plugin_id>` and `<template_id>` must satisfy [`check_id`].
+pub fn parse_plugin_template_ref(raw: &str) -> Option<(&str, &str)> {
+    let rest = raw.trim().strip_prefix("plugin:")?;
+    let (plugin_id, template_id) = rest.split_once('/')?;
+    if template_id.contains('/') {
+        return None;
+    }
+    check_id(plugin_id).ok()?;
+    check_id(template_id).ok()?;
+    Some((plugin_id, template_id))
+}
+
+/// Formats a plugin template reference (`"plugin:<plugin_id>/<template_id>"`).
+pub fn format_plugin_template_ref(plugin_id: &str, template_id: &str) -> String {
+    format!("plugin:{plugin_id}/{template_id}")
+}
+
+/// Validates a template reference: either a workspace template ID (`check_id`) or a
+/// plugin template reference (`"plugin:<plugin_id>/<template_id>"`).
+pub fn check_template_ref(raw: &str) -> Result<(), InvalidId> {
+    if parse_plugin_template_ref(raw).is_some() {
+        return Ok(());
+    }
+    check_id(raw)
 }
 
 /// Maximum number of Unicode scalar values in a persistent group name.

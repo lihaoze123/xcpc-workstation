@@ -81,6 +81,18 @@ impl PluginManager {
         context_payload: serde_json::Value,
         workspace: Option<Arc<dyn WorkspaceReader>>,
     ) -> Result<PluginCommandAction> {
+        self.run_command_with_writer(plugin_id, command_id, context_payload, workspace, None)
+    }
+
+    /// Invokes a plugin command with optional workspace read and write bridges.
+    pub fn run_command_with_writer(
+        &self,
+        plugin_id: &str,
+        command_id: &str,
+        context_payload: serde_json::Value,
+        workspace: Option<Arc<dyn WorkspaceReader>>,
+        workspace_writer: Option<Arc<dyn crate::workspace::WorkspaceWriter>>,
+    ) -> Result<PluginCommandAction> {
         let loaded = self.load_plugin(plugin_id)?;
         if !loaded.info.enabled {
             return Err(PluginError::Disabled(plugin_id.to_string()));
@@ -105,6 +117,7 @@ impl PluginManager {
             credentials: Arc::new(MemoryCredentialStore::new()),
             kv: Arc::new(kv),
             workspace,
+            workspace_writer,
             limits: SandboxLimits::default(),
         };
 

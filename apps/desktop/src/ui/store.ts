@@ -797,6 +797,7 @@ export function startPluginWatch() {
       } else {
         notifyPluginsChanged([]);
       }
+      refresh();
     }
   })();
 }

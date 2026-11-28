@@ -89,6 +89,28 @@ function PluginBadges(props: { plugin: ExtendedPluginSummary; hideBuiltinNetwork
           </Text>
         </View>
       </If>
+      <If when={Boolean(p().capabilities?.includes("template"))}>
+        <View
+          testID={`plugin-badge-template-${p().id}`}
+          class="bg-muted border border-border"
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
+        >
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
+            {zhEn("排版模板", "Template")}
+          </Text>
+        </View>
+      </If>
+      <If when={Boolean(p().workspaceWrite)}>
+        <View
+          testID={`plugin-badge-ws-write-${p().id}`}
+          class="bg-muted border border-border"
+          style={{ paddingLeft: SPACE[4], paddingRight: SPACE[4], paddingTop: SPACE[2], paddingBottom: SPACE[2], borderRadius: RADIUS.xs }}
+        >
+          <Text style={{ fontSize: FONT_SIZE.micro, fontWeight: FONT_WEIGHT.semibold }} class="text-secondary-foreground">
+            {zhEn("工作区写入", "Workspace write")}
+          </Text>
+        </View>
+      </If>
       <If when={isPendingTrust(p())}>
         <View
           testID={`plugin-badge-untrusted-${p().id}`}

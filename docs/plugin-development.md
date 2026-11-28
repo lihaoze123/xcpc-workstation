@@ -1,6 +1,6 @@
 # 插件开发指南（Plugin Development Guide）
 
-本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.6.0-beta.2` 与 `@xcpc-workstation/plugin-sdk` `v0.2.0`）。
+本文档是 **XCPC Workstation 插件开发者的唯一事实源**（对应当前版本 `v0.7.0` 周期与 `@xcpc-workstation/plugin-sdk` `v0.3.0`）。
 
 > **防漂移约定**：本文档只阐述架构模型、安全边界、开发工作流与最小可运行示例，**不复制**详尽的字段表与方法签名。所有权威 API 契约与清单字段以仓内类型定义和 Schema 为准：
 > - QuickJS 宿主 API 与插件导出契约：[packages/plugin-sdk/host.d.ts](../packages/plugin-sdk/host.d.ts)
@@ -10,15 +10,16 @@
 
 ---
 
-## 1. 插件架构与三种开发模式
+## 1. 插件架构与四种开发模式
 
 无论使用免构建手写文件还是 Vite 工程化构建，宿主始终只识别单一、自包含的插件目录结构：
 
-- `manifest.toml`（必需）：插件元数据、能力声明、权限与工具/命令定义。
-- `index.js`（默认入口，可选省略但建议提供）：运行在 Core **QuickJS 沙箱** 中的无头逻辑，桌面端、CLI 与 MCP 共用。
+- `manifest.toml`（必需）：插件元数据、能力声明、权限与工具/命令/模板定义。
+- `index.js`（默认入口；纯排版模板插件无需提供）：运行在 Core **QuickJS 沙箱** 中的无头逻辑，桌面端、CLI 与 MCP 共用。
 - `ui.html`（可选，由 `ui_entry = "ui.html"` 声明）：运行在桌面端 **纯 Web `<WebView>` 沙箱** 中的自定义界面，必须是单文件自包含 HTML（JS/CSS/资源全部内联）。
+- `templates/*.typ`、`assets/*` 与可选 `font_dirs`（排版模板插件声明）：纯声明式 Typst 模板与配套字体资源。
 
-基于上述产物，插件主要有三种形态：
+基于上述产物，插件主要有四种形态：
 
 ### 模式 A：OJ 数据源插件（`oj_source`）
 
@@ -40,7 +41,13 @@
   - 可选的宿主主题 CSS 变量（`--xcpc-*` 与 `data-theme="light|dark"`）、应用内嵌字体 `@font-face`（`Inter` 与 `JetBrains Mono`，经 `data:` 内联提供，Canvas/SVG 重绘建议监听 `document.fonts.ready`）以及低优先级 `:where(...)` 基础样式（`6px` 细滚动条、适配深浅主题的 `<select>` 下拉箭头、按钮字体继承与不折行），消除 Linux WebKitGTK 与 Windows WebView2 的控件观感差异且不影响插件自定义样式覆盖。
 - 宿主只管能力不管样式：你可以使用原生 HTML/TS/CSS、Canvas2D、SVG，或通过 Vite 打包 Preact/React 等任意标准前端框架。为控制桌面端内存，离开「工具」空间超过 15 秒后宿主会自动卸载空闲 `<WebView>` 实例，请通过 `xcpc.storage` 持久化可恢复状态。官方插件 `graph-editor`、`math-bitwise`、`codesnap` 即为此模式。
 
-> 除上述三种主形态外，`manifest.toml` 还支持 `commands`、`importer`、`exporter`、`credentials` 扩展点，详见 [`manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json) 与 [`host.d.ts`](../packages/plugin-sdk/host.d.ts)。
+### 模式 D：排版模板插件（`template`）
+
+- 在 `manifest.toml` 中声明 `capabilities = ["template"]`、`[[templates]]`（`id` / `entry` / `kind = "statement" | "trd"`）及可选 `font_dirs = ["fonts"]`，**无需提供 `index.js`**，也**不触发**敏感权限信任弹窗。
+- 引擎将插件目录以只读虚拟路径挂载至 `/plugins/<plugin-id>/...`，模板复用标准 `#let render(doc)` 与 `#let schema` 契约，可按需加载插件内嵌字体（单字体上限 `25 MiB`、解压总包上限 `64 MiB`）。
+- 工作区通过 `plugin:<plugin-id>/<template-id>` 活引用插件模板，支持 CLI `--template plugin:<id>/<tpl>`、`xcpc template eject` 一键复制到工作区 `templates/` 脱离插件依赖，以及在冻结比赛/TRD 时自动完整快照进 `snapshot/template/`。
+
+> 除上述四种主形态外，`manifest.toml` 还支持 `commands`、`importer`、`exporter`、`credentials` 扩展点。宿主侧同时为 QuickJS 与 WebView 统一提供完整的工作区只读投影（题目、比赛、算法模板、TRD）、受控工作区写接口（`workspace_write`）、纯内存无磁盘 `renderTypst` / `renderMath` 渲染，以及 QuickJS 内存 ZIP（`host.archive.*`）、`host.crypto.sha256` 与 WebView `files.{saveBinary, pickFiles}`，详见 [`manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json)、[`host.d.ts`](../packages/plugin-sdk/host.d.ts) 与 [`ui.d.ts`](../packages/plugin-sdk/ui.d.ts)。
 
 ---
 
@@ -52,8 +59,10 @@
 
 - 任何外部来源（本地目录、`.zip`、订阅仓库、CLI、`xcpc plugin link`）安装的插件，只要在 `manifest.toml` 中声明了以下任一敏感权限，安装后一律进入 `pending_trust = true` 状态，调用会被 Core 拒绝（`PLUGIN_UNTRUSTED`）：
   - `[permissions].domains` 非空（网络请求白名单，禁止通配符 `"*"`）
-  - `[permissions].workspace_read = true`（只读访问当前工作区题目/比赛）
+  - `[permissions].workspace_read = true`（只读访问当前工作区题目、比赛、算法模板与 TRD，绝不暴露宿主机绝对路径）
+  - `[permissions].workspace_write = true`（受控领域级写入：`createProblem` / `updateProblem` / `setSamples` / `upsertSnippet`；禁止删除题目/模板与比赛解冻，严格遵守 `--read-only`、原子写入与冻结保护）
   - `[[credentials]]` 非空（读取凭据）
+- 纯排版模板插件（仅声明 `capabilities = ["template"]` 且无上述敏感权限）免信任弹窗，安装即可在模板选择器中使用。
 - 用户必须在桌面端确认弹窗中放行，或执行 `xcpc plugin trust <id>` 后方可执行。
 - Core 记录每个已安装插件的 `source_repo`：发生跨仓库覆写或升级时权限范围扩大，都会自动重置为 `pending_trust = true`。
 
@@ -97,6 +106,9 @@ xcpc plugin init ./my-tool
 
 # 免构建 OJ 插件（生成 manifest.toml + index.js）
 xcpc plugin init ./my-oj --kind oj
+
+# 免构建排版模板插件（生成 manifest.toml + templates/sample.typ + assets/badge.svg）
+xcpc plugin init ./my-template --kind template
 
 # 2. Vite + TypeScript 轨道（自动配置 @xcpc-workstation/plugin-sdk/vite 单文件打包）
 xcpc plugin init ./my-tool --kind tool --vite
@@ -341,4 +353,4 @@ document.getElementById("export")!.addEventListener("click", async () => {
 - Vite 单文件打包插件 `xcpcPlugin(options?)`：[`packages/plugin-sdk/vite.d.ts`](../packages/plugin-sdk/vite.d.ts)
 - 插件清单完整字段与约束：[`packages/plugin-sdk/manifest.schema.json`](../packages/plugin-sdk/manifest.schema.json)
 - Phase 4D 架构规格与设计背景：[`docs/specs/phase-4d-plugin-sdk-and-ecosystem.md`](./specs/phase-4d-plugin-sdk-and-ecosystem.md)
-- 下一阶段插件 API 增强规格（待实现：模板插件、工作区读写与宿主底层能力）：[`docs/specs/plugin-api-v2-templates-and-capabilities.md`](./specs/plugin-api-v2-templates-and-capabilities.md)
+- 插件 API v2 规格（Phase 7 已落地：模板插件、工作区读写与宿主底层能力）：[`docs/specs/plugin-api-v2-templates-and-capabilities.md`](./specs/plugin-api-v2-templates-and-capabilities.md)

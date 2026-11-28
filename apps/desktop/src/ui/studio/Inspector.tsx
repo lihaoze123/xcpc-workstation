@@ -22,6 +22,7 @@ import {
   LOCAL_TEMPLATE_NAMESPACE,
   parseContestTemplateInfo,
   parseOptionsByTemplate,
+  parsePluginTemplateRef,
   type TemplateOptionMap,
   type TemplateOptionValue,
   type TemplatesCatalog,
@@ -821,9 +822,31 @@ function ContestLayoutTab(props: {
   const localTplInfo = computed(() => (hasLocal() ? parseContestTemplateInfo(c().contestTemplateJson) : undefined));
   const wsTplInfo = computed(() => props.catalog.templates.find((t) => t.id === effTemplateId()));
   const tplInfo = computed(() => (hasLocal() ? localTplInfo() : wsTplInfo()));
+  const pluginRef = computed(() => (!hasLocal() ? parsePluginTemplateRef(effTemplateId()) : null));
+  const isPluginTemplate = computed(() => !hasLocal() && tplInfo()?.source?.kind === "plugin");
   const isMissingTemplate = () => !hasLocal() && !wsTplInfo();
-  const canInstallMissingPreset = () => isMissingTemplate() && props.catalog.presets.some((p) => p.id === effTemplateId());
+  const canInstallMissingPreset = () => isMissingTemplate() && !pluginRef() && props.catalog.presets.some((p) => p.id === effTemplateId());
   const templateOverridden = () => !hasLocal() && !!c().template && c().template !== props.catalog.default;
+
+  const ejectPluginTemplate = () => {
+    const src = tplInfo()?.source;
+    if (src?.kind !== "plugin" || typeof preview.ejectPluginTemplate !== "function") return;
+    const res = preview.ejectPluginTemplate(src.plugin_id, src.template_id, null);
+    if (!res.ok) {
+      props.done(res);
+      return;
+    }
+    try {
+      const parsed = res.reportJson ? (JSON.parse(res.reportJson) as { name?: string }) : {};
+      if (parsed.name) {
+        meta({ template: parsed.name === props.catalog.default ? null : parsed.name });
+      } else {
+        refresh();
+      }
+    } catch {
+      refresh();
+    }
+  };
 
   const optsNs = () => (hasLocal() ? LOCAL_TEMPLATE_NAMESPACE : effTemplateId());
   const wsBookOpts = computed<TemplateOptionMap>(() =>
@@ -860,18 +883,32 @@ function ContestLayoutTab(props: {
                   />
                   <If when={!locked()}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6] }}>
-                      <Btn
-                        label={t("settings.layout.editTemplate")}
-                        icon="filePenLine"
-                        tooltip={tip(t("settings.layout.editTemplateTooltip"))}
-                        onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
-                      />
-                      <Btn
-                        label={t("inspector.layout.detach")}
-                        icon="copy"
-                        tooltip={tip(t("inspector.layout.detachTooltip"))}
-                        onPress={() => props.done(preview.detachContestTemplate(c().id))}
-                      />
+                      <If
+                        when={isPluginTemplate()}
+                        else={
+                          <>
+                            <Btn
+                              label={t("settings.layout.editTemplate")}
+                              icon="filePenLine"
+                              tooltip={tip(t("settings.layout.editTemplateTooltip"))}
+                              onPress={() => void preview.openTemplateFile(effTemplateId()).then((res) => !res.ok && props.done(res))}
+                            />
+                            <Btn
+                              label={t("inspector.layout.detach")}
+                              icon="copy"
+                              tooltip={tip(t("inspector.layout.detachTooltip"))}
+                              onPress={() => props.done(preview.detachContestTemplate(c().id))}
+                            />
+                          </>
+                        }
+                      >
+                        <Btn
+                          label={t("template.ejectToWorkspace")}
+                          icon="copy"
+                          tooltip={tip(t("template.ejectToWorkspaceTooltip"))}
+                          onPress={ejectPluginTemplate}
+                        />
+                      </If>
                     </View>
                   </If>
                 </View>
@@ -882,14 +919,26 @@ function ContestLayoutTab(props: {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
                     <Icon name="triangleAlert" size="sm" tone="destructive" />
                     <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
-                      {t("inspector.layout.missingTitle", { id: effTemplateId() })}
+                      {pluginRef()
+                        ? t("template.missingPluginTitle", { pluginId: pluginRef()!.pluginId })
+                        : t("inspector.layout.missingTitle", { id: effTemplateId() })}
                     </Text>
                   </View>
                   <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
-                    {t("inspector.layout.missingDesc")}
+                    {pluginRef()
+                      ? t("template.missingPluginDesc", { pluginId: pluginRef()!.pluginId })
+                      : t("inspector.layout.missingDesc")}
                   </Text>
                   <If when={!locked()}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE[6], paddingTop: SPACE[2] }}>
+                      <If when={!!pluginRef()}>
+                        <Btn
+                          variant="primary"
+                          label={t("template.openPluginsSettings")}
+                          icon="squareCode"
+                          onPress={() => goSettings("plugins")}
+                        />
+                      </If>
                       <If when={canInstallMissingPreset()}>
                         <Btn
                           variant="primary"
@@ -898,12 +947,14 @@ function ContestLayoutTab(props: {
                           onPress={() => props.done(preview.installPresetTemplate(effTemplateId(), effTemplateId()))}
                         />
                       </If>
-                      <Btn
-                        variant={canInstallMissingPreset() ? undefined : "primary"}
-                        label={t("template.addFromPresetEllipsis")}
-                        icon="plus"
-                        onPress={props.onRequestPreset}
-                      />
+                      <If when={!pluginRef()}>
+                        <Btn
+                          variant={canInstallMissingPreset() ? undefined : "primary"}
+                          label={t("template.addFromPresetEllipsis")}
+                          icon="plus"
+                          onPress={props.onRequestPreset}
+                        />
+                      </If>
                     </View>
                   </If>
                 </View>
@@ -1000,7 +1051,7 @@ function ContestLayoutTab(props: {
       <If when={!locked()}>
         <Section title={t("inspector.layout.advanced")} last>
           <View style={{ gap: SPACE[6] }}>
-            <If when={!hasLocal() && !!tplInfo()}>
+            <If when={!hasLocal() && !!tplInfo() && !isPluginTemplate()}>
               <Btn
                 label={t("inspector.layout.forkCurrent")}
                 icon="copy"

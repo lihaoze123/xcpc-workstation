@@ -28,7 +28,11 @@ test("manifest.schema.json is valid JSON Schema covering all plugin capabilities
     "importer",
     "exporter",
     "credentials",
+    "template",
   ]);
+  assert.equal(schema.properties.permissions.properties.workspace_write.type, "boolean");
+  assert.equal(schema.properties.templates.type, "array");
+  assert.equal(schema.properties.font_dirs.type, "array");
 });
 
 test("parseManifestEntries extracts id, entry, and ui_entry while ignoring section keys", () => {

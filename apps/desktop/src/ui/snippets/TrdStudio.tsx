@@ -20,12 +20,13 @@ import {
   activeTrdStudio,
   bumpSnippetsRevision,
   closeTrdStudio,
+  goSettings,
   info,
   preview,
   revision,
   snippetsRevision,
 } from "../store";
-import type { TemplateOptionMap } from "../templates";
+import { parsePluginTemplateRef, type TemplateOptionMap } from "../templates";
 import {
   collectMissingDeps,
   encodeStringPatch,
@@ -828,6 +829,54 @@ export function TrdStudio(props: { active: boolean }) {
                     readOnly={locked()}
                     onChange={changeTemplate}
                   />
+                  <If when={!locked() && activeTemplate()?.source?.kind === "plugin"}>
+                    <Btn
+                      label={t("template.ejectToWorkspace")}
+                      icon="copy"
+                      tooltip={tip(t("template.ejectToWorkspaceTooltip"))}
+                      onPress={() => {
+                        const src = activeTemplate()?.source;
+                        if (src?.kind !== "plugin" || typeof preview.ejectPluginTemplate !== "function") return;
+                        const res = preview.ejectPluginTemplate(src.plugin_id, src.template_id, null);
+                        if (!res.ok) {
+                          showToast({ tone: "issues", text: res.error ?? t("ctx.ejectPluginTemplate") });
+                          return;
+                        }
+                        try {
+                          const parsed = res.reportJson ? (JSON.parse(res.reportJson) as { name?: string }) : {};
+                          if (parsed.name) {
+                            changeTemplate(parsed.name);
+                          } else {
+                            bumpSnippetsRevision();
+                          }
+                        } catch {
+                          bumpSnippetsRevision();
+                        }
+                      }}
+                    />
+                  </If>
+                  <If when={!activeTemplate() && !!parsePluginTemplateRef(effectiveTemplateId())}>
+                    <View class="border border-border bg-muted/40" style={{ borderRadius: RADIUS.md, padding: SPACE[12], gap: SPACE[6] }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE[6] }}>
+                        <Icon name="triangleAlert" size="sm" tone="destructive" />
+                        <Text style={{ flex: 1, fontSize: FONT_SIZE.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-foreground">
+                          {t("template.missingPluginTitle", { pluginId: parsePluginTemplateRef(effectiveTemplateId())!.pluginId })}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption }} class="text-secondary-foreground">
+                        {t("template.missingPluginDesc", { pluginId: parsePluginTemplateRef(effectiveTemplateId())!.pluginId })}
+                      </Text>
+                      <Btn
+                        variant="primary"
+                        label={t("template.openPluginsSettings")}
+                        icon="squareCode"
+                        onPress={() => {
+                          closeTrdStudio();
+                          goSettings("plugins");
+                        }}
+                      />
+                    </View>
+                  </If>
                   <If when={!!activeTemplate()}>
                     <TemplateOptionsEditor
                       ownerKey={`trd:${trdId()}:${effectiveTemplateId()}`}

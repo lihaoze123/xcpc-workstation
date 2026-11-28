@@ -1670,6 +1670,8 @@ pub struct PluginSummaryJs {
     pub domains: Vec<String>,
     pub workspace_read: bool,
     #[prop(default)]
+    pub workspace_write: bool,
+    #[prop(default)]
     pub has_ui: bool,
     #[prop(default)]
     pub is_linked: bool,
@@ -1732,6 +1734,8 @@ pub struct InstallPluginResultJs {
 pub struct RepoPluginPermissionJs {
     pub domains: Vec<String>,
     pub workspace_read: bool,
+    #[prop(default)]
+    pub workspace_write: bool,
 }
 
 /// One installable plugin entry from a decentralized `index.json` catalog.
@@ -1941,6 +1945,8 @@ pub struct PluginUiHtmlJs {
     #[prop(skip_none)]
     pub workspace_read: Option<bool>,
     #[prop(skip_none)]
+    pub workspace_write: Option<bool>,
+    #[prop(skip_none)]
     pub error: Option<String>,
     #[prop(skip_none)]
     pub error_code: Option<String>,
@@ -2003,6 +2009,27 @@ pub struct PluginPickFileResultJs {
     pub text: Option<String>,
     #[prop(skip_none)]
     pub content_base64: Option<String>,
+    #[prop(skip_none)]
+    pub error: Option<String>,
+}
+
+/// One picked local file returned by `pluginPickFilesDialog`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginPickedFileJs {
+    pub name: String,
+    #[prop(skip_none)]
+    pub text: Option<String>,
+    pub content_base64: String,
+}
+
+/// Result of picking and reading one or more local files via `pluginPickFilesDialog`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsObject)]
+pub struct PluginPickFilesResultJs {
+    pub ok: bool,
+    #[prop(default)]
+    pub cancelled: bool,
+    #[prop(default)]
+    pub files: Vec<PluginPickedFileJs>,
     #[prop(skip_none)]
     pub error: Option<String>,
 }
@@ -4270,6 +4297,7 @@ impl From<xcpc_app::PluginSummaryJs> for PluginSummaryJs {
             capabilities: v.capabilities,
             domains: v.domains,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
             has_ui: v.has_ui,
             is_linked: v.is_linked,
             link_target: v.link_target,
@@ -4296,6 +4324,7 @@ impl From<PluginSummaryJs> for xcpc_app::PluginSummaryJs {
             capabilities: v.capabilities,
             domains: v.domains,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
             has_ui: v.has_ui,
             is_linked: v.is_linked,
             link_target: v.link_target,
@@ -4398,6 +4427,7 @@ impl From<xcpc_app::RepoPluginPermissionJs> for RepoPluginPermissionJs {
         Self {
             domains: v.domains,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
         }
     }
 }
@@ -4407,6 +4437,7 @@ impl From<RepoPluginPermissionJs> for xcpc_app::RepoPluginPermissionJs {
         Self {
             domains: v.domains,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
         }
     }
 }
@@ -4772,6 +4803,7 @@ impl From<xcpc_app::PluginUiHtmlJs> for PluginUiHtmlJs {
             html: v.html,
             plugin_id: v.plugin_id,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
             error: v.error,
             error_code: v.error_code,
         }
@@ -4785,6 +4817,7 @@ impl From<PluginUiHtmlJs> for xcpc_app::PluginUiHtmlJs {
             html: v.html,
             plugin_id: v.plugin_id,
             workspace_read: v.workspace_read,
+            workspace_write: v.workspace_write,
             error: v.error,
             error_code: v.error_code,
         }
@@ -4896,6 +4929,48 @@ impl From<PluginPickFileResultJs> for xcpc_app::PluginPickFileResultJs {
             name: v.name,
             text: v.text,
             content_base64: v.content_base64,
+            error: v.error,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginPickedFileJs> for PluginPickedFileJs {
+    fn from(v: xcpc_app::PluginPickedFileJs) -> Self {
+        Self {
+            name: v.name,
+            text: v.text,
+            content_base64: v.content_base64,
+        }
+    }
+}
+
+impl From<PluginPickedFileJs> for xcpc_app::PluginPickedFileJs {
+    fn from(v: PluginPickedFileJs) -> Self {
+        Self {
+            name: v.name,
+            text: v.text,
+            content_base64: v.content_base64,
+        }
+    }
+}
+
+impl From<xcpc_app::PluginPickFilesResultJs> for PluginPickFilesResultJs {
+    fn from(v: xcpc_app::PluginPickFilesResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            files: v.files.into_iter().map(Into::into).collect(),
+            error: v.error,
+        }
+    }
+}
+
+impl From<PluginPickFilesResultJs> for xcpc_app::PluginPickFilesResultJs {
+    fn from(v: PluginPickFilesResultJs) -> Self {
+        Self {
+            ok: v.ok,
+            cancelled: v.cancelled,
+            files: v.files.into_iter().map(Into::into).collect(),
             error: v.error,
         }
     }

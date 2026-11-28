@@ -510,7 +510,7 @@ pub fn init_workspace_with_template(
 
 /// Archived template configuration stored inside `contests/<id>/snapshot/template.toml`
 /// when a contest is frozen, guaranteeing reproducible re-rendering even if the workspace's
-/// default template, custom templates, or `templates/preamble.typ` later change.
+/// default template, custom templates, plugin templates, or `templates/preamble.typ` later change.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SnapshotTemplateMeta {
@@ -519,6 +519,14 @@ pub struct SnapshotTemplateMeta {
     pub has_custom_template: bool,
     #[serde(default)]
     pub has_preamble: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub font_dirs: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub options: BTreeMap<String, TemplateOptionValue>,
 }
@@ -531,6 +539,8 @@ pub struct SnapshotTemplateArchive {
     pub preamble_bytes: Option<Vec<u8>>,
     /// Archived template `image` option assets copied into `snapshot/assets/<filename>`.
     pub assets: BTreeMap<String, Vec<u8>>,
+    /// Archived plugin template bundle files copied into `snapshot/template/<rel_path>`.
+    pub plugin_bundle_files: BTreeMap<String, Vec<u8>>,
 }
 
 /// Reserved stem under `templates/` used by the workspace preamble (`templates/preamble.typ`).
@@ -972,6 +982,56 @@ impl Workspace {
             });
         }
         self.write(&rel, source_bytes)?;
+        Ok(rel)
+    }
+
+    /// Writes an ejected plugin template into `templates/<target_name>.typ` and, when
+    /// `bundle_files` is non-empty, copies all companion files into `templates/<target_name>/`.
+    /// Refuses the reserved name `preamble` and refuses to overwrite an existing template.
+    pub fn eject_template_bundle(
+        &self,
+        target_name: &str,
+        entry_typ_bytes: &[u8],
+        bundle_files: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<String> {
+        check_id(target_name)?;
+        if target_name == RESERVED_PREAMBLE_NAME {
+            return Err(Error::Invalid {
+                path: PREAMBLE_REL_PATH.to_owned(),
+                message: format!(
+                    "template name `{RESERVED_PREAMBLE_NAME}` is reserved for the workspace preamble ({PREAMBLE_REL_PATH})"
+                ),
+            });
+        }
+        let rel = format!("templates/{target_name}.typ");
+        self.check_writable(&rel)?;
+        let path = self.resolve(&rel)?;
+        if path.exists() {
+            let actual = fs::read(&path)
+                .map(|b| content_hash(&b))
+                .unwrap_or_default();
+            return Err(Error::Conflict {
+                path: rel,
+                expected: String::new(),
+                actual,
+            });
+        }
+        if !bundle_files.is_empty() {
+            let dir_rel = format!("templates/{target_name}");
+            let dir_path = self.resolve(&dir_rel)?;
+            if dir_path.exists() {
+                return Err(Error::Conflict {
+                    path: dir_rel,
+                    expected: String::new(),
+                    actual: "exists".into(),
+                });
+            }
+            for (sub_rel, bytes) in bundle_files {
+                let target_rel = format!("{dir_rel}/{sub_rel}");
+                self.write(&target_rel, bytes)?;
+            }
+        }
+        self.write(&rel, entry_typ_bytes)?;
         Ok(rel)
     }
 

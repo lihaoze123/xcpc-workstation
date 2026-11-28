@@ -10,15 +10,16 @@ XCPC Workstation 采用**混合沙箱插件架构**：核心逻辑运行于 Rust
 
 ---
 
-## 三种插件模式
+## 四种插件模式
 
-无论使用免构建手写文件还是 Vite 工程化构建，宿主只识别统一的自包含插件目录结构（`manifest.toml` + `index.js` + 可选 `ui.html`）。基于能力声明，插件分为三种主要模式：
+无论使用免构建手写文件还是 Vite 工程化构建，宿主只识别统一的自包含插件目录结构（`manifest.toml` + 可选 `index.js` / `ui.html` / `templates/*.typ`）。基于能力声明，插件分为四种主要模式：
 
 | 模式 | 关键声明 | 运行环境 | 适用场景与官方示例 |
 | :--- | :--- | :--- | :--- |
 | **OJ 数据源插件** (`oj_source`) | `capabilities = ["oj_source"]` + `[permissions].domains` | Core QuickJS 沙箱 | 同步 OJ 账号、提交记录、Rating 历史与比赛列表。主仓库内置 `codeforces`、`atcoder`。 |
 | **无头表单工具** (Headless `tool`) | `capabilities = ["tool"]` + `[[tools]]`（无 `ui_entry`） | Core QuickJS 沙箱 | 输入表单由桌面端 `HeadlessToolRunner` 自动渲染，同时支持 CLI（`xcpc tool`）调用。官方示例：`complexity-mem`、`string-lab`。 |
 | **纯 Web 自定义界面工具** (`<WebView>` `tool`) | `capabilities = ["tool"]` + `ui_entry = "ui.html"` | 桌面端隔离 `<WebView>`（可搭配 `index.js` 后端） | 需要 Canvas2D、SVG 或高频交互的工具界面，通过 `window.xcpc` 桥接宿主能力与主题变量。官方示例：`graph-editor`、`math-bitwise`。 |
+| **排版模板插件** (`template`) | `capabilities = ["template"]` + `[[templates]]`（可选 `font_dirs`） | 引擎只读虚拟挂载 `/plugins/<id>/...` | 分发题面或团队参考手册（TRD）Typst 排版模板与配套字体，支持 `plugin:<id>/<tpl>` 活引用、一键复制到工作区与冻结快照归档。 |
 
 除上述三种主形态外，`manifest.toml` 还支持 `commands`（命令面板入口）、`importer`（自定义导入器）、`exporter`（自定义导出器）与 `credentials`（系统凭据托管）扩展点。完整字段定义见仓库内的 [`manifest.schema.json`](https://github.com/lihaoze123/xcpc-workstation/blob/main/packages/plugin-sdk/manifest.schema.json) 与 [`host.d.ts`](https://github.com/lihaoze123/xcpc-workstation/blob/main/packages/plugin-sdk/host.d.ts)。
 

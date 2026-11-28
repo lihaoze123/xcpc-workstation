@@ -886,6 +886,7 @@ fn codeforces_pagination_full_and_incremental_early_stop() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -963,6 +964,7 @@ fn atcoder_verify_rejects_nonexistent_user_and_accepts_unrated_existing_user() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);

@@ -12,6 +12,118 @@ pub struct RenderedRgba {
     pub rgba_base64: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderTypstOptions {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub scale: Option<f32>,
+    #[serde(default)]
+    pub width_pt: Option<f64>,
+    #[serde(default)]
+    pub theme: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderMathOptions {
+    #[serde(default)]
+    pub display: Option<bool>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub scale: Option<f32>,
+    #[serde(default)]
+    pub theme: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderedTypstOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub png_base64: Option<String>,
+    pub width: f64,
+    pub height: f64,
+}
+
+fn parse_fragment_format(raw: Option<&str>) -> Result<xcpc_engine::FragmentFormat> {
+    match raw.map(str::trim).unwrap_or("svg") {
+        "" | "svg" => Ok(xcpc_engine::FragmentFormat::Svg),
+        "png" => Ok(xcpc_engine::FragmentFormat::Png),
+        other => Err(PluginError::InvalidArgument(format!(
+            "unsupported render format '{other}' (expected 'svg' or 'png')"
+        ))),
+    }
+}
+
+fn parse_fragment_theme(raw: Option<&str>) -> Result<xcpc_engine::FragmentTheme> {
+    match raw.map(str::trim).unwrap_or("light") {
+        "" | "light" => Ok(xcpc_engine::FragmentTheme::Light),
+        "dark" => Ok(xcpc_engine::FragmentTheme::Dark),
+        other => Err(PluginError::InvalidArgument(format!(
+            "unsupported render theme '{other}' (expected 'light' or 'dark')"
+        ))),
+    }
+}
+
+/// Renders an untrusted Typst snippet inside an isolated pure-memory `xcpc-engine` world.
+pub fn render_typst_snippet(
+    source: &str,
+    opts: &RenderTypstOptions,
+) -> Result<RenderedTypstOutput> {
+    let eng_opts = xcpc_engine::FragmentRenderOptions {
+        format: parse_fragment_format(opts.format.as_deref())?,
+        scale: opts.scale.unwrap_or(2.0),
+        width_pt: opts.width_pt,
+        theme: parse_fragment_theme(opts.theme.as_deref())?,
+    };
+    let rendered =
+        xcpc_engine::render_typst_fragment(source, &eng_opts).map_err(PluginError::Render)?;
+    Ok(RenderedTypstOutput {
+        svg: rendered.svg,
+        png_base64: rendered
+            .png_bytes
+            .map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
+        width: rendered.width,
+        height: rendered.height,
+    })
+}
+
+/// Converts LaTeX math via MiTeX and renders it inside an isolated pure-memory `xcpc-engine` world.
+pub fn render_math_snippet(latex: &str, opts: &RenderMathOptions) -> Result<RenderedTypstOutput> {
+    if latex.len() > xcpc_engine::MAX_FRAGMENT_SOURCE_BYTES {
+        return Err(PluginError::Render(format!(
+            "LaTeX input exceeds maximum length of {} bytes",
+            xcpc_engine::MAX_FRAGMENT_SOURCE_BYTES
+        )));
+    }
+    let trimmed = latex.trim();
+    if trimmed.is_empty() {
+        return Err(PluginError::InvalidArgument(
+            "LaTeX expression cannot be empty".into(),
+        ));
+    }
+    let typst_math = mitex::convert_math(trimmed, None)
+        .map_err(|e| PluginError::Render(format!("MiTeX conversion failed: {e}")))?;
+    let fn_name = if opts.display.unwrap_or(false) {
+        "dm"
+    } else {
+        "m"
+    };
+    let escaped = typst_math.replace('\\', "\\\\").replace('"', "\\\"");
+    let source = format!("#{fn_name}(\"{escaped}\")");
+    let typst_opts = RenderTypstOptions {
+        format: opts.format.clone(),
+        scale: opts.scale,
+        width_pt: None,
+        theme: opts.theme.clone(),
+    };
+    render_typst_snippet(&source, &typst_opts)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HighlightToken {
     /// One of: `keyword|type|string|number|comment|operator|ident|plain`.

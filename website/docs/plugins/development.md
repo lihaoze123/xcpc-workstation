@@ -4,7 +4,7 @@ title: 插件开发指南
 
 # 插件开发指南
 
-本指南介绍如何基于 `@xcpc-workstation/plugin-sdk`（当前版本 `v0.2.0`）与 `xcpc plugin` CLI 开发、本地联调、校验打包并发布 XCPC Workstation 插件。
+本指南介绍如何基于 `@xcpc-workstation/plugin-sdk`（当前版本 `v0.3.0`）与 `xcpc plugin` CLI 开发、本地联调、校验打包并发布 XCPC Workstation 插件。
 
 > **权威 API 契约**（以仓库内 TypeScript 类型定义与 JSON Schema 为唯一事实源）：
 > - QuickJS 宿主全局对象 `host` 与插件导出契约：[`packages/plugin-sdk/host.d.ts`](https://github.com/lihaoze123/xcpc-workstation/blob/main/packages/plugin-sdk/host.d.ts)
@@ -46,6 +46,9 @@ xcpc plugin init ./my-tool
 # 免构建 OJ 数据源插件（生成 manifest.toml + index.js）
 xcpc plugin init ./my-oj --kind oj
 
+# 免构建排版模板插件（生成 manifest.toml + templates/sample.typ + assets/badge.svg）
+xcpc plugin init ./my-template --kind template
+
 # 轨道二：Vite + TypeScript 工程化工具插件（自动配置 @xcpc-workstation/plugin-sdk/vite）
 xcpc plugin init ./my-tool --kind tool --vite
 cd ./my-tool
@@ -81,7 +84,7 @@ npm run dev   # 等价于 vite build --watch，保存即更新 dist/ 并触发�
 
 ### 放行敏感权限
 
-若插件声明了 `domains`、`credentials` 或 `workspace_read = true`，链接后需执行一次信任确认（详见 [安全边界与信任门控](./security.md)）：
+若插件声明了 `domains`、`credentials`、`workspace_read = true` 或 `workspace_write = true`，链接后需执行一次信任确认（纯 `template` 排版模板插件免信任弹窗；详见 [安全边界与信任门控](./security.md)）：
 
 ```bash
 xcpc plugin trust my-tool

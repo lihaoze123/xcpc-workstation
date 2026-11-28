@@ -4,7 +4,7 @@ title: Plugin Development Guide
 
 # Plugin Development Guide
 
-This guide covers developing, locally debugging, validating, packaging, and publishing XCPC Workstation plugins with `@xcpc-workstation/plugin-sdk` (current version `v0.2.0`) and the `xcpc plugin` CLI.
+This guide covers developing, locally debugging, validating, packaging, and publishing XCPC Workstation plugins with `@xcpc-workstation/plugin-sdk` (current version `v0.3.0`) and the `xcpc plugin` CLI.
 
 > **Authoritative API contracts** (TypeScript definitions and JSON Schema in the repository are the single source of truth):
 > - QuickJS host global `host` and plugin export contracts: [`packages/plugin-sdk/host.d.ts`](https://github.com/lihaoze123/xcpc-workstation/blob/main/packages/plugin-sdk/host.d.ts)
@@ -46,6 +46,9 @@ xcpc plugin init ./my-tool
 # Zero-build OJ source plugin (generates manifest.toml + index.js)
 xcpc plugin init ./my-oj --kind oj
 
+# Zero-build typesetting template plugin (generates manifest.toml + templates/sample.typ + assets/badge.svg)
+xcpc plugin init ./my-template --kind template
+
 # Track 2: Vite + TypeScript tool plugin (pre-configured with @xcpc-workstation/plugin-sdk/vite)
 xcpc plugin init ./my-tool --kind tool --vite
 cd ./my-tool
@@ -81,7 +84,7 @@ npm run dev   # equivalent to vite build --watch; updates dist/ on save and trig
 
 ### Approving Sensitive Permissions
 
-If the plugin declares `domains`, `credentials`, or `workspace_read = true`, trust it once after linking (see [Security Boundaries & Trust Gate](./security.md)):
+If the plugin declares `domains`, `credentials`, `workspace_read = true`, or `workspace_write = true`, trust it once after linking (pure `template` plugins do not require a trust prompt; see [Security Boundaries & Trust Gate](./security.md)):
 
 ```bash
 xcpc plugin trust my-tool

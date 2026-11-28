@@ -5891,6 +5891,7 @@ dependencies = [
  "typst-layout",
  "typst-pdf",
  "typst-render",
+ "typst-svg",
  "xcpc-domain",
  "xcpc-trace",
 ]
@@ -5978,6 +5979,7 @@ version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "keyring",
+ "mitex",
  "png",
  "resvg 0.47.0",
  "rquickjs",
@@ -5992,6 +5994,7 @@ dependencies = [
  "ureq",
  "url",
  "xcpc-domain",
+ "xcpc-engine",
  "xcpc-storage",
  "zip",
 ]

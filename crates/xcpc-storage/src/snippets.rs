@@ -915,6 +915,9 @@ impl Workspace {
             for (name, bytes) in &archive.assets {
                 self.write(&format!("{snap_rel}/assets/{name}"), bytes)?;
             }
+            for (rel_file, bytes) in &archive.plugin_bundle_files {
+                self.write(&format!("{snap_rel}/template/{rel_file}"), bytes)?;
+            }
         }
 
         // Archive exported PDF if provided.

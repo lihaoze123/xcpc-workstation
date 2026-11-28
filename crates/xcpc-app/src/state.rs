@@ -359,7 +359,32 @@ impl State {
             let old = state.install_workspace(ws);
             drop(old);
         }
+        state.sync_engine_plugin_mounts();
         state
+    }
+
+    /// Synchronizes enabled template plugin mounts (`/plugins/<plugin_id>/...`) into both
+    /// `compiler.engine` and `math_engine`, invalidating template & preview caches.
+    pub fn sync_engine_plugin_mounts(&self) {
+        let mounts = self
+            .effective_data_dir()
+            .ok()
+            .map(|dir| xcpc_plugin::PluginManager::new(dir).list_plugin_template_mounts())
+            .unwrap_or_default();
+        if let Ok(mut compiler) = self.compiler.lock() {
+            compiler.engine.set_plugin_mounts(mounts.clone());
+            compiler.cached = None;
+        }
+        if let Ok(mut math) = self.math_engine.lock() {
+            math.set_plugin_mounts(mounts);
+        }
+        if let Ok(mut cache) = self.templates_cache.lock() {
+            *cache = None;
+        }
+        if let Ok(mut cache) = self.trd_templates_cache.lock() {
+            *cache = None;
+        }
+        self.invalidate_cache();
     }
 
     pub fn revision(&self) -> u64 {
@@ -2521,6 +2546,36 @@ impl State {
                 ActionResult::ok()
             }
             Err(e) => ActionResult::from_storage_err(e),
+        }
+    }
+
+    pub fn eject_plugin_template(
+        &self,
+        plugin_id: &str,
+        template_id: &str,
+        target_name: Option<&str>,
+    ) -> JsonReportResultJs {
+        let ws = self.core.lock().unwrap().workspace.clone();
+        let Some(ws) = ws else {
+            return JsonReportResultJs::err("no_workspace", "no workspace open");
+        };
+        let engine = self.math_engine.lock().unwrap();
+        match publish::eject_plugin_template(&ws, &engine, plugin_id, template_id, target_name) {
+            Ok((name, path)) => {
+                drop(engine);
+                if let Ok(mut cache) = self.templates_cache.lock() {
+                    *cache = None;
+                }
+                if let Ok(mut cache) = self.trd_templates_cache.lock() {
+                    *cache = None;
+                }
+                self.invalidate_cache();
+                JsonReportResultJs::ok(
+                    Some(serde_json::json!({ "name": name, "path": path }).to_string()),
+                    None,
+                )
+            }
+            Err(e) => JsonReportResultJs::err(e.code(), e.to_string()),
         }
     }
 

@@ -108,6 +108,13 @@ pub struct Document {
     pub diagnostics: Vec<Diagnostic>,
     /// The problems set, in order, with their label.
     pub problems: Vec<(String, String)>,
+    /// When the document renders via a mounted template plugin, carries that plugin ID
+    /// so [`publish::compile`] activates its on-demand fonts.
+    pub active_plugin_id: Option<String>,
+    /// Optional cache key + extra font directories (e.g. archived plugin fonts in a
+    /// frozen contest/TRD snapshot) activated on demand during [`publish::compile`].
+    pub extra_font_key: Option<String>,
+    pub extra_font_dirs: Vec<std::path::PathBuf>,
 }
 
 /// The book's running head, cover and switches.
@@ -786,6 +793,9 @@ impl Out {
             map: self.map,
             diagnostics,
             problems,
+            active_plugin_id: None,
+            extra_font_key: None,
+            extra_font_dirs: Vec::new(),
         }
     }
 

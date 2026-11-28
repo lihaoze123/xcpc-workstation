@@ -342,6 +342,7 @@ impl SyncEngine {
             credentials: Arc::clone(&self.credentials),
             kv,
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits::default(),
         };
         let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -373,6 +374,7 @@ impl SyncEngine {
             credentials: Arc::clone(&self.credentials),
             kv: Arc::clone(&kv),
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits {
                 timeout: Duration::from_secs(120),
                 ..default_limits
@@ -573,6 +575,7 @@ fn resolve_problem_url_inner(
             credentials: Arc::clone(credentials),
             kv,
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits::default(),
         };
         let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);

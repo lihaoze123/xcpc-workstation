@@ -23,7 +23,7 @@ pub const OFFICIAL_PLUGIN_REPO_URL: &str =
 pub const LEGACY_OFFICIAL_PLUGIN_REPO_URL: &str =
     "https://raw.githubusercontent.com/lihaoze123/xcpc-plugins/main/index.json";
 pub const OFFICIAL_PLUGIN_SDK_PACKAGE: &str = "@xcpc-workstation/plugin-sdk";
-pub const OFFICIAL_PLUGIN_SDK_VERSION: &str = "^0.2.0";
+pub const OFFICIAL_PLUGIN_SDK_VERSION: &str = "^0.3.0";
 pub const OFFICIAL_PLUGIN_REPO_NAME: &str = "XCPC Official";
 pub const OFFICIAL_PLUGIN_REPO_ENV: &str = "XCPC_OFFICIAL_PLUGIN_REPO";
 
@@ -107,6 +107,8 @@ struct TrustedPermissions {
     credentials: Vec<String>,
     #[serde(default)]
     workspace_read: bool,
+    #[serde(default)]
+    workspace_write: bool,
 }
 
 impl TrustedPermissions {
@@ -134,11 +136,15 @@ impl TrustedPermissions {
             domains,
             credentials,
             workspace_read: manifest.permissions.workspace_read,
+            workspace_write: manifest.permissions.workspace_write,
         }
     }
 
     fn covers(&self, manifest: &PluginManifest) -> bool {
         if manifest.permissions.workspace_read && !self.workspace_read {
+            return false;
+        }
+        if manifest.permissions.workspace_write && !self.workspace_write {
             return false;
         }
         for d in &manifest.permissions.domains {
@@ -255,6 +261,7 @@ pub struct AggregatedRepoCatalog {
 pub enum ScaffoldKind {
     Oj,
     Tool,
+    Template,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -592,7 +599,14 @@ impl PluginManager {
         }
 
         if let Some(ref dir) = info.local_dir {
-            let entry_source = read_plugin_file_safe(dir, &info.manifest.entry, "entry")?;
+            let entry_source = if info.manifest.requires_script_entry()
+                || (!info.manifest.entry.trim().is_empty()
+                    && dir.join(&info.manifest.entry).exists())
+            {
+                read_plugin_file_safe(dir, &info.manifest.entry, "entry")?
+            } else {
+                String::new()
+            };
             let ui_source = match info.manifest.ui_entry {
                 Some(ref ui) => Some(read_plugin_file_safe(dir, ui, "ui_entry")?),
                 None => None,
@@ -679,10 +693,16 @@ impl PluginManager {
         let manifest = PluginManifest::from_toml_str(&manifest_raw)?;
         validate_plugin_id(&manifest.id)?;
         // Validate entry files exist and do not escape `canonical_target`.
-        let _ = read_plugin_file_safe(&canonical_target, &manifest.entry, "entry")?;
+        if manifest.requires_script_entry()
+            || (!manifest.entry.trim().is_empty()
+                && canonical_target.join(&manifest.entry).exists())
+        {
+            let _ = read_plugin_file_safe(&canonical_target, &manifest.entry, "entry")?;
+        }
         if let Some(ref ui) = manifest.ui_entry {
             let _ = read_plugin_file_safe(&canonical_target, ui, "ui_entry")?;
         }
+        validate_plugin_package_limits(&canonical_target, &manifest)?;
 
         let plugins_dir = self.plugins_dir();
         std::fs::create_dir_all(&plugins_dir)?;
@@ -848,12 +868,14 @@ impl PluginManager {
             ));
         }
         let manifest = PluginManifest::from_file(&manifest_path)?;
-        let entry_path = src.join(&manifest.entry);
-        if !entry_path.is_file() {
-            return Err(PluginError::InvalidPackage(format!(
-                "missing entry file '{}'",
-                manifest.entry
-            )));
+        if manifest.requires_script_entry() {
+            let entry_path = src.join(&manifest.entry);
+            if !entry_path.is_file() {
+                return Err(PluginError::InvalidPackage(format!(
+                    "missing entry file '{}'",
+                    manifest.entry
+                )));
+            }
         }
         if let Some(ref ui) = manifest.ui_entry
             && !src.join(ui).is_file()
@@ -862,6 +884,7 @@ impl PluginManager {
                 "missing ui_entry file '{ui}'"
             )));
         }
+        validate_plugin_package_limits(src, &manifest)?;
 
         let plugins_dir = self.plugins_dir();
         std::fs::create_dir_all(&plugins_dir)?;
@@ -1208,6 +1231,61 @@ impl PluginManager {
         }
         Err(PluginError::NotFound(plugin_id.to_string()))
     }
+
+    /// Returns read-only virtual mounts (`/plugins/<plugin_id>/...`) for all enabled,
+    /// trusted plugins declaring the `template` capability.
+    pub fn list_plugin_template_mounts(&self) -> Vec<xcpc_engine::PluginMount> {
+        let Ok(plugins) = self.list_plugins() else {
+            return Vec::new();
+        };
+        let mut mounts = Vec::new();
+        for plugin in plugins {
+            if !plugin.enabled
+                || plugin.pending_trust
+                || !plugin.manifest.has_capability(PluginCapability::Template)
+                || plugin.manifest.templates.is_empty()
+            {
+                continue;
+            }
+            let Some(root) = plugin.local_dir else {
+                continue;
+            };
+            let Ok(canonical_root) = std::fs::canonicalize(&root) else {
+                continue;
+            };
+            let mut font_dirs = Vec::new();
+            for rel in &plugin.manifest.font_dirs {
+                let candidate = canonical_root.join(rel);
+                if let Ok(canon) = std::fs::canonicalize(&candidate)
+                    && canon.is_dir()
+                    && canon.starts_with(&canonical_root)
+                {
+                    font_dirs.push(canon);
+                }
+            }
+            let templates = plugin
+                .manifest
+                .templates
+                .iter()
+                .map(|t| xcpc_engine::PluginTemplateEntry {
+                    id: t.id.clone(),
+                    entry: t.entry.clone(),
+                    kind: t.kind,
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                })
+                .collect();
+            mounts.push(xcpc_engine::PluginMount {
+                plugin_id: plugin.manifest.id,
+                plugin_name: plugin.manifest.name,
+                version: plugin.manifest.version,
+                root: canonical_root,
+                font_dirs,
+                templates,
+            });
+        }
+        mounts
+    }
 }
 
 /// Validates that a plugin repository or download URL uses HTTPS,
@@ -1254,8 +1332,134 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-const MAX_ZIP_FILE_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_ZIP_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum allowed size of a single font file (`.ttf` / `.otf` / `.ttc`) inside a plugin (25 MiB).
+pub const MAX_PLUGIN_FONT_FILE_BYTES: u64 = 25 * 1024 * 1024;
+/// Maximum allowed unpacked total size of a plugin directory (64 MiB).
+pub const MAX_PLUGIN_UNPACKED_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+const MAX_ZIP_FILE_BYTES: u64 = MAX_PLUGIN_FONT_FILE_BYTES;
+const MAX_ZIP_TOTAL_BYTES: u64 = MAX_PLUGIN_UNPACKED_TOTAL_BYTES;
+
+/// Validates a plugin directory's template entries, font directories, symlink isolation,
+/// per-font 25 MiB limit, and total unpacked 64 MiB size limit.
+pub fn validate_plugin_package_limits(dir: &Path, manifest: &PluginManifest) -> Result<()> {
+    let canonical_dir = std::fs::canonicalize(dir).map_err(|e| {
+        PluginError::InvalidPackage(format!(
+            "failed to resolve plugin directory '{}': {e}",
+            dir.display()
+        ))
+    })?;
+
+    for tpl in &manifest.templates {
+        let _ = read_plugin_file_safe(&canonical_dir, &tpl.entry, "templates[].entry")?;
+    }
+
+    for font_dir in &manifest.font_dirs {
+        if font_dir.trim().is_empty() || font_dir.contains('\\') || font_dir.starts_with('/') {
+            return Err(PluginError::ZipSlip(font_dir.clone()));
+        }
+        let candidate = canonical_dir.join(font_dir);
+        let meta = std::fs::symlink_metadata(&candidate).map_err(|e| {
+            PluginError::InvalidPackage(format!("missing font_dirs entry '{font_dir}': {e}"))
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(PluginError::SymlinkEscape(format!(
+                "font_dirs entry '{font_dir}' cannot be a symlink"
+            )));
+        }
+        if !meta.is_dir() {
+            return Err(PluginError::InvalidPackage(format!(
+                "font_dirs entry '{font_dir}' is not a directory"
+            )));
+        }
+        let canon = std::fs::canonicalize(&candidate)?;
+        if !canon.starts_with(&canonical_dir) {
+            return Err(PluginError::SymlinkEscape(format!(
+                "font_dirs entry '{font_dir}' escapes plugin directory"
+            )));
+        }
+        check_font_dir_sizes(&canon, &canonical_dir)?;
+    }
+
+    let mut total_bytes: u64 = 0;
+    walk_dir_size_checked(&canonical_dir, &canonical_dir, &mut total_bytes)?;
+    if total_bytes > MAX_PLUGIN_UNPACKED_TOTAL_BYTES {
+        return Err(PluginError::InvalidPackage(format!(
+            "plugin '{}' unpacked size ({total_bytes} bytes) exceeds 64 MiB limit ({MAX_PLUGIN_UNPACKED_TOTAL_BYTES} bytes)",
+            manifest.id
+        )));
+    }
+    Ok(())
+}
+
+fn check_font_dir_sizes(dir: &Path, plugin_root: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            return Err(PluginError::SymlinkEscape(format!(
+                "symlink not permitted in font_dirs: {}",
+                path.display()
+            )));
+        }
+        if meta.is_dir() {
+            check_font_dir_sizes(&path, plugin_root)?;
+            continue;
+        }
+        if meta.is_file() {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
+            if matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc"))
+                && meta.len() > MAX_PLUGIN_FONT_FILE_BYTES
+            {
+                let rel = path
+                    .strip_prefix(plugin_root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                return Err(PluginError::InvalidPackage(format!(
+                    "font file '{rel}' ({} bytes) exceeds 25 MiB limit ({MAX_PLUGIN_FONT_FILE_BYTES} bytes)",
+                    meta.len()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn walk_dir_size_checked(dir: &Path, root: &Path, total: &mut u64) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if matches!(name_str.as_ref(), ".git" | "node_modules") {
+            continue;
+        }
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            return Err(PluginError::SymlinkEscape(format!(
+                "symlink not permitted in plugin dir: {}",
+                path.display()
+            )));
+        }
+        if meta.is_dir() {
+            walk_dir_size_checked(&path, root, total)?;
+        } else if meta.is_file() {
+            *total = total.saturating_add(meta.len());
+            if *total > MAX_PLUGIN_UNPACKED_TOTAL_BYTES {
+                return Err(PluginError::InvalidPackage(format!(
+                    "plugin directory '{}' exceeds 64 MiB unpacked size limit",
+                    root.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Reads a plugin-relative file after rejecting path traversal and verifying its canonical path stays within `dir`.
 fn read_plugin_file_safe(dir: &Path, rel_path: &str, field_name: &str) -> Result<String> {
@@ -1408,13 +1612,19 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
 
 // --- DX Helpers ---
 
-/// Scaffolds a new plain-JS plugin directory with `manifest.toml`, `index.js`, and (for Tool plugins) a zero-build `ui.html`.
+/// Scaffolds a new plain-JS plugin directory (or pure declarative Typst template bundle when
+/// `kind == ScaffoldKind::Template`).
 pub fn init_plugin_scaffold(dir: &Path, kind: ScaffoldKind) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let id = derive_scaffold_id(dir);
     let display_name = title_case_id(&id);
 
+    if kind == ScaffoldKind::Template {
+        return init_template_plugin_scaffold(dir, &id, &display_name);
+    }
+
     let (manifest, index_js, ui_html) = match kind {
+        ScaffoldKind::Template => unreachable!(),
         ScaffoldKind::Oj => (
             format!(
                 r#"id = "{id}"
@@ -1591,6 +1801,123 @@ module.exports = { runTool };
     Ok(())
 }
 
+fn init_template_plugin_scaffold(dir: &Path, id: &str, display_name: &str) -> Result<()> {
+    std::fs::create_dir_all(dir.join("templates"))?;
+    std::fs::create_dir_all(dir.join("assets"))?;
+    std::fs::create_dir_all(dir.join("fonts"))?;
+
+    let manifest = format!(
+        r#"id = "{id}"
+name = "{display_name}"
+version = "0.1.0"
+description = "Declarative Typst template pack for XCPC Workstation."
+capabilities = ["template"]
+# Optional: uncomment after placing .ttf / .otf / .ttc files in fonts/
+# font_dirs = ["fonts"]
+
+[[templates]]
+id = "sample"
+entry = "templates/sample.typ"
+kind = "statement"
+name = "{display_name}"
+description = "Starter statement template with declarative schema and bundled assets."
+"#
+    );
+
+    let sample_typ = format!(
+        r##"// Declarative Typst template plugin for XCPC Workstation.
+#import "/xcpc/defaults.typ": section, samples, subsection, runin
+#import "/xcpc/fonts.typ": cjk-song, lm-roman-10
+
+#let schema = (
+  kind: "statement",
+  name: (zh: "{display_name}", en: "{display_name}"),
+  description: (
+    zh: "示例排版模板插件，支持声明式参数与配套资源",
+    en: "Starter template plugin with declarative options and bundled assets",
+  ),
+  groups: (
+    (id: "layout", label: (zh: "版式", en: "Layout")),
+  ),
+  fields: (
+    (
+      key: "accent",
+      label: (zh: "强调色", en: "Accent Color"),
+      type: "color",
+      scope: "book",
+      group: "layout",
+      default: "#0B6989",
+    ),
+    (
+      key: "show-badge",
+      label: (zh: "显示页眉徽标", en: "Show Header Badge"),
+      type: "bool",
+      scope: "book",
+      group: "layout",
+      default: true,
+    ),
+  ),
+)
+
+#let render(doc) = {{
+  let opts = doc.at("options", default: (:))
+  let accent-hex = opts.at("accent", default: "#0B6989")
+  let accent = if type(accent-hex) == str and accent-hex.starts-with("#") {{
+    rgb(accent-hex)
+  }} else {{
+    rgb("#0B6989")
+  }}
+  let show-badge = opts.at("show-badge", default: true)
+
+  set document(
+    title: doc.at("pdf-title", default: doc.at("name", default: "")),
+    author: if doc.at("pdf-author", default: none) != none {{ doc.pdf-author }} else {{ () }},
+  )
+  set page(
+    paper: "a4",
+    margin: (x: 20mm, y: 20mm),
+    header: context {{
+      set text(size: 9pt, fill: luma(110))
+      grid(
+        columns: (auto, 1fr, auto),
+        align: horizon,
+        column-gutter: 6pt,
+        if show-badge {{ image("../assets/badge.svg", height: 12pt) }} else {{ none }},
+        doc.at("name", default: ""),
+        counter(page).display(),
+      )
+      line(length: 100%, stroke: 0.5pt + accent)
+    }},
+  )
+  set text(font: (lm-roman-10, cjk-song), size: 10.5pt)
+  show math.equation: set text(font: "Latin Modern Math")
+
+  for (idx, prob) in doc.at("problems", default: ()).enumerate() {{
+    if idx > 0 {{ pagebreak(weak: true) }}
+    [#metadata((label: prob.at("label", default: ""))) <xcpc-problem>]
+    block(below: 8pt)[
+      #text(size: 15pt, weight: "bold", fill: accent)[
+        #prob.at("label", default: ""). #prob.at("title", default: "")
+      ]
+    ]
+    prob.at("body", default: [])
+  }}
+}}
+"##
+    );
+
+    let badge_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <rect x="2" y="2" width="20" height="20" rx="5" fill="#0B6989"/>
+  <path d="M7 16L12 7L17 16H7Z" fill="#FFFFFF"/>
+</svg>
+"##;
+
+    write_atomic(&dir.join("manifest.toml"), manifest.as_bytes())?;
+    write_atomic(&dir.join("templates/sample.typ"), sample_typ.as_bytes())?;
+    write_atomic(&dir.join("assets/badge.svg"), badge_svg.as_bytes())?;
+    Ok(())
+}
+
 /// Runs an exported action directly against a local plugin directory without installing it.
 pub fn test_plugin_dir(
     dir: &Path,
@@ -1599,6 +1926,27 @@ pub fn test_plugin_dir(
     http_client: Arc<dyn HttpClient>,
     credentials: Arc<dyn CredentialStore>,
     workspace: Option<Arc<dyn WorkspaceReader>>,
+) -> Result<PluginTestReport> {
+    test_plugin_dir_with_writer(
+        dir,
+        action,
+        args_json,
+        http_client,
+        credentials,
+        workspace,
+        None,
+    )
+}
+
+/// Runs an exported action directly against a local plugin directory with optional workspace read & write bridges.
+pub fn test_plugin_dir_with_writer(
+    dir: &Path,
+    action: &str,
+    args_json: &str,
+    http_client: Arc<dyn HttpClient>,
+    credentials: Arc<dyn CredentialStore>,
+    workspace: Option<Arc<dyn WorkspaceReader>>,
+    workspace_writer: Option<Arc<dyn crate::workspace::WorkspaceWriter>>,
 ) -> Result<PluginTestReport> {
     let manifest = PluginManifest::from_file(&dir.join("manifest.toml"))?;
     let source = read_plugin_file_safe(dir, &manifest.entry, "entry")?;
@@ -1622,6 +1970,7 @@ pub fn test_plugin_dir(
         credentials,
         kv: Arc::new(KvStore::in_memory()),
         workspace,
+        workspace_writer,
         limits: SandboxLimits::default(),
     };
 
@@ -1711,6 +2060,9 @@ fn title_case_id(id: &str) -> String {
 
 /// Scaffolds a Vite + TypeScript WebView plugin project using `@xcpc-workstation/plugin-sdk`.
 pub fn init_plugin_scaffold_vite(dir: &Path, kind: ScaffoldKind) -> Result<()> {
+    if kind == ScaffoldKind::Template {
+        return init_plugin_scaffold(dir, ScaffoldKind::Template);
+    }
     std::fs::create_dir_all(dir.join("src"))?;
     let id = derive_scaffold_id(dir);
     let display_name = title_case_id(&id);
@@ -1760,6 +2112,7 @@ export default defineConfig({
     let gitignore = "node_modules/\ndist/\n*.zip\n";
 
     let (manifest_toml, index_ts, web_files) = match kind {
+        ScaffoldKind::Template => unreachable!(),
         ScaffoldKind::Oj => (
             format!(
                 r#"# yaml-language-server: $schema=./node_modules/@xcpc-workstation/plugin-sdk/manifest.schema.json
@@ -2033,98 +2386,152 @@ pub fn check_plugin_dir(dir: &Path) -> PluginCheckReport {
     let version = manifest.version.clone();
     let has_ui = manifest.ui_entry.is_some();
 
-    // Check entry file existence + sandbox + dry-run load.
+    // Check entry file existence + sandbox + dry-run load when script capability is declared
+    // (pure template plugins without index.js skip the QuickJS check).
     let mut exports = Vec::new();
-    match read_plugin_file_safe(dir, &manifest.entry, "entry") {
-        Ok(entry_source) => {
-            let host_ctx = HostContext {
-                manifest: manifest.clone(),
-                http_client: Arc::new(MockHttpClient::new(|_| {
-                    Err(PluginError::Http(
-                        "network disabled during plugin check".into(),
-                    ))
-                })),
-                credentials: Arc::new(MemoryCredentialStore::default()),
-                kv: Arc::new(KvStore::in_memory()),
-                workspace: None,
-                limits: SandboxLimits::default(),
-            };
-            match PluginRuntime::list_exports(&entry_source, &host_ctx) {
-                Ok(found) => {
-                    exports = found;
-                    let has_fn = |name: &str| exports.iter().any(|e| e == name);
-                    for cap in &manifest.capabilities {
-                        match cap {
-                            PluginCapability::OjSource => {
-                                if !has_fn("normalizeRating") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "oj_source capability requires exported function 'normalizeRating'".into(),
-                                    );
+    let should_check_entry = manifest.requires_script_entry()
+        || (!manifest.entry.trim().is_empty() && dir.join(&manifest.entry).exists());
+    if should_check_entry {
+        match read_plugin_file_safe(dir, &manifest.entry, "entry") {
+            Ok(entry_source) => {
+                let host_ctx = HostContext {
+                    manifest: manifest.clone(),
+                    http_client: Arc::new(MockHttpClient::new(|_| {
+                        Err(PluginError::Http(
+                            "network disabled during plugin check".into(),
+                        ))
+                    })),
+                    credentials: Arc::new(MemoryCredentialStore::default()),
+                    kv: Arc::new(KvStore::in_memory()),
+                    workspace: None,
+                    workspace_writer: None,
+                    limits: SandboxLimits::default(),
+                };
+                match PluginRuntime::list_exports(&entry_source, &host_ctx) {
+                    Ok(found) => {
+                        exports = found;
+                        let has_fn = |name: &str| exports.iter().any(|e| e == name);
+                        for cap in &manifest.capabilities {
+                            match cap {
+                                PluginCapability::OjSource => {
+                                    if !has_fn("normalizeRating") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "oj_source capability requires exported function 'normalizeRating'".into(),
+                                        );
+                                    }
+                                    if !has_fn("syncAccount") && !has_fn("syncSummary") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "oj_source capability requires exported function 'syncSummary' or 'syncAccount'".into(),
+                                        );
+                                    }
                                 }
-                                if !has_fn("syncAccount") && !has_fn("syncSummary") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "oj_source capability requires exported function 'syncSummary' or 'syncAccount'".into(),
-                                    );
+                                PluginCapability::Tool => {
+                                    if !has_fn("runTool") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "tool capability requires exported function 'runTool'"
+                                                .into(),
+                                        );
+                                    }
                                 }
+                                PluginCapability::Commands => {
+                                    if !has_fn("runCommand") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "commands capability requires exported function 'runCommand'".into(),
+                                        );
+                                    }
+                                }
+                                PluginCapability::Importer => {
+                                    if !has_fn("importPackage") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "importer capability requires exported function 'importPackage'".into(),
+                                        );
+                                    }
+                                }
+                                PluginCapability::Exporter => {
+                                    if !has_fn("exportPackage") {
+                                        push_err(
+                                            &mut issues,
+                                            "MISSING_EXPORT",
+                                            "exporter capability requires exported function 'exportPackage'".into(),
+                                        );
+                                    }
+                                }
+                                PluginCapability::Credentials | PluginCapability::Template => {}
                             }
-                            PluginCapability::Tool => {
-                                if !has_fn("runTool") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "tool capability requires exported function 'runTool'"
-                                            .into(),
-                                    );
-                                }
-                            }
-                            PluginCapability::Commands => {
-                                if !has_fn("runCommand") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "commands capability requires exported function 'runCommand'".into(),
-                                    );
-                                }
-                            }
-                            PluginCapability::Importer => {
-                                if !has_fn("importPackage") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "importer capability requires exported function 'importPackage'".into(),
-                                    );
-                                }
-                            }
-                            PluginCapability::Exporter => {
-                                if !has_fn("exportPackage") {
-                                    push_err(
-                                        &mut issues,
-                                        "MISSING_EXPORT",
-                                        "exporter capability requires exported function 'exportPackage'".into(),
-                                    );
-                                }
-                            }
-                            PluginCapability::Credentials => {}
                         }
                     }
+                    Err(e) => {
+                        push_err(&mut issues, e.code(), e.detail());
+                    }
                 }
-                Err(e) => {
-                    push_err(&mut issues, e.code(), e.detail());
+            }
+            Err(e) => {
+                let mut detail = e.detail();
+                if dir.join("package.json").is_file()
+                    && (dir.join("vite.config.ts").is_file()
+                        || dir.join("vite.config.js").is_file())
+                {
+                    detail.push_str(" (hint: Vite source directory detected — run `npm run build` and check `dist/` instead)");
                 }
+                push_err(&mut issues, e.code(), detail);
             }
         }
-        Err(e) => {
-            let mut detail = e.detail();
-            if dir.join("package.json").is_file()
-                && (dir.join("vite.config.ts").is_file() || dir.join("vite.config.js").is_file())
-            {
-                detail.push_str(" (hint: Vite source directory detected — run `npm run build` and check `dist/` instead)");
+    }
+
+    // Check package size limits, font directories, and Typst template compilation & schema.
+    if let Err(e) = validate_plugin_package_limits(dir, &manifest) {
+        push_err(&mut issues, e.code(), e.detail());
+    } else if !manifest.templates.is_empty()
+        && let Ok(canonical_dir) = std::fs::canonicalize(dir)
+    {
+        let font_dirs: Vec<PathBuf> = manifest
+            .font_dirs
+            .iter()
+            .filter_map(|rel| std::fs::canonicalize(canonical_dir.join(rel)).ok())
+            .filter(|p| p.is_dir() && p.starts_with(&canonical_dir))
+            .collect();
+        let mount = xcpc_engine::PluginMount {
+            plugin_id: manifest.id.clone(),
+            plugin_name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            root: canonical_dir,
+            font_dirs,
+            templates: manifest
+                .templates
+                .iter()
+                .map(|t| xcpc_engine::PluginTemplateEntry {
+                    id: t.id.clone(),
+                    entry: t.entry.clone(),
+                    kind: t.kind,
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                })
+                .collect(),
+        };
+        let mut engine = xcpc_engine::Engine::new(&xcpc_engine::FontOptions::from_env(), None);
+        engine.set_plugin_mounts(vec![mount]);
+        engine.activate_plugin_fonts(Some(&manifest.id));
+        for tpl in &manifest.templates {
+            let import_path = format!("/plugins/{}/{}", manifest.id, tpl.entry);
+            if let Err(diags) = engine.validate_template_module(&import_path) {
+                for d in diags {
+                    push_err(
+                        &mut issues,
+                        "TEMPLATE_COMPILE_ERROR",
+                        format!("template '{}': {}", tpl.id, d.message),
+                    );
+                }
             }
-            push_err(&mut issues, e.code(), detail);
         }
     }
 
@@ -2195,13 +2602,27 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
     };
 
     push_if_safe("manifest.toml")?;
-    push_if_safe(&manifest.entry)?;
+    if manifest.requires_script_entry()
+        || (!manifest.entry.trim().is_empty() && canonical_dir.join(&manifest.entry).is_file())
+    {
+        push_if_safe(&manifest.entry)?;
+    }
     if let Some(ref ui) = manifest.ui_entry {
         push_if_safe(ui)?;
     }
     for optional_doc in ["README.md", "LICENSE", "LICENSE.md", "LICENSE.txt"] {
         if canonical_dir.join(optional_doc).is_file() {
             push_if_safe(optional_doc)?;
+        }
+    }
+    // For template plugins, recursively pack template files, companion assets, and font_dirs
+    // while skipping hidden/temporary/build artifacts.
+    if !manifest.templates.is_empty() || !manifest.font_dirs.is_empty() {
+        let mut collected = Vec::new();
+        collect_template_pack_files(&canonical_dir, &canonical_dir, &mut collected)?;
+        collected.sort();
+        for rel in collected {
+            push_if_safe(&rel)?;
         }
     }
 
@@ -2222,6 +2643,12 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .unix_permissions(0o644);
+        for font_dir in &manifest.font_dirs {
+            let dir_entry = format!("{}/", font_dir.trim_end_matches('/'));
+            writer
+                .add_directory(dir_entry, options)
+                .map_err(|e| PluginError::InvalidPackage(format!("zip write error: {e}")))?;
+        }
         for rel in &rel_files {
             let bytes = std::fs::read(canonical_dir.join(rel))?;
             writer
@@ -2247,4 +2674,40 @@ pub fn pack_plugin_dir(dir: &Path, out_zip: Option<&Path>) -> Result<PluginPackR
         size_bytes,
         files: rel_files,
     })
+}
+
+fn collect_template_pack_files(dir: &Path, root: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.')
+            || matches!(
+                name_str.as_ref(),
+                "node_modules" | "dist" | "target" | "Thumbs.db"
+            )
+        {
+            continue;
+        }
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            return Err(PluginError::SymlinkEscape(format!(
+                "symlink not permitted in plugin dir: {}",
+                path.display()
+            )));
+        }
+        if meta.is_dir() {
+            collect_template_pack_files(&path, root, out)?;
+        } else if meta.is_file() {
+            if name_str.to_ascii_lowercase().ends_with(".zip") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|e| PluginError::InvalidPackage(e.to_string()))?;
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
 }

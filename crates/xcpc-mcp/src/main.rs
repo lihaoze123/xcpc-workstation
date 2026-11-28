@@ -91,6 +91,9 @@ enum Command {
         /// Show cover page (`true` or `false`; for `build problems`).
         #[arg(long)]
         cover: Option<bool>,
+        /// Override template ID (workspace template ID or `plugin:<plugin_id>/<template_id>`).
+        #[arg(long)]
+        template: Option<String>,
         /// Write the PDF here (default: build/<title>.pdf in the workspace).
         #[arg(long = "output", alias = "out", short = 'o')]
         out: Option<PathBuf>,
@@ -117,6 +120,9 @@ enum Command {
         /// Only this page (1-based).
         #[arg(long)]
         page: Option<usize>,
+        /// Override template ID (workspace template ID or `plugin:<plugin_id>/<template_id>`).
+        #[arg(long)]
+        template: Option<String>,
     },
     /// Search problems in the workspace by text, tags, rating range, source platform, or group.
     Search {
@@ -528,6 +534,13 @@ enum TemplateCommand {
         /// New template ID (slug under templates/).
         new_name: String,
     },
+    /// Copy a mounted plugin template (`plugin:<plugin_id>/<template_id>` or `<plugin_id>/<template_id>`) into `templates/`.
+    Eject {
+        /// Plugin template reference (`plugin:<plugin_id>/<template_id>` or `<plugin_id>/<template_id>`).
+        target: String,
+        /// Optional target template ID under `templates/<name>.typ`.
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -568,7 +581,7 @@ enum PluginCommand {
     Init {
         /// Target directory to scaffold into.
         dir: PathBuf,
-        /// Plugin template kind (`tool` or `oj`).
+        /// Plugin template kind (`tool`, `oj`, or `template`).
         #[arg(long, default_value = "tool")]
         kind: PluginScaffoldKind,
         /// Generate a Vite + TypeScript/JSX project using `@xcpc-workstation/plugin-sdk`.
@@ -643,6 +656,7 @@ enum PluginRepoCommand {
 enum PluginScaffoldKind {
     Oj,
     Tool,
+    Template,
 }
 
 impl PluginScaffoldKind {
@@ -650,6 +664,7 @@ impl PluginScaffoldKind {
         match self {
             PluginScaffoldKind::Oj => "oj",
             PluginScaffoldKind::Tool => "tool",
+            PluginScaffoldKind::Template => "template",
         }
     }
 
@@ -657,6 +672,7 @@ impl PluginScaffoldKind {
         match self {
             PluginScaffoldKind::Oj => xcpc_plugin::ScaffoldKind::Oj,
             PluginScaffoldKind::Tool => xcpc_plugin::ScaffoldKind::Tool,
+            PluginScaffoldKind::Template => xcpc_plugin::ScaffoldKind::Template,
         }
     }
 }
@@ -1346,6 +1362,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             language,
             title,
             cover,
+            template,
             out,
             emit_typst,
         } => {
@@ -1356,7 +1373,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                 Kind::Statements
             };
             let doc_lang = language.map(Lang::into_language);
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             match kind {
                 BuildKind::Problem | BuildKind::Contest => {
                     if ids.len() != 1 {
@@ -1374,8 +1391,15 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                         BuildKind::Contest => Target::Contest(id.clone()),
                         BuildKind::Problems => unreachable!(),
                     };
-                    let (compiled, doc, report) =
-                        publish::check(&ws, &mut engine, &target, doc_kind, doc_lang, None)?;
+                    let (compiled, doc, report) = publish::check_with_template(
+                        &ws,
+                        &mut engine,
+                        &target,
+                        doc_kind,
+                        doc_lang,
+                        None,
+                        template.as_deref(),
+                    )?;
                     if let (Some(path), Some(doc)) = (emit_typst, doc.as_ref()) {
                         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
                             std::fs::create_dir_all(dir)
@@ -1403,7 +1427,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                         title: title.clone(),
                         language: doc_lang,
                         kind: doc_kind,
-                        template: None,
+                        template: template.clone(),
                         cover: *cover,
                     };
                     let unique_count = {
@@ -1414,7 +1438,8 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                     if out.is_none() {
                         ws.check_writable(&default_rel)?;
                     }
-                    let doc = publish::document_problems(&ws, ids, &opts)?;
+                    let doc =
+                        publish::document_problems_with_engine(&ws, Some(&engine), ids, &opts)?;
                     if let Some(path) = emit_typst {
                         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
                             std::fs::create_dir_all(dir)
@@ -1439,7 +1464,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
         Command::Check { what } => {
             let ws = open_workspace(cli)?;
             let target = what.target();
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let (_, _, report) = publish::check(
                 &ws,
                 &mut engine,
@@ -1461,17 +1486,19 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
             out,
             scale,
             page,
+            template,
         } => {
             let ws = open_workspace(cli)?;
             let target = what.target();
-            let mut engine = publish::engine(&ws, &fonts(cli));
-            let (compiled, _, report) = publish::check(
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
+            let (compiled, _, report) = publish::check_with_template(
                 &ws,
                 &mut engine,
                 &target,
                 what.kind(),
                 what.language(),
                 None,
+                template.as_deref(),
             )?;
             let mut outputs = Vec::new();
             if let Some(compiled) = compiled {
@@ -1584,7 +1611,7 @@ fn run(cli: &Cli) -> Result<ExitCode, Fatal> {
                     }
                 }
                 TargetKind::Contest => {
-                    let mut engine = publish::engine(&ws, &fonts(cli));
+                    let mut engine = engine_with_plugins(&ws, &fonts(cli));
                     let detail = views::contest_detail(&ws, &mut engine, id)?;
                     if cli.json {
                         println!(
@@ -1826,7 +1853,7 @@ fn build_contest_export_context(
 }
 
 fn compile_export_pdf_base64(cli: &Cli, ws: &Workspace, target: &Target) -> Result<String, Fatal> {
-    let mut engine = publish::engine(ws, &fonts(cli));
+    let mut engine = engine_with_plugins(ws, &fonts(cli));
     let (compiled, _, report) =
         publish::check(ws, &mut engine, target, Kind::Statements, None, None)?;
     let compiled = compiled.filter(|_| report.ok).ok_or_else(|| Fatal {
@@ -2137,23 +2164,44 @@ fn run_tool(cli: &Cli, action: &ToolCommand) -> Result<ExitCode, Fatal> {
                 map.insert(key.to_owned(), parse_tool_input_value(v));
             }
 
-            let needs_ws = pm
+            let loaded_perms = pm
                 .load_plugin(plugin_id)
-                .map(|p| p.info.manifest.permissions.workspace_read)
+                .map(|p| p.info.manifest.permissions);
+            let needs_read = loaded_perms
+                .as_ref()
+                .map(|p| p.workspace_read)
                 .unwrap_or(false);
-            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> = if needs_ws {
-                open_workspace_optional(cli)?.map(|ws| {
-                    Arc::new(CliWorkspaceReader { ws }) as Arc<dyn xcpc_plugin::WorkspaceReader>
-                })
+            let needs_write = loaded_perms
+                .as_ref()
+                .map(|p| p.workspace_write)
+                .unwrap_or(false);
+            let bridge = if needs_read || needs_write {
+                open_workspace_optional(cli)?
+                    .map(|ws| Arc::new(xcpc_plugin::StorageWorkspaceBridge::new(ws)))
+            } else {
+                None
+            };
+            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> = if needs_read {
+                bridge
+                    .as_ref()
+                    .map(|b| Arc::clone(b) as Arc<dyn xcpc_plugin::WorkspaceReader>)
+            } else {
+                None
+            };
+            let ws_writer: Option<Arc<dyn xcpc_plugin::WorkspaceWriter>> = if needs_write {
+                bridge
+                    .as_ref()
+                    .map(|b| Arc::clone(b) as Arc<dyn xcpc_plugin::WorkspaceWriter>)
             } else {
                 None
             };
 
-            let result = pm.run_tool(
+            let result = pm.run_tool_with_writer(
                 plugin_id,
                 tool_id,
                 serde_json::Value::Object(map),
                 ws_reader,
+                ws_writer,
             )?;
 
             if cli.json {
@@ -3842,56 +3890,6 @@ fn resolve_data_dir() -> Result<PathBuf, Fatal> {
     })
 }
 
-struct CliWorkspaceReader {
-    ws: Workspace,
-}
-
-impl xcpc_plugin::WorkspaceReader for CliWorkspaceReader {
-    fn list_problems(&self) -> xcpc_plugin::Result<Vec<xcpc_plugin::WorkspaceProblemSummary>> {
-        let ids = self
-            .ws
-            .list_problems()
-            .map_err(|e| xcpc_plugin::PluginError::InvalidPackage(e.to_string()))?;
-        let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Ok(p) = self.ws.load_problem(&id) {
-                out.push(xcpc_plugin::WorkspaceProblemSummary {
-                    id: p.id,
-                    title: p.meta.title,
-                    tags: p.meta.tags,
-                    difficulty: p.meta.rating.map(|r| r.to_string()),
-                });
-            }
-        }
-        Ok(out)
-    }
-
-    fn get_problem(
-        &self,
-        id: &str,
-    ) -> xcpc_plugin::Result<Option<xcpc_plugin::WorkspaceProblemDetail>> {
-        match self.ws.load_problem(id) {
-            Ok(p) => {
-                let statement_md = p
-                    .statement(Language::Chinese)
-                    .or_else(|| p.statements.first())
-                    .map(|s| s.file.text.clone());
-                let editorial_md = p.editorial.map(|e| e.text);
-                Ok(Some(xcpc_plugin::WorkspaceProblemDetail {
-                    id: p.id,
-                    title: p.meta.title,
-                    tags: p.meta.tags,
-                    difficulty: p.meta.rating.map(|r| r.to_string()),
-                    statement_md,
-                    editorial_md,
-                }))
-            }
-            Err(xcpc_storage::Error::NotFound(_)) => Ok(None),
-            Err(e) => Err(xcpc_plugin::PluginError::InvalidPackage(e.to_string())),
-        }
-    }
-}
-
 fn plugin_summary_json(p: &xcpc_plugin::InstalledPlugin) -> serde_json::Value {
     json!({
         "id": p.manifest.id,
@@ -3930,6 +3928,7 @@ fn format_plugin_capability(cap: xcpc_plugin::PluginCapability) -> &'static str 
         xcpc_plugin::PluginCapability::Importer => "importer",
         xcpc_plugin::PluginCapability::Exporter => "exporter",
         xcpc_plugin::PluginCapability::Credentials => "credentials",
+        xcpc_plugin::PluginCapability::Template => "template",
     }
 }
 
@@ -4141,7 +4140,7 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
             Ok(ExitCode::SUCCESS)
         }
         PluginCommand::Init { dir, kind, vite } => {
-            let files: Vec<&str> = if *vite {
+            let files: Vec<&str> = if *vite && !matches!(kind, PluginScaffoldKind::Template) {
                 xcpc_plugin::init_plugin_scaffold_vite(dir, kind.into_scaffold_kind())?;
                 match kind {
                     PluginScaffoldKind::Oj => vec![
@@ -4163,12 +4162,16 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                         "src/main.ts",
                         "src/style.css",
                     ],
+                    PluginScaffoldKind::Template => unreachable!(),
                 }
             } else {
                 xcpc_plugin::init_plugin_scaffold(dir, kind.into_scaffold_kind())?;
                 match kind {
                     PluginScaffoldKind::Oj => vec!["manifest.toml", "index.js"],
                     PluginScaffoldKind::Tool => vec!["manifest.toml", "index.js", "ui.html"],
+                    PluginScaffoldKind::Template => {
+                        vec!["manifest.toml", "templates/sample.typ", "assets/badge.svg"]
+                    }
                 }
             };
             if cli.json {
@@ -4340,17 +4343,23 @@ fn run_plugin(cli: &Cli, action: &PluginCommand) -> Result<ExitCode, Fatal> {
                     }
                 }
             };
-            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> =
-                open_workspace(cli).ok().map(|ws| {
-                    Arc::new(CliWorkspaceReader { ws }) as Arc<dyn xcpc_plugin::WorkspaceReader>
-                });
-            let report = xcpc_plugin::test_plugin_dir(
+            let ws_bridge = open_workspace(cli)
+                .ok()
+                .map(|ws| Arc::new(xcpc_plugin::StorageWorkspaceBridge::new(ws)));
+            let ws_reader: Option<Arc<dyn xcpc_plugin::WorkspaceReader>> = ws_bridge
+                .as_ref()
+                .map(|b| Arc::clone(b) as Arc<dyn xcpc_plugin::WorkspaceReader>);
+            let ws_writer: Option<Arc<dyn xcpc_plugin::WorkspaceWriter>> = ws_bridge
+                .as_ref()
+                .map(|b| Arc::clone(b) as Arc<dyn xcpc_plugin::WorkspaceWriter>);
+            let report = xcpc_plugin::test_plugin_dir_with_writer(
                 dir,
                 &resolved_action,
                 &resolved_args,
                 Arc::new(xcpc_plugin::UreqHttpClient::new()),
                 Arc::new(xcpc_plugin::SystemKeyringStore::new()),
                 ws_reader,
+                ws_writer,
             )?;
             if cli.json {
                 let mut val = serde_json::to_value(&report).expect("serializable");
@@ -5059,11 +5068,22 @@ fn print_training_editorials(res: &xcpc_sync::EditorialQueryResult) {
     }
 }
 
+pub(crate) fn engine_with_plugins(ws: &Workspace, font_opts: &FontOptions) -> Engine {
+    let mut engine = publish::engine(ws, font_opts);
+    if let Some(data_dir) = xcpc_sync::default_data_dir() {
+        let mounts = xcpc_plugin::PluginManager::new(data_dir).list_plugin_template_mounts();
+        if !mounts.is_empty() {
+            engine.set_plugin_mounts(mounts);
+        }
+    }
+    engine
+}
+
 fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> {
     let ws = open_workspace(cli)?;
     match action {
         TemplateCommand::List => {
-            let engine = publish::engine(&ws, &fonts(cli));
+            let engine = engine_with_plugins(&ws, &fonts(cli));
             let templates = publish::list_templates(&ws, &engine);
             let presets = xcpc_engine::list_presets();
             let default_tpl = ws
@@ -5108,8 +5128,13 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
             Ok(ExitCode::SUCCESS)
         }
         TemplateCommand::Schema { name } => {
-            let engine = publish::engine(&ws, &fonts(cli));
-            let Some(info) = publish::inspect_template(&ws, &engine, name) else {
+            let engine = engine_with_plugins(&ws, &fonts(cli));
+            let info = if let Some((pid, tid)) = xcpc_domain::parse_plugin_template_ref(name) {
+                publish::inspect_plugin_template(&engine, pid, tid)
+            } else {
+                publish::inspect_template(&ws, &engine, name)
+            };
+            let Some(info) = info else {
                 return Err(xcpc_storage::Error::NotFound(format!("template {name:?}")).into());
             };
             if cli.json {
@@ -5176,6 +5201,43 @@ fn run_template(cli: &Cli, action: &TemplateCommand) -> Result<ExitCode, Fatal> 
                 );
             } else {
                 println!("forked template {source} -> {rel}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        TemplateCommand::Eject { target, name } => {
+            let normalized = if target.trim().starts_with("plugin:") {
+                target.trim().to_owned()
+            } else {
+                format!("plugin:{}", target.trim())
+            };
+            let Some((pid, tid)) = xcpc_domain::parse_plugin_template_ref(&normalized) else {
+                return Err(Fatal {
+                    code: "invalid_arguments",
+                    message: format!(
+                        "invalid plugin template reference '{target}' (expected plugin:<plugin_id>/<template_id>)"
+                    ),
+                    human: Some(format!(
+                        "无效的插件模板引用「{target}」，请使用 `plugin:<plugin_id>/<template_id>` 格式。"
+                    )),
+                    exit_code: 2,
+                });
+            };
+            let engine = engine_with_plugins(&ws, &fonts(cli));
+            let (ejected_id, rel) =
+                publish::eject_plugin_template(&ws, &engine, pid, tid, name.as_deref())?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "source": normalized,
+                        "id": ejected_id,
+                        "path": rel,
+                    }))
+                    .expect("serializable")
+                );
+            } else {
+                println!("ejected template {normalized} -> {rel}");
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -5282,7 +5344,7 @@ fn run_contest(cli: &Cli, action: &ContestCommand) -> Result<ExitCode, Fatal> {
             Ok(ExitCode::SUCCESS)
         }
         ContestCommand::Freeze { id } => {
-            let mut engine = publish::engine(&ws, &fonts(cli));
+            let mut engine = engine_with_plugins(&ws, &fonts(cli));
             let outcome = publish::freeze_contest(&ws, &mut engine, id)?;
             let mut report = outcome.report;
             report.ok = outcome.frozen;

@@ -438,6 +438,9 @@ export function errorCopy(code: string | null | undefined, raw?: string | null):
       return { message: t("error.noWorkspace"), rule };
     case "missing_template":
       return { message: t("error.missingTemplate"), next: t("error.missingTemplateNext"), rule };
+    case "PLUGIN_TEMPLATE_NOT_FOUND":
+    case "plugin_template_not_found":
+      return { message: t("error.pluginTemplateNotFound"), next: t("error.pluginTemplateNotFoundNext"), rule };
     case "invalid_archive":
       return { message: t("error.invalidArchive"), next: t("error.invalidArchiveNext"), rule };
     case "zip_slip":

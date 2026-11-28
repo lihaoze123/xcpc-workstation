@@ -34,18 +34,19 @@ pub use crate::types::{
     MathPreviewJs, NormalizeDirtyResultJs, OverridePatchJs, PackageBuildStatusJs,
     PackageCreateResultJs, PackageFileContentJs, PackageInitResultJs, PackageInspectionResultJs,
     PackageWarningJs, PdfFreshnessJs, PickedFolder, PickedPathsJs, PlatformSyncReportJs,
-    PluginCredentialFieldJs, PluginKvResultJs, PluginPickFileResultJs, PluginRenderPngResultJs,
-    PluginRepoCatalogJs, PluginRepoConfigJs, PluginSummaryJs, PluginUiHtmlJs, PluginWatchEventJs,
-    PluginWorkspaceResultJs, PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic,
-    PreviewLayer, PreviewLocationJs, PreviewPage, PreviewRequest, PreviewResult, PreviewStart,
-    PreviewView, ProblemAssetJs, ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery,
-    ProblemSourceJs, ProblemSummaryJs, RatingBucketJs, RepoCatalogResultJs, RepoFetchErrorJs,
-    RepoPluginEntryJs, RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs,
-    SavePackageFileResultJs, SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs,
-    TagCountJs, TestCasePreviewJs, ThemeColorEntryJs, ThemeOverridesJs, ToolchainStatusJs,
-    TraceExportResultJs, TraceStatusJs, TrainingSubmissionsQueryJs, UnfreezeDiffResultJs,
-    UnfreezeProblemDiffJs, VerifyPluginResultJs, WatchEventJs, WorkspaceContest, WorkspaceFacets,
-    WorkspaceFile, WorkspaceInfo, WorkspaceItem, WorkspaceProblem,
+    PluginCredentialFieldJs, PluginKvResultJs, PluginPickFileResultJs, PluginPickFilesResultJs,
+    PluginPickedFileJs, PluginRenderPngResultJs, PluginRepoCatalogJs, PluginRepoConfigJs,
+    PluginSummaryJs, PluginUiHtmlJs, PluginWatchEventJs, PluginWorkspaceResultJs,
+    PluginsOverviewJs, PolygonImportResultJs, PreviewDiagnostic, PreviewLayer, PreviewLocationJs,
+    PreviewPage, PreviewRequest, PreviewResult, PreviewStart, PreviewView, ProblemAssetJs,
+    ProblemDetailJs, ProblemMetaPatchJs, ProblemSearchQuery, ProblemSourceJs, ProblemSummaryJs,
+    RatingBucketJs, RepoCatalogResultJs, RepoFetchErrorJs, RepoPluginEntryJs,
+    RepoPluginPermissionJs, ResolvedProblemUrlJs, SamplePairJs, SavePackageFileResultJs,
+    SaveReportResultJs, SaveResult, SourceLocationJs, SyncReportJs, TagCountJs, TestCasePreviewJs,
+    ThemeColorEntryJs, ThemeOverridesJs, ToolchainStatusJs, TraceExportResultJs, TraceStatusJs,
+    TrainingSubmissionsQueryJs, UnfreezeDiffResultJs, UnfreezeProblemDiffJs, VerifyPluginResultJs,
+    WatchEventJs, WorkspaceContest, WorkspaceFacets, WorkspaceFile, WorkspaceInfo, WorkspaceItem,
+    WorkspaceProblem,
 };
 
 /// The crate's UI set (`nsh.json` `"rust"`).
@@ -1151,6 +1152,23 @@ impl Preview {
     /// Forks a workspace template `source` into `templates/<newName>.typ`.
     pub fn fork_template(&self, source: String, new_name: String) -> ActionResult {
         self.app.fork_template(source, new_name).into()
+    }
+
+    /// Copies a mounted plugin template (`plugin:<pluginId>/<templateId>`) into `templates/`.
+    pub fn eject_plugin_template(
+        &self,
+        plugin_id: String,
+        template_id: String,
+        target_name: Option<String>,
+    ) -> JsonReportResultJs {
+        self.app
+            .eject_plugin_template(plugin_id, template_id, target_name)
+            .into()
+    }
+
+    /// Synchronizes mounted template plugins and invalidates template caches.
+    pub fn sync_plugin_mounts(&self) {
+        self.app.sync_plugin_mounts();
     }
 
     /// Installs a bundled preset seed (`olymp-classic`, `cnoi-classic`, `minimal`) into
@@ -2563,6 +2581,166 @@ impl Preview {
         xcpc_app::AppController::plugin_render_svg_png(svg, scale).into()
     }
 
+    /// Renders an untrusted Typst snippet off the UI thread for an enabled, trusted plugin.
+    pub async fn plugin_render_typst(
+        this: Instance<Self>,
+        plugin_id: String,
+        source: String,
+        opts_json: Option<String>,
+    ) -> PluginWorkspaceResultJs {
+        if this.is_disposed() {
+            return PluginWorkspaceResultJs {
+                ok: false,
+                data_json: None,
+                error: Some("preview disposed".into()),
+                error_code: Some("DISPOSED".into()),
+            };
+        }
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_render_typst(&plugin_id, &source, opts_json.as_deref())
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(format!("render typst task failed: {e}")),
+            error_code: Some("RENDER_ERROR".into()),
+        })
+    }
+
+    /// Converts LaTeX math via MiTeX and renders it off the UI thread for an enabled, trusted plugin.
+    pub async fn plugin_render_math(
+        this: Instance<Self>,
+        plugin_id: String,
+        latex: String,
+        opts_json: Option<String>,
+    ) -> PluginWorkspaceResultJs {
+        if this.is_disposed() {
+            return PluginWorkspaceResultJs {
+                ok: false,
+                data_json: None,
+                error: Some("preview disposed".into()),
+                error_code: Some("DISPOSED".into()),
+            };
+        }
+        let state = this.with(|p| p.app.state.clone());
+        blocking(move || {
+            state
+                .plugin_render_math(&plugin_id, &latex, opts_json.as_deref())
+                .into()
+        })
+        .await
+        .unwrap_or_else(|e| PluginWorkspaceResultJs {
+            ok: false,
+            data_json: None,
+            error: Some(format!("render math task failed: {e}")),
+            error_code: Some("RENDER_ERROR".into()),
+        })
+    }
+
+    /// Opens a native save dialog and atomically writes an arbitrary base64-encoded binary file
+    /// (up to 50 MiB decoded) for `window.xcpc.files.saveBinary(...)`.
+    pub async fn plugin_save_binary_dialog(
+        base64_data: String,
+        default_name: String,
+        title: Option<String>,
+        extensions: Option<Vec<String>>,
+    ) -> SaveReportResultJs {
+        use base64::Engine as _;
+        const MAX_BINARY_BYTES: usize = 50 * 1024 * 1024;
+
+        let trimmed = base64_data.trim();
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(trimmed) {
+            Ok(b) => b,
+            Err(err) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(format!("invalid base64 payload: {err}")),
+                };
+            }
+        };
+        if bytes.len() > MAX_BINARY_BYTES {
+            return SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(format!(
+                    "binary payload exceeds 50 MiB limit ({} bytes)",
+                    bytes.len()
+                )),
+            };
+        }
+        let file_name = if default_name.trim().is_empty() {
+            "output.bin"
+        } else {
+            default_name.trim()
+        };
+        let mut dialog = SaveDialog::new()
+            .title(title.as_deref().unwrap_or("保存文件"))
+            .button_label("保存")
+            .file_name(file_name);
+        if let Some(exts) = extensions {
+            let clean: Vec<String> = exts
+                .into_iter()
+                .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+            if !clean.is_empty() {
+                let refs: Vec<&str> = clean.iter().map(String::as_str).collect();
+                dialog = dialog.filter(FileFilter::new("Files", refs));
+            }
+        } else if let Some(ext) = Path::new(file_name).extension().and_then(|e| e.to_str())
+            && !ext.is_empty()
+        {
+            dialog = dialog.filter(FileFilter::new(ext, [ext]));
+        }
+        let picked = match pick_save_path(dialog).await {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: true,
+                    path: None,
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return SaveReportResultJs {
+                    ok: false,
+                    cancelled: false,
+                    path: None,
+                    error: Some(err),
+                };
+            }
+        };
+        let path_str = picked.display().to_string();
+        match blocking(move || xcpc_app::atomic_write_file(&picked, &bytes)).await {
+            Ok(Ok(())) => SaveReportResultJs {
+                ok: true,
+                cancelled: false,
+                path: Some(path_str),
+                error: None,
+            },
+            Ok(Err(err)) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(err.to_string()),
+            },
+            Err(err) => SaveReportResultJs {
+                ok: false,
+                cancelled: false,
+                path: None,
+                error: Some(format!("save binary task failed: {err}")),
+            },
+        }
+    }
+
     /// Opens a native save dialog and atomically writes a base64-encoded PNG file.
     pub async fn plugin_save_png_dialog(
         png_base64: String,
@@ -2839,6 +3017,113 @@ impl Preview {
         }
     }
 
+    /// Prompts the user to pick one or more local files (default 10 MiB/file, 30 MiB total)
+    /// and returns their filenames, optional UTF-8 text, and base64 bytes for `files.pickFiles`.
+    pub async fn plugin_pick_files_dialog(
+        extensions: Option<Vec<String>>,
+        title: Option<String>,
+        multiple: Option<bool>,
+        max_bytes: Option<u32>,
+    ) -> PluginPickFilesResultJs {
+        use base64::Engine as _;
+        const DEFAULT_SINGLE_LIMIT: u64 = 10 * 1024 * 1024;
+        const MAX_TOTAL_BYTES: u64 = 30 * 1024 * 1024;
+
+        let single_limit = max_bytes
+            .map(u64::from)
+            .filter(|&v| v > 0)
+            .unwrap_or(DEFAULT_SINGLE_LIMIT)
+            .min(MAX_TOTAL_BYTES);
+
+        let mut dialog = OpenDialog::files()
+            .title(title.as_deref().unwrap_or("选择文件"))
+            .multiple(multiple.unwrap_or(true));
+        if let Some(exts) = extensions {
+            let clean: Vec<String> = exts
+                .into_iter()
+                .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+            if !clean.is_empty() {
+                let refs: Vec<&str> = clean.iter().map(String::as_str).collect();
+                dialog = dialog.filter(FileFilter::new("Files", refs));
+            }
+        }
+        let picked = match pick_paths(dialog).await {
+            Ok(Some(paths)) if !paths.is_empty() => paths,
+            Ok(_) => {
+                return PluginPickFilesResultJs {
+                    ok: false,
+                    cancelled: true,
+                    files: Vec::new(),
+                    error: None,
+                };
+            }
+            Err(err) => {
+                return PluginPickFilesResultJs {
+                    ok: false,
+                    cancelled: false,
+                    files: Vec::new(),
+                    error: Some(err),
+                };
+            }
+        };
+
+        match blocking(move || -> Result<Vec<PluginPickedFileJs>, String> {
+            let mut total: u64 = 0;
+            let mut out = Vec::with_capacity(picked.len());
+            for path in picked {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file".to_owned());
+                let meta = std::fs::metadata(&path).map_err(|e| format!("{name}: {e}"))?;
+                if meta.len() > single_limit {
+                    return Err(format!(
+                        "file '{name}' exceeds single-file limit ({} > {single_limit} bytes)",
+                        meta.len()
+                    ));
+                }
+                total = total.saturating_add(meta.len());
+                if total > MAX_TOTAL_BYTES {
+                    return Err(format!(
+                        "selected files exceed 30 MiB total limit ({total} bytes)"
+                    ));
+                }
+                let bytes = std::fs::read(&path).map_err(|e| format!("{name}: {e}"))?;
+                let text = String::from_utf8(bytes.clone()).ok();
+                let content_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                out.push(PluginPickedFileJs {
+                    name,
+                    text,
+                    content_base64,
+                });
+            }
+            Ok(out)
+        })
+        .await
+        {
+            Ok(Ok(files)) => PluginPickFilesResultJs {
+                ok: true,
+                cancelled: false,
+                files,
+                error: None,
+            },
+            Ok(Err(err)) => PluginPickFilesResultJs {
+                ok: false,
+                cancelled: false,
+                files: Vec::new(),
+                error: Some(err),
+            },
+            Err(err) => PluginPickFilesResultJs {
+                ok: false,
+                cancelled: false,
+                files: Vec::new(),
+                error: Some(format!("read files task failed: {err}")),
+            },
+        }
+    }
+
     /// Long-polling async notification when plugin files (`manifest.toml`, `index.js`, `ui.html`,
     /// `ui.js`, or `plugin_links.json`) change in `<dataDir>/plugins/` or any registered linked target dir.
     pub async fn next_plugin_change(this: Instance<Self>) -> PluginWatchEventJs {
@@ -2851,6 +3136,7 @@ impl Preview {
             return closed();
         }
         let rx = this.with(|p| p.app.state.ensure_plugin_watcher());
+        let state = this.with(|p| p.app.state.clone());
         let Some(rx) = rx else {
             return closed();
         };
@@ -2860,7 +3146,10 @@ impl Preview {
                 Err(_) => return closed(),
             };
             match guard.recv() {
-                Ok(ev) => ev.into(),
+                Ok(ev) => {
+                    state.sync_engine_plugin_mounts();
+                    ev.into()
+                }
                 Err(_) => closed(),
             }
         })

@@ -21,10 +21,16 @@ use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
 
 mod fingerprint;
+pub mod fragment;
 mod locate;
 mod overflow;
 mod packages;
 mod schema;
+
+pub use fragment::{
+    FRAGMENT_TIMEOUT_MS, FragmentFormat, FragmentRenderOptions, FragmentTheme,
+    MAX_FRAGMENT_PIXEL_DIM, MAX_FRAGMENT_SOURCE_BYTES, RenderedFragment, render_typst_fragment,
+};
 
 pub use typst_render::render as render_page_raw;
 pub use xcpc_domain::{PRESETS, PresetSeed, list_presets, list_presets_by_kind, preset_source};
@@ -72,6 +78,183 @@ const MAIN_PATH: &str = "/main.typ";
 
 /// Per-engine virtual module exposing the resolved CJK font family names.
 const FONTS_PATH: &str = "/xcpc/fonts.typ";
+
+/// Maximum file size allowed for a single font file inside a template plugin (25 MiB).
+pub const MAX_PLUGIN_FONT_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
+/// Metadata for a single template declared by an enabled template plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginTemplateEntry {
+    pub id: String,
+    pub entry: String,
+    pub kind: Option<xcpc_domain::TemplateKind>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Read-only virtual mount for an enabled template plugin at `/plugins/<plugin_id>/...`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginMount {
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub version: String,
+    pub root: PathBuf,
+    pub font_dirs: Vec<PathBuf>,
+    pub templates: Vec<PluginTemplateEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedPluginMount {
+    mount: PluginMount,
+    canonical_root: PathBuf,
+    font_fingerprint: u64,
+}
+
+struct LayeredFontStore {
+    base: Arc<FontStore>,
+    base_len: usize,
+    extra: FontStore,
+    combined_book: LazyHash<FontBook>,
+}
+
+impl LayeredFontStore {
+    fn new(base: Arc<FontStore>, extra: FontStore) -> Self {
+        let mut book = FontBook::new();
+        let mut base_len = 0usize;
+        while let Some(info) = base.book().info(base_len) {
+            book.push(info.clone());
+            base_len += 1;
+        }
+        let mut extra_idx = 0usize;
+        while let Some(info) = extra.book().info(extra_idx) {
+            book.push(info.clone());
+            extra_idx += 1;
+        }
+        Self {
+            base,
+            base_len,
+            extra,
+            combined_book: LazyHash::new(book),
+        }
+    }
+
+    fn book(&self) -> &LazyHash<FontBook> {
+        &self.combined_book
+    }
+
+    fn font(&self, index: usize) -> Option<Font> {
+        if index < self.base_len {
+            self.base.font(index)
+        } else {
+            self.extra.font(index - self.base_len)
+        }
+    }
+}
+
+/// Scans `.ttf` / `.otf` / `.ttc` font files inside `dirs` (strictly within `allowed_root`
+/// when provided, rejecting symlinks and files exceeding `MAX_PLUGIN_FONT_FILE_BYTES`).
+fn scan_bounded_font_dirs(dirs: &[PathBuf], allowed_root: Option<&Path>) -> FontStore {
+    let mut store = FontStore::new();
+    let mut stack: Vec<PathBuf> = dirs.to_vec();
+    while let Some(dir) = stack.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&dir) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        let Ok(canon_dir) = dir.canonicalize() else {
+            continue;
+        };
+        if let Some(root) = allowed_root
+            && !canon_dir.starts_with(root)
+        {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&canon_dir) else {
+            continue;
+        };
+        let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        children.sort();
+        for path in children {
+            let Ok(child_meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if child_meta.file_type().is_symlink() {
+                continue;
+            }
+            if child_meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !child_meta.is_file() || child_meta.len() > MAX_PLUGIN_FONT_FILE_BYTES {
+                continue;
+            }
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc")) {
+                continue;
+            }
+            let Ok(canon_file) = path.canonicalize() else {
+                continue;
+            };
+            if let Some(root) = allowed_root
+                && !canon_file.starts_with(root)
+            {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&canon_file) else {
+                continue;
+            };
+            for (index, info) in typst::text::FontInfo::iter(&bytes).enumerate() {
+                store.push((
+                    typst_kit::fonts::FontPath {
+                        path: canon_file.clone(),
+                        index: index as u32,
+                    },
+                    info,
+                ));
+            }
+        }
+    }
+    store
+}
+
+fn fingerprint_font_dirs(dirs: &[PathBuf]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut stack: Vec<PathBuf> = dirs.to_vec();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        children.sort();
+        for path in children {
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            path.to_string_lossy().hash(&mut hasher);
+            meta.len().hash(&mut hasher);
+            if let Ok(mtime) = meta.modified()
+                && let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                dur.as_secs().hash(&mut hasher);
+                dur.subsec_nanos().hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
 
 /// Candidate CJK font families in preference order for each template role.
 /// The first entry is the pinned FounderType family; later entries serve as
@@ -567,10 +750,16 @@ pub struct CompileError {
 pub struct Engine {
     library: Arc<LazyHash<Library>>,
     fonts: Arc<FontStore>,
+    active_extra_fonts: Option<Arc<LayeredFontStore>>,
+    active_extra_font_key: Option<String>,
+    extra_font_cache: HashMap<String, (Arc<LayeredFontStore>, String, Option<String>)>,
+    base_fonts_source: Source,
+    base_font_fallback_warning: Option<String>,
     font_options: FontOptions,
     full_system_fonts_loaded: bool,
     root: Option<PathBuf>,
     canonical_root: Option<PathBuf>,
+    plugin_mounts: HashMap<String, ResolvedPluginMount>,
     main: Source,
     fonts_source: Source,
     fonts_used: AtomicBool,
@@ -606,15 +795,22 @@ impl Engine {
         };
         let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
         let canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
+        let base_fonts_source = Source::new(project_id(FONTS_PATH), fonts_text.clone());
         Self {
             library: Arc::new(LazyHash::new(Library::default())),
             fonts: Arc::new(store),
+            active_extra_fonts: None,
+            active_extra_font_key: None,
+            extra_font_cache: HashMap::new(),
+            base_fonts_source: base_fonts_source.clone(),
+            base_font_fallback_warning: font_fallback_warning.clone(),
             font_options: fonts.clone(),
             full_system_fonts_loaded,
             root,
             canonical_root,
+            plugin_mounts: HashMap::new(),
             main: Source::new(main_id(), String::new()),
-            fonts_source: Source::new(project_id(FONTS_PATH), fonts_text),
+            fonts_source: base_fonts_source,
             fonts_used: AtomicBool::new(false),
             font_fallback_warning,
             files: Mutex::new(HashMap::new()),
@@ -626,17 +822,27 @@ impl Engine {
     /// and standard library, avoiding duplicate system-font scans and memory usage.
     pub fn share_fonts(&self, root: Option<PathBuf>) -> Self {
         let canonical_root = root.as_deref().and_then(|r| r.canonicalize().ok());
+        let base_fonts_source = Source::new(
+            project_id(FONTS_PATH),
+            self.base_fonts_source.text().to_owned(),
+        );
         Self {
             library: Arc::clone(&self.library),
             fonts: Arc::clone(&self.fonts),
+            active_extra_fonts: None,
+            active_extra_font_key: None,
+            extra_font_cache: HashMap::new(),
+            base_fonts_source: base_fonts_source.clone(),
+            base_font_fallback_warning: self.base_font_fallback_warning.clone(),
             font_options: self.font_options.clone(),
             full_system_fonts_loaded: self.full_system_fonts_loaded,
             root,
             canonical_root,
+            plugin_mounts: self.plugin_mounts.clone(),
             main: Source::new(main_id(), String::new()),
-            fonts_source: Source::new(project_id(FONTS_PATH), self.fonts_source.text().to_owned()),
+            fonts_source: base_fonts_source,
             fonts_used: AtomicBool::new(false),
-            font_fallback_warning: self.font_fallback_warning.clone(),
+            font_fallback_warning: self.base_font_fallback_warning.clone(),
             files: Mutex::new(HashMap::new()),
             sources: Mutex::new(HashMap::new()),
         }
@@ -669,17 +875,156 @@ impl Engine {
             Arc::new(s)
         };
         let (fonts_text, font_fallback_warning) = resolve_cjk_fonts(store.book());
+        let base_src = Source::new(project_id(FONTS_PATH), fonts_text);
         self.fonts = store;
-        self.fonts_source = Source::new(project_id(FONTS_PATH), fonts_text);
+        self.base_fonts_source = base_src.clone();
+        self.base_font_fallback_warning = font_fallback_warning.clone();
+        self.active_extra_fonts = None;
+        self.active_extra_font_key = None;
+        self.extra_font_cache.clear();
+        self.fonts_source = base_src;
         self.font_fallback_warning = font_fallback_warning;
         self.full_system_fonts_loaded = true;
         true
     }
 
+    /// Replaces the set of enabled template plugin virtual mounts (`/plugins/<plugin_id>/...`).
+    /// Invalidates cached virtual files and stale plugin font caches when mounts change.
+    pub fn set_plugin_mounts(&mut self, mounts: Vec<PluginMount>) {
+        let mut next = HashMap::with_capacity(mounts.len());
+        let mut valid_font_keys = std::collections::HashSet::new();
+        for mount in mounts {
+            let Ok(canonical_root) = mount.root.canonicalize() else {
+                continue;
+            };
+            let font_fingerprint = fingerprint_font_dirs(&mount.font_dirs);
+            let font_key = format!(
+                "plugin:{}:{}:{font_fingerprint}",
+                mount.plugin_id, mount.version
+            );
+            valid_font_keys.insert(font_key);
+            next.insert(
+                mount.plugin_id.clone(),
+                ResolvedPluginMount {
+                    mount,
+                    canonical_root,
+                    font_fingerprint,
+                },
+            );
+        }
+        self.plugin_mounts = next;
+        self.extra_font_cache
+            .retain(|k, _| !k.starts_with("plugin:") || valid_font_keys.contains(k));
+        if let Some(active_key) = self.active_extra_font_key.as_deref()
+            && active_key.starts_with("plugin:")
+            && !valid_font_keys.contains(active_key)
+        {
+            self.activate_plugin_fonts(None);
+        }
+        self.reset_files();
+    }
+
+    /// Returns all currently registered plugin mounts sorted by `plugin_id`.
+    pub fn plugin_mounts(&self) -> Vec<&PluginMount> {
+        let mut list: Vec<&PluginMount> = self.plugin_mounts.values().map(|r| &r.mount).collect();
+        list.sort_by(|a, b| a.plugin_id.cmp(&b.plugin_id));
+        list
+    }
+
+    /// Looks up a mounted plugin template by `(plugin_id, template_id)`.
+    pub fn find_plugin_template(
+        &self,
+        plugin_id: &str,
+        template_id: &str,
+    ) -> Option<(&PluginMount, &PluginTemplateEntry)> {
+        let resolved = self.plugin_mounts.get(plugin_id)?;
+        let entry = resolved
+            .mount
+            .templates
+            .iter()
+            .find(|t| t.id == template_id)?;
+        Some((&resolved.mount, entry))
+    }
+
+    /// Activates on-demand fonts for the given mounted plugin (`Some(plugin_id)`), or
+    /// restores the base font set (`None`). Results are cached by `(plugin_id, version, mtime)`.
+    pub fn activate_plugin_fonts(&mut self, plugin_id: Option<&str>) {
+        let Some(pid) = plugin_id else {
+            if self.active_extra_fonts.is_some() {
+                self.active_extra_fonts = None;
+                self.active_extra_font_key = None;
+                self.fonts_source = self.base_fonts_source.clone();
+                self.font_fallback_warning = self.base_font_fallback_warning.clone();
+            }
+            return;
+        };
+        let Some(resolved) = self.plugin_mounts.get(pid) else {
+            self.activate_plugin_fonts(None);
+            return;
+        };
+        if resolved.mount.font_dirs.is_empty() {
+            self.activate_plugin_fonts(None);
+            return;
+        }
+        let key = format!(
+            "plugin:{}:{}:{}",
+            resolved.mount.plugin_id, resolved.mount.version, resolved.font_fingerprint
+        );
+        if self.active_extra_font_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        let (layered, fonts_text, warn) = if let Some(hit) = self.extra_font_cache.get(&key) {
+            hit.clone()
+        } else {
+            let extra =
+                scan_bounded_font_dirs(&resolved.mount.font_dirs, Some(&resolved.canonical_root));
+            let layered = Arc::new(LayeredFontStore::new(Arc::clone(&self.fonts), extra));
+            let (fonts_text, warn) = resolve_cjk_fonts(layered.book());
+            self.extra_font_cache.insert(
+                key.clone(),
+                (Arc::clone(&layered), fonts_text.clone(), warn.clone()),
+            );
+            (layered, fonts_text, warn)
+        };
+        self.active_extra_fonts = Some(layered);
+        self.active_extra_font_key = Some(key);
+        self.fonts_source = Source::new(project_id(FONTS_PATH), fonts_text);
+        self.font_fallback_warning = warn;
+    }
+
+    /// Activates extra on-demand font directories (e.g. from a frozen contest snapshot's
+    /// archived plugin template fonts) keyed by `cache_key`.
+    pub fn activate_extra_font_dirs(&mut self, cache_key: &str, dirs: &[PathBuf]) {
+        if dirs.is_empty() {
+            self.activate_plugin_fonts(None);
+            return;
+        }
+        let fp = fingerprint_font_dirs(dirs);
+        let key = format!("extra:{cache_key}:{fp}");
+        if self.active_extra_font_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        let (layered, fonts_text, warn) = if let Some(hit) = self.extra_font_cache.get(&key) {
+            hit.clone()
+        } else {
+            let extra = scan_bounded_font_dirs(dirs, self.canonical_root.as_deref());
+            let layered = Arc::new(LayeredFontStore::new(Arc::clone(&self.fonts), extra));
+            let (fonts_text, warn) = resolve_cjk_fonts(layered.book());
+            self.extra_font_cache.insert(
+                key.clone(),
+                (Arc::clone(&layered), fonts_text.clone(), warn.clone()),
+            );
+            (layered, fonts_text, warn)
+        };
+        self.active_extra_fonts = Some(layered);
+        self.active_extra_font_key = Some(key);
+        self.fonts_source = Source::new(project_id(FONTS_PATH), fonts_text);
+        self.font_fallback_warning = warn;
+    }
+
     /// Font families known to the engine, with the number of faces in each.
     pub fn font_families(&self) -> Vec<(String, usize)> {
-        self.fonts
-            .book()
+        self.book()
             .families()
             .map(|(name, infos)| (name.to_string(), infos.count()))
             .collect()
@@ -756,10 +1101,20 @@ impl Engine {
         }
     }
 
-    /// Evaluates `import_path` (e.g. `"/xcpc/olymp-classic.typ"` or `"/templates/my.typ"`)
-    /// and returns its exported `#let schema = (...)`, or an empty schema if absent.
+    /// Evaluates `import_path` (e.g. `"/xcpc/olymp-classic.typ"`, `"/templates/my.typ"`,
+    /// or `"/plugins/my-pack/templates/ec.typ"`) and returns its exported `#let schema = (...)`,
+    /// or an empty schema if absent.
     pub fn inspect_template_schema(&self, import_path: &str) -> xcpc_domain::TemplateSchema {
         schema::inspect(self, import_path)
+    }
+
+    /// Validates that `import_path` compiles cleanly and exports `#let render(doc)`,
+    /// returning its parsed `#let schema` on success or Typst diagnostics on failure.
+    pub fn validate_template_module(
+        &self,
+        import_path: &str,
+    ) -> Result<xcpc_domain::TemplateSchema, Vec<Diagnostic>> {
+        schema::validate_module(self, import_path)
     }
 
     /// Resolves a point `(x_pt, y_pt)` (typographic points from the top-left of 0-based
@@ -834,33 +1189,99 @@ impl Engine {
         out
     }
 
-    /// A file of the project, if it is inside the root, links followed.
+    /// A file of the project, if it is inside the root, or inside a mounted plugin at
+    /// `/plugins/<plugin_id>/...` (strictly isolated to that plugin's canonical root).
     fn read_disk(&self, id: FileId) -> FileResult<Bytes> {
-        let root = self.root.as_deref().ok_or_else(|| not_found(id))?;
-        let path = id
-            .vpath()
-            .realize(root)
-            .map_err(|_| FileError::AccessDenied)?;
-        let real = path
-            .canonicalize()
-            .map_err(|e| FileError::from_io(e, &path))?;
-        let owned_real_root;
-        let real_root = match self.canonical_root.as_deref() {
-            Some(r) => r,
-            None => {
-                owned_real_root = root
-                    .canonicalize()
-                    .map_err(|e| FileError::from_io(e, root))?;
-                &owned_real_root
+        let vpath = id.vpath().get_with_slash();
+        if let Some(rest) = vpath.strip_prefix("/plugins/") {
+            let Some((plugin_id, rel)) = rest.split_once('/') else {
+                return Err(FileError::AccessDenied);
+            };
+            if plugin_id.is_empty() || rel.is_empty() || rel.contains('\\') {
+                return Err(FileError::AccessDenied);
             }
-        };
-        if !real.starts_with(real_root) {
-            return Err(FileError::AccessDenied);
+            let Some(resolved) = self.plugin_mounts.get(plugin_id) else {
+                return Err(not_found(id));
+            };
+            let rel_path = Path::new(rel);
+            if rel_path.is_absolute() {
+                return Err(FileError::AccessDenied);
+            }
+            for comp in rel_path.components() {
+                if matches!(
+                    comp,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                ) {
+                    return Err(FileError::AccessDenied);
+                }
+            }
+            let full = resolved.canonical_root.join(rel_path);
+            let real = full
+                .canonicalize()
+                .map_err(|e| FileError::from_io(e, &full))?;
+            if !real.starts_with(&resolved.canonical_root) {
+                return Err(FileError::AccessDenied);
+            }
+            return std::fs::read(&real)
+                .map(Bytes::new)
+                .map_err(|e| FileError::from_io(e, &full));
         }
-        std::fs::read(&real)
-            .map(Bytes::new)
-            .map_err(|e| FileError::from_io(e, &path))
+
+        let disk_res = (|| -> FileResult<Bytes> {
+            let root = self.root.as_deref().ok_or_else(|| not_found(id))?;
+            let path = id
+                .vpath()
+                .realize(root)
+                .map_err(|_| FileError::AccessDenied)?;
+            let real = path
+                .canonicalize()
+                .map_err(|e| FileError::from_io(e, &path))?;
+            let owned_real_root;
+            let real_root = match self.canonical_root.as_deref() {
+                Some(r) => r,
+                None => {
+                    owned_real_root = root
+                        .canonicalize()
+                        .map_err(|e| FileError::from_io(e, root))?;
+                    &owned_real_root
+                }
+            };
+            if !real.starts_with(real_root) {
+                return Err(FileError::AccessDenied);
+            }
+            std::fs::read(&real)
+                .map(Bytes::new)
+                .map_err(|e| FileError::from_io(e, &path))
+        })();
+
+        // Allow plugin templates to import built-in helper aliases like `/templates/defaults.typ`
+        // or `/templates/markdown.typ` when the workspace doesn't shadow them on disk.
+        if let Err(FileError::NotFound(_)) = &disk_res {
+            if let Some(builtin_text) = builtin_template_alias(vpath) {
+                return Ok(Bytes::from_string(builtin_text));
+            }
+            if vpath == "/templates/fonts.typ" {
+                self.fonts_used.store(true, Ordering::Relaxed);
+                return Ok(Bytes::from_string(self.fonts_source.text().to_owned()));
+            }
+        }
+        disk_res
     }
+}
+
+fn builtin_template_alias(vpath: &str) -> Option<&'static str> {
+    let mapped = match vpath {
+        "/templates/defaults.typ" => "/xcpc/defaults.typ",
+        "/templates/markdown.typ" => "/xcpc/markdown.typ",
+        "/templates/mono.tmTheme" => "/xcpc/mono.tmTheme",
+        _ => return None,
+    };
+    TEMPLATES
+        .iter()
+        .find(|(p, _)| *p == mapped)
+        .map(|(_, text)| *text)
 }
 
 /// Picks the first available family for each CJK role and generates `/xcpc/fonts.typ`.
@@ -962,7 +1383,11 @@ impl World for Engine {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        self.fonts.book()
+        if let Some(layered) = &self.active_extra_fonts {
+            layered.book()
+        } else {
+            self.fonts.book()
+        }
     }
 
     fn main(&self) -> FileId {
@@ -1019,7 +1444,11 @@ impl World for Engine {
     }
 
     fn font(&self, index: usize) -> Option<Font> {
-        self.fonts.font(index)
+        if let Some(layered) = &self.active_extra_fonts {
+            layered.font(index)
+        } else {
+            self.fonts.font(index)
+        }
     }
 
     fn today(&self, _offset: Option<TypstDuration>) -> Option<Datetime> {

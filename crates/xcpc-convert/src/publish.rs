@@ -9,21 +9,25 @@
 //! [`freeze_contest`] validates, builds PDFs and atomically archives a contest snapshot.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use xcpc_domain::{
-    ContestItem, ContestMeta, Language, SnippetVerifyStatus, Statement, TemplateFieldScope,
-    TemplateFieldType, TemplateInfo, TemplateKind, TemplateOptionValue, TemplateOptionsMap,
-    TextFile, TrdFreezeResult, TrdPreflightSeverity, check_id, label_for_index,
+    ContestItem, ContestMeta, Language, LocalizedText, SnippetVerifyStatus, Statement,
+    TemplateFieldScope, TemplateFieldType, TemplateInfo, TemplateKind, TemplateOptionValue,
+    TemplateOptionsMap, TemplateSource, TextFile, TrdFreezeResult, TrdPreflightSeverity, check_id,
+    format_plugin_template_ref, label_for_index, parse_plugin_template_ref,
 };
-use xcpc_engine::{Compiled, Engine};
+use xcpc_engine::{Compiled, Engine, PluginMount};
 use xcpc_storage::{Error, SnapshotTemplateArchive, SnapshotTemplateMeta, Workspace};
 
 use crate::{Book, Document, Entry, TrdBook, TrdChapterInput};
 
 /// Diagnostic code emitted when the resolved `.typ` template file does not exist on disk.
 pub const MISSING_TEMPLATE: &str = "missing_template";
+/// Diagnostic code emitted when a referenced `plugin:<plugin_id>/<template_id>` template
+/// is not installed, disabled, untrusted, or missing from the plugin.
+pub const PLUGIN_TEMPLATE_NOT_FOUND: &str = "PLUGIN_TEMPLATE_NOT_FOUND";
 
 /// What to publish.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -77,6 +81,20 @@ pub fn document_with(
     kind: Kind,
     language: Option<Language>,
     unsaved: Option<(&str, &str)>,
+) -> Result<Document, Error> {
+    document_with_engine(ws, None, target, kind, language, unsaved, None)
+}
+
+/// [`document_with`] extended with an optional [`Engine`] (for resolving mounted
+/// `plugin:<plugin_id>/<template_id>` templates) and optional `--template` override.
+pub fn document_with_engine(
+    ws: &Workspace,
+    engine: Option<&Engine>,
+    target: &Target,
+    kind: Kind,
+    language: Option<Language>,
+    unsaved: Option<(&str, &str)>,
+    template_override: Option<&str>,
 ) -> Result<Document, Error> {
     let _span = xcpc_trace::span_with("convert", "build_document", || {
         serde_json::json!({
@@ -139,20 +157,52 @@ pub fn document_with(
         }
         merged
     };
+    let template_override = template_override.map(str::trim).filter(|s| !s.is_empty());
     let resolve_workspace_template = |book: &mut Book,
                                       contest_meta: Option<&ContestMeta>,
                                       diag_file: String|
-     -> Option<crate::Diagnostic> {
+     -> (Option<String>, Option<crate::Diagnostic>) {
         book.preamble = ws.load_preamble();
         let contest_template = contest_meta
             .and_then(|m| m.template.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let name = contest_template
+        let name = template_override
             .map(str::to_owned)
+            .or_else(|| contest_template.map(str::to_owned))
             .or_else(|| ws.default_template())
             .unwrap_or_else(|| "olymp-classic".into());
-        if check_id(&name).is_ok() && ws.has_custom_template(&name) {
+        if let Some((plugin_id, template_id)) = parse_plugin_template_ref(&name) {
+            if let Some((mount, tpl_entry)) =
+                engine.and_then(|e| e.find_plugin_template(plugin_id, template_id))
+            {
+                book.template_name = name.clone();
+                book.template_import =
+                    Some(format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry));
+                let mut opts = merge_book_options(&name, contest_meta.map(|m| &m.template_options));
+                if let Some(meta) = contest_meta {
+                    fold_legacy_contest_options(meta, &mut opts);
+                }
+                book.template_options = opts;
+                (Some(mount.plugin_id.clone()), None)
+            } else {
+                book.template_name = name.clone();
+                book.template_import = None;
+                (
+                    None,
+                    Some(crate::Diagnostic {
+                        error: true,
+                        code: Some(PLUGIN_TEMPLATE_NOT_FOUND.into()),
+                        message: format!(
+                            "未找到插件模板「{name}」（插件 {plugin_id} 未安装、未启用或不包含模板 {template_id}）"
+                        ),
+                        file: diag_file,
+                        line: 1,
+                        column: 1,
+                    }),
+                )
+            }
+        } else if check_id(&name).is_ok() && ws.has_custom_template(&name) {
             book.template_name = name.clone();
             book.template_import = Some(format!("/templates/{name}.typ"));
             let mut opts = merge_book_options(&name, contest_meta.map(|m| &m.template_options));
@@ -160,20 +210,23 @@ pub fn document_with(
                 fold_legacy_contest_options(meta, &mut opts);
             }
             book.template_options = opts;
-            None
+            (None, None)
         } else {
             book.template_name = name.clone();
             book.template_import = None;
-            Some(crate::Diagnostic {
-                error: true,
-                code: Some(MISSING_TEMPLATE.into()),
-                message: format!(
-                    "未找到模板「{name}」（templates/{name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
-                ),
-                file: diag_file,
-                line: 1,
-                column: 1,
-            })
+            (
+                None,
+                Some(crate::Diagnostic {
+                    error: true,
+                    code: Some(MISSING_TEMPLATE.into()),
+                    message: format!(
+                        "未找到模板「{name}」（templates/{name}.typ 不存在）；请从预设安装或在 templates/ 中提供该模板"
+                    ),
+                    file: diag_file,
+                    line: 1,
+                    column: 1,
+                }),
+            )
         }
     };
     match target {
@@ -181,12 +234,14 @@ pub fn document_with(
             let mut problem = ws.load_problem(id)?;
             overlay(&mut problem);
             let mut book = Book::single(language.unwrap_or_else(|| problem.default_language()));
-            let err = resolve_workspace_template(&mut book, None, "workspace.toml".into());
+            let (active_plugin_id, err) =
+                resolve_workspace_template(&mut book, None, "workspace.toml".into());
             let entries = [Entry::single(&problem)];
             let mut doc = match kind {
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
             };
+            doc.active_plugin_id = active_plugin_id;
             if let Some(d) = err {
                 doc.diagnostics.push(d);
             }
@@ -202,11 +257,44 @@ pub fn document_with(
             if let Some(language) = language {
                 book.language = language;
             }
-            let err = if contest.meta.frozen {
+            let mut active_plugin_id: Option<String> = None;
+            let mut extra_font_key: Option<String> = None;
+            let mut extra_font_dirs: Vec<PathBuf> = Vec::new();
+            let err = if contest.meta.frozen && template_override.is_none() {
+                let snap = ws.load_snapshot_template(id);
+                let snap_bundle_entry =
+                    snap.as_ref()
+                        .and_then(|s| s.entry.as_deref())
+                        .and_then(|entry_rel| {
+                            let rel = format!("contests/{id}/snapshot/template/{entry_rel}");
+                            ws.resolve(&rel).ok().filter(|p| p.is_file()).map(|_| rel)
+                        });
                 let snap_tpl_rel = format!("contests/{id}/snapshot/template.typ");
                 let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
-                if has_snap_tpl {
-                    let snap = ws.load_snapshot_template(id);
+                if let Some(bundle_rel) = snap_bundle_entry {
+                    book.template_name = snap
+                        .as_ref()
+                        .map(|s| s.template.clone())
+                        .unwrap_or_else(|| "local".into());
+                    book.template_options =
+                        snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+                    book.preamble = ws.load_snapshot_preamble(id);
+                    book.template_import = Some(format!("/{bundle_rel}"));
+                    if let Some(s) = &snap
+                        && !s.font_dirs.is_empty()
+                    {
+                        extra_font_key = Some(format!("contest-snap:{id}"));
+                        for dir in &s.font_dirs {
+                            let rel = format!("contests/{id}/snapshot/template/{dir}");
+                            if let Ok(abs) = ws.resolve(&rel)
+                                && abs.is_dir()
+                            {
+                                extra_font_dirs.push(abs);
+                            }
+                        }
+                    }
+                    None
+                } else if has_snap_tpl {
                     book.template_name = snap
                         .as_ref()
                         .map(|s| s.template.clone())
@@ -229,7 +317,7 @@ pub fn document_with(
                         column: 1,
                     })
                 }
-            } else if ws.has_contest_template(id) {
+            } else if template_override.is_none() && ws.has_contest_template(id) {
                 book.template_name = "local".into();
                 book.template_import = Some(format!("/contests/{id}/template.typ"));
                 let mut opts = contest
@@ -253,7 +341,10 @@ pub fn document_with(
                 } else {
                     "workspace.toml".into()
                 };
-                resolve_workspace_template(&mut book, Some(&contest.meta), diag_file)
+                let (pid, err) =
+                    resolve_workspace_template(&mut book, Some(&contest.meta), diag_file);
+                active_plugin_id = pid;
+                err
             };
             let entries: Vec<Entry> = problems
                 .iter()
@@ -266,6 +357,9 @@ pub fn document_with(
                 Kind::Statements => crate::statements(&book, &entries),
                 Kind::Editorial => crate::editorials(&book, &entries),
             };
+            doc.active_plugin_id = active_plugin_id;
+            doc.extra_font_key = extra_font_key;
+            doc.extra_font_dirs = extra_font_dirs;
             if let Some(d) = err {
                 doc.diagnostics.push(d);
             }
@@ -452,6 +546,16 @@ pub fn document_problems(
     problem_ids: &[String],
     opts: &MergedBookOptions,
 ) -> Result<Document, Error> {
+    document_problems_with_engine(ws, None, problem_ids, opts)
+}
+
+/// [`document_problems`] with an optional [`Engine`] for resolving mounted `plugin:` templates.
+pub fn document_problems_with_engine(
+    ws: &Workspace,
+    engine: Option<&Engine>,
+    problem_ids: &[String],
+    opts: &MergedBookOptions,
+) -> Result<Document, Error> {
     let unique_ids = dedup_problem_ids(problem_ids);
     if unique_ids.is_empty() {
         return Err(Error::Invalid {
@@ -495,7 +599,40 @@ pub fn document_problems(
         .or_else(|| ws.default_template())
         .unwrap_or_else(|| "olymp-classic".into());
 
-    let missing_tpl_diag = if check_id(&tpl_name).is_ok() && ws.has_custom_template(&tpl_name) {
+    let mut active_plugin_id: Option<String> = None;
+    let missing_tpl_diag = if let Some((pid, tid)) = parse_plugin_template_ref(&tpl_name) {
+        if let Some((mount, tpl_entry)) = engine.and_then(|e| e.find_plugin_template(pid, tid)) {
+            book.template_name = tpl_name.clone();
+            book.template_import =
+                Some(format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry));
+            let mut merged_opts = ws
+                .workspace_template_options()
+                .remove(&tpl_name)
+                .unwrap_or_default();
+            if let Some(cover) = opts.cover {
+                merged_opts.insert(
+                    "cover".into(),
+                    TemplateOptionValue::String(if cover { "on" } else { "off" }.into()),
+                );
+            }
+            book.template_options = merged_opts;
+            active_plugin_id = Some(mount.plugin_id.clone());
+            None
+        } else {
+            book.template_name = tpl_name.clone();
+            book.template_import = None;
+            Some(crate::Diagnostic {
+                error: true,
+                code: Some(PLUGIN_TEMPLATE_NOT_FOUND.into()),
+                message: format!(
+                    "未找到插件模板「{tpl_name}」（插件 {pid} 未安装、未启用或不包含模板 {tid}）"
+                ),
+                file: "workspace.toml".into(),
+                line: 1,
+                column: 1,
+            })
+        }
+    } else if check_id(&tpl_name).is_ok() && ws.has_custom_template(&tpl_name) {
         book.template_name = tpl_name.clone();
         book.template_import = Some(format!("/templates/{tpl_name}.typ"));
         let mut merged_opts = ws
@@ -550,6 +687,7 @@ pub fn document_problems(
         Kind::Statements => crate::statements(&book, &entries),
         Kind::Editorial => crate::editorials(&book, &entries),
     };
+    doc.active_plugin_id = active_plugin_id;
     if let Some(d) = missing_tpl_diag {
         doc.diagnostics.push(d);
     }
@@ -568,7 +706,7 @@ pub fn compile_merged_pdf_bytes(
     opts: &MergedBookOptions,
 ) -> Result<(Option<Vec<u8>>, Report, String), Error> {
     let unique_ids = dedup_problem_ids(problem_ids);
-    let doc = document_problems(ws, &unique_ids, opts)?;
+    let doc = document_problems_with_engine(ws, Some(engine), &unique_ids, opts)?;
     let title = resolve_merged_title(unique_ids.len(), opts);
 
     engine.reset_files();
@@ -656,10 +794,13 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
             hints: Vec::new(),
         })
         .collect();
-    if diagnostics
-        .iter()
-        .any(|d| d.is_error() && d.code.as_deref() == Some(MISSING_TEMPLATE))
-    {
+    if diagnostics.iter().any(|d| {
+        d.is_error()
+            && matches!(
+                d.code.as_deref(),
+                Some(MISSING_TEMPLATE) | Some(PLUGIN_TEMPLATE_NOT_FOUND)
+            )
+    }) {
         return (
             None,
             Report {
@@ -670,6 +811,15 @@ pub fn compile(engine: &mut Engine, doc: &Document) -> (Option<Compiled>, Report
                 compile_ms: 0,
             },
         );
+    }
+    if let Some(pid) = doc.active_plugin_id.as_deref() {
+        engine.activate_plugin_fonts(Some(pid));
+    } else if let Some(key) = doc.extra_font_key.as_deref()
+        && !doc.extra_font_dirs.is_empty()
+    {
+        engine.activate_extra_font_dirs(key, &doc.extra_font_dirs);
+    } else {
+        engine.activate_plugin_fonts(None);
     }
     engine.set_main(&doc.source);
     let map = |d: &xcpc_engine::Diagnostic| {
@@ -771,6 +921,30 @@ pub fn check(
         unsaved,
         kind == Kind::Editorial,
         false,
+        None,
+    )
+}
+
+/// [`check`] with an optional `--template` override (workspace template ID or `plugin:<pid>/<tid>`).
+pub fn check_with_template(
+    ws: &Workspace,
+    engine: &mut Engine,
+    target: &Target,
+    kind: Kind,
+    language: Option<Language>,
+    unsaved: Option<(&str, &str)>,
+    template_override: Option<&str>,
+) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
+    check_inner(
+        ws,
+        engine,
+        target,
+        kind,
+        language,
+        unsaved,
+        kind == Kind::Editorial,
+        false,
+        template_override,
     )
 }
 
@@ -794,6 +968,7 @@ pub fn check_preview(
         unsaved,
         kind == Kind::Editorial,
         true,
+        None,
     )
 }
 
@@ -807,6 +982,7 @@ fn check_inner(
     unsaved: Option<(&str, &str)>,
     check_editorial: bool,
     skip_package_freshness: bool,
+    template_override: Option<&str>,
 ) -> Result<(Option<Compiled>, Option<Document>, Report), Error> {
     let lint_opts = xcpc_lint::LintOptions {
         language,
@@ -845,7 +1021,15 @@ fn check_inner(
         return Ok((None, None, report));
     }
 
-    let doc = document_with(ws, target, kind, language, unsaved)?;
+    let doc = document_with_engine(
+        ws,
+        Some(engine),
+        target,
+        kind,
+        language,
+        unsaved,
+        template_override,
+    )?;
     // Preserve cached workspace templates & asset bytes during pure in-memory edits
     // (disk/watcher mutations reset via workspace revision or `unsaved.is_none()`).
     if unsaved.is_none() {
@@ -919,6 +1103,7 @@ pub fn freeze_contest(
         None,
         true,
         false,
+        None,
     )?;
 
     let Some(compiled_stmts) = compiled_stmts.filter(|_| report.ok) else {
@@ -949,7 +1134,8 @@ pub fn freeze_contest(
     let problems = ws.contest_problems(&contest)?;
     let has_any_editorial = problems.iter().any(|(_, p)| p.editorial.is_some());
     let editorial_pdf = if has_any_editorial {
-        let ed_doc = document(ws, &target, Kind::Editorial, None)?;
+        let ed_doc =
+            document_with_engine(ws, Some(engine), &target, Kind::Editorial, None, None, None)?;
         engine.reset_files();
         let (compiled_ed, ed_report) = compile(engine, &ed_doc);
         report.compile_ms = report.compile_ms.saturating_add(ed_report.compile_ms);
@@ -982,7 +1168,9 @@ pub fn freeze_contest(
     };
 
     // Build the template archive so frozen snapshots reproduce even if workspace
-    // defaults, templates, assets, or `templates/preamble.typ` later change.
+    // defaults, templates, plugin bundles, assets, or `templates/preamble.typ` later change.
+    let mut plugin_archive_meta: Option<(String, String, String, Vec<String>)> = None;
+    let mut plugin_bundle_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let (eff_template, tpl_import_path, template_bytes, mut merged_opts) =
         if ws.has_contest_template(contest_id) {
             let rel = format!("contests/{contest_id}/template.typ");
@@ -993,7 +1181,7 @@ pub fn freeze_contest(
                 .get("local")
                 .cloned()
                 .unwrap_or_default();
-            ("local".to_owned(), format!("/{rel}"), bytes, opts)
+            ("local".to_owned(), format!("/{rel}"), Some(bytes), opts)
         } else {
             let eff = contest
                 .meta
@@ -1004,8 +1192,6 @@ pub fn freeze_contest(
                 .map(str::to_owned)
                 .or_else(|| ws.default_template())
                 .unwrap_or_else(|| "olymp-classic".into());
-            let rel = format!("templates/{eff}.typ");
-            let bytes = ws.read_bytes(&rel)?;
             let mut opts = ws
                 .workspace_template_options()
                 .remove(&eff)
@@ -1015,7 +1201,25 @@ pub fn freeze_contest(
                     opts.insert(k.clone(), v.clone());
                 }
             }
-            (eff, format!("/{rel}"), bytes, opts)
+            if let Some((pid, tid)) = parse_plugin_template_ref(&eff) {
+                let Some((mount, tpl_entry)) = engine.find_plugin_template(pid, tid) else {
+                    return Err(Error::NotFound(format!("plugin template {eff:?}")));
+                };
+                plugin_bundle_files = collect_plugin_bundle_files(mount)?;
+                let rel_font_dirs = relative_font_dirs(mount);
+                let import_path = format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry);
+                plugin_archive_meta = Some((
+                    mount.plugin_id.clone(),
+                    mount.version.clone(),
+                    tpl_entry.entry.clone(),
+                    rel_font_dirs,
+                ));
+                (eff, import_path, None, opts)
+            } else {
+                let rel = format!("templates/{eff}.typ");
+                let bytes = ws.read_bytes(&rel)?;
+                (eff, format!("/{rel}"), Some(bytes), opts)
+            }
         };
     fold_legacy_contest_options(&contest.meta, &mut merged_opts);
 
@@ -1061,16 +1265,25 @@ pub fn freeze_contest(
     }
 
     let preamble_bytes = ws.load_preamble().map(String::into_bytes);
+    let (plugin_id, plugin_version, entry, font_dirs) = match plugin_archive_meta {
+        Some((pid, ver, ent, fdirs)) => (Some(pid), Some(ver), Some(ent), fdirs),
+        None => (None, None, None, Vec::new()),
+    };
     let archive = SnapshotTemplateArchive {
         meta: SnapshotTemplateMeta {
             template: eff_template,
             has_custom_template: true,
             has_preamble: preamble_bytes.is_some(),
+            plugin_id,
+            plugin_version,
+            entry,
+            font_dirs,
             options: merged_opts,
         },
-        custom_template_bytes: Some(template_bytes),
+        custom_template_bytes: template_bytes,
         preamble_bytes,
         assets: snapshot_assets,
+        plugin_bundle_files,
     };
 
     ws.freeze_commit_with_template(
@@ -1245,6 +1458,7 @@ pub fn inspect_template(ws: &Workspace, engine: &Engine, name: &str) -> Option<T
         path: rel_path,
         name: display_name,
         description,
+        source: TemplateSource::Workspace,
         schema,
     })
 }
@@ -1272,6 +1486,7 @@ pub fn inspect_contest_template(
         path: rel_path,
         name: display_name,
         description,
+        source: TemplateSource::Local,
         schema,
     })
 }
@@ -1296,19 +1511,71 @@ pub fn inspect_trd_template(ws: &Workspace, engine: &Engine, trd_id: &str) -> Op
         path: rel_path,
         name: display_name,
         description,
+        source: TemplateSource::Local,
         schema,
     })
 }
 
-/// Lists all workspace templates (`templates/*.typ`) with their evaluated declarative schemas.
-pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
-    ws.list_templates()
-        .into_iter()
-        .filter_map(|id| inspect_template(ws, engine, &id))
-        .collect()
+/// Inspects a mounted plugin template (`plugin:<plugin_id>/<template_id>`) and returns
+/// its metadata and declarative `#let schema`.
+pub fn inspect_plugin_template(
+    engine: &Engine,
+    plugin_id: &str,
+    template_id: &str,
+) -> Option<TemplateInfo> {
+    let (mount, tpl) = engine.find_plugin_template(plugin_id, template_id)?;
+    let import_path = format!("/plugins/{}/{}", mount.plugin_id, tpl.entry);
+    let schema = engine.inspect_template_schema(&import_path);
+    let kind = tpl.kind.unwrap_or(schema.kind);
+    let display_name = tpl
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| LocalizedText::Plain(s.to_owned()))
+        .or_else(|| schema.name.clone())
+        .unwrap_or_else(|| LocalizedText::Plain(tpl.id.clone()));
+    let description = tpl
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| LocalizedText::Plain(s.to_owned()))
+        .or_else(|| schema.description.clone());
+    Some(TemplateInfo {
+        id: format_plugin_template_ref(&mount.plugin_id, &tpl.id),
+        kind,
+        path: import_path,
+        name: display_name,
+        description,
+        source: TemplateSource::Plugin {
+            plugin_id: mount.plugin_id.clone(),
+            plugin_name: mount.plugin_name.clone(),
+            template_id: tpl.id.clone(),
+        },
+        schema,
+    })
 }
 
-/// Lists workspace templates filtered by [`TemplateKind`] (`Statement` vs `Trd`).
+/// Lists all workspace templates (`templates/*.typ`) and mounted plugin templates
+/// (`plugin:<plugin_id>/<template_id>`) with their evaluated declarative schemas.
+pub fn list_templates(ws: &Workspace, engine: &Engine) -> Vec<TemplateInfo> {
+    let mut out: Vec<TemplateInfo> = ws
+        .list_templates()
+        .into_iter()
+        .filter_map(|id| inspect_template(ws, engine, &id))
+        .collect();
+    for mount in engine.plugin_mounts() {
+        for tpl in &mount.templates {
+            if let Some(info) = inspect_plugin_template(engine, &mount.plugin_id, &tpl.id) {
+                out.push(info);
+            }
+        }
+    }
+    out
+}
+
+/// Lists workspace and plugin templates filtered by [`TemplateKind`] (`Statement` vs `Trd`).
 pub fn list_templates_by_kind(
     ws: &Workspace,
     engine: &Engine,
@@ -1330,6 +1597,142 @@ pub fn fork_template(ws: &Workspace, source_name: &str, new_name: &str) -> Resul
     }
     let bytes = ws.read_bytes(&format!("templates/{source_name}.typ"))?;
     ws.fork_template(new_name, &bytes)
+}
+
+/// Copies a mounted plugin template (`plugin:<plugin_id>/<template_id>`) into the workspace
+/// as a self-contained workspace template (`templates/<target_name>.typ`, plus
+/// `templates/<target_name>/...` when the plugin includes companion modules or assets).
+/// Returns `(target_name, rel_path)`.
+pub fn eject_plugin_template(
+    ws: &Workspace,
+    engine: &Engine,
+    plugin_id: &str,
+    template_id: &str,
+    target_name: Option<&str>,
+) -> Result<(String, String), Error> {
+    let Some((mount, tpl_entry)) = engine.find_plugin_template(plugin_id, template_id) else {
+        return Err(Error::NotFound(format!(
+            "plugin template {:?}",
+            format_plugin_template_ref(plugin_id, template_id)
+        )));
+    };
+    let target = target_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if !ws.has_custom_template(template_id) {
+                template_id.to_owned()
+            } else {
+                format!("{plugin_id}-{template_id}")
+            }
+        });
+    check_id(&target)?;
+
+    let bundle = collect_plugin_bundle_files(mount)?;
+    let entry_norm = tpl_entry.entry.replace('\\', "/");
+    let Some(entry_bytes) = bundle.get(&entry_norm).cloned() else {
+        return Err(Error::NotFound(format!(
+            "plugin template entry {:?}",
+            tpl_entry.entry
+        )));
+    };
+
+    let rel = if bundle.len() <= 1 {
+        ws.eject_template_bundle(&target, &entry_bytes, &BTreeMap::new())?
+    } else {
+        let escaped = format!("{target}/{entry_norm}")
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let wrapper = format!(
+            "// Ejected from plugin:{plugin_id}/{template_id} (v{})\n\
+             #import \"{escaped}\": *\n",
+            mount.version
+        );
+        ws.eject_template_bundle(&target, wrapper.as_bytes(), &bundle)?
+    };
+    Ok((target, rel))
+}
+
+fn collect_plugin_bundle_files(mount: &PluginMount) -> Result<BTreeMap<String, Vec<u8>>, Error> {
+    let canon_root = mount.root.canonicalize().map_err(|e| Error::Io {
+        path: mount.root.display().to_string(),
+        source: e,
+    })?;
+    let mut files = BTreeMap::new();
+    collect_plugin_bundle_rec(&canon_root, &canon_root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_plugin_bundle_rec(
+    dir: &Path,
+    root: &Path,
+    out: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), Error> {
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::Io {
+        path: dir.display().to_string(),
+        source: e,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::Io {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.')
+            || matches!(
+                name_str.as_ref(),
+                "node_modules" | "dist" | "target" | "Thumbs.db"
+            )
+        {
+            continue;
+        }
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path).map_err(|e| Error::Io {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::PathEscape(path.display().to_string()));
+        }
+        if meta.is_dir() {
+            collect_plugin_bundle_rec(&path, root, out)?;
+        } else if meta.is_file() {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|_| Error::PathEscape(path.display().to_string()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if matches!(
+                rel.as_str(),
+                "manifest.toml" | "index.js" | "ui.html" | "ui.js"
+            ) || rel.to_ascii_lowercase().ends_with(".zip")
+            {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|e| Error::Io {
+                path: path.display().to_string(),
+                source: e,
+            })?;
+            out.insert(rel, bytes);
+        }
+    }
+    Ok(())
+}
+
+fn relative_font_dirs(mount: &PluginMount) -> Vec<String> {
+    let Ok(canon_root) = mount.root.canonicalize() else {
+        return Vec::new();
+    };
+    mount
+        .font_dirs
+        .iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .filter_map(|d| d.strip_prefix(&canon_root).ok().map(Path::to_path_buf))
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Maximum UTF-8 byte length for a sanitized PDF filename stem (leaving ample room for
@@ -1478,6 +1881,17 @@ pub fn default_trd_output(ws: &Workspace, trd_id: &str) -> String {
 /// 4. Else if `<name>` is a built-in TRD preset (`trd-compact` / `trd-book`): `/xcpc/<name>.typ`.
 /// 5. Otherwise emits a `MISSING_TEMPLATE` diagnostic.
 pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
+    document_trd_with_engine(ws, None, trd_id, None)
+}
+
+/// [`document_trd`] extended with an optional [`Engine`] (for mounted `plugin:` templates)
+/// and optional `--template` override.
+pub fn document_trd_with_engine(
+    ws: &Workspace,
+    engine: Option<&Engine>,
+    trd_id: &str,
+    template_override: Option<&str>,
+) -> Result<Document, Error> {
     let trd = ws.load_trd(trd_id)?;
     let mut missing_diags: Vec<crate::Diagnostic> = Vec::new();
     let chapters_owned: Vec<(String, Vec<xcpc_domain::SnippetDetail>)> = if trd.meta.frozen {
@@ -1508,6 +1922,10 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
     };
     let lang = infer_trd_language(&trd.meta.name);
     let mut book = TrdBook::from_meta(&trd.meta, lang);
+    let template_override = template_override.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(ov) = template_override {
+        book.template_name = ov.to_owned();
+    }
 
     let ws_template_opts = ws.workspace_template_options();
     let merge_trd_opts = |tpl_name: &str| {
@@ -1522,11 +1940,42 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
     };
 
     let mut missing_tpl_diag: Option<crate::Diagnostic> = None;
-    if trd.meta.frozen {
+    let mut active_plugin_id: Option<String> = None;
+    let mut extra_font_key: Option<String> = None;
+    let mut extra_font_dirs: Vec<PathBuf> = Vec::new();
+    if trd.meta.frozen && template_override.is_none() {
+        let snap = ws.load_trd_snapshot_template(trd_id);
+        let snap_bundle_entry =
+            snap.as_ref()
+                .and_then(|s| s.entry.as_deref())
+                .and_then(|entry_rel| {
+                    let rel = format!("trds/{trd_id}/snapshot/template/{entry_rel}");
+                    ws.resolve(&rel).ok().filter(|p| p.is_file()).map(|_| rel)
+                });
         let snap_tpl_rel = format!("trds/{trd_id}/snapshot/template.typ");
         let has_snap_tpl = ws.resolve(&snap_tpl_rel).is_ok_and(|p| p.is_file());
-        if has_snap_tpl {
-            let snap = ws.load_trd_snapshot_template(trd_id);
+        if let Some(bundle_rel) = snap_bundle_entry {
+            book.template_name = snap
+                .as_ref()
+                .map(|s| s.template.clone())
+                .unwrap_or_else(|| "local".into());
+            book.template_options = snap.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+            book.preamble = ws.load_trd_snapshot_preamble(trd_id);
+            book.template_import = Some(format!("/{bundle_rel}"));
+            if let Some(s) = &snap
+                && !s.font_dirs.is_empty()
+            {
+                extra_font_key = Some(format!("trd-snap:{trd_id}"));
+                for dir in &s.font_dirs {
+                    let rel = format!("trds/{trd_id}/snapshot/template/{dir}");
+                    if let Ok(abs) = ws.resolve(&rel)
+                        && abs.is_dir()
+                    {
+                        extra_font_dirs.push(abs);
+                    }
+                }
+            }
+        } else if has_snap_tpl {
             book.template_name = snap
                 .as_ref()
                 .map(|s| s.template.clone())
@@ -1553,7 +2002,7 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
                 });
             }
         }
-    } else if ws.has_trd_template(trd_id) {
+    } else if template_override.is_none() && ws.has_trd_template(trd_id) {
         book.template_name = "local".into();
         book.template_import = Some(format!("/trds/{trd_id}/template.typ"));
         book.template_options = trd
@@ -1566,7 +2015,27 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
     } else {
         let name = book.template_name.clone();
         book.preamble = ws.load_preamble();
-        if check_id(&name).is_ok() && ws.has_custom_template(&name) {
+        if let Some((pid, tid)) = parse_plugin_template_ref(&name) {
+            if let Some((mount, tpl_entry)) = engine.and_then(|e| e.find_plugin_template(pid, tid))
+            {
+                book.template_import =
+                    Some(format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry));
+                book.template_options = merge_trd_opts(&name);
+                active_plugin_id = Some(mount.plugin_id.clone());
+            } else {
+                book.template_import = None;
+                missing_tpl_diag = Some(crate::Diagnostic {
+                    error: true,
+                    code: Some(PLUGIN_TEMPLATE_NOT_FOUND.into()),
+                    message: format!(
+                        "未找到插件模板「{name}」（插件 {pid} 未安装、未启用或不包含模板 {tid}）"
+                    ),
+                    file: format!("trds/{trd_id}/trd.toml"),
+                    line: 1,
+                    column: 1,
+                });
+            }
+        } else if check_id(&name).is_ok() && ws.has_custom_template(&name) {
             book.template_import = Some(format!("/templates/{name}.typ"));
             book.template_options = merge_trd_opts(&name);
         } else if is_builtin_trd_preset(&name) {
@@ -1596,6 +2065,9 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
         .collect();
 
     let mut doc = crate::render_trd(&book, &chapter_inputs);
+    doc.active_plugin_id = active_plugin_id;
+    doc.extra_font_key = extra_font_key;
+    doc.extra_font_dirs = extra_font_dirs;
     if let Some(d) = missing_tpl_diag {
         doc.diagnostics.push(d);
     }
@@ -1609,6 +2081,17 @@ pub fn document_trd(ws: &Workspace, trd_id: &str) -> Result<Document, Error> {
 /// `snippets/<slug>/notes.md`) in memory without touching disk.
 pub fn document_snippet_preview(
     ws: &Workspace,
+    slug: &str,
+    template: Option<&str>,
+    unsaved: Option<(&str, &str)>,
+) -> Result<Document, Error> {
+    document_snippet_preview_with_engine(ws, None, slug, template, unsaved)
+}
+
+/// [`document_snippet_preview`] with an optional [`Engine`] for mounted `plugin:` templates.
+pub fn document_snippet_preview_with_engine(
+    ws: &Workspace,
+    engine: Option<&Engine>,
     slug: &str,
     template: Option<&str>,
     unsaved: Option<(&str, &str)>,
@@ -1658,6 +2141,7 @@ pub fn document_snippet_preview(
         .and_then(|id| ws.load_trd(id).ok());
 
     let mut missing_tpl_diag = None;
+    let mut active_plugin_id: Option<String> = None;
     if let Some(trd) = trd_ref {
         if !trd.meta.frozen && ws.has_trd_template(&trd.id) {
             book.template_name = "local".into();
@@ -1684,7 +2168,27 @@ pub fn document_snippet_preview(
                 }
             }
             book.template_options = merged;
-            if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
+            if let Some((pid, tid)) = parse_plugin_template_ref(tpl_name) {
+                if let Some((mount, tpl_entry)) =
+                    engine.and_then(|e| e.find_plugin_template(pid, tid))
+                {
+                    book.template_import =
+                        Some(format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry));
+                    active_plugin_id = Some(mount.plugin_id.clone());
+                } else {
+                    book.template_import = None;
+                    missing_tpl_diag = Some(crate::Diagnostic {
+                        error: true,
+                        code: Some(PLUGIN_TEMPLATE_NOT_FOUND.into()),
+                        message: format!(
+                            "未找到插件模板「{tpl_name}」（插件 {pid} 未安装、未启用或不包含模板 {tid}）"
+                        ),
+                        file: format!("trds/{}/trd.toml", trd.id),
+                        line: 1,
+                        column: 1,
+                    });
+                }
+            } else if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
                 book.template_import = Some(format!("/templates/{tpl_name}.typ"));
             } else if is_builtin_trd_preset(tpl_name) {
                 book.template_import = Some(format!("/xcpc/{tpl_name}.typ"));
@@ -1697,7 +2201,26 @@ pub fn document_snippet_preview(
             .unwrap_or("trd-compact");
         book.template_name = tpl_name.to_owned();
         book.template_options = ws_template_opts.get(tpl_name).cloned().unwrap_or_default();
-        if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
+        if let Some((pid, tid)) = parse_plugin_template_ref(tpl_name) {
+            if let Some((mount, tpl_entry)) = engine.and_then(|e| e.find_plugin_template(pid, tid))
+            {
+                book.template_import =
+                    Some(format!("/plugins/{}/{}", mount.plugin_id, tpl_entry.entry));
+                active_plugin_id = Some(mount.plugin_id.clone());
+            } else {
+                book.template_import = None;
+                missing_tpl_diag = Some(crate::Diagnostic {
+                    error: true,
+                    code: Some(PLUGIN_TEMPLATE_NOT_FOUND.into()),
+                    message: format!(
+                        "未找到插件模板「{tpl_name}」（插件 {pid} 未安装、未启用或不包含模板 {tid}）"
+                    ),
+                    file: "workspace.toml".into(),
+                    line: 1,
+                    column: 1,
+                });
+            }
+        } else if check_id(tpl_name).is_ok() && ws.has_custom_template(tpl_name) {
             book.template_import = Some(format!("/templates/{tpl_name}.typ"));
         } else if is_builtin_trd_preset(tpl_name) {
             book.template_import = Some(format!("/xcpc/{tpl_name}.typ"));
@@ -1721,6 +2244,7 @@ pub fn document_snippet_preview(
         items: vec![&snippet],
     }];
     let mut doc = crate::render_trd(&book, &chapters);
+    doc.active_plugin_id = active_plugin_id;
     if let Some(d) = missing_tpl_diag {
         doc.diagnostics.push(d);
     }
@@ -1733,7 +2257,7 @@ pub fn compile_trd(
     engine: &mut Engine,
     trd_id: &str,
 ) -> Result<(Option<Compiled>, Document, Report), Error> {
-    let doc = document_trd(ws, trd_id)?;
+    let doc = document_trd_with_engine(ws, Some(engine), trd_id, None)?;
     engine.reset_files();
     let (compiled, report) = compile(engine, &doc);
     Ok((compiled, doc, report))
@@ -1857,7 +2381,7 @@ pub fn compile_snippet_preview(
     template: Option<&str>,
     unsaved: Option<(&str, &str)>,
 ) -> Result<(Option<Compiled>, Document, Report), Error> {
-    let doc = document_snippet_preview(ws, slug, template, unsaved)?;
+    let doc = document_snippet_preview_with_engine(ws, Some(engine), slug, template, unsaved)?;
     if unsaved.is_none() {
         engine.reset_files();
     }
@@ -1934,7 +2458,9 @@ pub fn freeze_trd_with_pdf(
         return Ok((None, report));
     };
 
-    // Build template archive so frozen snapshots reproduce even if workspace templates change.
+    // Build template archive so frozen snapshots reproduce even if workspace/plugin templates change.
+    let mut plugin_archive_meta: Option<(String, String, String, Vec<String>)> = None;
+    let mut plugin_bundle_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let (eff_template, template_bytes, merged_opts) = if ws.has_trd_template(trd_id) {
         let rel = format!("trds/{trd_id}/template.typ");
         let bytes = ws.read_bytes(&rel)?;
@@ -1944,7 +2470,7 @@ pub fn freeze_trd_with_pdf(
             .get("local")
             .cloned()
             .unwrap_or_default();
-        ("local".to_owned(), bytes, opts)
+        ("local".to_owned(), Some(bytes), opts)
     } else {
         let eff = trd
             .meta
@@ -1954,13 +2480,6 @@ pub fn freeze_trd_with_pdf(
             .filter(|s| !s.is_empty())
             .unwrap_or("trd-compact")
             .to_owned();
-        let bytes = if ws.has_custom_template(&eff) {
-            ws.read_bytes(&format!("templates/{eff}.typ"))?
-        } else if let Some(src) = xcpc_engine::preset_source(&eff) {
-            src.as_bytes().to_vec()
-        } else {
-            return Err(Error::NotFound(format!("template {eff:?}")));
-        };
         let mut opts = ws
             .workspace_template_options()
             .remove(&eff)
@@ -1970,20 +2489,51 @@ pub fn freeze_trd_with_pdf(
                 opts.insert(k.clone(), v.clone());
             }
         }
-        (eff, bytes, opts)
+        if let Some((pid, tid)) = parse_plugin_template_ref(&eff) {
+            let Some((mount, tpl_entry)) = engine.find_plugin_template(pid, tid) else {
+                return Err(Error::NotFound(format!("plugin template {eff:?}")));
+            };
+            plugin_bundle_files = collect_plugin_bundle_files(mount)?;
+            let rel_font_dirs = relative_font_dirs(mount);
+            plugin_archive_meta = Some((
+                mount.plugin_id.clone(),
+                mount.version.clone(),
+                tpl_entry.entry.clone(),
+                rel_font_dirs,
+            ));
+            (eff, None, opts)
+        } else {
+            let bytes = if ws.has_custom_template(&eff) {
+                ws.read_bytes(&format!("templates/{eff}.typ"))?
+            } else if let Some(src) = xcpc_engine::preset_source(&eff) {
+                src.as_bytes().to_vec()
+            } else {
+                return Err(Error::NotFound(format!("template {eff:?}")));
+            };
+            (eff, Some(bytes), opts)
+        }
     };
 
     let preamble_bytes = ws.load_preamble().map(String::into_bytes);
+    let (plugin_id, plugin_version, entry, font_dirs) = match plugin_archive_meta {
+        Some((pid, ver, ent, fdirs)) => (Some(pid), Some(ver), Some(ent), fdirs),
+        None => (None, None, None, Vec::new()),
+    };
     let archive = SnapshotTemplateArchive {
         meta: SnapshotTemplateMeta {
             template: eff_template,
             has_custom_template: true,
             has_preamble: preamble_bytes.is_some(),
+            plugin_id,
+            plugin_version,
+            entry,
+            font_dirs,
             options: merged_opts,
         },
-        custom_template_bytes: Some(template_bytes),
+        custom_template_bytes: template_bytes,
         preamble_bytes,
         assets: BTreeMap::new(),
+        plugin_bundle_files,
     };
 
     let result = ws.freeze_trd(

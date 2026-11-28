@@ -13,7 +13,8 @@ XCPC Workstation 的所有插件安全边界均在 Rust Core（`xcpc-plugin`）�
 任何来自外部来源（本地目录、`.zip` 归档、订阅仓库、CLI 或 `xcpc plugin link` 开发链接）安装的插件，只要在 `manifest.toml` 中声明了以下任一敏感权限，安装后一律进入 `pending_trust = true` 状态：
 
 - `[permissions].domains` 非空（外网请求域名白名单，**禁止**通配符 `"*"`）
-- `[permissions].workspace_read = true`（只读访问当前工作区的题目与比赛元数据）
+- `[permissions].workspace_read = true`（只读访问当前工作区的题目、比赛、算法模板与团队参考手册（TRD）投影，不暴露宿主机绝对路径）
+- `[permissions].workspace_write = true`（受控领域级写入：仅允许 `createProblem`、`updateProblem`、`setSamples` 与 `upsertSnippet`，禁止删除与比赛解冻，严格遵守 `--read-only`、原子写入与冻结保护）
 - `[[credentials]]` 非空（通过系统 `keyring` 读取托管凭据）
 
 在用户显式放行之前，Core 会拒绝该插件的所有调用并返回错误码 `PLUGIN_UNTRUSTED`。放行方式有两种：
@@ -28,7 +29,7 @@ XCPC Workstation 的所有插件安全边界均在 Rust Core（`xcpc-plugin`）�
 
 Core 会持久化记录每个已安装插件的来源仓库（`source_repo`）与已授权权限快照。升级或重新安装时，只要出现以下任一情况，信任状态都会自动重置为 `pending_trust = true`，需要用户重新确认：
 
-- 新版本请求的权限范围扩大（新增域名、新增凭据或新开启 `workspace_read`）；
+- 新版本请求的权限范围扩大（新增域名、新增凭据或新开启 `workspace_read` / `workspace_write`）；
 - 来自不同仓库源的跨仓库覆写。
 
 ---
@@ -48,7 +49,8 @@ Core 会持久化记录每个已安装插件的来源仓库（`source_repo`）�
 - **托管能力边界**：
   - 凭据通过系统 `keyring` 按插件 ID 隔离托管，插件仅可按 key 读取自身作用域的凭据，无法访问或枚举其他插件的凭据；
   - 持久化状态通过插件独立作用域的 `host.kv` 存储，不同插件间完全隔离；
-  - 工作区访问严格只读（且需声明并信任 `workspace_read = true`），不可修改工作区文件。
+  - 工作区访问受双层权限严格约束：`workspace_read = true` 仅开放只读领域投影，`workspace_write = true` 仅开放新增/更新题目、样例与算法模板（禁止删除文件、禁止解冻比赛，且遵守 `--read-only`）；
+  - 纯内存 Typst / LaTeX 数学渲染（`renderTypst` / `renderMath`）运行于无磁盘权限的独立内存世界（源码上限 `64 KiB`、超时 `2000ms`、像素上限 `4096×4096`）；内存 ZIP 归档（`host.archive.*`）强制校验 Zip Slip、拒绝软链并实施 `20 MiB` 输入 / `50 MiB` 解压 / `1000` 条目防炸弹护栏。
 
 ---
 

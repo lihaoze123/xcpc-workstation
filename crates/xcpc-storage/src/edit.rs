@@ -12,7 +12,8 @@ use xcpc_domain::{
     ContestMeta, ContestMetaPatch, DeleteGroupReport, DiffKind, GroupSummary, LimitsPatch,
     MAX_CONTEST_PROBLEMS, OverridePatch, Patch, Problem, ProblemMeta, ProblemMetaPatch,
     ProblemSource, RenameGroupReport, Source, TemplateOptionValue, TemplateOptionsMap,
-    TemplateOptionsPatch, UnfreezeProblemDiff, check_id, label_for_index, normalize_group_name,
+    TemplateOptionsPatch, UnfreezeProblemDiff, check_id, check_template_ref, label_for_index,
+    normalize_group_name,
 };
 
 use crate::{
@@ -100,7 +101,7 @@ impl Workspace {
                 if trimmed.is_empty() {
                     root.remove("template");
                 } else {
-                    check_id(trimmed)?;
+                    check_template_ref(trimmed)?;
                     set_scalar(root, "template", Value::from(trimmed));
                 }
             }
@@ -1481,6 +1482,18 @@ impl Workspace {
                             .map_err(|e| io(&snapshot_rel, e))?;
                     }
                 }
+                if !archive.plugin_bundle_files.is_empty() {
+                    let tpl_dir = stage_dir.join("template");
+                    fs::create_dir_all(&tpl_dir).map_err(|e| io(&snapshot_rel, e))?;
+                    for (rel_file, bytes) in &archive.plugin_bundle_files {
+                        validate_bundle_rel_path(rel_file)?;
+                        let target = tpl_dir.join(rel_file);
+                        if let Some(parent) = target.parent() {
+                            fs::create_dir_all(parent).map_err(|e| io(&snapshot_rel, e))?;
+                        }
+                        write_atomic(&target, bytes).map_err(|e| io(&snapshot_rel, e))?;
+                    }
+                }
             }
             Ok(())
         })();
@@ -2063,13 +2076,38 @@ fn apply_contest_meta_patch(root: &mut dyn TableLike, patch: &ContestMetaPatch) 
     }
     match &patch.template {
         Patch::Keep => {}
-        Patch::Set(t) => set_scalar(root, "template", Value::from(t.as_str())),
+        Patch::Set(t) => {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
+                root.remove("template");
+            } else {
+                check_template_ref(trimmed)?;
+                set_scalar(root, "template", Value::from(trimmed));
+            }
+        }
         Patch::Clear => {
             root.remove("template");
         }
     }
     if !patch.template_options.is_empty() {
         apply_template_options_patch(root, "template-options", &patch.template_options, None)?;
+    }
+    Ok(())
+}
+
+fn validate_bundle_rel_path(rel: &str) -> Result<()> {
+    if rel.trim().is_empty() || rel.starts_with('/') || rel.contains('\\') {
+        return Err(Error::PathEscape(rel.to_owned()));
+    }
+    for comp in std::path::Path::new(rel).components() {
+        if matches!(
+            comp,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        ) {
+            return Err(Error::PathEscape(rel.to_owned()));
+        }
     }
     Ok(())
 }
@@ -2097,7 +2135,7 @@ fn apply_template_options_patch(
     base_values: Option<&TemplateOptionsMap>,
 ) -> Result<()> {
     for (tpl, fields) in patches {
-        check_id(tpl)?;
+        check_template_ref(tpl)?;
         let has_set = fields.values().any(|p| matches!(p, Patch::Set(_)));
         if parent.get(section_key).is_none() {
             if !has_set {

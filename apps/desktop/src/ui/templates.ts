@@ -48,12 +48,31 @@ export interface TemplateSchema {
   fields: TemplateField[];
 }
 
+export type TemplateSource =
+  | { kind: "workspace" }
+  | { kind: "local" }
+  | { kind: "plugin"; plugin_id: string; plugin_name: string; template_id: string };
+
 export interface TemplateInfo {
   id: string;
   path: string;
   name: LocalizedText;
   description?: LocalizedText;
+  source?: TemplateSource;
   schema: TemplateSchema;
+}
+
+/** Parses `"plugin:<pluginId>/<templateId>"` into its components, or returns `null`. */
+export function parsePluginTemplateRef(id: string): { pluginId: string; templateId: string } | null {
+  const trimmed = id.trim();
+  if (!trimmed.startsWith("plugin:")) return null;
+  const rest = trimmed.slice("plugin:".length);
+  const slash = rest.indexOf("/");
+  if (slash <= 0 || slash !== rest.lastIndexOf("/") || slash >= rest.length - 1) return null;
+  return {
+    pluginId: rest.slice(0, slash),
+    templateId: rest.slice(slash + 1),
+  };
 }
 
 export interface PresetInfo {

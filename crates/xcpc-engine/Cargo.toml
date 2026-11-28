@@ -15,6 +15,7 @@ serde_json.workspace = true
 typst.workspace = true
 typst-layout.workspace = true
 typst-render.workspace = true
+typst-svg.workspace = true
 tiny-skia.workspace = true
 typst-pdf.workspace = true
 siphasher.workspace = true

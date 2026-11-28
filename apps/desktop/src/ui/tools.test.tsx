@@ -118,6 +118,19 @@ describe("Phase 4C/4D Pure Tools space & WebView Plugin Bridge", () => {
     // S4: clipboard.readText, clipboard.readImage, and openExternal are not exposed to untrusted plugins.
     expect(injected).toContain("clipboard.writeImage");
     expect(injected).toContain("oj.listAccounts");
+    // Phase 7B/7C bridge surfaces: workspace read/write, renderTypst/renderMath, files.saveBinary/pickFiles.
+    expect(injected).toContain("workspace.listSnippets");
+    expect(injected).toContain("workspace.getTrd");
+    expect(injected).toContain("workspace.createProblem");
+    expect(injected).toContain("workspace.updateProblem");
+    expect(injected).toContain("workspace.setSamples");
+    expect(injected).toContain("workspace.upsertSnippet");
+    expect(injected).toContain("render.renderTypst");
+    expect(injected).toContain("render.renderMath");
+    expect(injected).toContain("files.saveBinary");
+    expect(injected).toContain("files.pickFiles");
+    expect(injected).not.toContain("deleteProblem");
+    expect(injected).not.toContain("deleteSnippet");
     expect(injected).not.toContain("clipboard.readText");
     expect(injected).not.toContain("clipboard.readImage");
     expect(injected).not.toContain("openExternal");

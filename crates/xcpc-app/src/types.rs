@@ -1691,6 +1691,7 @@ pub struct PluginSummaryJs {
     pub capabilities: Vec<String>,
     pub domains: Vec<String>,
     pub workspace_read: bool,
+    pub workspace_write: bool,
     pub has_ui: bool,
     pub is_linked: bool,
     pub link_target: Option<String>,
@@ -1740,6 +1741,7 @@ pub struct InstallPluginResultJs {
 pub struct RepoPluginPermissionJs {
     pub domains: Vec<String>,
     pub workspace_read: bool,
+    pub workspace_write: bool,
 }
 
 /// One installable plugin entry from a decentralized `index.json` catalog.
@@ -1902,6 +1904,7 @@ pub struct PluginUiHtmlJs {
     pub html: Option<String>,
     pub plugin_id: Option<String>,
     pub workspace_read: Option<bool>,
+    pub workspace_write: Option<bool>,
     pub error: Option<String>,
     pub error_code: Option<String>,
 }
@@ -1949,5 +1952,22 @@ pub struct PluginPickFileResultJs {
     pub name: Option<String>,
     pub text: Option<String>,
     pub content_base64: Option<String>,
+    pub error: Option<String>,
+}
+
+/// One picked local file returned by `pluginPickFilesDialog`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginPickedFileJs {
+    pub name: String,
+    pub text: Option<String>,
+    pub content_base64: String,
+}
+
+/// Result of picking and reading one or more local files via `pluginPickFilesDialog`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginPickFilesResultJs {
+    pub ok: bool,
+    pub cancelled: bool,
+    pub files: Vec<PluginPickedFileJs>,
     pub error: Option<String>,
 }

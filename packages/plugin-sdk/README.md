@@ -14,10 +14,10 @@ If you scaffold a project with `xcpc plugin init <dir> --vite`, this dependency 
 
 | Subpath | Purpose |
 | :--- | :--- |
-| `@xcpc-workstation/plugin-sdk/host` | QuickJS sandbox `host` global types and plugin module contracts (`OjSourcePlugin`, `ToolPlugin`, `CommandPlugin`, `ImporterPlugin`, `ExporterPlugin`, etc.). |
-| `@xcpc-workstation/plugin-sdk/ui` | Typed `window.xcpc` WebView capability bridge (`XcpcBridge`) and `getXcpc()` helper. |
+| `@xcpc-workstation/plugin-sdk/host` | QuickJS sandbox `host` global types (`http`, `credentials`, `html`, `kv`, unified `workspace` read/write, `render.{svgToPng,svgToRgba,renderTypst,renderMath}`, `archive.{listZip,readZip,createZip}`, `crypto.sha256`, `highlight`) and plugin module contracts (`OjSourcePlugin`, `ToolPlugin`, `CommandPlugin`, `ImporterPlugin`, `ExporterPlugin`). |
+| `@xcpc-workstation/plugin-sdk/ui` | Typed `window.xcpc` WebView capability bridge (`XcpcBridge`, including `workspace` read/write, `render.{renderTypst,renderMath}`, `files.{saveBinary,pickFiles}`) and `getXcpc()` helper. |
 | `@xcpc-workstation/plugin-sdk/vite` | Zero-config `xcpcPlugin(options?)` Vite plugin: bundles WebView UI into a single self-contained IIFE `dist/ui.html`, compiles `src/index.ts` to `dist/index.js` with QuickJS sandbox guardrails, and copies `manifest.toml`. |
-| `@xcpc-workstation/plugin-sdk/manifest.schema.json` | JSON Schema for `manifest.toml` editor validation and completion. |
+| `@xcpc-workstation/plugin-sdk/manifest.schema.json` | JSON Schema for `manifest.toml` editor validation and completion (including `template` plugins, `[[templates]]`, `font_dirs`, and `permissions.workspace_write`). |
 
 ## Minimal Vite Configuration
 

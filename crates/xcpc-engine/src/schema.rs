@@ -103,6 +103,60 @@ pub(crate) fn inspect(engine: &Engine, import_path: &str) -> TemplateSchema {
     }
 }
 
+/// Validates that `import_path` compiles cleanly as a Typst template module, exports a
+/// callable `render` function, and returns its parsed `#let schema` (if any).
+pub(crate) fn validate_module(
+    engine: &Engine,
+    import_path: &str,
+) -> Result<TemplateSchema, Vec<crate::Diagnostic>> {
+    let escaped = import_path.replace('\\', "\\\\").replace('"', "\\\"");
+    let src = format!(
+        "#import \"{escaped}\" as __tpl\n\
+         #let __dict = dictionary(__tpl)\n\
+         #let __has_render = \"render\" in __dict and type(__tpl.render) == function\n\
+         #let __s = if \"schema\" in __dict {{ __tpl.schema }} else {{ none }}\n\
+         #metadata((has_render: __has_render, schema: __s)) <xcpc-schema-check>\n"
+    );
+    let world = SchemaWorld {
+        engine,
+        main: Source::new(project_id(SCHEMA_MAIN_PATH), src),
+    };
+    let warned = typst::compile::<PagedDocument>(&world);
+    let doc = warned.output.map_err(|errs| engine.diagnostics(&errs))?;
+    let Some(label) = Label::new(PicoStr::intern("xcpc-schema-check")) else {
+        return Ok(TemplateSchema::default());
+    };
+    let introspector = doc.introspector();
+    let Some(elem) = introspector
+        .query(&Selector::Label(label))
+        .into_iter()
+        .next()
+    else {
+        return Ok(TemplateSchema::default());
+    };
+    let Ok(Value::Dict(dict)) = elem.get_by_name("value") else {
+        return Ok(TemplateSchema::default());
+    };
+    let has_render = matches!(dict.get("has_render"), Ok(Value::Bool(true)));
+    if !has_render {
+        return Err(vec![crate::Diagnostic {
+            error: true,
+            message: format!("template '{import_path}' must export `#let render(doc) = ...`"),
+            file: Some(import_path.to_owned()),
+            line: Some(1),
+            column: Some(1),
+            offset: Some(0),
+            page: None,
+            hints: Vec::new(),
+        }]);
+    }
+    let schema = match dict.get("schema") {
+        Ok(Value::Dict(s)) => parse_schema(s),
+        _ => TemplateSchema::default(),
+    };
+    Ok(schema)
+}
+
 fn parse_schema(dict: &Dict) -> TemplateSchema {
     let kind = match get_str(dict, "kind").as_deref() {
         Some("trd") => TemplateKind::Trd,

@@ -49,12 +49,15 @@ fn minimal_manifest(id: &str, domains: &[&str], workspace_read: bool) -> PluginM
         permissions: PluginPermissions {
             domains: domains.iter().map(|s| s.to_string()).collect(),
             workspace_read,
+            workspace_write: false,
         },
         credentials: Vec::new(),
         tools: Vec::new(),
         commands: Vec::new(),
         importers: Vec::new(),
         exporters: Vec::new(),
+        templates: Vec::new(),
+        font_dirs: Vec::new(),
     }
 }
 
@@ -81,6 +84,11 @@ impl WorkspaceReader for MockWorkspace {
                 title: p.title.clone(),
                 tags: p.tags.clone(),
                 difficulty: p.difficulty.clone(),
+                rating: p.rating,
+                time_limit: p.time_limit.clone(),
+                memory_limit: p.memory_limit.clone(),
+                sample_count: p.samples.len(),
+                has_editorial: p.editorial_md.is_some(),
             })
             .collect())
     }
@@ -193,6 +201,7 @@ fn sandbox_enforces_timeout() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits {
             timeout: Duration::from_millis(80),
             memory_limit_bytes: 16 * 1024 * 1024,
@@ -219,6 +228,7 @@ fn sandbox_enforces_memory_limit() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits {
             timeout: Duration::from_secs(5),
             memory_limit_bytes: 2 * 1024 * 1024,
@@ -258,6 +268,7 @@ fn sandbox_domain_whitelist_blocks_unauthorized_host_and_protects_credentials() 
         credentials: creds.clone(),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
 
@@ -309,6 +320,11 @@ fn sandbox_workspace_read_gating() {
             title: "A+B Again?".into(),
             tags: vec!["math".into()],
             difficulty: Some("800".into()),
+            rating: Some(800),
+            time_limit: None,
+            memory_limit: None,
+            source: Vec::new(),
+            samples: Vec::new(),
             statement_md: Some("Compute sum of digits.".into()),
             editorial_md: None,
         }],
@@ -330,6 +346,7 @@ fn sandbox_workspace_read_gating() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: Some(ws.clone()),
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let err = PluginRuntime::call_function(src, "readAll", &[], &denied_ctx).unwrap_err();
@@ -346,6 +363,7 @@ fn sandbox_workspace_read_gating() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: Some(ws),
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let ok = PluginRuntime::call_function(src, "readAll", &[], &allowed_ctx).unwrap();
@@ -363,6 +381,7 @@ fn host_kv_render_html_log_and_async_promise() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: kv.clone(),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
 
@@ -520,6 +539,7 @@ fn builtin_codeforces_end_to_end() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -680,6 +700,7 @@ fn builtin_atcoder_end_to_end() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -737,6 +758,7 @@ fn lightweight_oj_plugin_sync_summary() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let src = r#"
@@ -967,6 +989,7 @@ fn render_svg_to_rgba_and_highlight_code_primitives() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let src = r##"
@@ -1535,6 +1558,7 @@ fn atcoder_pagination_boundary_dedup_verify_503_and_contest_time_guard() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client = OjPluginClient::new(&loaded.entry_source, &host_ctx);
@@ -1606,6 +1630,7 @@ fn codeforces_testing_cursor_guard_and_mid_pagination_retry() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client1 = OjPluginClient::new(&loaded.entry_source, &ctx1);
@@ -1653,6 +1678,7 @@ fn codeforces_testing_cursor_guard_and_mid_pagination_retry() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let client2 = OjPluginClient::new(&loaded.entry_source, &ctx2);
@@ -1694,6 +1720,7 @@ fn security_redirect_whitelist_kv_traversal_repo_id_and_unpremultiplied_png() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let src = r#"
@@ -1736,6 +1763,7 @@ fn security_redirect_whitelist_kv_traversal_repo_id_and_unpremultiplied_png() {
         credentials: creds,
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let src2 = r#"
@@ -1966,6 +1994,7 @@ capabilities = ["tool"]
         credentials: Arc::new(MemoryCredentialStore::default()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let err = PluginRuntime::call_function(source, "runTool", &[], &host_ctx).unwrap_err();
@@ -2607,6 +2636,7 @@ fn http_fetch_base64_response_type() {
         credentials: Arc::new(MemoryCredentialStore::new()),
         kv: Arc::new(KvStore::in_memory()),
         workspace: None,
+        workspace_writer: None,
         limits: SandboxLimits::default(),
     };
     let src = r#"
@@ -2624,4 +2654,456 @@ fn http_fetch_base64_response_type() {
     assert_eq!(res.value["status"], 200);
     assert_eq!(res.value["b64"], "iVBORw0KGgo=");
     assert_eq!(res.value["ct"], "image/png");
+}
+
+#[test]
+fn phase7a_template_plugin_scaffold_check_pack_install_and_mounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let plugin_src = dir.path().join("icpc-asia-pack");
+    crate::init_plugin_scaffold(&plugin_src, crate::ScaffoldKind::Template).unwrap();
+
+    // Pure template plugin does not have index.js and does not trigger pending_trust.
+    assert!(!plugin_src.join("index.js").exists());
+    assert!(plugin_src.join("templates/sample.typ").is_file());
+    assert!(plugin_src.join("assets/badge.svg").is_file());
+
+    let manifest = PluginManifest::from_file(&plugin_src.join("manifest.toml")).unwrap();
+    assert!(!manifest.requires_script_entry());
+    assert!(!manifest.requires_trust());
+    assert_eq!(manifest.templates.len(), 1);
+    assert_eq!(manifest.templates[0].id, "sample");
+
+    // `check_plugin_dir` validates Typst compilation, #let render, and #let schema.
+    let report = crate::check_plugin_dir(&plugin_src);
+    assert!(report.ok, "check failed: {:?}", report.issues);
+
+    // `pack_plugin_dir` bundles manifest, template, and assets into a clean zip.
+    let zip_out = dir.path().join("icpc-asia-pack.zip");
+    let pack = crate::pack_plugin_dir(&plugin_src, Some(&zip_out)).unwrap();
+    assert!(pack.files.iter().any(|f| f == "manifest.toml"));
+    assert!(pack.files.iter().any(|f| f == "templates/sample.typ"));
+    assert!(pack.files.iter().any(|f| f == "assets/badge.svg"));
+
+    // Install from zip into PluginManager and verify mount discovery (no pending_trust).
+    let data_dir = dir.path().join("data");
+    let pm = PluginManager::new(&data_dir);
+    let installed = pm.install_from_zip(&zip_out).unwrap();
+    assert!(!installed.pending_trust);
+    assert!(installed.enabled);
+
+    let mounts = pm.list_plugin_template_mounts();
+    assert_eq!(mounts.len(), 1);
+    assert_eq!(mounts[0].plugin_id, "icpc-asia-pack");
+    assert_eq!(mounts[0].templates.len(), 1);
+    assert_eq!(mounts[0].templates[0].id, "sample");
+
+    // Disabling the plugin removes it from active mounts.
+    pm.set_enabled("icpc-asia-pack", false).unwrap();
+    assert!(pm.list_plugin_template_mounts().is_empty());
+}
+
+#[test]
+fn phase7a_template_plugin_rejects_bad_manifest_and_missing_render() {
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("bad-tpl");
+    std::fs::create_dir_all(bad.join("templates")).unwrap();
+    std::fs::write(
+        bad.join("manifest.toml"),
+        r#"
+id = "bad-tpl"
+name = "Bad"
+version = "0.1.0"
+capabilities = ["template"]
+
+[[templates]]
+id = "broken"
+entry = "templates/broken.typ"
+"#,
+    )
+    .unwrap();
+    std::fs::write(bad.join("templates/broken.typ"), "#let x = 1\n").unwrap();
+
+    let report = crate::check_plugin_dir(&bad);
+    assert!(!report.ok);
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.code == "TEMPLATE_COMPILE_ERROR")
+    );
+}
+
+#[test]
+fn phase7b_workspace_read_write_permissions_and_guardrails() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = xcpc_storage::init_workspace(dir.path()).unwrap();
+    ws.create_problem("alpha", "Alpha Problem").unwrap();
+    // Inject an unknown custom TOML field to verify `updateProblem` preserves it.
+    let toml_path = dir.path().join("problems/alpha/problem.toml");
+    let orig_toml = std::fs::read_to_string(&toml_path).unwrap();
+    std::fs::write(
+        &toml_path,
+        format!("{orig_toml}\ncustom_note = \"keep-me\"\n"),
+    )
+    .unwrap();
+    ws.write(
+        "contests/c1/contest.toml",
+        b"name = \"Contest One\"\n[[problem]]\nlabel = \"A\"\nid = \"alpha\"\n",
+    )
+    .unwrap();
+    ws.create_snippet(
+        "dsu",
+        &xcpc_domain::SnippetMeta {
+            title: "Disjoint Set Union".into(),
+            tags: vec!["ds".into()],
+            ..Default::default()
+        },
+        Some("struct DSU {};\n"),
+        Some("Path compression."),
+    )
+    .unwrap();
+    ws.write(
+        "trds/main-trd/trd.toml",
+        b"name = \"Team Reference\"\n[[section]]\ntitle = \"DS\"\nsnippets = [\"dsu\"]\n",
+    )
+    .unwrap();
+
+    let bridge = Arc::new(crate::StorageWorkspaceBridge::new(ws.clone()));
+
+    let mut manifest = minimal_manifest("ws-rw", &[], true);
+    manifest.permissions.workspace_write = true;
+    let ctx_rw = HostContext {
+        manifest: manifest.clone(),
+        http_client: Arc::new(MockHttpClient::new(|_| ok_json("{}"))),
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: Some(Arc::clone(&bridge) as Arc<dyn WorkspaceReader>),
+        workspace_writer: Some(Arc::clone(&bridge) as Arc<dyn crate::WorkspaceWriter>),
+        limits: SandboxLimits::default(),
+    };
+
+    let src = r###"
+        module.exports = {
+            readAll() {
+                const problems = host.workspace.listProblems();
+                const prob = host.workspace.getProblem("alpha");
+                const contests = host.workspace.listContests();
+                const contest = host.workspace.getContest("c1");
+                const snippets = host.workspace.listSnippets();
+                const snippet = host.workspace.getSnippet("dsu");
+                const trds = host.workspace.listTrds();
+                const trd = host.workspace.getTrd("main-trd");
+                return {
+                    problems,
+                    prob,
+                    contests,
+                    contest,
+                    snippets,
+                    snippet,
+                    trds,
+                    trd,
+                    hasDeleteProblem: typeof host.workspace.deleteProblem !== "undefined",
+                    hasDeleteSnippet: typeof host.workspace.deleteSnippet !== "undefined",
+                    hasUnfreeze: typeof host.workspace.unfreezeContest !== "undefined",
+                };
+            },
+            writeFlow() {
+                const created = host.workspace.createProblem({
+                    id: "beta",
+                    title: "Beta Sum",
+                    tags: ["math", "dp"],
+                    rating: 1600,
+                    timeLimit: "2s",
+                    memoryLimit: "512 MiB",
+                    statementMd: "## 题目描述\n\nCompute $a + b$.\n",
+                    editorialMd: "Add them.\n",
+                    samples: [{ input: "1 2\n", output: "3\n" }],
+                });
+                const updated = host.workspace.updateProblem("alpha", {
+                    title: "Alpha Renamed",
+                    tags: ["graph"],
+                    rating: 1900,
+                    timeLimit: "1.5s",
+                });
+                const sampleRes = host.workspace.setSamples("beta", [
+                    { input: "1 2\n", output: "3\n" },
+                    { input: "10 20\n", output: "30\n" },
+                ]);
+                const snipCreated = host.workspace.upsertSnippet({
+                    id: "seg-tree",
+                    title: "Segment Tree",
+                    tags: ["ds", "tree"],
+                    code: "struct SegTree {};\n",
+                    timeComplexity: "O(log n)",
+                    description: "Point update range query",
+                    notesMd: "Iterative variant.",
+                });
+                const snipUpdated = host.workspace.upsertSnippet({
+                    id: "seg-tree",
+                    title: "Segment Tree v2",
+                    code: "struct SegTreeV2 {};\n",
+                });
+                return { created, updated, sampleRes, snipCreated, snipUpdated };
+            },
+            createDup() {
+                return host.workspace.createProblem({ id: "beta", title: "Dup" });
+            },
+            tooManySamples() {
+                const arr = [];
+                for (let i = 0; i < 65; i++) arr.push({ input: "1\n", output: "1\n" });
+                return host.workspace.setSamples("beta", arr);
+            }
+        };
+    "###;
+
+    // 1. All 8 read methods succeed, and no raw host paths or forbidden methods are exposed.
+    let read_res = PluginRuntime::call_function(src, "readAll", &[], &ctx_rw).unwrap();
+    let read_str = serde_json::to_string(&read_res.value).unwrap();
+    assert!(
+        !read_str.contains(&dir.path().display().to_string()),
+        "must not leak host workspace path: {read_str}"
+    );
+    assert_eq!(read_res.value["problems"].as_array().unwrap().len(), 1);
+    assert_eq!(read_res.value["prob"]["id"], "alpha");
+    assert_eq!(read_res.value["contests"][0]["id"], "c1");
+    assert_eq!(read_res.value["contest"]["problems"][0]["id"], "alpha");
+    assert_eq!(read_res.value["snippets"][0]["id"], "dsu");
+    assert_eq!(read_res.value["snippet"]["code"], "struct DSU {};\n");
+    assert_eq!(read_res.value["trds"][0]["id"], "main-trd");
+    assert_eq!(read_res.value["trd"]["title"], "Team Reference");
+    assert_eq!(read_res.value["hasDeleteProblem"], false);
+    assert_eq!(read_res.value["hasDeleteSnippet"], false);
+    assert_eq!(read_res.value["hasUnfreeze"], false);
+
+    // 2. All 4 write methods succeed and preserve unknown TOML fields.
+    let write_res = PluginRuntime::call_function(src, "writeFlow", &[], &ctx_rw).unwrap();
+    assert_eq!(write_res.value["created"]["id"], "beta");
+    assert_eq!(write_res.value["created"]["rating"], 1600);
+    assert_eq!(write_res.value["updated"]["title"], "Alpha Renamed");
+    assert_eq!(write_res.value["sampleRes"]["count"], 2);
+    assert_eq!(write_res.value["snipCreated"]["id"], "seg-tree");
+    assert_eq!(write_res.value["snipUpdated"]["title"], "Segment Tree v2");
+    let preserved_toml = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(
+        preserved_toml.contains("custom_note = \"keep-me\""),
+        "unknown TOML field must be preserved: {preserved_toml}"
+    );
+
+    // 3. Duplicate createProblem fails with ALREADY_EXISTS.
+    let dup_err = PluginRuntime::call_function(src, "createDup", &[], &ctx_rw).unwrap_err();
+    assert_eq!(dup_err.code(), "ALREADY_EXISTS");
+
+    // 4. >64 samples rejected with INVALID_ARGUMENT.
+    let samples_err =
+        PluginRuntime::call_function(src, "tooManySamples", &[], &ctx_rw).unwrap_err();
+    assert_eq!(samples_err.code(), "INVALID_ARGUMENT");
+
+    // 5. Missing workspace_write permission fails with PERMISSION_DENIED.
+    let ctx_ro_perm = HostContext {
+        manifest: minimal_manifest("ws-ro-only", &[], true),
+        http_client: Arc::new(MockHttpClient::new(|_| ok_json("{}"))),
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: Some(Arc::clone(&bridge) as Arc<dyn WorkspaceReader>),
+        workspace_writer: Some(Arc::clone(&bridge) as Arc<dyn crate::WorkspaceWriter>),
+        limits: SandboxLimits::default(),
+    };
+    let perm_err = PluginRuntime::call_function(src, "writeFlow", &[], &ctx_ro_perm).unwrap_err();
+    assert_eq!(perm_err.code(), "PERMISSION_DENIED");
+
+    // 6. Read-only workspace rejects writes with WORKSPACE_READ_ONLY.
+    let ws_ro = xcpc_storage::Workspace::open(dir.path(), true).unwrap();
+    let ro_bridge = Arc::new(crate::StorageWorkspaceBridge::new(ws_ro));
+    let ctx_ro_ws = HostContext {
+        manifest: manifest.clone(),
+        http_client: Arc::new(MockHttpClient::new(|_| ok_json("{}"))),
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: Some(Arc::clone(&ro_bridge) as Arc<dyn WorkspaceReader>),
+        workspace_writer: Some(Arc::clone(&ro_bridge) as Arc<dyn crate::WorkspaceWriter>),
+        limits: SandboxLimits::default(),
+    };
+    let ro_err = PluginRuntime::call_function(src, "createDup", &[], &ctx_ro_ws).unwrap_err();
+    assert_eq!(ro_err.code(), "WORKSPACE_READ_ONLY");
+
+    // 7. Trust escalation: adding workspace_write after trusting workspace_read resets pending_trust.
+    let data_dir = dir.path().join("data");
+    let plugin_src = dir.path().join("esc-plugin");
+    std::fs::create_dir_all(&plugin_src).unwrap();
+    std::fs::write(plugin_src.join("index.js"), "module.exports = {};\n").unwrap();
+    std::fs::write(
+        plugin_src.join("manifest.toml"),
+        r#"
+id = "esc-plugin"
+name = "Esc"
+version = "0.1.0"
+capabilities = ["tool"]
+[permissions]
+workspace_read = true
+"#,
+    )
+    .unwrap();
+    let pm = PluginManager::new(&data_dir);
+    let inst = pm.install_from_dir(&plugin_src).unwrap();
+    assert!(inst.pending_trust);
+    pm.trust_plugin("esc-plugin").unwrap();
+    let trusted = pm.list_plugins().unwrap();
+    assert!(
+        !trusted
+            .iter()
+            .find(|p| p.manifest.id == "esc-plugin")
+            .unwrap()
+            .pending_trust
+    );
+    // Escalate manifest with workspace_write = true -> must re-trigger pending_trust.
+    std::fs::write(
+        data_dir.join("plugins/esc-plugin/manifest.toml"),
+        r#"
+id = "esc-plugin"
+name = "Esc"
+version = "0.2.0"
+capabilities = ["tool"]
+[permissions]
+workspace_read = true
+workspace_write = true
+"#,
+    )
+    .unwrap();
+    let after_esc = pm.list_plugins().unwrap();
+    assert!(
+        after_esc
+            .iter()
+            .find(|p| p.manifest.id == "esc-plugin")
+            .unwrap()
+            .pending_trust
+    );
+}
+
+#[test]
+fn phase7c_render_typst_math_archive_and_crypto_host_apis() {
+    let host_ctx = HostContext {
+        manifest: minimal_manifest("cap-v2", &[], false),
+        http_client: Arc::new(MockHttpClient::new(|_| ok_json("{}"))),
+        credentials: Arc::new(MemoryCredentialStore::new()),
+        kv: Arc::new(KvStore::in_memory()),
+        workspace: None,
+        workspace_writer: None,
+        limits: SandboxLimits::default(),
+    };
+
+    let src = r#"
+        module.exports = {
+            runAll() {
+                const svgOut = host.render.renderTypst("= Hello\n$a^2 + b^2 = c^2$", {
+                    format: "svg",
+                    widthPt: 220,
+                    theme: "light",
+                });
+                const pngOut = host.render.renderTypst("Dark *text*", {
+                    format: "png",
+                    scale: 1.5,
+                    theme: "dark",
+                });
+                const mathSvg = host.render.renderMath("\\sum_{i=1}^n i = \\frac{n(n+1)}{2}", {
+                    display: true,
+                    format: "svg",
+                });
+                const mathPng = host.render.renderMath("\\alpha + \\beta", {
+                    display: false,
+                    format: "png",
+                    scale: 2.0,
+                });
+
+                const zipB64 = host.archive.createZip([
+                    { path: "a/hello.txt", text: "hello world" },
+                    { path: "bin/data.bin", base64: "AAECAw==" },
+                ]);
+                const listed = host.archive.listZip(zipB64);
+                const readAll = host.archive.readZip(zipB64);
+                const readFiltered = host.archive.readZip(zipB64, { paths: ["a/hello.txt"], asText: true });
+
+                const hashUtf8 = host.crypto.sha256("abc");
+                const hashB64 = host.crypto.sha256("YWJj", "base64");
+
+                return {
+                    svgOut,
+                    pngOut,
+                    mathSvg,
+                    mathPng,
+                    listed,
+                    readAll,
+                    readFiltered,
+                    hashUtf8,
+                    hashB64,
+                };
+            },
+            tryDiskRead() {
+                return host.render.renderTypst('#read("/etc/passwd")');
+            },
+            tryZipSlip() {
+                return host.archive.createZip([{ path: "../escape.txt", text: "nope" }]);
+            }
+        };
+    "#;
+
+    let res = PluginRuntime::call_function(src, "runAll", &[], &host_ctx).unwrap();
+    assert!(
+        res.value["svgOut"]["svg"]
+            .as_str()
+            .unwrap()
+            .contains("<svg")
+    );
+    assert!(res.value["svgOut"]["width"].as_f64().unwrap() > 0.0);
+    assert!(
+        !res.value["pngOut"]["pngBase64"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        res.value["mathSvg"]["svg"]
+            .as_str()
+            .unwrap()
+            .contains("<svg")
+    );
+    assert!(
+        !res.value["mathPng"]["pngBase64"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+
+    assert_eq!(res.value["listed"].as_array().unwrap().len(), 2);
+    assert_eq!(res.value["readAll"].as_array().unwrap().len(), 2);
+    assert_eq!(res.value["readFiltered"].as_array().unwrap().len(), 1);
+    assert_eq!(res.value["readFiltered"][0]["text"], "hello world");
+
+    const SHA256_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    assert_eq!(res.value["hashUtf8"], SHA256_ABC);
+    assert_eq!(res.value["hashB64"], SHA256_ABC);
+
+    // Pure-memory fragment renderer must block host disk reads.
+    let disk_err = PluginRuntime::call_function(src, "tryDiskRead", &[], &host_ctx).unwrap_err();
+    assert_eq!(disk_err.code(), "RENDER_ERROR");
+
+    // createZip must reject Zip Slip path traversal.
+    let slip_err = PluginRuntime::call_function(src, "tryZipSlip", &[], &host_ctx).unwrap_err();
+    assert_eq!(slip_err.code(), "ZIP_SLIP");
+
+    // Direct Rust archive tests: reject symlink entries and oversized ZIP bombs.
+    use base64::Engine as _;
+    let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+    {
+        let mut w = zip::ZipWriter::new(&mut cursor);
+        w.add_symlink(
+            "link",
+            "/etc/passwd",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        w.finish().unwrap();
+    }
+    let symlink_zip = base64::engine::general_purpose::STANDARD.encode(cursor.into_inner());
+    let sym_err = crate::read_zip(&symlink_zip, None, true).unwrap_err();
+    assert_eq!(sym_err.code(), "ZIP_SLIP");
 }

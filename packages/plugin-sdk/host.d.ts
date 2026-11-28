@@ -30,16 +30,185 @@ export interface HtmlElementMatch {
   attrs: Record<string, string>;
 }
 
+export interface WorkspaceSample {
+  input: string;
+  output: string;
+}
+
+export interface WorkspaceProblemSource {
+  platform: string;
+  id: string;
+  url?: string;
+}
+
 export interface WorkspaceProblemSummary {
   id: string;
   title: string;
   tags: string[];
   difficulty?: string;
+  rating?: number;
+  time_limit?: string;
+  memory_limit?: string;
+  sample_count?: number;
+  has_editorial?: boolean;
 }
 
-export interface WorkspaceProblemDetail extends WorkspaceProblemSummary {
+export interface WorkspaceProblemDetail {
+  id: string;
+  title: string;
+  tags: string[];
+  difficulty?: string;
+  rating?: number;
+  time_limit?: string;
+  memory_limit?: string;
+  source?: WorkspaceProblemSource[];
+  samples?: WorkspaceSample[];
   statement_md?: string;
   editorial_md?: string;
+}
+
+export interface WorkspaceContestItem {
+  label: string;
+  id: string;
+  title: string;
+}
+
+export interface WorkspaceContestSummary {
+  id: string;
+  title: string;
+  subtitle?: string;
+  problem_count: number;
+  frozen: boolean;
+  template?: string;
+}
+
+export interface WorkspaceContestDetail extends WorkspaceContestSummary {
+  location?: string;
+  date?: string;
+  author?: string;
+  language: string;
+  problems: WorkspaceContestItem[];
+}
+
+export interface WorkspaceSnippetSummary {
+  id: string;
+  title: string;
+  category?: string;
+  tags: string[];
+  language: string;
+}
+
+export interface WorkspaceSnippetDetail extends WorkspaceSnippetSummary {
+  code?: string;
+  time_complexity?: string;
+  space_complexity?: string;
+  description?: string;
+  notes_md?: string;
+}
+
+export interface WorkspaceTrdSection {
+  title: string;
+  items: string[];
+}
+
+export interface WorkspaceTrdSummary {
+  id: string;
+  title: string;
+  template?: string;
+  section_count: number;
+  frozen: boolean;
+}
+
+export interface WorkspaceTrdDetail extends WorkspaceTrdSummary {
+  author?: string;
+  date?: string;
+  sections: WorkspaceTrdSection[];
+}
+
+export interface CreateProblemInput {
+  id: string;
+  title: string;
+  tags?: string[];
+  difficulty?: string;
+  rating?: number;
+  time_limit?: string;
+  memory_limit?: string;
+  statement_md?: string;
+  editorial_md?: string;
+  samples?: WorkspaceSample[];
+}
+
+export interface UpdateProblemPatch {
+  title?: string;
+  tags?: string[];
+  difficulty?: string;
+  rating?: number;
+  time_limit?: string;
+  memory_limit?: string;
+  statement_md?: string;
+  editorial_md?: string;
+}
+
+export interface SetSamplesResult {
+  count: number;
+}
+
+export interface UpsertSnippetInput {
+  id: string;
+  title: string;
+  category?: string;
+  tags?: string[];
+  language?: string;
+  code?: string;
+  notes?: string;
+  time_complexity?: string;
+  space_complexity?: string;
+  description?: string;
+}
+
+export interface RenderTypstOptions {
+  format?: "svg" | "png";
+  scale?: number;
+  widthPt?: number;
+  theme?: "light" | "dark";
+}
+
+export interface RenderMathOptions {
+  display?: boolean;
+  format?: "svg" | "png";
+  scale?: number;
+  theme?: "light" | "dark";
+}
+
+export interface RenderedTypstOutput {
+  svg?: string;
+  pngBase64?: string;
+  width: number;
+  height: number;
+}
+
+export interface ZipEntryMeta {
+  path: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export interface ZipEntryData {
+  path: string;
+  text?: string;
+  content_base64?: string;
+}
+
+export interface ReadZipOptions {
+  paths?: string[];
+  asText?: boolean;
+}
+
+export interface CreateZipEntry {
+  path: string;
+  text?: string;
+  content_base64?: string;
+  base64?: string;
 }
 
 export interface RenderedRgba {
@@ -315,10 +484,30 @@ export interface HostApi {
   readonly workspace: {
     listProblems(): WorkspaceProblemSummary[];
     getProblem(id: string): WorkspaceProblemDetail | null;
+    listContests(): WorkspaceContestSummary[];
+    getContest(id: string): WorkspaceContestDetail | null;
+    listSnippets(): WorkspaceSnippetSummary[];
+    getSnippet(id: string): WorkspaceSnippetDetail | null;
+    listTrds(): WorkspaceTrdSummary[];
+    getTrd(id: string): WorkspaceTrdDetail | null;
+    createProblem(input: CreateProblemInput): WorkspaceProblemDetail;
+    updateProblem(id: string, patch: UpdateProblemPatch): WorkspaceProblemDetail;
+    setSamples(problemId: string, samples: WorkspaceSample[]): SetSamplesResult;
+    upsertSnippet(input: UpsertSnippetInput): WorkspaceSnippetDetail;
   };
   readonly render: {
     svgToPng(svg: string, scale?: number): string;
     svgToRgba(svg: string, scale?: number): RenderedRgba;
+    renderTypst(source: string, opts?: RenderTypstOptions): RenderedTypstOutput;
+    renderMath(latex: string, opts?: RenderMathOptions): RenderedTypstOutput;
+  };
+  readonly archive: {
+    listZip(zipBase64: string): ZipEntryMeta[];
+    readZip(zipBase64: string, opts?: ReadZipOptions): ZipEntryData[];
+    createZip(entries: CreateZipEntry[]): string;
+  };
+  readonly crypto: {
+    sha256(data: string, encoding?: "utf8" | "base64"): string;
   };
   highlight(
     code: string,

@@ -43,10 +43,8 @@ use crate::views;
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 pub fn serve(ws: Workspace, fonts: FontOptions) -> Result<()> {
-    let mut server = Server {
-        engine: publish::engine(&ws, &fonts),
-        ws,
-    };
+    let engine = crate::engine_with_plugins(&ws, &fonts);
+    let mut server = Server { engine, ws };
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lock().lines() {

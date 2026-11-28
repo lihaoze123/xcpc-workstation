@@ -1,29 +1,49 @@
 // @xcpc-workstation/plugin-sdk/ui — Typed `window.xcpc` capability bridge for WebView plugins
 
 import type {
+  CreateProblemInput,
+  RenderedTypstOutput,
+  RenderMathOptions,
+  RenderTypstOptions,
+  SetSamplesResult,
   ToolExecutionResult,
+  UpdateProblemPatch,
+  UpsertSnippetInput,
+  WorkspaceContestDetail,
+  WorkspaceContestSummary,
   WorkspaceProblemDetail,
   WorkspaceProblemSummary,
+  WorkspaceSample,
+  WorkspaceSnippetDetail,
+  WorkspaceSnippetSummary,
+  WorkspaceTrdDetail,
+  WorkspaceTrdSummary,
 } from "./host";
+
+export type {
+  CreateProblemInput,
+  RenderedTypstOutput,
+  RenderMathOptions,
+  RenderTypstOptions,
+  SetSamplesResult,
+  UpdateProblemPatch,
+  UpsertSnippetInput,
+  WorkspaceContestDetail,
+  WorkspaceContestSummary,
+  WorkspaceProblemDetail,
+  WorkspaceProblemSummary,
+  WorkspaceSample,
+  WorkspaceSnippetDetail,
+  WorkspaceSnippetSummary,
+  WorkspaceTrdDetail,
+  WorkspaceTrdSummary,
+};
 
 export type XcpcColorScheme = "light" | "dark";
 
 export interface XcpcTheme {
   scheme: XcpcColorScheme;
   tokens?: Record<string, string>;
-}
-
-export interface WorkspaceContestSummary {
-  id: string;
-  title: string;
-  subtitle?: string;
-  problem_count?: number;
-  frozen?: boolean;
-}
-
-export interface WorkspaceContestDetail extends WorkspaceContestSummary {
-  problems?: WorkspaceProblemSummary[];
-  [key: string]: unknown;
 }
 
 export interface XcpcPickedFile {
@@ -33,6 +53,17 @@ export interface XcpcPickedFile {
 }
 
 export interface XcpcPickFileOptions {
+  title?: string;
+  extensions?: string[];
+}
+
+export interface XcpcPickFilesOptions extends XcpcPickFileOptions {
+  multiple?: boolean;
+  /** Single-file byte limit (default 10 MiB, max 30 MiB total across all files). */
+  maxBytes?: number;
+}
+
+export interface XcpcSaveBinaryOptions {
   title?: string;
   extensions?: string[];
 }
@@ -48,6 +79,19 @@ export interface XcpcWorkspaceBridge {
   listProblems(): Promise<WorkspaceProblemSummary[]>;
   getContest(id: string): Promise<WorkspaceContestDetail | null>;
   listContests(): Promise<WorkspaceContestSummary[]>;
+  listSnippets(): Promise<WorkspaceSnippetSummary[]>;
+  getSnippet(id: string): Promise<WorkspaceSnippetDetail | null>;
+  listTrds(): Promise<WorkspaceTrdSummary[]>;
+  getTrd(id: string): Promise<WorkspaceTrdDetail | null>;
+  createProblem(input: CreateProblemInput): Promise<WorkspaceProblemDetail>;
+  updateProblem(id: string, patch: UpdateProblemPatch): Promise<WorkspaceProblemDetail>;
+  setSamples(problemId: string, samples: WorkspaceSample[]): Promise<SetSamplesResult>;
+  upsertSnippet(input: UpsertSnippetInput): Promise<WorkspaceSnippetDetail>;
+}
+
+export interface XcpcRenderBridge {
+  renderTypst(source: string, opts?: RenderTypstOptions): Promise<RenderedTypstOutput>;
+  renderMath(latex: string, opts?: RenderMathOptions): Promise<RenderedTypstOutput>;
 }
 
 export interface XcpcOjAccount {
@@ -79,7 +123,13 @@ export interface XcpcClipboardBridge {
 export interface XcpcFilesBridge {
   saveText(defaultName: string, content: string): Promise<string | null>;
   savePng(defaultName: string, pngBase64: string): Promise<string | null>;
+  saveBinary(
+    defaultName: string,
+    base64: string,
+    options?: XcpcSaveBinaryOptions,
+  ): Promise<string | null>;
   pickFile(options?: XcpcPickFileOptions): Promise<XcpcPickedFile | null>;
+  pickFiles(options?: XcpcPickFilesOptions): Promise<XcpcPickedFile[] | null>;
 }
 
 export interface XcpcBridge {
@@ -89,6 +139,7 @@ export interface XcpcBridge {
   ): Promise<T>;
   readonly storage: XcpcStorageBridge;
   readonly workspace: XcpcWorkspaceBridge;
+  readonly render: XcpcRenderBridge;
   readonly oj: XcpcOjBridge;
   toast(message: string, kind?: "info" | "success" | "error"): void;
   readonly clipboard: XcpcClipboardBridge;

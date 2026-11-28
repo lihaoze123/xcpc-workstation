@@ -4031,3 +4031,126 @@ fn list_templates_json_hits_cache_on_problem_edits_and_invalidates_on_template_c
         "expected custom-perf template after cache invalidation, got {ids:?}"
     );
 }
+
+#[test]
+fn phase7_app_plugin_workspace_rw_render_and_template_eject() {
+    let (dir, _init_preview) = init_temp_preview("phase7-app");
+    let data_dir = dir.0.join("_app_data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let preview = Preview::new(Some(data_dir.display().to_string()));
+    assert!(
+        preview
+            .open_workspace(dir.0.display().to_string(), false)
+            .error
+            .is_none()
+    );
+    assert!(preview.create_problem("p1".into(), "Origin".into()).ok);
+
+    // 1. Install a template plugin and eject it into workspace `templates/`.
+    let tpl_src = dir.0.join("_tpl_src").join("tpl-pack");
+    xcpc_plugin::init_plugin_scaffold(&tpl_src, xcpc_plugin::ScaffoldKind::Template).unwrap();
+    let pm = xcpc_plugin::PluginManager::new(&data_dir);
+    let inst_tpl = pm.install_from_dir(&tpl_src).unwrap();
+    assert!(!inst_tpl.pending_trust);
+    preview.state.sync_engine_plugin_mounts();
+
+    let tpls: serde_json::Value = serde_json::from_str(&preview.list_templates_json()).unwrap();
+    assert!(
+        tpls["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == "plugin:tpl-pack/sample")
+    );
+    let ej = preview.eject_plugin_template(
+        "tpl-pack".into(),
+        "sample".into(),
+        Some("my-ejected".into()),
+    );
+    assert!(ej.ok, "eject failed: {:?}", ej.error);
+    assert!(dir.0.join("templates/my-ejected.typ").is_file());
+
+    // 2. Install a workspace_read + workspace_write plugin, trust it, test read/write + render.
+    let rw_src = dir.0.join("_rw_src");
+    std::fs::create_dir_all(&rw_src).unwrap();
+    std::fs::write(rw_src.join("index.js"), "module.exports = {};\n").unwrap();
+    std::fs::write(
+        rw_src.join("manifest.toml"),
+        r#"
+id = "rw-helper"
+name = "RW Helper"
+version = "0.1.0"
+capabilities = ["tool"]
+[permissions]
+workspace_read = true
+workspace_write = true
+"#,
+    )
+    .unwrap();
+    let inst_rw = pm.install_from_dir(&rw_src).unwrap();
+    assert!(inst_rw.pending_trust);
+    assert!(preview.trust_plugin("rw-helper".into()).ok);
+
+    // Overview reports workspace_write = true.
+    let overview = preview.get_plugins_overview();
+    let rw_summary = overview
+        .plugins
+        .iter()
+        .find(|p| p.id == "rw-helper")
+        .unwrap();
+    assert!(rw_summary.workspace_read);
+    assert!(rw_summary.workspace_write);
+
+    // Create problem & upsert snippet via plugin_workspace_query -> updates workspace & index.
+    let created = preview.plugin_workspace_query(
+        "rw-helper".into(),
+        "createProblem".into(),
+        Some(r#"{"id":"from-plugin","title":"From Plugin","tags":["ad-hoc"]}"#.into()),
+    );
+    assert!(created.ok, "createProblem error: {:?}", created.error);
+    assert!(
+        preview
+            .workspace()
+            .problems
+            .iter()
+            .any(|p| p.id == "from-plugin")
+    );
+
+    let snip = preview.plugin_workspace_query(
+        "rw-helper".into(),
+        "upsertSnippet".into(),
+        Some(r#"{"id":"fenwick","title":"Fenwick Tree","code":"struct BIT {};"}"#.into()),
+    );
+    assert!(snip.ok, "upsertSnippet error: {:?}", snip.error);
+    let listed_snips =
+        preview.plugin_workspace_query("rw-helper".into(), "listSnippets".into(), None);
+    assert!(listed_snips.ok);
+    let snips_json: serde_json::Value =
+        serde_json::from_str(&listed_snips.data_json.unwrap()).unwrap();
+    assert!(
+        snips_json
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "fenwick")
+    );
+
+    // Render Typst & LaTeX math via plugin_render_{typst,math}.
+    let typst_res = preview.plugin_render_typst(
+        "rw-helper".into(),
+        "= Preview\n$x + y$".into(),
+        Some(r#"{"format":"svg","theme":"light"}"#.into()),
+    );
+    assert!(typst_res.ok, "render_typst error: {:?}", typst_res.error);
+    let typst_val: serde_json::Value = serde_json::from_str(&typst_res.data_json.unwrap()).unwrap();
+    assert!(typst_val["svg"].as_str().unwrap().contains("<svg"));
+
+    let math_res = preview.plugin_render_math(
+        "rw-helper".into(),
+        r"\frac{a}{b}".into(),
+        Some(r#"{"display":true,"format":"png","scale":1.5}"#.into()),
+    );
+    assert!(math_res.ok, "render_math error: {:?}", math_res.error);
+    let math_val: serde_json::Value = serde_json::from_str(&math_res.data_json.unwrap()).unwrap();
+    assert!(!math_val["pngBase64"].as_str().unwrap().is_empty());
+}

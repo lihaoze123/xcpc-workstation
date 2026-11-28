@@ -18,7 +18,14 @@ import {
 import { Preview } from "xcpc-workstation/native";
 import { Icon } from "../Icon";
 import { Btn } from "../kit";
-import { goSettings, openToolPlugin, pluginRevisionFor, preview } from "../store";
+import {
+  bumpSnippetsRevision,
+  goSettings,
+  openToolPlugin,
+  pluginRevisionFor,
+  preview,
+  refresh,
+} from "../store";
 import { MONO, SANS, token } from "../theme";
 import { showToast, type ToastTone } from "../Toast";
 import { zhEn } from "../training/locale";
@@ -304,7 +311,19 @@ var xcpc={
     getProblem:function(id){return rpc("workspace.getProblem",{id:String(id||"")});},
     listProblems:function(){return rpc("workspace.listProblems",{});},
     getContest:function(id){return rpc("workspace.getContest",{id:String(id||"")});},
-    listContests:function(){return rpc("workspace.listContests",{});}
+    listContests:function(){return rpc("workspace.listContests",{});},
+    listSnippets:function(){return rpc("workspace.listSnippets",{});},
+    getSnippet:function(id){return rpc("workspace.getSnippet",{id:String(id||"")});},
+    listTrds:function(){return rpc("workspace.listTrds",{});},
+    getTrd:function(id){return rpc("workspace.getTrd",{id:String(id||"")});},
+    createProblem:function(input){return rpc("workspace.createProblem",input||{});},
+    updateProblem:function(id,patch){return rpc("workspace.updateProblem",{id:String(id||""),patch:patch||{}});},
+    setSamples:function(problemId,samples){return rpc("workspace.setSamples",{problemId:String(problemId||""),samples:Array.isArray(samples)?samples:[]});},
+    upsertSnippet:function(input){return rpc("workspace.upsertSnippet",input||{});}
+  },
+  render:{
+    renderTypst:function(source,opts){return rpc("render.renderTypst",{source:String(source||""),opts:opts||{}});},
+    renderMath:function(latex,opts){return rpc("render.renderMath",{latex:String(latex||""),opts:opts||{}});}
   },
   oj:{
     listAccounts:function(){return rpc("oj.listAccounts",{});}
@@ -323,8 +342,14 @@ var xcpc={
     savePng:function(defaultName,pngBase64){
       return rpc("files.savePng",{defaultName:String(defaultName||"output.png"),pngBase64:String(pngBase64||"")});
     },
+    saveBinary:function(defaultName,base64,options){
+      return rpc("files.saveBinary",{defaultName:String(defaultName||"output.bin"),base64:String(base64||""),options:options||{}});
+    },
     pickFile:function(options){
       return rpc("files.pickFile",options||{});
+    },
+    pickFiles:function(options){
+      return rpc("files.pickFiles",options||{});
     }
   },
   openTool:function(pluginId,toolIdOrPayload,maybePayload){
@@ -604,13 +629,51 @@ export function PluginWebView(props: {
       case "workspace.getProblem":
       case "workspace.listProblems":
       case "workspace.getContest":
-      case "workspace.listContests": {
+      case "workspace.listContests":
+      case "workspace.listSnippets":
+      case "workspace.getSnippet":
+      case "workspace.listTrds":
+      case "workspace.getTrd": {
         const wsMethod = method.slice("workspace.".length);
         const res = preview.pluginWorkspaceQuery(
           pluginId,
           wsMethod,
           JSON.stringify(params ?? {}),
         );
+        if (!res.ok) throw new Error(formatPluginError(res.error));
+        return res.dataJson ? JSON.parse(res.dataJson) : null;
+      }
+
+      case "workspace.createProblem":
+      case "workspace.updateProblem":
+      case "workspace.setSamples":
+      case "workspace.upsertSnippet": {
+        const wsMethod = method.slice("workspace.".length);
+        const res = preview.pluginWorkspaceQuery(
+          pluginId,
+          wsMethod,
+          JSON.stringify(params ?? {}),
+        );
+        if (!res.ok) throw new Error(formatPluginError(res.error));
+        refresh();
+        if (wsMethod === "upsertSnippet") {
+          bumpSnippetsRevision();
+        }
+        return res.dataJson ? JSON.parse(res.dataJson) : null;
+      }
+
+      case "render.renderTypst": {
+        const source = String(params.source ?? "");
+        const optsJson = JSON.stringify(params.opts ?? {});
+        const res = await preview.pluginRenderTypst(pluginId, source, optsJson);
+        if (!res.ok) throw new Error(formatPluginError(res.error));
+        return res.dataJson ? JSON.parse(res.dataJson) : null;
+      }
+
+      case "render.renderMath": {
+        const latex = String(params.latex ?? "");
+        const optsJson = JSON.stringify(params.opts ?? {});
+        const res = await preview.pluginRenderMath(pluginId, latex, optsJson);
         if (!res.ok) throw new Error(formatPluginError(res.error));
         return res.dataJson ? JSON.parse(res.dataJson) : null;
       }
@@ -659,6 +722,18 @@ export function PluginWebView(props: {
         return res.path ?? defaultName;
       }
 
+      case "files.saveBinary": {
+        const base64 = String(params.base64 ?? "");
+        const defaultName = String(params.defaultName ?? "output.bin");
+        const opts = (params.options ?? {}) as Record<string, unknown>;
+        const title = opts.title ? String(opts.title) : null;
+        const exts = Array.isArray(opts.extensions) ? opts.extensions.map(String) : null;
+        const res = await Preview.pluginSaveBinaryDialog(base64, defaultName, title, exts);
+        if (res.cancelled) return null;
+        if (!res.ok) throw new Error(res.error ?? "Failed to save binary file");
+        return res.path ?? defaultName;
+      }
+
       case "files.pickFile": {
         const exts = Array.isArray(params.extensions) ? params.extensions.map(String) : null;
         const title = params.title ? String(params.title) : null;
@@ -672,6 +747,23 @@ export function PluginWebView(props: {
           content: res.text ?? "",
           base64: res.contentBase64,
         };
+      }
+
+      case "files.pickFiles": {
+        const exts = Array.isArray(params.extensions) ? params.extensions.map(String) : null;
+        const title = params.title ? String(params.title) : null;
+        const multiple = typeof params.multiple === "boolean" ? params.multiple : true;
+        const maxBytes = typeof params.maxBytes === "number" ? params.maxBytes : null;
+        const res = await Preview.pluginPickFilesDialog(exts, title, multiple, maxBytes);
+        if (res.cancelled) return null;
+        if (!res.ok) {
+          throw new Error(res.error ?? "Failed to read files");
+        }
+        return (res.files ?? []).map((f) => ({
+          name: f.name,
+          content: f.text ?? "",
+          base64: f.contentBase64,
+        }));
       }
 
       default:

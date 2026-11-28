@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 keyring.workspace = true
+mitex.workspace = true
 png.workspace = true
 resvg.workspace = true
 rquickjs.workspace = true
@@ -22,5 +23,6 @@ toml.workspace = true
 ureq.workspace = true
 url.workspace = true
 xcpc-domain.workspace = true
+xcpc-engine.workspace = true
 xcpc-storage.workspace = true
 zip.workspace = true

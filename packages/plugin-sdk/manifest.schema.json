@@ -52,9 +52,54 @@
       "uniqueItems": true,
       "items": {
         "type": "string",
-        "enum": ["oj_source", "tool", "commands", "importer", "exporter", "credentials"]
+        "enum": ["oj_source", "tool", "commands", "importer", "exporter", "credentials", "template"]
       },
       "description": "Declared extension points implemented by this plugin."
+    },
+    "font_dirs": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Optional relative directories inside the plugin package containing bundled font files (.ttf/.otf/.ttc) loaded on demand."
+    },
+    "templates": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["id", "entry"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "description": "Template identifier referenced as plugin:<plugin-id>/<template-id>."
+          },
+          "entry": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Relative path to the Typst entry file (.typ) exporting #let render(doc) and optional #let schema."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["statement", "trd"],
+            "default": "statement",
+            "description": "Target document kind for this template."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional display name override."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional short description."
+          }
+        }
+      },
+      "description": "Declarative Typst typesetting templates provided by a template plugin."
     },
     "permissions": {
       "type": "object",
@@ -72,7 +117,12 @@
         "workspace_read": {
           "type": "boolean",
           "default": false,
-          "description": "Whether the plugin may read problem metadata/statements from the active workspace."
+          "description": "Whether the plugin may read problem, contest, snippet, and TRD data from the active workspace."
+        },
+        "workspace_write": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the plugin may create or update problems, samples, and snippets in the active workspace (triggers trust gate; deletion and unfreezing are never permitted)."
         }
       }
     },

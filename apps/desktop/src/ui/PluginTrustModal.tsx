@@ -76,6 +76,21 @@ export function PluginTrustModal(props: {
                 </View>
               </If>
 
+              <If when={Boolean(plugin().workspaceWrite)}>
+                <View
+                  testID="plugin-trust-workspace-write"
+                  class="bg-muted/60 border border-destructive/40"
+                  style={{ borderRadius: RADIUS.md, padding: SPACE[12] }}
+                >
+                  <Text style={{ fontSize: FONT_SIZE.caption, lineHeight: LINE_HEIGHT.caption, fontWeight: FONT_WEIGHT.semibold }} class="text-destructive">
+                    {zhEn(
+                      "请求向当前工作区写入题目、样例与算法模板（不可删除现有文件或修改冻结比赛）。",
+                      "Requests write access to create or update problems, samples, and snippets in the current workspace (cannot delete files or modify frozen contests).",
+                    )}
+                  </Text>
+                </View>
+              </If>
+
               <If when={plugin().credentials.length > 0}>
                 <View
                   class="bg-muted/60 border border-border"

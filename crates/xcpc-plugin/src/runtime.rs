@@ -9,13 +9,20 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::archive::{CreateZipEntry, create_zip, list_zip, read_zip, sha256_encoded};
 use crate::credentials::CredentialStore;
 use crate::error::{PluginError, Result};
 use crate::http::{HttpClient, HttpRequest};
 use crate::kv::KvStore;
 use crate::manifest::PluginManifest;
-use crate::render::{highlight_code, svg_to_png_base64, svg_to_rgba};
-use crate::workspace::WorkspaceReader;
+use crate::render::{
+    RenderMathOptions, RenderTypstOptions, highlight_code, render_math_snippet,
+    render_typst_snippet, svg_to_png_base64, svg_to_rgba,
+};
+use crate::workspace::{
+    CreateProblemInput, UpdateProblemPatch, UpsertSnippetInput, WorkspaceReader, WorkspaceSample,
+    WorkspaceWriter,
+};
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
@@ -53,6 +60,7 @@ pub struct HostContext {
     pub credentials: Arc<dyn CredentialStore>,
     pub kv: Arc<KvStore>,
     pub workspace: Option<Arc<dyn WorkspaceReader>>,
+    pub workspace_writer: Option<Arc<dyn WorkspaceWriter>>,
     pub limits: SandboxLimits,
 }
 
@@ -105,10 +113,16 @@ const HOST_BOOTSTRAP_JS: &str = r#"
   const _kvGet = globalThis.__xcpc_kv_get;
   const _kvSet = globalThis.__xcpc_kv_set;
   const _kvDelete = globalThis.__xcpc_kv_delete;
-  const _wsList = globalThis.__xcpc_ws_list_problems;
-  const _wsGet = globalThis.__xcpc_ws_get_problem;
+  const _wsRead = globalThis.__xcpc_ws_read;
+  const _wsWrite = globalThis.__xcpc_ws_write;
   const _svgToPng = globalThis.__xcpc_render_svg_to_png;
   const _svgToRgba = globalThis.__xcpc_render_svg_to_rgba;
+  const _renderTypst = globalThis.__xcpc_render_typst;
+  const _renderMath = globalThis.__xcpc_render_math;
+  const _archiveListZip = globalThis.__xcpc_archive_list_zip;
+  const _archiveReadZip = globalThis.__xcpc_archive_read_zip;
+  const _archiveCreateZip = globalThis.__xcpc_archive_create_zip;
+  const _cryptoSha256 = globalThis.__xcpc_crypto_sha256;
   const _highlight = globalThis.__xcpc_highlight;
   const _log = globalThis.__xcpc_log;
 
@@ -118,10 +132,16 @@ const HOST_BOOTSTRAP_JS: &str = r#"
   delete globalThis.__xcpc_kv_get;
   delete globalThis.__xcpc_kv_set;
   delete globalThis.__xcpc_kv_delete;
-  delete globalThis.__xcpc_ws_list_problems;
-  delete globalThis.__xcpc_ws_get_problem;
+  delete globalThis.__xcpc_ws_read;
+  delete globalThis.__xcpc_ws_write;
   delete globalThis.__xcpc_render_svg_to_png;
   delete globalThis.__xcpc_render_svg_to_rgba;
+  delete globalThis.__xcpc_render_typst;
+  delete globalThis.__xcpc_render_math;
+  delete globalThis.__xcpc_archive_list_zip;
+  delete globalThis.__xcpc_archive_read_zip;
+  delete globalThis.__xcpc_archive_create_zip;
+  delete globalThis.__xcpc_crypto_sha256;
   delete globalThis.__xcpc_highlight;
   delete globalThis.__xcpc_log;
 
@@ -157,10 +177,40 @@ const HOST_BOOTSTRAP_JS: &str = r#"
     }),
     workspace: Object.freeze({
       listProblems() {
-        return JSON.parse(_wsList());
+        return JSON.parse(_wsRead("listProblems", "{}"));
       },
       getProblem(id) {
-        return JSON.parse(_wsGet(String(id)));
+        return JSON.parse(_wsRead("getProblem", JSON.stringify({ id: String(id ?? "") })));
+      },
+      listContests() {
+        return JSON.parse(_wsRead("listContests", "{}"));
+      },
+      getContest(id) {
+        return JSON.parse(_wsRead("getContest", JSON.stringify({ id: String(id ?? "") })));
+      },
+      listSnippets() {
+        return JSON.parse(_wsRead("listSnippets", "{}"));
+      },
+      getSnippet(id) {
+        return JSON.parse(_wsRead("getSnippet", JSON.stringify({ id: String(id ?? "") })));
+      },
+      listTrds() {
+        return JSON.parse(_wsRead("listTrds", "{}"));
+      },
+      getTrd(id) {
+        return JSON.parse(_wsRead("getTrd", JSON.stringify({ id: String(id ?? "") })));
+      },
+      createProblem(draft) {
+        return JSON.parse(_wsWrite("createProblem", JSON.stringify(draft ?? {})));
+      },
+      updateProblem(id, patch) {
+        return JSON.parse(_wsWrite("updateProblem", JSON.stringify({ id: String(id ?? ""), patch: patch ?? {} })));
+      },
+      setSamples(problemId, samples) {
+        return JSON.parse(_wsWrite("setSamples", JSON.stringify({ problemId: String(problemId ?? ""), samples: samples ?? [] })));
+      },
+      upsertSnippet(input) {
+        return JSON.parse(_wsWrite("upsertSnippet", JSON.stringify(input ?? {})));
       },
     }),
     render: Object.freeze({
@@ -169,6 +219,28 @@ const HOST_BOOTSTRAP_JS: &str = r#"
       },
       svgToRgba(svg, scale) {
         return JSON.parse(_svgToRgba(String(svg ?? ""), scale == null ? 1.0 : Number(scale)));
+      },
+      renderTypst(source, opts) {
+        return JSON.parse(_renderTypst(String(source ?? ""), JSON.stringify(opts ?? {})));
+      },
+      renderMath(latex, opts) {
+        return JSON.parse(_renderMath(String(latex ?? ""), JSON.stringify(opts ?? {})));
+      },
+    }),
+    archive: Object.freeze({
+      listZip(zipBase64) {
+        return JSON.parse(_archiveListZip(String(zipBase64 ?? "")));
+      },
+      readZip(zipBase64, opts) {
+        return JSON.parse(_archiveReadZip(String(zipBase64 ?? ""), JSON.stringify(opts ?? {})));
+      },
+      createZip(entries) {
+        return _archiveCreateZip(JSON.stringify(entries ?? []));
+      },
+    }),
+    crypto: Object.freeze({
+      sha256(input, encoding) {
+        return _cryptoSha256(String(input ?? ""), encoding == null ? "utf8" : String(encoding));
       },
     }),
     highlight(code, lang) {
@@ -780,85 +852,169 @@ fn register_native_bridges<'js>(
             .map_err(|e| PluginError::JsError(e.to_string()))?;
     }
 
-    // 5. host.workspace.{listProblems, getProblem}
+    // 5. host.workspace (unified read + controlled write)
     {
         let plugin_id = host_ctx.manifest.id.clone();
-        let allowed = host_ctx.manifest.permissions.workspace_read;
+        let allowed_read = host_ctx.manifest.permissions.workspace_read;
         let ws = host_ctx.workspace.clone();
         let last_err = Arc::clone(last_host_error);
-        let func_list = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
-            if !allowed {
-                let err = PluginError::PermissionDenied {
-                    plugin_id: plugin_id.clone(),
-                    permission: "workspace_read".into(),
-                };
-                let msg = err.to_string();
-                *last_err.lock().unwrap() = Some(err);
-                return Err(Exception::throw_message(&ctx, &msg));
-            }
-            let Some(ref reader) = ws else {
-                let err = PluginError::PermissionDenied {
-                    plugin_id: plugin_id.clone(),
-                    permission: "workspace_read (no workspace attached)".into(),
-                };
-                let msg = err.to_string();
-                *last_err.lock().unwrap() = Some(err);
-                return Err(Exception::throw_message(&ctx, &msg));
-            };
-            let list = match reader.list_problems() {
-                Ok(v) => v,
-                Err(e) => {
-                    let msg = e.to_string();
-                    *last_err.lock().unwrap() = Some(e);
+        let func_read = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, method: String, args_json: String| {
+                if !allowed_read {
+                    let err = PluginError::PermissionDenied {
+                        plugin_id: plugin_id.clone(),
+                        permission: "workspace_read".into(),
+                    };
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
                     return Err(Exception::throw_message(&ctx, &msg));
                 }
-            };
-            serde_json::to_string(&list).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
-        })
+                let Some(ref reader) = ws else {
+                    let err = PluginError::PermissionDenied {
+                        plugin_id: plugin_id.clone(),
+                        permission: "workspace_read (no workspace attached)".into(),
+                    };
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                };
+                let args: serde_json::Value =
+                    serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
+                let id_arg = || {
+                    args.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_owned()
+                };
+                let serialized: Result<String> = match method.as_str() {
+                    "listProblems" => reader
+                        .list_problems()
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "getProblem" => reader
+                        .get_problem(&id_arg())
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "listContests" => reader
+                        .list_contests()
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "getContest" => reader
+                        .get_contest(&id_arg())
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "listSnippets" => reader
+                        .list_snippets()
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "getSnippet" => reader
+                        .get_snippet(&id_arg())
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "listTrds" => reader
+                        .list_trds()
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    "getTrd" => reader
+                        .get_trd(&id_arg())
+                        .and_then(|v| Ok(serde_json::to_string(&v)?)),
+                    other => Err(PluginError::InvalidArgument(format!(
+                        "unknown workspace read method '{other}'"
+                    ))),
+                };
+                match serialized {
+                    Ok(json) => Ok(json),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            },
+        )
         .map_err(|e| PluginError::JsError(e.to_string()))?;
         globals
-            .set("__xcpc_ws_list_problems", func_list)
+            .set("__xcpc_ws_read", func_read)
             .map_err(|e| PluginError::JsError(e.to_string()))?;
 
         let plugin_id = host_ctx.manifest.id.clone();
-        let ws = host_ctx.workspace.clone();
+        let allowed_write = host_ctx.manifest.permissions.workspace_write;
+        let writer = host_ctx.workspace_writer.clone();
         let last_err = Arc::clone(last_host_error);
-        let func_get = Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: String| {
-            if !allowed {
-                let err = PluginError::PermissionDenied {
-                    plugin_id: plugin_id.clone(),
-                    permission: "workspace_read".into(),
-                };
-                let msg = err.to_string();
-                *last_err.lock().unwrap() = Some(err);
-                return Err(Exception::throw_message(&ctx, &msg));
-            }
-            let Some(ref reader) = ws else {
-                let err = PluginError::PermissionDenied {
-                    plugin_id: plugin_id.clone(),
-                    permission: "workspace_read (no workspace attached)".into(),
-                };
-                let msg = err.to_string();
-                *last_err.lock().unwrap() = Some(err);
-                return Err(Exception::throw_message(&ctx, &msg));
-            };
-            let item = match reader.get_problem(&id) {
-                Ok(v) => v,
-                Err(e) => {
-                    let msg = e.to_string();
-                    *last_err.lock().unwrap() = Some(e);
+        let func_write = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, method: String, args_json: String| {
+                if !allowed_write {
+                    let err = PluginError::PermissionDenied {
+                        plugin_id: plugin_id.clone(),
+                        permission: "workspace_write".into(),
+                    };
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
                     return Err(Exception::throw_message(&ctx, &msg));
                 }
-            };
-            serde_json::to_string(&item).map_err(|e| Exception::throw_message(&ctx, &e.to_string()))
-        })
+                let Some(ref writer) = writer else {
+                    let err =
+                        PluginError::WorkspaceReadOnly("no writable workspace is attached".into());
+                    let msg = err.to_string();
+                    *last_err.lock().unwrap() = Some(err);
+                    return Err(Exception::throw_message(&ctx, &msg));
+                };
+                let serialized: Result<String> = (|| match method.as_str() {
+                    "createProblem" => {
+                        let input: CreateProblemInput = serde_json::from_str(&args_json)
+                            .map_err(|e| PluginError::InvalidArgument(e.to_string()))?;
+                        writer
+                            .create_problem(input)
+                            .and_then(|v| Ok(serde_json::to_string(&v)?))
+                    }
+                    "updateProblem" => {
+                        #[derive(Deserialize)]
+                        struct Args {
+                            id: String,
+                            patch: UpdateProblemPatch,
+                        }
+                        let args: Args = serde_json::from_str(&args_json)
+                            .map_err(|e| PluginError::InvalidArgument(e.to_string()))?;
+                        writer
+                            .update_problem(&args.id, args.patch)
+                            .and_then(|v| Ok(serde_json::to_string(&v)?))
+                    }
+                    "setSamples" => {
+                        #[derive(Deserialize)]
+                        #[serde(rename_all = "camelCase")]
+                        struct Args {
+                            problem_id: String,
+                            samples: Vec<WorkspaceSample>,
+                        }
+                        let args: Args = serde_json::from_str(&args_json)
+                            .map_err(|e| PluginError::InvalidArgument(e.to_string()))?;
+                        writer
+                            .set_samples(&args.problem_id, args.samples)
+                            .and_then(|v| Ok(serde_json::to_string(&v)?))
+                    }
+                    "upsertSnippet" => {
+                        let input: UpsertSnippetInput = serde_json::from_str(&args_json)
+                            .map_err(|e| PluginError::InvalidArgument(e.to_string()))?;
+                        writer
+                            .upsert_snippet(input)
+                            .and_then(|v| Ok(serde_json::to_string(&v)?))
+                    }
+                    other => Err(PluginError::InvalidArgument(format!(
+                        "unknown workspace write method '{other}'"
+                    ))),
+                })();
+                match serialized {
+                    Ok(json) => Ok(json),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            },
+        )
         .map_err(|e| PluginError::JsError(e.to_string()))?;
         globals
-            .set("__xcpc_ws_get_problem", func_get)
+            .set("__xcpc_ws_write", func_write)
             .map_err(|e| PluginError::JsError(e.to_string()))?;
     }
 
-    // 6. host.render.{svgToPng, svgToRgba} & host.highlight
+    // 6. host.render.{svgToPng, svgToRgba, renderTypst, renderMath}, host.archive.*, host.crypto.sha256 & host.highlight
     {
         let last_err = Arc::clone(last_host_error);
         let func = Function::new(
@@ -896,6 +1052,142 @@ fn register_native_bridges<'js>(
         .map_err(|e| PluginError::JsError(e.to_string()))?;
         globals
             .set("__xcpc_render_svg_to_rgba", func_rgba)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_typst = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, source: String, opts_json: String| {
+                let opts: RenderTypstOptions = serde_json::from_str(&opts_json).unwrap_or_default();
+                match render_typst_snippet(&source, &opts) {
+                    Ok(rendered) => serde_json::to_string(&rendered)
+                        .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_render_typst", func_typst)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_math = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, latex: String, opts_json: String| {
+                let opts: RenderMathOptions = serde_json::from_str(&opts_json).unwrap_or_default();
+                match render_math_snippet(&latex, &opts) {
+                    Ok(rendered) => serde_json::to_string(&rendered)
+                        .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_render_math", func_math)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_list_zip =
+            Function::new(
+                ctx.clone(),
+                move |ctx: Ctx<'js>, b64: String| match list_zip(&b64) {
+                    Ok(entries) => serde_json::to_string(&entries)
+                        .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                },
+            )
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_archive_list_zip", func_list_zip)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_read_zip = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, b64: String, opts_json: String| {
+                #[derive(Default, Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct ReadZipOpts {
+                    #[serde(default)]
+                    paths: Option<Vec<String>>,
+                    #[serde(default)]
+                    as_text: bool,
+                }
+                let opts: ReadZipOpts = serde_json::from_str(&opts_json).unwrap_or_default();
+                match read_zip(&b64, opts.paths.as_deref(), opts.as_text) {
+                    Ok(entries) => serde_json::to_string(&entries)
+                        .map_err(|e| Exception::throw_message(&ctx, &e.to_string())),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_archive_read_zip", func_read_zip)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_create_zip =
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, entries_json: String| {
+                let entries: Vec<CreateZipEntry> = match serde_json::from_str(&entries_json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err = PluginError::InvalidArgument(format!("invalid entries: {e}"));
+                        let msg = err.to_string();
+                        *last_err.lock().unwrap() = Some(err);
+                        return Err(Exception::throw_message(&ctx, &msg));
+                    }
+                };
+                match create_zip(&entries) {
+                    Ok(b64) => Ok(b64),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        *last_err.lock().unwrap() = Some(e);
+                        Err(Exception::throw_message(&ctx, &msg))
+                    }
+                }
+            })
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_archive_create_zip", func_create_zip)
+            .map_err(|e| PluginError::JsError(e.to_string()))?;
+
+        let last_err = Arc::clone(last_host_error);
+        let func_sha256 = Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, input: String, encoding: String| match sha256_encoded(
+                &input,
+                Some(&encoding),
+            ) {
+                Ok(hex) => Ok(hex),
+                Err(e) => {
+                    let msg = e.to_string();
+                    *last_err.lock().unwrap() = Some(e);
+                    Err(Exception::throw_message(&ctx, &msg))
+                }
+            },
+        )
+        .map_err(|e| PluginError::JsError(e.to_string()))?;
+        globals
+            .set("__xcpc_crypto_sha256", func_sha256)
             .map_err(|e| PluginError::JsError(e.to_string()))?;
 
         let func_hl = Function::new(

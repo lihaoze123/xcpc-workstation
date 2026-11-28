@@ -216,6 +216,7 @@ impl PluginManager {
             credentials: Arc::new(MemoryCredentialStore::new()),
             kv: Arc::new(kv),
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits::default(),
         };
 
@@ -265,6 +266,7 @@ impl PluginManager {
             credentials: Arc::new(MemoryCredentialStore::new()),
             kv: Arc::new(kv),
             workspace: None,
+            workspace_writer: None,
             limits: SandboxLimits::default(),
         };
 

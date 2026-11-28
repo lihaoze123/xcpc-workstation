@@ -53,11 +53,29 @@ export function TemplatePicker(props: {
     return c?.description ? resolveLocalized(c.description) : "";
   };
   const entries = computed<MenuEntry[]>(() => {
-    const list: MenuEntry[] = props.templates.map((tpl) => ({
-      id: tpl.id,
-      label: resolveLocalized(tpl.name) || tpl.id,
-      checked: tpl.id === props.value,
-    }));
+    const workspaceList: MenuEntry[] = [];
+    const pluginList: MenuEntry[] = [];
+    for (const tpl of props.templates) {
+      if (tpl.source?.kind === "plugin") {
+        pluginList.push({
+          id: tpl.id,
+          label: resolveLocalized(tpl.name) || tpl.id,
+          note: tpl.source.plugin_name,
+          checked: tpl.id === props.value,
+        });
+      } else {
+        workspaceList.push({
+          id: tpl.id,
+          label: resolveLocalized(tpl.name) || tpl.id,
+          checked: tpl.id === props.value,
+        });
+      }
+    }
+    const list: MenuEntry[] = [...workspaceList];
+    if (pluginList.length > 0) {
+      if (list.length > 0) list.push({ separator: true, id: "sep-plugin-templates" });
+      list.push(...pluginList);
+    }
     if (props.onAddFromPreset) {
       if (list.length > 0) list.push({ separator: true, id: "sep-add-preset" });
       list.push({

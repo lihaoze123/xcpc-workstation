@@ -327,3 +327,200 @@ fn limits_read_as_the_template_writes_them() {
         ("500 毫秒".into(), "weird".into())
     );
 }
+
+#[test]
+fn phase7a_plugin_template_render_eject_missing_and_frozen_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws_root = dir.path().join("ws");
+    let ws = xcpc_storage::init_workspace(&ws_root).unwrap();
+    ws.create_problem("a-plus-b", "A + B").unwrap();
+    ws.write(
+        "problems/a-plus-b/statement.md",
+        b"Given $a$ and $b$, output $a+b$.\n\n## Input\nTwo integers.\n\n## Output\nOne integer.\n",
+    )
+    .unwrap();
+    ws.write("problems/a-plus-b/samples/01.in", b"1 2\n")
+        .unwrap();
+    ws.write("problems/a-plus-b/samples/01.ans", b"3\n")
+        .unwrap();
+
+    // Create a mock template plugin directory with a helper module + SVG asset.
+    let plugin_root = dir.path().join("plugin-pack");
+    std::fs::create_dir_all(plugin_root.join("templates")).unwrap();
+    std::fs::create_dir_all(plugin_root.join("assets")).unwrap();
+    std::fs::write(
+        plugin_root.join("assets/logo.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#0B6989"/></svg>"##,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_root.join("templates/helper.typ"),
+        "#let badge() = image(\"../assets/logo.svg\", height: 10pt)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_root.join("templates/ec.typ"),
+        r##"
+#import "/templates/defaults.typ": section, samples, subsection, runin
+#import "/xcpc/fonts.typ": lm-roman-10, cjk-song
+#import "./helper.typ": badge
+
+#let schema = (
+  kind: "statement",
+  name: (zh: "EC 模板", en: "EC Template"),
+  fields: (
+    (key: "show-logo", label: "Logo", type: "bool", scope: "book", default: true),
+  ),
+)
+
+#let render(doc) = {
+  set page(paper: "a4")
+  set text(font: (lm-roman-10, cjk-song), size: 10pt)
+  show math.equation: set text(font: "Latin Modern Math")
+  for p in doc.problems {
+    [#metadata((label: p.label)) <xcpc-problem>]
+    badge()
+    [= #p.title]
+    p.body
+  }
+}
+"##,
+    )
+    .unwrap();
+
+    let mount = xcpc_engine::PluginMount {
+        plugin_id: "icpc-pack".into(),
+        plugin_name: "ICPC Pack".into(),
+        version: "1.0.0".into(),
+        root: plugin_root.clone(),
+        font_dirs: Vec::new(),
+        templates: vec![xcpc_engine::PluginTemplateEntry {
+            id: "ec".into(),
+            entry: "templates/ec.typ".into(),
+            kind: Some(xcpc_domain::TemplateKind::Statement),
+            name: Some("ICPC EC".into()),
+            description: Some("EC Layout".into()),
+        }],
+    };
+
+    let mut engine = crate::publish::engine(&ws, &xcpc_engine::FontOptions::from_env());
+    engine.set_plugin_mounts(vec![mount]);
+
+    // 1. Discovery lists plugin template with Plugin source.
+    let templates = crate::publish::list_templates(&ws, &engine);
+    let found = templates
+        .iter()
+        .find(|t| t.id == "plugin:icpc-pack/ec")
+        .expect("plugin template listed");
+    assert_eq!(
+        found.source,
+        xcpc_domain::TemplateSource::Plugin {
+            plugin_id: "icpc-pack".into(),
+            plugin_name: "ICPC Pack".into(),
+            template_id: "ec".into(),
+        }
+    );
+    assert!(found.schema.fields.iter().any(|f| f.key == "show-logo"));
+
+    // 2. Compose contest using plugin template & compile cleanly.
+    ws.write(
+        "contests/round1/contest.toml",
+        b"name = \"Round 1\"\nlanguage = \"english\"\ntemplate = \"plugin:icpc-pack/ec\"\n\n[[problem]]\nid = \"a-plus-b\"\nlabel = \"A\"\n",
+    )
+    .unwrap();
+    let (compiled, _doc, report) = crate::publish::check(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Contest("round1".into()),
+        crate::publish::Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(report.ok, "compile diagnostics: {:?}", report.diagnostics);
+    assert!(compiled.is_some());
+
+    // 3. Eject copies bundle + wrapper into workspace templates/, compiling without any plugin mount.
+    let (ejected_id, ejected_rel) =
+        crate::publish::eject_plugin_template(&ws, &engine, "icpc-pack", "ec", Some("ec-local"))
+            .unwrap();
+    assert_eq!(ejected_id, "ec-local");
+    assert_eq!(ejected_rel, "templates/ec-local.typ");
+    assert!(ws_root.join("templates/ec-local.typ").is_file());
+    assert!(ws_root.join("templates/ec-local/assets/logo.svg").is_file());
+
+    // 4. Freeze contest archives plugin template bundle into snapshot/template/, then unmounting
+    //    the plugin still allows frozen contest to compile cleanly offline!
+    let frozen = crate::publish::freeze_contest(&ws, &mut engine, "round1").unwrap();
+    assert!(
+        frozen.frozen,
+        "freeze report: {:?}",
+        frozen.report.diagnostics
+    );
+    assert!(
+        ws_root
+            .join("contests/round1/snapshot/template/templates/ec.typ")
+            .is_file()
+    );
+    assert!(
+        ws_root
+            .join("contests/round1/snapshot/template/assets/logo.svg")
+            .is_file()
+    );
+
+    // Unmount all plugins -> frozen contest STILL compiles!
+    engine.set_plugin_mounts(Vec::new());
+    let (frozen_compiled, _, frozen_report) = crate::publish::check(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Contest("round1".into()),
+        crate::publish::Kind::Statements,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        frozen_report.ok,
+        "frozen offline report: {:?}",
+        frozen_report.diagnostics
+    );
+    assert!(frozen_compiled.is_some());
+
+    // And ejected template compiles cleanly with zero plugins mounted!
+    let (ejected_compiled, _, ejected_report) = crate::publish::check_with_template(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Problem("a-plus-b".into()),
+        crate::publish::Kind::Statements,
+        None,
+        None,
+        Some("ec-local"),
+    )
+    .unwrap();
+    assert!(
+        ejected_report.ok,
+        "ejected report: {:?}",
+        ejected_report.diagnostics
+    );
+    assert!(ejected_compiled.is_some());
+
+    // 5. Missing plugin template emits PLUGIN_TEMPLATE_NOT_FOUND.
+    let (missing_compiled, _, missing_report) = crate::publish::check_with_template(
+        &ws,
+        &mut engine,
+        &crate::publish::Target::Problem("a-plus-b".into()),
+        crate::publish::Kind::Statements,
+        None,
+        None,
+        Some("plugin:icpc-pack/ec"),
+    )
+    .unwrap();
+    assert!(!missing_report.ok);
+    assert!(missing_compiled.is_none());
+    assert!(
+        missing_report
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_deref() == Some(crate::publish::PLUGIN_TEMPLATE_NOT_FOUND))
+    );
+}
