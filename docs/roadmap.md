@@ -343,7 +343,7 @@
 
 **不做**（Phase 5 整体）：25 页页数红线预算仪表盘、强制冻结硬门禁（仅作可选严格开关）、应用内 C++ IDE、离线盲打练习小游戏。
 
-## Phase 6：增强 o11y 与全面整体打磨（已完成，6A–6G 至 v0.6.0-beta.3）
+## Phase 6：增强 o11y 与全面整体打磨（已完成，v0.6.0）
 
 2026-11-26 对齐确认，**6A / 6A.5 / 6B / 6C**（规格见 [specs/phase-6-o11y-and-polish.md](./specs/phase-6-o11y-and-polish.md)）与 **6D–6G** 均已在 `v0.6.0-beta.1` 完成落地，`v0.6.0-beta.2`–`beta.3` 补齐了 Windows 全量体验对齐（路径规范化、静默 Job Object 评测、原生剪贴板、内存极致优化至 ~76 MB、WebView2 插件字体与样式一致性）与发布打磨。原计划的 **6H（Vello 预览渲染引擎与 `nsh-gpu` 零拷贝演进）** 已于 2026-11-28 确认**整体延后至「待定与远期」**，待上游 `longbridge/nsh` 与 `wgpu`/Vello 稳定对齐后再重启，Phase 6 至此收口。
 

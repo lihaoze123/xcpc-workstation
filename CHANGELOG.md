@@ -2,6 +2,27 @@
 
 所有值得注意的变更都会记录在本文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-11-28
+
+Phase 6 正式版：升级至 **NSH 0.7.1** 与多窗口 **`nsh-o11y` 开发者诊断面板**，完成桌面端设计系统、排版字体、状态完备性与物理弹簧动效的体系化打磨，并补齐 **Linux / Windows / macOS（Apple Silicon）** 三平台完整体验、极致内存优化与中英双语文档站。
+
+### 核心亮点
+
+- **框架升级与独立诊断窗口（Phase 6A–6C）**：
+  - 升级宿主至 NSH 0.7.1，接入 `nsh-icon` / `nsh-icon-lucide` / `nsh-o11y` 与原生 `quitRequest` 未保存退出保护；下沉 `crates/xcpc-app` 解耦 Core 与桌面端外壳。
+  - 新增 `Ctrl+Shift+D` 独立多窗口开发者诊断面板（实时帧率/排版/IPC 曲线、跨线程 Span 瀑布图与基线对比、结构化日志与 Perfetto JSON 导出），常态零 `rAF` 零落盘。
+- **设计系统、排版与物理弹簧动效（Phase 6D–6G）**：
+  - 建立集中式设计 Token 与静态护栏门禁，内嵌 Inter 与 JetBrains Mono 字体并在挂载前注册，补齐三档空态/加载/错误态与焦点环，并落地三档弹簧 + `prefers-reduced-motion` 降级动效体系。
+- **跨平台完整体验与极致内存优化**：
+  - **Windows**：统一剥离 `\\?\` 路径前缀、静默无弹窗评测与 Job Object 真实峰值内存/MLE 判定、原生双格式（`CF_DIB` + `PNG`）图片剪贴板、WebView2 插件桥接与字体样式统一，并通过定向 CJK 字体加载与分级缓存回收将常规常驻内存压低 70%–90%。
+  - **macOS (`arm64`)**：正式提供 `.dmg` / `.tar.gz`、应用内自动更新与独立 CLI 包，适配 Finder 语言检测、Homebrew GCC 优先发现、沙箱 `ru_maxrss` MLE 判定与中文字体回退链。
+- **中英双语文档站与生态**：
+  - 上线中英双语产品与开发者文档站（含三平台安装与插件开发指南），插件 SDK 包名统一为 `@xcpc-workstation/plugin-sdk`。
+
+### 变更（自 `0.6.0-beta.3` 起）
+
+- 收口 Phase 6 路线图，将 Vello 预览引擎演进（原 6H）延后至远期，正式排期 Phase 7（插件 API v2）与 Phase 8（极简领域化 Git 与离线盲验流转）。
+
 ## [0.6.0-beta.3] - 2026-11-28
 
 macOS（Apple Silicon `arm64`）端正式发布支持与字体回退增强版本：新增 macOS 桌面端 `.dmg` / `.tar.gz` 与独立 CLI 打包、应用内自动更新及 CI 覆盖，并修复 macOS 下的语言检测、Homebrew GCC 发现、沙箱内存限制与中文字体回退问题。
